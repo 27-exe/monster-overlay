@@ -5,6 +5,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QHash>
 #include <QFileInfo>
 #include <QDateTime>
 #include <QRegularExpression>
@@ -481,6 +482,16 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             continue;
         if (displayName.startsWith(QStringLiteral("em\\em")))
             displayName = displayName.mid(5);
+
+        // Capcom's em\* ID mapping changed in the 421810 build; old HunterPie
+        // XML maps are stale. Apply our locally-verified table.
+        static const QHash<QString, QString> kNameTable = {
+            {QStringLiteral("057"), QStringLiteral("雷狼龙")},
+            // Add more as the user verifies them in-game.
+        };
+        const auto it = kNameTable.find(displayName);
+        if (it != kNameTable.end())
+            displayName = *it;
 
         MonsterSnapshot m;
         m.address = monster;
