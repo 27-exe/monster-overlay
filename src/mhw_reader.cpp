@@ -380,44 +380,62 @@ QString MhwReader::joinOffsets() const
 
 QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
 {
-    Q_UNUSED(error);
     QVector<MonsterSnapshot> result;
 
-    if (monsterTableBase_ == 0)
-        discoverMonsterTable();
-    if (monsterTableBase_ == 0 || hpClusters_.empty())
+    // With mhw_fix.so, the MonsterList chain is now functional.
+    // Follow HunterPie's path: MONSTER_LIST_ADDRESS -> deref -> +0x38 -> Component*[].
+    const std::uintptr_t listAddr = absolute(QStringLiteral("MONSTER_LIST_ADDRESS"));
+    const auto headPtr = memory_.read<std::uintptr_t>(listAddr);
+    if (!headPtr || *headPtr < 0x10000) {
+        if (error) *error = QStringLiteral("MonsterList head is null/stale");
         return result;
+    }
+    const std::uintptr_t arrayBase = *headPtr + 0x38ULL;
+    const auto components = memory_.readArray<std::uintptr_t>(arrayBase, 128, error);
 
-    // Read HP clusters + map to name table entries (big monsters only).
-    // Each cluster = [maxHP, curHP, ??, 0] at a known address.
-    int nameIdx = 0;
-    for (const auto &cluster : hpClusters_) {
-        // Find next big monster name from name table
-        QString name;
-        while (nameIdx < static_cast<int>(monsterTableCount_)) {
-            char buf[64] = {0};
-            if (!memory_.readBytes(monsterTableBase_ + nameIdx * 0x130ULL + 0x2A0ULL,
-                                   buf, sizeof(buf) - 1, nullptr))
-                break;
-            name = QString::fromUtf8(buf);
-            ++nameIdx;
-            if (name.startsWith(QStringLiteral("em\\ems")))
-                continue; // skip small monsters
-            break;
-        }
-        if (name.isEmpty() || name.startsWith(QStringLiteral("em\\ems")))
+    int liveCount = 0;
+    for (const std::uintptr_t comp : components) {
+        if (comp < 0x10000 || comp >= 0x0000800000000000ULL)
             continue;
+        ++liveCount;
+    }
+    qWarning("MonsterList: head=0x%llx array=0x%llx live=%d/128",
+             static_cast<unsigned long long>(*headPtr),
+             static_cast<unsigned long long>(arrayBase), liveCount);
 
-        // Read HP from cached address
-        const auto hp = memory_.readArray<float>(cluster.hpAddr, 2);
-        if (hp.size() < 2)
+    for (const std::uintptr_t comp : components) {
+        if (comp < 0x10000 || comp >= 0x0000800000000000ULL)
+            continue;
+        // Component + 0x138 -> Monster*
+        const auto innerPtr = memory_.read<std::uintptr_t>(comp + 0x138ULL);
+        if (!innerPtr || *innerPtr < 0x10000 || *innerPtr >= 0x0000800000000000ULL)
+            continue;
+        const std::uintptr_t monster = *innerPtr;
+
+        // Name: Monster + 0x2A0 is a POINTER to name struct; name at struct+0xC
+        char nameBuf[64] = {0};
+        const auto nameStruct = memory_.read<std::uintptr_t>(monster + 0x2A0ULL);
+        if (nameStruct && *nameStruct >= 0x10000 && *nameStruct < 0x0000800000000000ULL) {
+            memory_.readBytes(*nameStruct + 0xCULL, nameBuf, sizeof(nameBuf) - 1, nullptr);
+        }
+        const QString internalName = QString::fromUtf8(nameBuf);
+        // Skip small monsters and empty names
+        if (internalName.isEmpty() || internalName.startsWith(QStringLiteral("em\\ems")))
             continue;
 
         MonsterSnapshot m;
-        m.address = cluster.hpAddr;
-        m.internalName = name;
-        m.maxHealth = hp[0];
-        m.health = hp[1];
+        m.address = monster;
+        m.internalName = internalName;
+
+        // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
+        const auto healthPtr = memory_.read<std::uintptr_t>(monster + 0x7670ULL);
+        if (healthPtr && isSanePointer(*healthPtr)) {
+            const auto hp = memory_.readArray<float>(*healthPtr + 0x60ULL, 2);
+            if (hp.size() == 2) {
+                m.maxHealth = hp[0];
+                m.health = hp[1];
+            }
+        }
         result.push_back(m);
     }
     return result;
