@@ -91,7 +91,7 @@ OverlayWindow::OverlayWindow(QString mapPath, bool demoMode, QWidget *parent)
     timer_ = new QTimer(this);
     timer_->setTimerType(Qt::PreciseTimer);
     connect(timer_, &QTimer::timeout, this, &OverlayWindow::refresh);
-    timer_->start(100);
+    timer_->start(1000);
     refresh();
 }
 
