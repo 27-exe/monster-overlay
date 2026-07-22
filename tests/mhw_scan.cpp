@@ -176,6 +176,31 @@ int main(int argc, char *argv[])
         std::cout << "target 0x" << std::hex << target << " not a valid userspace address\n";
     }
 
+    // The HunterPie map says MONSTER_LIST_OFFSETS=0x38, which is the
+    // wrong deref step. The 32-byte dump of 0x14500cf40 reveals the real
+    // struct layout: [int32 head 32-bit-residue][int32 count=47][padding
+    // 4][nint[0]][nint[1]]... So the array of Component* starts at
+    // offset 0x10 within the struct, not 0x38. Print the array of 64
+    // candidate pointers so we can find a slot whose 0x2A0 is a real
+    // short monster name.
+    {
+        const std::uintptr_t arrayBase = base + 0x0500CF40ULL + 0x10ULL;
+        std::cout << "\n[array] 0x0500CF40 + 0x10 = 0x" << std::hex << arrayBase
+                  << " (read 64 candidate Component*)\n" << std::dec;
+        const auto array = memory.readArray<std::uintptr_t>(arrayBase, 64, nullptr);
+        for (std::size_t i = 0; i < array.size(); ++i) {
+            const std::uintptr_t component = array[i];
+            const bool live = (component >= 0x140000000ULL && component < 0x150000000ULL)
+                || (component >= 0x14990000ULL && component < 0x1aa90000ULL);
+            if (!live)
+                continue;
+            char nb[16] = {0};
+            memory.readBytes(component + kNameOffset, nb, sizeof(nb) - 1, nullptr);
+            std::printf("    [array %2zu] = 0x%016llx  name=\"%s\"\n",
+                        i, static_cast<unsigned long long>(component), nb);
+        }
+    }
+
     // Strategy A: scan the entire image (or until the highest
     // MonsterHunterWorld.exe mapping) for "em\em" substrings, then verify
     // each as a candidate monster struct.
