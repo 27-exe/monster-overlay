@@ -381,49 +381,61 @@ QString MhwReader::joinOffsets() const
 QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
 {
     QVector<MonsterSnapshot> result;
-    const std::uintptr_t base = absolute(QStringLiteral("MONSTER_LIST_ADDRESS"));
-    const std::uintptr_t components = followPointerChain(memory_, base,
-                                                         map_.offsets(QStringLiteral("MONSTER_LIST_OFFSETS")), error);
-    qWarning("readMonsters: MONSTER_LIST_ADDRESS abs=0x%llx offsets=[%s] -> components=0x%llx",
-             static_cast<unsigned long long>(base),
-             qPrintable(joinOffsets()),
-             static_cast<unsigned long long>(components));
-    if (!components)
+    // 1. The catalog: MONSTER_LIST_ADDRESS (0x0500CF40) holds a pointer
+    //    to an array of 47 big-monster component pointers. The mhw-probe
+    //    confirmed deref(0x0500CF40) = 0x27b97760 on this build, and
+    //    *(0x27b97760+0x8) = 47 (the catalog count).
+    const std::uintptr_t catalogBase = followPointerChain(memory_, absolute(QStringLiteral("MONSTER_LIST_ADDRESS")),
+                                                          map_.offsets(QStringLiteral("MONSTER_LIST_OFFSETS")), error);
+    if (!catalogBase) {
+        qWarning("readMonsters: catalog chain returned 0; offsets=[%s] abs=0x%llx",
+                 qPrintable(joinOffsets()),
+                 static_cast<unsigned long long>(absolute(QStringLiteral("MONSTER_LIST_ADDRESS"))));
         return result;
+    }
+    // 2. Active component index from LOCKON_ADDRESS: read int through the
+    //    5-step offset chain [0x1618, 0x12608, 0x3340, 0x0, 0x48, 0x0].
+    const std::uintptr_t activeIndexAddr = followPointerChain(memory_, absolute(QStringLiteral("LOCKON_ADDRESS")),
+                                                             map_.offsets(QStringLiteral("LOCKEDON_MONSTER_INDEX_OFFSETS")), error);
+    int activeIndex = -1;
+    if (activeIndexAddr) {
+        const auto index = memory_.read<std::int32_t>(activeIndexAddr, nullptr);
+        if (index && *index >= 0 && *index < 128)
+            activeIndex = *index;
+    }
+    qWarning("readMonsters: catalog=0x%llx activeIndex=%d (activeIndexAddr=0x%llx)",
+             static_cast<unsigned long long>(catalogBase),
+             activeIndex,
+             static_cast<unsigned long long>(activeIndexAddr));
 
-    const auto componentPointers = memory_.readArray<std::uintptr_t>(components, 128, error);
+    // 3. Read the catalog of 47 component pointers. We try at least 64
+    //    slots because the catalog count occasionally reports 47 but
+    //    higher build variants pack a small extra.
+    constexpr std::size_t kCatalogSlots = 64;
+    const auto catalog = memory_.readArray<std::uintptr_t>(catalogBase, kCatalogSlots, error);
     int live = 0;
-    for (const std::uintptr_t p : componentPointers)
+    for (const std::uintptr_t p : catalog)
         if (p >= 0x10000 && p < 0x0000800000000000ULL)
             ++live;
-    qWarning("readMonsters: read %lld component pointers (%d in sane range); first 6:",
-             static_cast<long long>(componentPointers.size()), live);
-    for (int i = 0; i < std::min<int>(6, componentPointers.size()); ++i)
-        qWarning("    [%d]=0x%llx", i, static_cast<unsigned long long>(componentPointers[i]));
-    if (live > 0) {
-        const std::uintptr_t c0 = componentPointers[0];
-        if (c0 >= 0x10000 && c0 < 0x0000800000000000ULL) {
-            char buf[64] = {0};
-            memory_.readBytes(c0 + 0x2A0, buf, sizeof(buf) - 1, nullptr);
-            qWarning("    c0+0x2A0 raw bytes: %s", buf);
-        }
-    }
-    for (const std::uintptr_t component : componentPointers) {
-        if (!isSanePointer(component))
-            continue;
-        const auto monsterAddress = memory_.read<std::uintptr_t>(component + 0x138, nullptr);
-        if (!monsterAddress || !isSanePointer(*monsterAddress))
-            continue;
-        const QString internalName = readUtf8(*monsterAddress + 0x2A0, 64);
-        if (!internalName.startsWith(QStringLiteral("em\\em")) || internalName.startsWith(QStringLiteral("em\\ems")))
-            continue;
+    qWarning("readMonsters: catalog read %lld entries (%d live)", static_cast<long long>(catalog.size()), live);
 
+    auto buildSnapshot = [&](const std::uintptr_t component, bool force) {
+        if (!(component >= 0x10000 && component < 0x0000800000000000ULL))
+            return;
+        // Some catalogs (e.g. mhw-probe slot 0 = 0x81b62a40) are stale
+        // freed chunks: name at +0x2A0 is empty, no HP. We treat that as
+        // "not loaded" and skip unless force is set.
+        char nameBuf[64] = {0};
+        memory_.readBytes(component + 0x2A0, nameBuf, sizeof(nameBuf) - 1, nullptr);
+        const std::string name(nameBuf);
+        if (name.empty() && !force)
+            return;
         MonsterSnapshot monster;
-        monster.address = *monsterAddress;
-        monster.internalName = internalName;
-        if (const auto id = memory_.read<std::int32_t>(*monsterAddress + 0x12280))
+        monster.address = component;
+        monster.internalName = QString::fromUtf8(nameBuf);
+        if (const auto id = memory_.read<std::int32_t>(component + 0x12280))
             monster.id = *id;
-        if (const auto healthPtr = memory_.read<std::uintptr_t>(*monsterAddress + 0x7670);
+        if (const auto healthPtr = memory_.read<std::uintptr_t>(component + 0x7670);
             healthPtr && isSanePointer(*healthPtr)) {
             const auto health = memory_.readArray<float>(*healthPtr + 0x60, 2);
             if (health.size() == 2) {
@@ -431,17 +443,23 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 monster.health = health[1];
             }
         }
-        const auto stamina = memory_.readArray<float>(*monsterAddress + 0x1C0F0, 2);
+        const auto stamina = memory_.readArray<float>(component + 0x1C0F0, 2);
         if (stamina.size() == 2) {
             monster.stamina = stamina[0];
             monster.maxStamina = stamina[1];
         }
-        if (const auto enrage = memory_.read<MonsterEnrage>(*monsterAddress + 0x1BE30)) {
+        if (const auto enrage = memory_.read<MonsterEnrage>(component + 0x1BE30)) {
             monster.enrageSeconds = enrage->duration;
             monster.enrageMaxSeconds = enrage->maxDuration;
             monster.enraged = enrage->duration > 0.0F;
         }
         result.push_back(monster);
+    };
+
+    for (int i = 0; i < catalog.size(); ++i) {
+        const std::uintptr_t component = catalog[i];
+        const bool isActive = (i == activeIndex);
+        buildSnapshot(component, isActive);
     }
     return result;
 }
