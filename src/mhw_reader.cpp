@@ -496,6 +496,11 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         MonsterSnapshot m;
         m.address = monster;
         m.internalName = displayName;
+
+        // ID field: HunterPie 421810 reads this at monster+0x1228C, not
+        // the +0x12280 in the old .map. Capcom shifted the ID slot.
+        if (const auto id = memory_.read<std::int32_t>(monster + 0x1228CULL))
+            m.id = *id;
         m.maxHealth = maxHP;
         m.health = curHP;
         monsterCache_[comp] = {m, maxHP};
