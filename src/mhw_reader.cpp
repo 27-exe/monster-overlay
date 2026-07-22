@@ -497,10 +497,14 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         m.address = monster;
         m.internalName = displayName;
 
-        // ID field: HunterPie 421810 reads this at monster+0x1228C, not
-        // the +0x12280 in the old .map. Capcom shifted the ID slot.
-        if (const auto id = memory_.read<std::int32_t>(monster + 0x1228CULL))
+        // HunterPie reads the ID at +0x12280. In the 421810 build this
+        // returns a different number than the em\* string id (e.g. em057
+        // -> id 94). We still record it for debugging but use the em\*
+        // string as the source of truth for the display name.
+        if (const auto id = memory_.read<std::int32_t>(monster + 0x12280ULL))
             m.id = *id;
+
+        // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
         m.maxHealth = maxHP;
         m.health = curHP;
         monsterCache_[comp] = {m, maxHP};
