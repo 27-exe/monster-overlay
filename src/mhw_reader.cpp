@@ -483,11 +483,47 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         if (displayName.startsWith(QStringLiteral("em\\em")))
             displayName = displayName.mid(5);
 
-        // Capcom's em\* ID mapping changed in the 421810 build; old HunterPie
-        // XML maps are stale. Apply our locally-verified table.
+        // HunterPie 421810 zh-cn.xml Id -> name (Monster/@Id from
+        // https://github.com/HunterPie/Localization). Verified: em057
+        // maps to Id=94, which is 冰狼龙 in this table.
         static const QHash<QString, QString> kNameTable = {
-            {QStringLiteral("057"), QStringLiteral("雷狼龙")},
-            // Add more as the user verifies them in-game.
+            {QStringLiteral("000"), QStringLiteral("雌火龙")},
+            {QStringLiteral("001"), QStringLiteral("霸主·雌火龙")},
+            {QStringLiteral("002"), QStringLiteral("火龙")},
+            {QStringLiteral("003"), QStringLiteral("霸主·火龙")},
+            {QStringLiteral("007"), QStringLiteral("霸主·角龙")},
+            {QStringLiteral("008"), QStringLiteral("金狮子")},
+            {QStringLiteral("012"), QStringLiteral("轰龙")},
+            {QStringLiteral("018"), QStringLiteral("雷狼龙")},
+            {QStringLiteral("019"), QStringLiteral("霸主·雷狼龙")},
+            {QStringLiteral("020"), QStringLiteral("毒狗龙王")},
+            {QStringLiteral("021"), QStringLiteral("青熊兽")},
+            {QStringLiteral("024"), QStringLiteral("赤甲兽")},
+            {QStringLiteral("025"), QStringLiteral("泡狐龙")},
+            {QStringLiteral("028"), QStringLiteral("怨虎龙")},
+            {QStringLiteral("040"), QStringLiteral("蛮颚龙")},
+            {QStringLiteral("041"), QStringLiteral("毒妖鸟")},
+            {QStringLiteral("043"), QStringLiteral("泥鱼龙")},
+            {QStringLiteral("044"), QStringLiteral("飞雷龙")},
+            {QStringLiteral("045"), QStringLiteral("爆鳞龙")},
+            {QStringLiteral("057"), QStringLiteral("冰狼龙")},
+            {QStringLiteral("076"), QStringLiteral("金火龙")},
+            {QStringLiteral("077"), QStringLiteral("银火龙")},
+            {QStringLiteral("080"), QStringLiteral("激昂金狮子")},
+            {QStringLiteral("082"), QStringLiteral("黑蚀龙")},
+            {QStringLiteral("084"), QStringLiteral("千刃龙")},
+            {QStringLiteral("085"), QStringLiteral("电龙")},
+            {QStringLiteral("086"), QStringLiteral("焰狐龙")},
+            {QStringLiteral("087"), QStringLiteral("嗟怨震天怨虎龙")},
+            {QStringLiteral("089"), QStringLiteral("冰人鱼龙")},
+            {QStringLiteral("091"), QStringLiteral("熔翁龙")},
+            {QStringLiteral("094"), QStringLiteral("冰狼龙")},
+            {QStringLiteral("095"), QStringLiteral("刚缠兽")},
+            {QStringLiteral("096"), QStringLiteral("冥渊龙")},
+            {QStringLiteral("107"), QStringLiteral("怪异克服钢龙")},
+            {QStringLiteral("111"), QStringLiteral("怪异克服天彗龙")},
+            {QStringLiteral("114"), QStringLiteral("冰呪龙")},
+            {QStringLiteral("115"), QStringLiteral("岚龙")},
         };
         const auto it = kNameTable.find(displayName);
         if (it != kNameTable.end())
@@ -497,11 +533,9 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         m.address = monster;
         m.internalName = displayName;
 
-        // HunterPie reads the ID at +0x12280. In the 421810 build this
-        // returns a different number than the em\* string id (e.g. em057
-        // -> id 94). We still record it for debugging but use the em\*
-        // string as the source of truth for the display name.
-        if (const auto id = memory_.read<std::int32_t>(monster + 0x12280ULL))
+        // HunterPie 2.14.0.461 reads the ID at +0x1228C (not +0x12280 in
+        // the old .map). The struct layout shifted; use the live offset.
+        if (const auto id = memory_.read<std::int32_t>(monster + 0x1228CULL))
             m.id = *id;
 
         // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
