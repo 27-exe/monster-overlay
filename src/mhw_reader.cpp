@@ -277,26 +277,29 @@ std::optional<qint64> MhwReader::findGamePid()
         if (!numeric || pid <= 0)
             continue;
 
-        // The actual Wine PE process has MonsterHunterWorld.exe in its map set.
-        // Prefer this over command-line matching: Proton launch wrappers may also
-        // contain the exe name in argv while not hosting the game image.
+        // The actual Wine PE process has MonsterHunterWorld.exe in its map set,
+        // but the comm name is set to wine-preloader / wineserver so we cannot
+        // rely on /proc/<pid>/comm. Match on /proc/<pid>/maps (any case) and
+        // also on cmdline as a fallback.
         QFile maps(entry.filePath() + QStringLiteral("/maps"));
         if (maps.open(QIODevice::ReadOnly | QIODevice::Text)
-            && maps.readAll().contains("MonsterHunterWorld.exe"))
+            && maps.readAll().toLower().contains("monsterhunterworld.exe"))
             return pid;
 
         QFile comm(entry.filePath() + QStringLiteral("/comm"));
         if (comm.open(QIODevice::ReadOnly)) {
-            const QByteArray raw = comm.readAll().trimmed();
-            if (raw.contains("MonsterHunterW"))
+            const QByteArray raw = comm.readAll().trimmed().toLower();
+            if (raw.contains("monsterhunterw"))
                 fallback = pid;
         }
 
-        QFile cmdline(entry.filePath() + QStringLiteral("/cmdline"));
-        if (!fallback && cmdline.open(QIODevice::ReadOnly)) {
-            const QByteArray raw = cmdline.readAll();
-            if (raw.contains("MonsterHunterWorld.exe"))
-                fallback = pid;
+        if (!fallback) {
+            QFile cmdline(entry.filePath() + QStringLiteral("/cmdline"));
+            if (cmdline.open(QIODevice::ReadOnly)) {
+                const QByteArray raw = cmdline.readAll().toLower();
+                if (raw.contains("monsterhunterworld.exe"))
+                    fallback = pid;
+            }
         }
     }
     return fallback;
@@ -335,7 +338,8 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
         QString error;
         if (!memory_.attach(*pid, &error)) {
             snapshot.pid = *pid;
-            snapshot.status = QStringLiteral("已发现 MHW，但无法读取内存：%1。ptrace_scope=1 时需由启动器建立允许关系。")
+            snapshot.status = QStringLiteral("已发现 PID %1，但 /proc/%1/mem 拒绝读取：%2。ptrace_scope=1 + 同用户非子进程 → 失败，需要 launcher/ptrace_proxy 关系。")
+                                  .arg(*pid)
                                   .arg(error);
             return false;
         }
