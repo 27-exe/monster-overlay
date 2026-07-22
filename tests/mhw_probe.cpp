@@ -43,30 +43,32 @@ int main(int argc, char *argv[])
     // caller's side and does not require ptrace access.
     const QString mapsPath = QStringLiteral("/proc/%1/maps").arg(pid);
     QFile maps(mapsPath);
-    if (!maps.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!maps.open(QIODevice::ReadOnly)) {
         std::cout << "cannot open " << mapsPath.toStdString() << ": " << maps.errorString().toStdString() << '\n';
         return 3;
     }
+    const QByteArray raw = maps.readAll();
+    std::cout << "raw maps bytes = " << raw.size() << '\n';
     std::uintptr_t base = 0;
     int matchLines = 0;
-    QTextStream in(&maps);
-    while (!in.atEnd()) {
-        const QString line = in.readLine();
-        if (!line.toLower().contains("monsterhunterworld.exe"))
+    const QList<QByteArray> lines = raw.split('\n');
+    for (const QByteArray &lineBytes : lines) {
+        if (!lineBytes.toLower().contains("monsterhunterworld.exe"))
             continue;
         ++matchLines;
-        const QStringList fields = line.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+        const QList<QByteArray> fields = lineBytes.split(' ');
         if (fields.size() < 3)
             continue;
-        const QStringList range = fields[0].split('-');
-        if (range.size() != 2)
+        const QList<QByteArray> halves = fields[0].split('-');
+        if (halves.size() != 2)
             continue;
         bool okStart = false, okOffset = false;
-        const qulonglong start = range[0].toULongLong(&okStart, 16);
-        const qulonglong offset = fields[2].toULongLong(&okOffset, 16);
+        const qulonglong start = halves[0].toULongLong(&okStart, 16);
+        // /proc/<pid>/maps fields: range, perms, offset, dev, inode, [path]
+        const qulonglong off = fields[2].toULongLong(&okOffset, 16);
         if (!okStart || !okOffset)
             continue;
-        if (offset == 0 && base == 0)
+        if (off == 0 && base == 0)
             base = static_cast<std::uintptr_t>(start);
     }
     if (matchLines == 0) {

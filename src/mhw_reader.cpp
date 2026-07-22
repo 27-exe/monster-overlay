@@ -188,28 +188,32 @@ std::uintptr_t ProcessMemory::imageBase(QString *error) const
     if (pid_ <= 0)
         return 0;
 
+    // Use QByteArray rather than QTextStream: when the line contains a
+    // non-ASCII path component (e.g. "Monster Hunter World" with a literal
+    // space) the QTextStream decoder on a POSIX locale drops bytes and
+    // misses the row.
     QFile maps(QStringLiteral("/proc/%1/maps").arg(pid_));
-    if (!maps.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!maps.open(QIODevice::ReadOnly)) {
         if (error)
             *error = QStringLiteral("无法读取 maps: %1").arg(maps.errorString());
         return 0;
     }
 
-    QTextStream stream(&maps);
+    const QByteArray raw = maps.readAll();
     std::uintptr_t fallback = 0;
-    while (!stream.atEnd()) {
-        const QString line = stream.readLine();
-        if (!line.contains(QStringLiteral("MonsterHunterWorld.exe"), Qt::CaseInsensitive))
+    const QList<QByteArray> lines = raw.split('\n');
+    for (const QByteArray &lineBytes : lines) {
+        if (!lineBytes.toLower().contains("monsterhunterworld.exe"))
             continue;
-        const QStringList fields = line.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+        const QList<QByteArray> fields = lineBytes.split(' ');
         if (fields.size() < 3)
+            continue;
+        const QList<QByteArray> halves = fields[0].split('-');
+        if (halves.size() != 2)
             continue;
         bool okStart = false;
         bool okOffset = false;
-        const QStringList range = fields[0].split('-');
-        if (range.size() != 2)
-            continue;
-        const qulonglong start = range[0].toULongLong(&okStart, 16);
+        const qulonglong start = halves[0].toULongLong(&okStart, 16);
         const qulonglong offset = fields[2].toULongLong(&okOffset, 16);
         if (!okStart || !okOffset)
             continue;
