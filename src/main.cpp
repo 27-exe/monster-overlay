@@ -6,9 +6,25 @@
 #include <QDir>
 #include <QProcess>
 #include <QTimer>
+#include <cstdio>
+
+void messageHandler(QtMsgType type, const QMessageLogContext &, const QString &msg)
+{
+    const char *prefix = "INFO";
+    switch (type) {
+    case QtDebugMsg:    prefix = "DEBUG"; break;
+    case QtInfoMsg:     prefix = "INFO";  break;
+    case QtWarningMsg:  prefix = "WARN";  break;
+    case QtCriticalMsg: prefix = "CRIT";  break;
+    case QtFatalMsg:    prefix = "FATAL"; break;
+    }
+    std::fprintf(stderr, "[%s] %s\n", prefix, qPrintable(msg));
+    std::fflush(stderr);
+}
 
 int main(int argc, char **argv)
 {
+    qInstallMessageHandler(messageHandler);
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("mhw-linux-overlay"));
     QApplication::setApplicationDisplayName(QStringLiteral("MHW Linux Overlay"));

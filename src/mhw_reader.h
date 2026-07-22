@@ -174,6 +174,7 @@ private:
     bool ensureAttached(GameSnapshot &snapshot);
     std::uintptr_t absolute(const QString &key) const;
     QString readUtf8(std::uintptr_t address, std::size_t maxLength) const;
+    QString joinOffsets() const;
     Zone readZone(QString *error);
     QVector<MonsterSnapshot> readMonsters(QString *error);
     PlayerSnapshot readPlayer(QString *error);

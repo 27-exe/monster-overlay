@@ -370,15 +370,44 @@ QString MhwReader::readUtf8(std::uintptr_t address, std::size_t maxLength) const
     return QString::fromUtf8(buffer.data(), static_cast<qsizetype>(std::distance(buffer.begin(), end))).trimmed();
 }
 
+QString MhwReader::joinOffsets() const
+{
+    QStringList items;
+    for (const auto v : map_.offsets(QStringLiteral("MONSTER_LIST_OFFSETS")))
+        items << QString::number(v, 16);
+    return items.join(QLatin1Char(','));
+}
+
 QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
 {
     QVector<MonsterSnapshot> result;
-    const std::uintptr_t components = followPointerChain(memory_, absolute(QStringLiteral("MONSTER_LIST_ADDRESS")),
+    const std::uintptr_t base = absolute(QStringLiteral("MONSTER_LIST_ADDRESS"));
+    const std::uintptr_t components = followPointerChain(memory_, base,
                                                          map_.offsets(QStringLiteral("MONSTER_LIST_OFFSETS")), error);
+    qWarning("readMonsters: MONSTER_LIST_ADDRESS abs=0x%llx offsets=[%s] -> components=0x%llx",
+             static_cast<unsigned long long>(base),
+             qPrintable(joinOffsets()),
+             static_cast<unsigned long long>(components));
     if (!components)
         return result;
 
     const auto componentPointers = memory_.readArray<std::uintptr_t>(components, 128, error);
+    int live = 0;
+    for (const std::uintptr_t p : componentPointers)
+        if (p >= 0x10000 && p < 0x0000800000000000ULL)
+            ++live;
+    qWarning("readMonsters: read %lld component pointers (%d in sane range); first 6:",
+             static_cast<long long>(componentPointers.size()), live);
+    for (int i = 0; i < std::min<int>(6, componentPointers.size()); ++i)
+        qWarning("    [%d]=0x%llx", i, static_cast<unsigned long long>(componentPointers[i]));
+    if (live > 0) {
+        const std::uintptr_t c0 = componentPointers[0];
+        if (c0 >= 0x10000 && c0 < 0x0000800000000000ULL) {
+            char buf[64] = {0};
+            memory_.readBytes(c0 + 0x2A0, buf, sizeof(buf) - 1, nullptr);
+            qWarning("    c0+0x2A0 raw bytes: %s", buf);
+        }
+    }
     for (const std::uintptr_t component : componentPointers) {
         if (!isSanePointer(component))
             continue;
