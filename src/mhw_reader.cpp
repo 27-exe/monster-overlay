@@ -423,9 +423,14 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         if (internalName.isEmpty() || internalName.startsWith(QStringLiteral("em\\ems")))
             continue;
 
+        // Clean display name: strip "em\\em" prefix, keep just the ID
+        QString displayName = internalName;
+        if (displayName.startsWith(QStringLiteral("em\\em")))
+            displayName = displayName.mid(5);
+
         MonsterSnapshot m;
         m.address = monster;
-        m.internalName = internalName;
+        m.internalName = displayName;
 
         // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
         const auto healthPtr = memory_.read<std::uintptr_t>(monster + 0x7670ULL);
