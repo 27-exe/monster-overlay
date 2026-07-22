@@ -157,6 +157,8 @@ private:
     int memFd_{-1};
 };
 
+struct HpCluster { std::uintptr_t hpAddr = 0; float maxHealth = 0.0F; };
+
 class MhwReader {
 public:
     explicit MhwReader(QString mapPath);
@@ -189,6 +191,7 @@ private:
     std::uintptr_t imageBase_ = 0;
     std::uintptr_t monsterTableBase_ = 0;
     std::size_t monsterTableCount_ = 0;
+    std::vector<HpCluster> hpClusters_;
 };
 
 } // namespace mhw

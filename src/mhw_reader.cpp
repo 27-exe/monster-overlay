@@ -54,7 +54,7 @@ struct QuestData {
     std::int32_t deaths;
 };
 #pragma pack(pop)
-
+struct MonsterEnrageSimple { float duration; float maxDuration; };
 static_assert(sizeof(MonsterEnrage) >= 40);
 static_assert(sizeof(QuestData) == 8);
 
@@ -380,127 +380,150 @@ QString MhwReader::joinOffsets() const
 
 QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
 {
+    Q_UNUSED(error);
     QVector<MonsterSnapshot> result;
 
-    // On Wine/Proton the HunterPie .map MONSTER_LIST_ADDRESS points to a
-    // Windows-specific address (0x27B97760) that Wine cannot VirtualAlloc,
-    // so the catalog pointer is stale. Instead, scan all large rw-p regions
-    // for the monster struct table: stride 0x130, name at +0x2A0 starting
-    // with "em\\em". Cache on first successful scan.
-    if (monsterTableBase_ == 0) {
-        discoverMonsterTable();
-    }
     if (monsterTableBase_ == 0)
+        discoverMonsterTable();
+    if (monsterTableBase_ == 0 || hpClusters_.empty())
         return result;
 
-    auto buildSnapshot = [&](std::uintptr_t sbase) {
-        MonsterSnapshot monster;
-        monster.address = sbase;
-        char nameBuf[64] = {0};
-        if (!memory_.readBytes(sbase + 0x2A0, nameBuf, sizeof(nameBuf) - 1, nullptr))
-            return;
-        monster.internalName = QString::fromUtf8(nameBuf);
-        // Skip small monsters
-        if (monster.internalName.startsWith(QStringLiteral("em\\ems")))
-            return;
-        if (const auto id = memory_.read<std::int32_t>(sbase + 0x12280))
-            monster.id = *id;
-        if (const auto healthPtr = memory_.read<std::uintptr_t>(sbase + 0x7670);
-            healthPtr && isSanePointer(*healthPtr)) {
-            const auto health = memory_.readArray<float>(*healthPtr + 0x60, 2);
-            if (health.size() == 2) {
-                monster.maxHealth = health[0];
-                monster.health = health[1];
-            }
+    // Read HP clusters + map to name table entries (big monsters only).
+    // Each cluster = [maxHP, curHP, ??, 0] at a known address.
+    int nameIdx = 0;
+    for (const auto &cluster : hpClusters_) {
+        // Find next big monster name from name table
+        QString name;
+        while (nameIdx < static_cast<int>(monsterTableCount_)) {
+            char buf[64] = {0};
+            if (!memory_.readBytes(monsterTableBase_ + nameIdx * 0x130ULL + 0x2A0ULL,
+                                   buf, sizeof(buf) - 1, nullptr))
+                break;
+            name = QString::fromUtf8(buf);
+            ++nameIdx;
+            if (name.startsWith(QStringLiteral("em\\ems")))
+                continue; // skip small monsters
+            break;
         }
-        const auto stamina = memory_.readArray<float>(sbase + 0x1C0F0, 2);
-        if (stamina.size() == 2) {
-            monster.stamina = stamina[0];
-            monster.maxStamina = stamina[1];
-        }
-        if (const auto enrage = memory_.read<MonsterEnrage>(sbase + 0x1BE30)) {
-            monster.enrageSeconds = enrage->duration;
-            monster.enrageMaxSeconds = enrage->maxDuration;
-            monster.enraged = enrage->duration > 0.0F;
-        }
-        result.push_back(monster);
-    };
+        if (name.isEmpty() || name.startsWith(QStringLiteral("em\\ems")))
+            continue;
 
-    constexpr std::size_t stride = 0x130;
-    for (std::size_t i = 0; i < monsterTableCount_; ++i) {
-        buildSnapshot(monsterTableBase_ + i * stride);
+        // Read HP from cached address
+        const auto hp = memory_.readArray<float>(cluster.hpAddr, 2);
+        if (hp.size() < 2)
+            continue;
+
+        MonsterSnapshot m;
+        m.address = cluster.hpAddr;
+        m.internalName = name;
+        m.maxHealth = hp[0];
+        m.health = hp[1];
+        result.push_back(m);
     }
     return result;
 }
 
 void MhwReader::discoverMonsterTable()
 {
-    // Read /proc/<pid>/maps to find all large rw-p regions, then scan
-    // each for the "em\\em001" anchor string at +0x2A0 within a 0x130-stride
-    // struct. The table is allocated by the game on startup and stays static.
+    // Phase 1: find the name table by scanning rw-p regions for "em\\em001".
     const QString mapsPath = QStringLiteral("/proc/%1/maps").arg(memory_.pid());
-    QFile mapsFile(mapsPath);
-    if (!mapsFile.open(QIODevice::ReadOnly))
-        return;
-    const QByteArray maps = mapsFile.readAll();
-    constexpr std::size_t kMinRegion = 8 * 1024 * 1024;
-    constexpr std::size_t kChunk = 0x400000; // 4 MB scan chunks
+    QFile mf(mapsPath);
+    if (!mf.open(QIODevice::ReadOnly)) return;
+    const QByteArray mapsData = mf.readAll();
+    constexpr std::size_t kChunk = 0x400000;
+    std::vector<char> buf(kChunk);
 
-    for (const QByteArray &line : maps.split('\n')) {
-        if (!line.contains("rw-p") && !line.contains("rw-s"))
-            continue;
-        const QList<QByteArray> fields = line.split(' ');
+    for (const QByteArray &line : mapsData.split('\n')) {
+        if (!line.contains("rw-p") && !line.contains("rw-s")) continue;
+        const auto fields = line.split(' ');
         if (fields.size() < 2) continue;
-        const QList<QByteArray> range = fields[0].split('-');
+        const auto range = fields[0].split('-');
         if (range.size() != 2) continue;
         bool okS = false, okE = false;
-        const qulonglong start = range[0].toULongLong(&okS, 16);
-        const qulonglong end   = range[1].toULongLong(&okE, 16);
-        if (!okS || !okE || (end - start) < kMinRegion)
-            continue;
-        std::vector<char> buf(kChunk);
-        for (std::uintptr_t addr = static_cast<std::uintptr_t>(start);
-             addr < static_cast<std::uintptr_t>(end); addr += kChunk) {
-            const std::size_t want = std::min(kChunk, static_cast<std::size_t>(static_cast<std::uintptr_t>(end) - addr));
-            if (!memory_.readBytes(addr, buf.data(), want, nullptr))
-                continue;
-            // Search for "em\\em001" byte sequence
+        const qulonglong rs = range[0].toULongLong(&okS, 16);
+        const qulonglong re = range[1].toULongLong(&okE, 16);
+        if (!okS || !okE || (re - rs) < 8ULL * 1024 * 1024) continue;
+
+        for (std::uintptr_t addr = static_cast<std::uintptr_t>(rs);
+             addr < static_cast<std::uintptr_t>(re); addr += kChunk) {
+            const std::size_t want = std::min(kChunk, static_cast<std::size_t>(re - addr));
+            if (!memory_.readBytes(addr, buf.data(), want, nullptr)) continue;
             for (std::size_t i = 0; i + 10 < want; ++i) {
-                if (buf[i] != 'e' || buf[i+1] != 'm' || buf[i+2] != '\\' || buf[i+3] != 'e' || buf[i+4] != 'm'
+                if (buf[i] != 'e' || buf[i+1] != 'm' || buf[i+2] != '\\'
+                    || buf[i+3] != 'e' || buf[i+4] != 'm'
                     || buf[i+5] != '0' || buf[i+6] != '0' || buf[i+7] != '1')
                     continue;
                 if (i < 0x2A0) continue;
                 const std::uintptr_t strAddr = addr + i;
-                const std::uintptr_t structBase = strAddr - 0x2A0ULL;
-                // Walk backwards to find the first struct in the table
-                std::uintptr_t firstBase = structBase;
+                std::uintptr_t firstBase = strAddr - 0x2A0ULL;
+                // Walk back to table start
                 for (int step = 1; step < 80; ++step) {
-                    const std::uintptr_t prev = structBase - step * 0x130ULL;
-                    char nameCheck[16] = {0};
-                    if (!memory_.readBytes(prev + 0x2A0ULL, nameCheck, sizeof(nameCheck) - 1, nullptr))
+                    char check[8] = {0};
+                    if (!memory_.readBytes(firstBase - 0x130ULL + 0x2A0ULL, check, 7, nullptr))
                         break;
-                    if (nameCheck[0] == 'e' && nameCheck[1] == 'm' && nameCheck[2] == '\\' && nameCheck[3] == 'e' && nameCheck[4] == 'm')
-                        firstBase = prev;
-                    else
-                        break;
+                    if (check[0] == 'e' && check[1] == 'm' && check[2] == '\\'
+                        && check[3] == 'e' && check[4] == 'm')
+                        firstBase -= 0x130ULL;
+                    else break;
                 }
-                // Count forward until name stops being "em\\em"
                 std::size_t count = 0;
                 for (std::size_t j = 0; j < 128; ++j) {
-                    char nameCheck[16] = {0};
-                    if (!memory_.readBytes(firstBase + j * 0x130ULL + 0x2A0ULL, nameCheck, sizeof(nameCheck) - 1, nullptr))
+                    char check[8] = {0};
+                    if (!memory_.readBytes(firstBase + j * 0x130ULL + 0x2A0ULL, check, 7, nullptr))
                         break;
-                    if (nameCheck[0] != 'e' || nameCheck[1] != 'm' || nameCheck[2] != '\\' || nameCheck[3] != 'e' || nameCheck[4] != 'm')
+                    if (check[0] != 'e' || check[1] != 'm' || check[2] != '\\'
+                        || check[3] != 'e' || check[4] != 'm')
                         break;
                     ++count;
                 }
-                if (count >= 35) { // at least 35 big+small monster entries
-                    monsterTableBase_ = firstBase;
-                    monsterTableCount_ = count;
-                    qWarning("discoverMonsterTable: found at 0x%llx, %zu entries",
-                             static_cast<unsigned long long>(firstBase), count);
-                    return;
+                if (count < 35) continue;
+                monsterTableBase_ = firstBase;
+                monsterTableCount_ = count;
+                qWarning("name table @ 0x%llx (%zu entries)",
+                         static_cast<unsigned long long>(firstBase), count);
+
+                // Phase 2: scan backwards for HP clusters [maxHP,curHP,?,0]
+                hpClusters_.clear();
+                struct Candidate { std::uintptr_t addr; float max; float cur; };
+                std::vector<Candidate> cand;
+                for (std::uintptr_t hpAddr = firstBase; hpAddr > firstBase - 0x40000ULL; hpAddr -= 16) {
+                    const auto v = memory_.readArray<float>(hpAddr, 4);
+                    if (v.size() < 4) continue;
+                    float f0 = v[0], f1 = v[1], f2 = v[2], f3 = v[3];
+                    if (f0 < 1000.0F || f1 < 0.0F || f1 > f0) continue;
+                    if (f3 != 0.0F) continue; // padding marker
+                    (void)f2;
+                    cand.push_back({hpAddr, f0, f1});
                 }
+                // Group by similar maxHP (within 5%), require ≥2 entries
+                hpClusters_.clear();
+                struct C { std::uintptr_t addr; float max; float cur; int count; };
+                std::vector<C> grp;
+                for (const auto &c : cand) {
+                    bool found = false;
+                    for (auto &g : grp) {
+                        if (std::abs(c.max - g.max) / g.max < 0.05F) {
+                            g.count++;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                        grp.push_back({c.addr, c.max, c.cur, 1});
+                }
+                for (const auto &g : grp) {
+                    if (g.count >= 2 && g.max > 5000.0F) {
+                        hpClusters_.push_back({g.addr, g.max});
+                    }
+                }
+                // Sort by maxHP desc, keep top 8
+                std::sort(hpClusters_.begin(), hpClusters_.end(),
+                          [](const HpCluster &a, const HpCluster &b) { return a.maxHealth > b.maxHealth; });
+                if (hpClusters_.size() > 8)
+                    hpClusters_.resize(8);
+                qWarning("HP clusters: %zu (total candidates: %zu)",
+                         hpClusters_.size(), cand.size());
+                return;
             }
         }
     }
