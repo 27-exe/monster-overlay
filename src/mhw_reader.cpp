@@ -6,12 +6,14 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QDateTime>
 #include <QRegularExpression>
 #include <QStringConverter>
 #include <QTextStream>
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fcntl.h>
@@ -264,9 +266,19 @@ const QString &MhwReader::mapPath() const
 
 std::optional<qint64> MhwReader::findGamePid()
 {
+    static qint64 cachedPid = -1;
+    static qint64 lastScanMs = 0;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (cachedPid > 0 && (nowMs - lastScanMs) < 5000) {
+        // Verify cached PID is still alive
+        if (QFile::exists(QStringLiteral("/proc/%1/maps").arg(cachedPid)))
+            return cachedPid;
+        cachedPid = -1; // stale, fall through to rescan
+    }
+    lastScanMs = nowMs;
+
     QDir proc(QStringLiteral("/proc"));
     const QFileInfoList entries = proc.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-    std::optional<qint64> fallback;
     for (const QFileInfo &entry : entries) {
         bool numeric = false;
         const qint64 pid = entry.fileName().toLongLong(&numeric);
@@ -279,26 +291,13 @@ std::optional<qint64> MhwReader::findGamePid()
         // also on cmdline as a fallback.
         QFile maps(entry.filePath() + QStringLiteral("/maps"));
         if (maps.open(QIODevice::ReadOnly | QIODevice::Text)
-            && maps.readAll().toLower().contains("monsterhunterworld.exe"))
-            return pid;
-
-        QFile comm(entry.filePath() + QStringLiteral("/comm"));
-        if (comm.open(QIODevice::ReadOnly)) {
-            const QByteArray raw = comm.readAll().trimmed().toLower();
-            if (raw.contains("monsterhunterw"))
-                fallback = pid;
-        }
-
-        if (!fallback) {
-            QFile cmdline(entry.filePath() + QStringLiteral("/cmdline"));
-            if (cmdline.open(QIODevice::ReadOnly)) {
-                const QByteArray raw = cmdline.readAll().toLower();
-                if (raw.contains("monsterhunterworld.exe"))
-                    fallback = pid;
-            }
+            && maps.readAll().toLower().contains("monsterhunterworld.exe")) {
+            cachedPid = pid;
+            return cachedPid;
         }
     }
-    return fallback;
+    cachedPid = -1;
+    return std::nullopt;
 }
 
 std::uintptr_t MhwReader::followPointerChain(const ProcessMemory &memory,
@@ -390,57 +389,105 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         if (error) *error = QStringLiteral("MonsterList head is null/stale");
         return result;
     }
+    // Cache the 128-slot Component* array: if it hasn't changed, reuse.
     const std::uintptr_t arrayBase = *headPtr + 0x38ULL;
-    const auto components = memory_.readArray<std::uintptr_t>(arrayBase, 128, error);
-
-    int liveCount = 0;
-    for (const std::uintptr_t comp : components) {
-        if (comp < 0x10000 || comp >= 0x0000800000000000ULL)
-            continue;
-        ++liveCount;
+    std::vector<std::uintptr_t> components;
+    if (cachedArray_.size() == 128 && cachedArrayBase_ == arrayBase) {
+        // Still cheap to re-read 1024 bytes once per tick to detect spawns,
+        // but if identical to cache, skip per-component work below.
+        const std::vector<std::uintptr_t> fresh = memory_.readArray<std::uintptr_t>(arrayBase, 128, error);
+        if (fresh.size() == 128 && fresh == cachedArray_) {
+            // Array unchanged - check HP from cache for each live slot
+            for (const std::uintptr_t comp : cachedArray_) {
+                if (comp < 0x10000 || comp >= 0x0000800000000000ULL) continue;
+                auto cachedIt = monsterCache_.find(comp);
+                if (cachedIt == monsterCache_.end()) continue;
+                const std::uintptr_t monster = cachedIt->second.snapshot.address;
+                const auto healthPtr = memory_.read<std::uintptr_t>(monster + 0x7670ULL);
+                if (!healthPtr || !isSanePointer(*healthPtr)) continue;
+                const auto hp = memory_.readArray<float>(*healthPtr + 0x60ULL, 2);
+                if (hp.size() != 2) continue;
+                MonsterSnapshot m = cachedIt->second.snapshot;
+                m.maxHealth = hp[0];
+                m.health = hp[1];
+                cachedIt->second.maxHP = hp[0];
+                result.push_back(m);
+            }
+            return result;
+        }
+        components = fresh;
+        cachedArray_ = fresh;
+    } else {
+        const std::vector<std::uintptr_t> fresh = memory_.readArray<std::uintptr_t>(arrayBase, 128, error);
+        if (fresh.size() != 128) return result;
+        components = fresh;
+        cachedArray_ = fresh;
+        cachedArrayBase_ = arrayBase;
     }
-    qWarning("MonsterList: head=0x%llx array=0x%llx live=%d/128",
-             static_cast<unsigned long long>(*headPtr),
-             static_cast<unsigned long long>(arrayBase), liveCount);
 
+    // Cache monster struct addresses across ticks; only re-read HP if it
+    // changes. The MonsterList array is static after the quest starts, so
+    // we only do the heavy per-component dereferencing when a new
+    // component appears (or disappears) in the array.
+    QSet<std::uintptr_t> seenComponents;
     for (const std::uintptr_t comp : components) {
         if (comp < 0x10000 || comp >= 0x0000800000000000ULL)
             continue;
+        seenComponents.insert(comp);
+    }
+
+    // Drop monsters that despawned.
+    for (auto it = monsterCache_.begin(); it != monsterCache_.end(); ) {
+        if (!seenComponents.contains(it->first))
+            it = monsterCache_.erase(it);
+        else
+            ++it;
+    }
+
+    for (const std::uintptr_t comp : seenComponents) {
         // Component + 0x138 -> Monster*
         const auto innerPtr = memory_.read<std::uintptr_t>(comp + 0x138ULL);
         if (!innerPtr || *innerPtr < 0x10000 || *innerPtr >= 0x0000800000000000ULL)
             continue;
         const std::uintptr_t monster = *innerPtr;
 
-        // Name: Monster + 0x2A0 is a POINTER to name struct; name at struct+0xC
+        // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
+        const auto healthPtr = memory_.read<std::uintptr_t>(monster + 0x7670ULL);
+        if (!healthPtr || !isSanePointer(*healthPtr)) continue;
+        const auto hp = memory_.readArray<float>(*healthPtr + 0x60ULL, 2);
+        if (hp.size() != 2) continue;
+        const float maxHP = hp[0];
+        const float curHP = hp[1];
+        if (maxHP <= 0.0F) continue;
+
+        // Cache hit: name+maxHP unchanged -> reuse, only update curHP
+        auto cachedIt = monsterCache_.find(comp);
+        if (cachedIt != monsterCache_.end() &&
+            cachedIt->second.maxHP == maxHP && !cachedIt->second.snapshot.internalName.isEmpty()) {
+            MonsterSnapshot m = cachedIt->second.snapshot;
+            m.health = curHP;
+            result.push_back(m);
+            continue;
+        }
+
+        // Cache miss: read name
         char nameBuf[64] = {0};
         const auto nameStruct = memory_.read<std::uintptr_t>(monster + 0x2A0ULL);
         if (nameStruct && *nameStruct >= 0x10000 && *nameStruct < 0x0000800000000000ULL) {
             memory_.readBytes(*nameStruct + 0xCULL, nameBuf, sizeof(nameBuf) - 1, nullptr);
         }
-        const QString internalName = QString::fromUtf8(nameBuf);
-        // Skip small monsters and empty names
-        if (internalName.isEmpty() || internalName.startsWith(QStringLiteral("em\\ems")))
+        QString displayName = QString::fromUtf8(nameBuf);
+        if (displayName.isEmpty() || displayName.startsWith(QStringLiteral("em\\ems")))
             continue;
-
-        // Clean display name: strip "em\\em" prefix, keep just the ID
-        QString displayName = internalName;
         if (displayName.startsWith(QStringLiteral("em\\em")))
             displayName = displayName.mid(5);
 
         MonsterSnapshot m;
         m.address = monster;
         m.internalName = displayName;
-
-        // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
-        const auto healthPtr = memory_.read<std::uintptr_t>(monster + 0x7670ULL);
-        if (healthPtr && isSanePointer(*healthPtr)) {
-            const auto hp = memory_.readArray<float>(*healthPtr + 0x60ULL, 2);
-            if (hp.size() == 2) {
-                m.maxHealth = hp[0];
-                m.health = hp[1];
-            }
-        }
+        m.maxHealth = maxHP;
+        m.health = curHP;
+        monsterCache_[comp] = {m, maxHP};
         result.push_back(m);
     }
     return result;
@@ -668,8 +715,18 @@ GameSnapshot MhwReader::poll()
         return snapshot;
 
     snapshot.zone = readZone(nullptr);
+    static int callCount = 0;
+    if (++callCount % 10 == 0)
+        qWarning("poll #%d: zone=%d", callCount, static_cast<int>(snapshot.zone));
     QString error;
-    snapshot.monsters = isHuntingZone(snapshot.zone) ? readMonsters(&error) : QVector<MonsterSnapshot>{};
+    if (isHuntingZone(snapshot.zone)) {
+        const auto t0 = std::chrono::steady_clock::now();
+        snapshot.monsters = readMonsters(&error);
+        const auto t1 = std::chrono::steady_clock::now();
+        if (callCount % 10 == 0)
+            qWarning("poll: monsters=%zu in %lldus", snapshot.monsters.size(),
+                     std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+    }
     snapshot.player = readPlayer(nullptr);
     snapshot.quest = readQuest(nullptr);
     snapshot.party = readParty(nullptr);

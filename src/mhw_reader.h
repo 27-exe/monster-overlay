@@ -2,7 +2,7 @@
 
 #include <QString>
 #include <QVector>
-
+#include <QSet>
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
@@ -192,6 +192,10 @@ private:
     std::uintptr_t monsterTableBase_ = 0;
     std::size_t monsterTableCount_ = 0;
     std::vector<HpCluster> hpClusters_;
+    struct CachedMonster { MonsterSnapshot snapshot; float maxHP; };
+    std::unordered_map<std::uintptr_t, CachedMonster> monsterCache_;
+    std::vector<std::uintptr_t> cachedArray_;
+    std::uintptr_t cachedArrayBase_ = 0;
 };
 
 } // namespace mhw
