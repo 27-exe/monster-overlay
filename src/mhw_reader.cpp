@@ -381,61 +381,31 @@ QString MhwReader::joinOffsets() const
 QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
 {
     QVector<MonsterSnapshot> result;
-    // 1. The catalog: MONSTER_LIST_ADDRESS (0x0500CF40) holds a pointer
-    //    to an array of 47 big-monster component pointers. The mhw-probe
-    //    confirmed deref(0x0500CF40) = 0x27b97760 on this build, and
-    //    *(0x27b97760+0x8) = 47 (the catalog count).
-    const std::uintptr_t catalogBase = followPointerChain(memory_, absolute(QStringLiteral("MONSTER_LIST_ADDRESS")),
-                                                          map_.offsets(QStringLiteral("MONSTER_LIST_OFFSETS")), error);
-    if (!catalogBase) {
-        qWarning("readMonsters: catalog chain returned 0; offsets=[%s] abs=0x%llx",
-                 qPrintable(joinOffsets()),
-                 static_cast<unsigned long long>(absolute(QStringLiteral("MONSTER_LIST_ADDRESS"))));
+
+    // On Wine/Proton the HunterPie .map MONSTER_LIST_ADDRESS points to a
+    // Windows-specific address (0x27B97760) that Wine cannot VirtualAlloc,
+    // so the catalog pointer is stale. Instead, scan all large rw-p regions
+    // for the monster struct table: stride 0x130, name at +0x2A0 starting
+    // with "em\\em". Cache on first successful scan.
+    if (monsterTableBase_ == 0) {
+        discoverMonsterTable();
+    }
+    if (monsterTableBase_ == 0)
         return result;
-    }
-    // 2. Active component index from LOCKON_ADDRESS: read int through the
-    //    5-step offset chain [0x1618, 0x12608, 0x3340, 0x0, 0x48, 0x0].
-    const std::uintptr_t activeIndexAddr = followPointerChain(memory_, absolute(QStringLiteral("LOCKON_ADDRESS")),
-                                                             map_.offsets(QStringLiteral("LOCKEDON_MONSTER_INDEX_OFFSETS")), error);
-    int activeIndex = -1;
-    if (activeIndexAddr) {
-        const auto index = memory_.read<std::int32_t>(activeIndexAddr, nullptr);
-        if (index && *index >= 0 && *index < 128)
-            activeIndex = *index;
-    }
-    qWarning("readMonsters: catalog=0x%llx activeIndex=%d (activeIndexAddr=0x%llx)",
-             static_cast<unsigned long long>(catalogBase),
-             activeIndex,
-             static_cast<unsigned long long>(activeIndexAddr));
 
-    // 3. Read the catalog of 47 component pointers. We try at least 64
-    //    slots because the catalog count occasionally reports 47 but
-    //    higher build variants pack a small extra.
-    constexpr std::size_t kCatalogSlots = 64;
-    const auto catalog = memory_.readArray<std::uintptr_t>(catalogBase, kCatalogSlots, error);
-    int live = 0;
-    for (const std::uintptr_t p : catalog)
-        if (p >= 0x10000 && p < 0x0000800000000000ULL)
-            ++live;
-    qWarning("readMonsters: catalog read %lld entries (%d live)", static_cast<long long>(catalog.size()), live);
-
-    auto buildSnapshot = [&](const std::uintptr_t component, bool force) {
-        if (!(component >= 0x10000 && component < 0x0000800000000000ULL))
-            return;
-        // Some catalogs (e.g. mhw-probe slot 0 = 0x81b62a40) are stale
-        // freed chunks: name at +0x2A0 is empty, no HP. We treat that as
-        // "not loaded" and skip unless force is set.
-        char nameBuf[64] = {0};
-        memory_.readBytes(component + 0x2A0, nameBuf, sizeof(nameBuf) - 1, nullptr);
-        const std::string name(nameBuf);
-        if (name.empty() && !force)
-            return;
+    auto buildSnapshot = [&](std::uintptr_t sbase) {
         MonsterSnapshot monster;
-        monster.address = component;
+        monster.address = sbase;
+        char nameBuf[64] = {0};
+        if (!memory_.readBytes(sbase + 0x2A0, nameBuf, sizeof(nameBuf) - 1, nullptr))
+            return;
         monster.internalName = QString::fromUtf8(nameBuf);
-        if (const auto id = memory_.read<std::int32_t>(component + 0x12280))
+        // Skip small monsters
+        if (monster.internalName.startsWith(QStringLiteral("em\\ems")))
+            return;
+        if (const auto id = memory_.read<std::int32_t>(sbase + 0x12280))
             monster.id = *id;
-        if (const auto healthPtr = memory_.read<std::uintptr_t>(component + 0x7670);
+        if (const auto healthPtr = memory_.read<std::uintptr_t>(sbase + 0x7670);
             healthPtr && isSanePointer(*healthPtr)) {
             const auto health = memory_.readArray<float>(*healthPtr + 0x60, 2);
             if (health.size() == 2) {
@@ -443,12 +413,12 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 monster.health = health[1];
             }
         }
-        const auto stamina = memory_.readArray<float>(component + 0x1C0F0, 2);
+        const auto stamina = memory_.readArray<float>(sbase + 0x1C0F0, 2);
         if (stamina.size() == 2) {
             monster.stamina = stamina[0];
             monster.maxStamina = stamina[1];
         }
-        if (const auto enrage = memory_.read<MonsterEnrage>(component + 0x1BE30)) {
+        if (const auto enrage = memory_.read<MonsterEnrage>(sbase + 0x1BE30)) {
             monster.enrageSeconds = enrage->duration;
             monster.enrageMaxSeconds = enrage->maxDuration;
             monster.enraged = enrage->duration > 0.0F;
@@ -456,12 +426,84 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         result.push_back(monster);
     };
 
-    for (int i = 0; i < catalog.size(); ++i) {
-        const std::uintptr_t component = catalog[i];
-        const bool isActive = (i == activeIndex);
-        buildSnapshot(component, isActive);
+    constexpr std::size_t stride = 0x130;
+    for (std::size_t i = 0; i < monsterTableCount_; ++i) {
+        buildSnapshot(monsterTableBase_ + i * stride);
     }
     return result;
+}
+
+void MhwReader::discoverMonsterTable()
+{
+    // Read /proc/<pid>/maps to find all large rw-p regions, then scan
+    // each for the "em\\em001" anchor string at +0x2A0 within a 0x130-stride
+    // struct. The table is allocated by the game on startup and stays static.
+    const QString mapsPath = QStringLiteral("/proc/%1/maps").arg(memory_.pid());
+    QFile mapsFile(mapsPath);
+    if (!mapsFile.open(QIODevice::ReadOnly))
+        return;
+    const QByteArray maps = mapsFile.readAll();
+    constexpr std::size_t kMinRegion = 8 * 1024 * 1024;
+    constexpr std::size_t kChunk = 0x400000; // 4 MB scan chunks
+
+    for (const QByteArray &line : maps.split('\n')) {
+        if (!line.contains("rw-p") && !line.contains("rw-s"))
+            continue;
+        const QList<QByteArray> fields = line.split(' ');
+        if (fields.size() < 2) continue;
+        const QList<QByteArray> range = fields[0].split('-');
+        if (range.size() != 2) continue;
+        bool okS = false, okE = false;
+        const qulonglong start = range[0].toULongLong(&okS, 16);
+        const qulonglong end   = range[1].toULongLong(&okE, 16);
+        if (!okS || !okE || (end - start) < kMinRegion)
+            continue;
+        std::vector<char> buf(kChunk);
+        for (std::uintptr_t addr = static_cast<std::uintptr_t>(start);
+             addr < static_cast<std::uintptr_t>(end); addr += kChunk) {
+            const std::size_t want = std::min(kChunk, static_cast<std::size_t>(static_cast<std::uintptr_t>(end) - addr));
+            if (!memory_.readBytes(addr, buf.data(), want, nullptr))
+                continue;
+            // Search for "em\\em001" byte sequence
+            for (std::size_t i = 0; i + 10 < want; ++i) {
+                if (buf[i] != 'e' || buf[i+1] != 'm' || buf[i+2] != '\\' || buf[i+3] != 'e' || buf[i+4] != 'm'
+                    || buf[i+5] != '0' || buf[i+6] != '0' || buf[i+7] != '1')
+                    continue;
+                if (i < 0x2A0) continue;
+                const std::uintptr_t strAddr = addr + i;
+                const std::uintptr_t structBase = strAddr - 0x2A0ULL;
+                // Walk backwards to find the first struct in the table
+                std::uintptr_t firstBase = structBase;
+                for (int step = 1; step < 80; ++step) {
+                    const std::uintptr_t prev = structBase - step * 0x130ULL;
+                    char nameCheck[16] = {0};
+                    if (!memory_.readBytes(prev + 0x2A0ULL, nameCheck, sizeof(nameCheck) - 1, nullptr))
+                        break;
+                    if (nameCheck[0] == 'e' && nameCheck[1] == 'm' && nameCheck[2] == '\\' && nameCheck[3] == 'e' && nameCheck[4] == 'm')
+                        firstBase = prev;
+                    else
+                        break;
+                }
+                // Count forward until name stops being "em\\em"
+                std::size_t count = 0;
+                for (std::size_t j = 0; j < 128; ++j) {
+                    char nameCheck[16] = {0};
+                    if (!memory_.readBytes(firstBase + j * 0x130ULL + 0x2A0ULL, nameCheck, sizeof(nameCheck) - 1, nullptr))
+                        break;
+                    if (nameCheck[0] != 'e' || nameCheck[1] != 'm' || nameCheck[2] != '\\' || nameCheck[3] != 'e' || nameCheck[4] != 'm')
+                        break;
+                    ++count;
+                }
+                if (count >= 35) { // at least 35 big+small monster entries
+                    monsterTableBase_ = firstBase;
+                    monsterTableCount_ = count;
+                    qWarning("discoverMonsterTable: found at 0x%llx, %zu entries",
+                             static_cast<unsigned long long>(firstBase), count);
+                    return;
+                }
+            }
+        }
+    }
 }
 
 PlayerSnapshot MhwReader::readPlayer(QString *error)

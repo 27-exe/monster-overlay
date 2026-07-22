@@ -175,6 +175,7 @@ private:
     std::uintptr_t absolute(const QString &key) const;
     QString readUtf8(std::uintptr_t address, std::size_t maxLength) const;
     QString joinOffsets() const;
+    void discoverMonsterTable();
     Zone readZone(QString *error);
     QVector<MonsterSnapshot> readMonsters(QString *error);
     PlayerSnapshot readPlayer(QString *error);
@@ -185,7 +186,9 @@ private:
     ProcessMemory memory_;
     QString mapPath_;
     QString mapError_;
-    std::uintptr_t imageBase_{};
+    std::uintptr_t imageBase_ = 0;
+    std::uintptr_t monsterTableBase_ = 0;
+    std::size_t monsterTableCount_ = 0;
 };
 
 } // namespace mhw
