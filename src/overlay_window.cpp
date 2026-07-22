@@ -54,15 +54,18 @@ OverlayWindow::OverlayWindow(QString mapPath, bool demoMode, QWidget *parent)
     layout_->setContentsMargins(18, 14, 18, 14);
     layout_->setSpacing(6);
 
+    context_ = makeContextLabel();
     status_ = makeLabel(QStringLiteral("MHW Linux Overlay"), 10, QFont::DemiBold);
     quest_ = makeLabel(QString(), 12, QFont::DemiBold);
     player_ = makeLabel(QString(), 11, QFont::Medium);
     party_ = makeLabel(QString(), 10, QFont::Normal);
     monsters_ = makeLabel(QString(), 12, QFont::Medium);
+    abnormalities_ = makeLabel(QString(), 10, QFont::Normal);
+    equipment_ = makeLabel(QString(), 10, QFont::Normal);
 
     status_->setObjectName(QStringLiteral("status"));
     monsters_->setObjectName(QStringLiteral("monsters"));
-    for (QLabel *label : {status_, quest_, player_, party_, monsters_}) {
+    for (QLabel *label : {context_, status_, quest_, player_, party_, monsters_, abnormalities_, equipment_}) {
         label->setTextFormat(Qt::PlainText);
         label->setWordWrap(false);
         layout_->addWidget(label);
@@ -78,6 +81,7 @@ OverlayWindow::OverlayWindow(QString mapPath, bool demoMode, QWidget *parent)
         }
         QLabel { color: #f4f7fb; background: transparent; }
         QLabel#status { color: rgba(225, 232, 242, 180); }
+        QLabel#context { color: #ffd479; }
         QLabel#monsters { color: #ffffff; }
     )CSS"));
 
@@ -98,6 +102,17 @@ QLabel *OverlayWindow::makeLabel(const QString &text, int pointSize, int weight)
     font.setPointSize(pointSize);
     font.setWeight(static_cast<QFont::Weight>(weight));
     label->setFont(font);
+    return label;
+}
+
+QLabel *OverlayWindow::makeContextLabel()
+{
+    auto *label = new QLabel(container_);
+    QFont font(QStringLiteral("Noto Sans CJK SC"));
+    font.setPointSize(11);
+    font.setBold(true);
+    label->setFont(font);
+    label->setObjectName(QStringLiteral("context"));
     return label;
 }
 
@@ -138,23 +153,49 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
     status_->setText(snapshot.status);
 
     if (!snapshot.attached) {
+        context_->setText(QStringLiteral("未连接"));
         quest_->setText(QStringLiteral("只读原型 · 当前未连接游戏"));
         player_->clear();
         party_->clear();
         monsters_->clear();
+        abnormalities_->clear();
+        equipment_->clear();
+        lastZone_ = mhw::Zone::Unknown;
         adjustSize();
         return;
     }
 
-    if (snapshot.quest.active) {
-        quest_->setText(QStringLiteral("任务 %1 · ★%2 · 剩余 %3 · 猫车 %4/%5")
-                            .arg(snapshot.quest.id)
-                            .arg(snapshot.quest.stars % 10)
-                            .arg(seconds(snapshot.quest.timeLeftSeconds))
-                            .arg(snapshot.quest.deaths)
-                            .arg(snapshot.quest.maxDeaths));
+    QString contextText;
+    if (mhw::isHuntingZone(snapshot.zone)) {
+        if (snapshot.quest.active)
+            contextText = QStringLiteral("狩猎 · %1").arg(QString::fromUtf8(mhw::zoneName(snapshot.zone)));
+        else
+            contextText = QStringLiteral("狩猎场内 · 未开始任务 · %1").arg(QString::fromUtf8(mhw::zoneName(snapshot.zone)));
+    } else if (mhw::isPeaceZone(snapshot.zone)) {
+        contextText = QStringLiteral("营地 · %1").arg(QString::fromUtf8(mhw::zoneName(snapshot.zone)));
+    } else if (snapshot.zone == mhw::Zone::MainMenu) {
+        contextText = QStringLiteral("主菜单");
+    } else if (snapshot.zone == mhw::Zone::TrainingArea) {
+        contextText = QStringLiteral("训练区");
     } else {
-        quest_->setText(QStringLiteral("未在任务中"));
+        contextText = QStringLiteral("未知场景 · id=%1").arg(static_cast<int>(snapshot.zone));
+    }
+    context_->setText(contextText);
+    lastZone_ = snapshot.zone;
+
+    if (mhw::isHuntingZone(snapshot.zone)) {
+        if (snapshot.quest.active) {
+            quest_->setText(QStringLiteral("任务 %1 · ★%2 · 剩余 %3 · 猫车 %4/%5")
+                                .arg(snapshot.quest.id)
+                                .arg(snapshot.quest.stars % 10)
+                                .arg(seconds(snapshot.quest.timeLeftSeconds))
+                                .arg(snapshot.quest.deaths)
+                                .arg(snapshot.quest.maxDeaths));
+        } else {
+            quest_->setText(QStringLiteral("未在任务中"));
+        }
+    } else {
+        quest_->clear();
     }
 
     if (snapshot.player.valid) {
@@ -168,38 +209,53 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
         player_->clear();
     }
 
-    QStringList partyLines;
-    for (const auto &member : snapshot.party) {
-        partyLines << QStringLiteral("%1  MR %2  伤害 %3")
-                          .arg(member.name)
-                          .arg(member.masterRank)
-                          .arg(member.damage);
+    if (mhw::isHuntingZone(snapshot.zone) || snapshot.zone == mhw::Zone::TrainingArea) {
+        QStringList partyLines;
+        for (const auto &member : snapshot.party) {
+            partyLines << QStringLiteral("%1  MR %2  伤害 %3")
+                              .arg(member.name)
+                              .arg(member.masterRank)
+                              .arg(member.damage);
+        }
+        party_->setText(partyLines.isEmpty() ? QStringLiteral("无队员") : partyLines.join(QLatin1Char('\n')));
+    } else {
+        party_->clear();
     }
-    party_->setText(partyLines.join(QLatin1Char('\n')));
 
-    QStringList monsterLines;
-    for (const auto &monster : snapshot.monsters) {
-        QString suffix;
-        if (monster.enraged)
-            suffix = QStringLiteral("  🔥%1s").arg(monster.enrageSeconds, 0, 'f', 0);
-        monsterLines << QStringLiteral("%1 [ID %2]\nHP  %3 / %4   %5%6")
-                            .arg(monster.internalName)
-                            .arg(monster.id)
-                            .arg(monster.health, 0, 'f', 0)
-                            .arg(monster.maxHealth, 0, 'f', 0)
-                            .arg(percentage(monster.health, monster.maxHealth))
-                            .arg(suffix);
+    if (mhw::isHuntingZone(snapshot.zone)) {
+        QStringList monsterLines;
+        for (const auto &monster : snapshot.monsters) {
+            QString suffix;
+            if (monster.enraged)
+                suffix = QStringLiteral("  🔥%1s").arg(monster.enrageSeconds, 0, 'f', 0);
+            monsterLines << QStringLiteral("%1 [ID %2]\nHP  %3 / %4   %5%6")
+                                .arg(monster.internalName)
+                                .arg(monster.id)
+                                .arg(monster.health, 0, 'f', 0)
+                                .arg(monster.maxHealth, 0, 'f', 0)
+                                .arg(percentage(monster.health, monster.maxHealth))
+                                .arg(suffix);
+        }
+        monsters_->setText(monsterLines.isEmpty() ? QStringLiteral("等待大型怪物数据") : monsterLines.join(QStringLiteral("\n\n")));
+    } else {
+        monsters_->clear();
     }
-    monsters_->setText(monsterLines.isEmpty() ? QStringLiteral("等待大型怪物数据") : monsterLines.join(QStringLiteral("\n\n")));
+
+    abnormalities_->setText(QString());
+    equipment_->setText(QString());
     adjustSize();
 }
 
 void OverlayWindow::renderDemo()
 {
     status_->setText(QStringLiteral("DEMO · KDE Wayland layer-shell overlay"));
+    context_->setText(QStringLiteral("狩猎 · 古代树森林"));
     quest_->setText(QStringLiteral("任务 66801 · ★6 · 剩余 41:37 · 猫车 0/3"));
     player_->setText(QStringLiteral("猎人  HP 172/200 (86.0%)   ST 130/150"));
     party_->setText(QStringLiteral("A27exe  MR 214  伤害 12840\nHunter  MR 83  伤害 9061"));
     monsters_->setText(QStringLiteral("em\\em100_00 [ID 100]\nHP  14280 / 20880   68.4%  🔥74s"));
+    abnormalities_->setText(QString());
+    equipment_->setText(QString());
+    lastZone_ = mhw::Zone::AncientForest;
     adjustSize();
 }
