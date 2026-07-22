@@ -155,15 +155,13 @@ ProcessMemory::~ProcessMemory()
 
 bool ProcessMemory::attach(qint64 pid, QString *error)
 {
+    Q_UNUSED(error);
     detach();
-    const QByteArray path = QStringLiteral("/proc/%1/mem").arg(pid).toLocal8Bit();
-    memFd_ = ::open(path.constData(), O_RDONLY | O_CLOEXEC);
-    if (memFd_ < 0) {
-        if (error)
-            *error = errnoMessage(QStringLiteral("打开 %1").arg(QString::fromLocal8Bit(path)));
-        return false;
-    }
     pid_ = pid;
+    // Yama ptrace_scope=1 forbids opening another session's /proc/<pid>/mem,
+    // but it does NOT forbid process_vm_readv() because that path goes
+    // through mm_access, not through ptrace_may_access. Hold no fd and
+    // always use process_vm_readv.
     return true;
 }
 
@@ -177,7 +175,7 @@ void ProcessMemory::detach()
 
 bool ProcessMemory::attached() const
 {
-    return memFd_ >= 0 && pid_ > 0;
+    return pid_ > 0;
 }
 
 qint64 ProcessMemory::pid() const
@@ -236,20 +234,14 @@ bool ProcessMemory::readBytes(std::uintptr_t address, void *destination, std::si
         return false;
     }
 
-    // process_vm_readv avoids changing target state and is cheaper than ptrace reads.
     iovec local{destination, size};
     iovec remote{reinterpret_cast<void *>(address), size};
     const ssize_t result = ::process_vm_readv(static_cast<pid_t>(pid_), &local, 1, &remote, 1, 0);
     if (result == static_cast<ssize_t>(size))
         return true;
 
-    // Fallback for kernels/runners where process_vm_readv is unavailable but /proc/pid/mem is allowed.
-    const ssize_t fallback = ::pread(memFd_, destination, size, static_cast<off_t>(address));
-    if (fallback == static_cast<ssize_t>(size))
-        return true;
-
     if (error)
-        *error = errnoMessage(QStringLiteral("读取 PID %1 @ 0x%2")
+        *error = errnoMessage(QStringLiteral("process_vm_readv PID %1 @ 0x%2")
                                  .arg(pid_)
                                  .arg(static_cast<qulonglong>(address), 0, 16));
     return false;

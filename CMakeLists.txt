@@ -41,4 +41,14 @@ if(BUILD_TESTING)
     target_include_directories(mhw-reader-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(mhw-reader-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME mhw-reader-tests COMMAND mhw-reader-tests)
+
+    add_executable(mhw-probe
+        tests/mhw_probe.cpp
+        src/mhw_reader.cpp
+        src/mhw_reader.h
+    )
+    target_link_libraries(mhw-probe PRIVATE Qt6::Core)
+    target_include_directories(mhw-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(mhw-probe PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_definitions(mhw-probe PRIVATE MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map")
 endif()
