@@ -240,7 +240,7 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
                 for (const auto &p : monster.parts) {
                     const QString name = p.name.isEmpty()
                         ? QStringLiteral("Part[%1]").arg(p.index)
-                        : p.name.mid(4); // strip "PART_" prefix
+                        : p.name; // already Chinese from kPartNames
                     partLines << QStringLiteral("  %1  %2 / %3  (%4%)")
                                   .arg(name, -10)
                                   .arg(p.health, 0, 'f', 0)
