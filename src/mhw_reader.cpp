@@ -379,6 +379,84 @@ QString MhwReader::joinOffsets() const
     return items.join(QLatin1Char(','));
 }
 
+// Auto-generated from MonsterData.xml + zh-cn.xml
+// 72 monsters
+static const QHash<int, QVector<QString>> kPartSchemas = {
+    {0, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {1, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {4, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("胸部"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴"), QStringLiteral("壳"), QStringLiteral("排气管（中）"), QStringLiteral("排气管（头）"), QStringLiteral("排气管 (坑)"), QStringLiteral("排气管（后）"), QStringLiteral("左弱壳"), QStringLiteral("右弱壳")}},
+    {7, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴"), QStringLiteral("腹部")}},
+    {9, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {10, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {11, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {12, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {13, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {14, {QStringLiteral("角"), QStringLiteral("手臂"), QStringLiteral("腿")}},
+    {15, {QStringLiteral("角"), QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {16, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("尾巴"), QStringLiteral("左肢"), QStringLiteral("右肢"), QStringLiteral("翼")}},
+    {17, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("四肢"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+    {18, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("翼"), QStringLiteral("尾巴")}},
+    {19, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("腹部"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {20, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("胸部"), QStringLiteral("臀部"), QStringLiteral("手臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {21, {QStringLiteral("头部"), QStringLiteral("头部(泥土)"), QStringLiteral("身体"), QStringLiteral("BODY_MUD"), QStringLiteral("手臂"), QStringLiteral("手臂(泥土)"), QStringLiteral("左腿"), QStringLiteral("左腿(泥土)"), QStringLiteral("右腿"), QStringLiteral("右腿(泥土)"), QStringLiteral("尾巴"), QStringLiteral("尾巴(泥土)")}},
+    {22, {QStringLiteral("颚"), QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {23, {QStringLiteral("鹿角"), QStringLiteral("身体"), QStringLiteral("腿"), QStringLiteral("手臂"), QStringLiteral("???")}},
+    {24, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {25, {QStringLiteral("角"), QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+    {26, {QStringLiteral("头部"), QStringLiteral("颈部"), QStringLiteral("背部"), QStringLiteral("胸部"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("翼"), QStringLiteral("尾巴")}},
+    {27, {QStringLiteral("头部"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴"), QStringLiteral("石头")}},
+    {28, {QStringLiteral("头部"), QStringLiteral("头部"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {29, {QStringLiteral("头部"), QStringLiteral("躯干"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴"), QStringLiteral("头部(泥土)"), QStringLiteral("躯干(泥土)"), QStringLiteral("左腿(泥土)"), QStringLiteral("右腿(泥土)"), QStringLiteral("尾巴(泥土)")}},
+    {30, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("鬃毛"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {31, {QStringLiteral("头部"), QStringLiteral("气囊"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+    {32, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {33, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {34, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {35, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴"), QStringLiteral("颚"), QStringLiteral("背部"), QStringLiteral("左骨"), QStringLiteral("右骨")}},
+    {36, {QStringLiteral("头部"), QStringLiteral("背部"), QStringLiteral("胸部"), QStringLiteral("尾巴"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("翼")}},
+    {37, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {38, {QStringLiteral("角"), QStringLiteral("胸部"), QStringLiteral("身体"), QStringLiteral("左肢"), QStringLiteral("右肢"), QStringLiteral("尾巴"), QStringLiteral("金角"), QStringLiteral("金鬃毛"), QStringLiteral("黄金左胸"), QStringLiteral("黄金右胸"), QStringLiteral("黄金左臂"), QStringLiteral("黄金右臂"), QStringLiteral("黄金左腿"), QStringLiteral("黄金右腿"), QStringLiteral("黄金尾巴（左）"), QStringLiteral("黄金尾巴（右）")}},
+    {39, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+    {51, {QStringLiteral("鹿角"), QStringLiteral("身体"), QStringLiteral("腿"), QStringLiteral("手臂"), QStringLiteral("???")}},
+    {61, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {62, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {63, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {64, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("胸部"), QStringLiteral("臀部"), QStringLiteral("手臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {65, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {66, {QStringLiteral("头部"), QStringLiteral("鳍"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {67, {QStringLiteral("头部"), QStringLiteral("鳍"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {68, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {69, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {70, {QStringLiteral("角"), QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+    {71, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("鬃毛"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {72, {QStringLiteral("头部"), QStringLiteral("气囊"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+    {73, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {74, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {75, {QStringLiteral("头部"), QStringLiteral("背部"), QStringLiteral("胸部"), QStringLiteral("尾巴"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("翼"), QStringLiteral("???"), QStringLiteral("???"), QStringLiteral("???"), QStringLiteral("???"), QStringLiteral("???")}},
+    {76, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+    {77, {QStringLiteral("头部"), QStringLiteral("头部（雪）"), QStringLiteral("身体"), QStringLiteral("身体（雪）"), QStringLiteral("腿"), QStringLiteral("尾巴"), QStringLiteral("尾巴（雪）")}},
+    {78, {QStringLiteral("角"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {79, {QStringLiteral("头部"), QStringLiteral("头部（冰）"), QStringLiteral("身体"), QStringLiteral("身体（冰）"), QStringLiteral("翼"), QStringLiteral("翼（冰）"), QStringLiteral("手臂"), QStringLiteral("手臂（冰）"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {80, {QStringLiteral("头部"), QStringLiteral("背部"), QStringLiteral("尾巴"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("翼")}},
+    {81, {QStringLiteral("左颈（岩石）"), QStringLiteral("右颈（岩石）"), QStringLiteral("头部（岩石）"), QStringLiteral("尾巴（岩石）"), QStringLiteral("左翼（岩石）"), QStringLiteral("右翼（岩石）"), QStringLiteral("左臂（岩石）"), QStringLiteral("右臂（岩石）"), QStringLiteral("腿"), QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("尾巴")}},
+    {87, {QStringLiteral("头部"), QStringLiteral("胸部"), QStringLiteral("翼"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {88, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {89, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {90, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+    {91, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {92, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {93, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {94, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("背部"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {95, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("背部"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
+    {96, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("背部"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴"), QStringLiteral("尾尖")}},
+    {97, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("腹部"), QStringLiteral("背部"), QStringLiteral("胸部"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+    {98, {QStringLiteral("???"), QStringLiteral("???"), QStringLiteral("???")}},
+    {99, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+    {100, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
+    {101, {QStringLiteral("头部"), QStringLiteral("颈部"), QStringLiteral("胸部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+};
+
+
 QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
 {
     QVector<MonsterSnapshot> result;
@@ -460,6 +538,9 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         // hit decision below).
         auto cachedIt = monsterCache_.find(comp);
 
+        int hunterId = -1;
+        if (const auto id = memory_.read<std::int32_t>(monster + 0x12280ULL))
+            hunterId = *id;
         // Read body parts (always; HP changes on damage). Names are cached.
         const auto partPtr = memory_.read<std::uintptr_t>(monster + 0x1D058ULL);
         QVector<PartSnapshot> parts;
@@ -494,18 +575,9 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 // Index matches partSchema.Id from MonsterData.xml.
                 // Stored as the schema's "String" attribute (e.g. PART_HEAD).
                 // We use HunterPie's localized part names.
-                                static const QHash<int, QString> kPartNames = {
-                    {0, QStringLiteral("头")},
-                    {1, QStringLiteral("身")},
-                    {2, QStringLiteral("前脚")},
-                    {3, QStringLiteral("后脚")},
-                    {4, QStringLiteral("尾")},
-                    {5, QStringLiteral("断尾")},
-                    {6, QStringLiteral("背")},
-                    {7, QStringLiteral("翼")},
-                };
-                QString pname = kPartNames.value(i);
-                                p.name = cachedPartNames.value(i, pname.isEmpty() ? QStringLiteral("[%1]").arg(i) : pname);
+                                const QVector<QString> &schema = kPartSchemas.value(hunterId);
+                QString pname = (i < schema.size()) ? schema[i] : QString();
+                                p.name = cachedPartNames.value(i, pname.isEmpty() ? QStringLiteral("Part[%1]").arg(i) : pname);
                 parts.push_back(p);
             }
         }
@@ -533,9 +605,6 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         if (nameBuf[0] == 0) continue; // skip monsters with no name
         const QString rawEm = QString::fromUtf8(nameBuf);
         if (rawEm.startsWith(QStringLiteral("em\\ems"))) continue;
-        int hunterId = -1;
-        if (const auto id = memory_.read<std::int32_t>(monster + 0x12280ULL))
-            hunterId = *id;
                 QString displayName = QStringLiteral("%1").arg(hunterId, 3, 10, QLatin1Char('0'));
 
 
