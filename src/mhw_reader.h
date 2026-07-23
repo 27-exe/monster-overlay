@@ -13,12 +13,24 @@ namespace mhw {
 struct PartSnapshot {
     int index{-1};        // part index (matches MHWMonsterPartStructure.Index)
     QString name;         // e.g. "PART_HEAD"
+    // Break layer: Health / MaxHealth. Per-layer values; in multiplayer
+    // on the client these stay frozen at 100% (Capcom does not sync
+    // per-part HP deltas — only Counter + total HP).
     float health{};
     float maxHealth{};
     float extraHealth{};
     float extraMaxHealth{};
-    int counter{};
+    // Flinch: cumulative stagger damage on this part. Updates every hit
+    // on the local client (both solo and multi), because the flinch
+    // accumulator runs locally. MaxFlinch = the per-layer single-hit cap
+    // when the part has BreakThresholds; otherwise the per-hit cap.
+    float flinch{};
+    float maxFlinch{};
+    int counter{};        // number of BreakThresholds already crossed
     int firstThreshold{0};
+    bool isSeverable{false};   // from MonsterData.xml IsSeverable
+    bool isBreakable{false};   // BreakThresholds.Count > 0
+    bool isBroken{false};      // computed: Counter >= last threshold OR part severed
 };
 
 struct MonsterSnapshot {
@@ -115,6 +127,7 @@ struct GameSnapshot {
     PlayerSnapshot player;
     QVector<PartyMemberSnapshot> party;
     QuestSnapshot quest;
+    bool isMultiplayer{false};   // party.size() > 1
 };
 
 class AddressMap {

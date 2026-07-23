@@ -224,31 +224,74 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
 
     if (mhw::isHuntingZone(snapshot.zone)) {
         QStringList monsterLines;
+        const bool multi = snapshot.isMultiplayer;
         for (const auto &monster : snapshot.monsters) {
             QString suffix;
             if (monster.enraged) {
-            float remain = monster.enrageMaxSeconds - monster.enrageSeconds;
-            if (remain > 0.0F)
-                suffix = QStringLiteral("  🔥%1s").arg(remain, 0, 'f', 0);
-        }
-            QString main = QStringLiteral("%1 [ID %2]\nHP  %3 / %4   %5%6")
+                float remain = monster.enrageMaxSeconds - monster.enrageSeconds;
+                if (remain > 0.0F)
+                    suffix = QStringLiteral("  🔥%1s").arg(remain, 0, 'f', 0);
+            }
+            // Total HP: in multiplayer the per-layer Health field on the
+            // client is frozen, but total HP IS synced. Show the ratio
+            // only when it actually moves (i.e. local client has fresh
+            // data, == solo or first tick after switching quest).
+            const bool totalLive = monster.health > 0.0F
+                                && monster.health < monster.maxHealth;
+            const QString totalLine = totalLive
+                ? QStringLiteral("HP  %1 / %2   %3%4")
+                      .arg(monster.health, 0, 'f', 0)
+                      .arg(monster.maxHealth, 0, 'f', 0)
+                      .arg(percentage(monster.health, monster.maxHealth))
+                      .arg(suffix)
+                : QStringLiteral("HP  -- / %1   (sync-locked)%2")
+                      .arg(monster.maxHealth, 0, 'f', 0)
+                      .arg(suffix);
+            QString main = QStringLiteral("%1 [ID %2]\n%3")
                                 .arg(monster.internalName)
                                 .arg(monster.id)
-                                .arg(monster.health, 0, 'f', 0)
-                                .arg(monster.maxHealth, 0, 'f', 0)
-                                .arg(percentage(monster.health, monster.maxHealth))
-                                .arg(suffix);
+                                .arg(totalLine);
             if (!monster.parts.isEmpty()) {
                 QStringList partLines;
                 for (const auto &p : monster.parts) {
                     const QString name = p.name.isEmpty()
                         ? QStringLiteral("Part[%1]").arg(p.index)
                         : p.name; // already Chinese from kPartNames
-                    partLines << QStringLiteral("  %1  %2 / %3  (%4)")
+                    // Two bars: Flinch (live, both solo and multi) and
+                    // Health/MaxHealth (live in solo, frozen in multi).
+                    const QString flinchPct = percentage(p.flinch, p.maxFlinch);
+                    // In multiplayer, the Health field is the synced
+                    // per-layer "current"; it stays at 100% on the
+                    // client. Show the ratio as info, but prefix with
+                    // a clear marker so the user knows it's not live.
+                    QString hpLine;
+                    if (p.maxHealth > 0.0F) {
+                        const QString hpPct = percentage(p.health, p.maxHealth);
+                        if (multi) {
+                            // Multiplayer: Health field frozen client-side
+                            // (see mhw-parts-hp-frozen-on-client-2026-07-23).
+                            // Show only the locally-accurate flinch and
+                            // a "(mp-locked)" marker on the layer HP.
+                            hpLine = QStringLiteral("    削 %1/%2  %3%4  破 %5  (mp)")
+                                .arg(p.flinch, 0, 'f', 0)
+                                .arg(p.maxFlinch, 0, 'f', 0)
+                                .arg(flinchPct)
+                                .arg(p.isBroken ? QStringLiteral(" ✖") : QString())
+                                .arg(p.counter);
+                        } else {
+                            hpLine = QStringLiteral("    削 %1/%2  %3%4  破 %5")
+                                .arg(p.flinch, 0, 'f', 0)
+                                .arg(p.maxFlinch, 0, 'f', 0)
+                                .arg(flinchPct)
+                                .arg(p.isBroken ? QStringLiteral(" ✖") : QString())
+                                .arg(p.counter);
+                        }
+                    } else {
+                        hpLine = QStringLiteral("    削 --");
+                    }
+                    partLines << QStringLiteral("  %1\n%2")
                                   .arg(name, -10)
-                                  .arg(p.health, 0, 'f', 0)
-                                  .arg(p.maxHealth, 0, 'f', 0)
-                                  .arg(percentage(p.health, p.maxHealth));
+                                  .arg(hpLine);
                 }
                 main += QLatin1Char('\n') + partLines.join(QLatin1Char('\n'));
             }
@@ -271,7 +314,7 @@ void OverlayWindow::renderDemo()
     quest_->setText(QStringLiteral("任务 66801 · ★6 · 剩余 41:37 · 猫车 0/3"));
     player_->setText(QStringLiteral("猎人  HP 172/200 (86.0%)   ST 130/150"));
     party_->setText(QStringLiteral("A27exe  MR 214  伤害 12840\nHunter  MR 83  伤害 9061"));
-    monsters_->setText(QStringLiteral("em\\em100_00 [ID 100]\nHP  14280 / 20880   68.4%  🔥74s"));
+    monsters_->setText(QStringLiteral("em\\em100_00 [ID 100]\nHP  14280 / 20880   68.4%  🔥74s\n  头部         (0/2破)\n    削 3105/3105  100.0%  破 0\n  尾巴         (可断)\n    削 200/200   100.0%  破 0 (mp)"));
     abnormalities_->setText(QString());
     equipment_->setText(QString());
     lastZone_ = mhw::Zone::AncientForest;

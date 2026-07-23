@@ -61,4 +61,14 @@ if(BUILD_TESTING)
     target_include_directories(mhw-scan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(mhw-scan PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
     target_compile_definitions(mhw-scan PRIVATE MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map")
+
+    add_executable(mhw-probe-parts
+        tests/mhw_probe_parts.cpp
+        src/mhw_reader.cpp
+        src/mhw_reader.h
+    )
+    target_link_libraries(mhw-probe-parts PRIVATE Qt6::Core)
+    target_include_directories(mhw-probe-parts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(mhw-probe-parts PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
+    target_compile_definitions(mhw-probe-parts PRIVATE MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map")
 endif()

@@ -1295,6 +1295,25 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
 
             // Helper: read a single MHWMonsterPartStructure (0x78 bytes) at addr.
             // Returns true if MaxHealth > 0 (valid slot).
+            // Layout (verified 421810):
+            //   +0x0C float MaxHealth
+            //   +0x10 float Health        (per-layer current)
+            //   +0x18 int   Counter
+            //   +0x20 float ExtraMaxHealth
+            //   +0x24 float ExtraHealth
+            //   +0x6C uint  Index
+            // HunterPie's MHWMonsterPart.Update() then dispatches by part type:
+            //   Severable  -> MaxSever = data.MaxHealth;   Sever   = data.Health
+            //   Flinch     -> MaxFlinch = data.MaxHealth;  Flinch  = data.Health
+            //   Breakable  -> MaxFlinch = data.MaxHealth;  Flinch  = data.Health
+            //                 (and threshold math on top for the cumulative HP)
+            // In the Wine build the per-layer Health field is updated locally
+            // for Flinch (stagger accumulator runs on the client). For
+            // Breakable per-layer Health the client only sees the local hit
+            // feedback; the cap-room (how much damage is still needed to
+            // break the next layer) is what we expose as Health/MaxHealth
+            // when thresholds remain, and as the layer's raw value after the
+            // last threshold.
             auto readPartStruct = [&](std::uintptr_t addr, float &mhp, float &chp,
                                       float &emhp, float &ehp, int &counter,
                                       std::uint32_t &index) -> bool {
@@ -1361,13 +1380,25 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                         if (static_cast<int>(index) == ps.id) {
                             // Match — use schema position s as stable key.
                             PartSnapshot p;
-                            p.index = 1000 + s; // positive key = severable (offset to avoid clash with normal)
+                            p.index = 1000 + s; // positive key = severable
+                            // Severable layer is bound to data.Health /
+                            // data.MaxHealth verbatim (HunterPie
+                            // UpdateSeverableData, no threshold math).
                             p.health = chp;
                             p.maxHealth = mhp;
+                            p.flinch = chp;
+                            p.maxFlinch = mhp;
                             p.extraHealth = ehp;
                             p.extraMaxHealth = emhp;
                             p.counter = counter;
-                            applyBreakable(p, ps, mhp, chp);
+                            p.isSeverable = true;
+                            p.isBreakable = ps.thresholds[0] != '\0';
+                            // Severed = the game cuts this part off and
+                            // em* goes to a "destroyed" string; in practice
+                            // for the tail / horn the part just stops ticking
+                            // and the layer HP is no longer updated.
+                            p.isBroken = counter > 0
+                                      || (p.maxHealth > 0.0F && p.health <= 0.0F);
                             QString thSuffix;
                             if (p.firstThreshold > 0)
                                 thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(p.firstThreshold);
@@ -1391,12 +1422,29 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                     if (mhp <= 0.0F) continue; // empty slot
                     PartSnapshot p;
                     p.index = -1 - normalSlotIdx; // negative key = normal
-                    p.health = chp;
-                    p.maxHealth = mhp;
+                    // Flinch is always data.Health / data.MaxHealth
+                    // (HunterPie UpdateFlinchData / UpdateBreakableData,
+                    // first half — MaxFlinch is set unconditionally).
+                    p.flinch = chp;
+                    p.maxFlinch = mhp;
                     p.extraHealth = ehp;
                     p.extraMaxHealth = emhp;
                     p.counter = counter;
+                    p.isSeverable = false;
+                    p.isBreakable = ps.thresholds[0] != '\0';
+                    // applyBreakable fills Health/MaxHealth + firstThreshold;
+                    // the per-layer value drives the "is this part already
+                    // past every threshold" flag for IsBroken.
                     applyBreakable(p, ps, mhp, chp);
+                    // HunterPie's IsBroken:
+                    //   MaxHealth <= 0
+                    // || (Health == MaxHealth && (Breaks > 0 || Flinch != MaxFlinch))
+                    // In solo on the local client Health == MaxHealth is the
+                    // steady state for an unhit part, so "Breaks > 0" is the
+                    // meaningful test. The Flinch != MaxFlinch arm is for
+                    // parts still receiving flinch damage after a break.
+                    p.isBroken = p.maxHealth <= 0.0F
+                              || (p.counter > 0);
                     QString thSuffix;
                     if (p.firstThreshold > 0)
                         thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(p.firstThreshold);
@@ -1791,6 +1839,7 @@ GameSnapshot MhwReader::poll()
     snapshot.player = readPlayer(nullptr);
     snapshot.quest = readQuest(nullptr);
     snapshot.party = readParty(nullptr);
+    snapshot.isMultiplayer = (snapshot.party.size() > 1);
     if (!error.isEmpty() && snapshot.monsters.isEmpty())
         snapshot.status += QStringLiteral(" · 部分读取失败: %1").arg(error);
     return snapshot;
