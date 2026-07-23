@@ -486,7 +486,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         QHash<int, QString> cachedPartNames;
         if (cachedIt != monsterCache_.end())
             for (const auto &p : cachedIt->second.snapshot.parts)
-                cachedPartNames.insert(p.index, p.name);
+                            cachedPartNames.insert(p.index, p.name);
         if (partPtr && isSanePointer(*partPtr)) {
             const std::uintptr_t normalAddr = *partPtr + 0x40ULL;
             for (int i = 0; i < 16; ++i) {
@@ -556,7 +556,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         int hunterId = -1;
         if (const auto id = memory_.read<std::int32_t>(monster + 0x12280ULL))
             hunterId = *id;
-        QString displayName = QString::number(hunterId);
+                QString displayName = QStringLiteral("%1").arg(hunterId, 3, 10, QLatin1Char('0'));
 
 
         // HunterPie 421810 zh-cn.xml Id -> name. The 421810 build reads
