@@ -381,80 +381,84 @@ QString MhwReader::joinOffsets() const
 
 // Auto-generated from MonsterData.xml + zh-cn.xml
 // 72 monsters
-static const QHash<int, QVector<QString>> kPartSchemas = {
-    {0, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {1, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {4, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("胸部"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴"), QStringLiteral("壳"), QStringLiteral("排气管（中）"), QStringLiteral("排气管（头）"), QStringLiteral("排气管 (坑)"), QStringLiteral("排气管（后）"), QStringLiteral("左弱壳"), QStringLiteral("右弱壳")}},
-    {7, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴"), QStringLiteral("腹部")}},
-    {9, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {10, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {11, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {12, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {13, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {14, {QStringLiteral("角"), QStringLiteral("手臂"), QStringLiteral("腿")}},
-    {15, {QStringLiteral("角"), QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {16, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("尾巴"), QStringLiteral("左肢"), QStringLiteral("右肢"), QStringLiteral("翼")}},
-    {17, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("四肢"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
-    {18, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("翼"), QStringLiteral("尾巴")}},
-    {19, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("腹部"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {20, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("胸部"), QStringLiteral("臀部"), QStringLiteral("手臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {21, {QStringLiteral("头部"), QStringLiteral("头部(泥土)"), QStringLiteral("身体"), QStringLiteral("BODY_MUD"), QStringLiteral("手臂"), QStringLiteral("手臂(泥土)"), QStringLiteral("左腿"), QStringLiteral("左腿(泥土)"), QStringLiteral("右腿"), QStringLiteral("右腿(泥土)"), QStringLiteral("尾巴"), QStringLiteral("尾巴(泥土)")}},
-    {22, {QStringLiteral("颚"), QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {23, {QStringLiteral("鹿角"), QStringLiteral("身体"), QStringLiteral("腿"), QStringLiteral("手臂"), QStringLiteral("???")}},
-    {24, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {25, {QStringLiteral("角"), QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
-    {26, {QStringLiteral("头部"), QStringLiteral("颈部"), QStringLiteral("背部"), QStringLiteral("胸部"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("翼"), QStringLiteral("尾巴")}},
-    {27, {QStringLiteral("头部"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴"), QStringLiteral("石头")}},
-    {28, {QStringLiteral("头部"), QStringLiteral("头部"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {29, {QStringLiteral("头部"), QStringLiteral("躯干"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴"), QStringLiteral("头部(泥土)"), QStringLiteral("躯干(泥土)"), QStringLiteral("左腿(泥土)"), QStringLiteral("右腿(泥土)"), QStringLiteral("尾巴(泥土)")}},
-    {30, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("鬃毛"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {31, {QStringLiteral("头部"), QStringLiteral("气囊"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
-    {32, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {33, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {34, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {35, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴"), QStringLiteral("颚"), QStringLiteral("背部"), QStringLiteral("左骨"), QStringLiteral("右骨")}},
-    {36, {QStringLiteral("头部"), QStringLiteral("背部"), QStringLiteral("胸部"), QStringLiteral("尾巴"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("翼")}},
-    {37, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {38, {QStringLiteral("角"), QStringLiteral("胸部"), QStringLiteral("身体"), QStringLiteral("左肢"), QStringLiteral("右肢"), QStringLiteral("尾巴"), QStringLiteral("金角"), QStringLiteral("金鬃毛"), QStringLiteral("黄金左胸"), QStringLiteral("黄金右胸"), QStringLiteral("黄金左臂"), QStringLiteral("黄金右臂"), QStringLiteral("黄金左腿"), QStringLiteral("黄金右腿"), QStringLiteral("黄金尾巴（左）"), QStringLiteral("黄金尾巴（右）")}},
-    {39, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
-    {51, {QStringLiteral("鹿角"), QStringLiteral("身体"), QStringLiteral("腿"), QStringLiteral("手臂"), QStringLiteral("???")}},
-    {61, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {62, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {63, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {64, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("胸部"), QStringLiteral("臀部"), QStringLiteral("手臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {65, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {66, {QStringLiteral("头部"), QStringLiteral("鳍"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {67, {QStringLiteral("头部"), QStringLiteral("鳍"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {68, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {69, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {70, {QStringLiteral("角"), QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
-    {71, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("鬃毛"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {72, {QStringLiteral("头部"), QStringLiteral("气囊"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
-    {73, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {74, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {75, {QStringLiteral("头部"), QStringLiteral("背部"), QStringLiteral("胸部"), QStringLiteral("尾巴"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("翼"), QStringLiteral("???"), QStringLiteral("???"), QStringLiteral("???"), QStringLiteral("???"), QStringLiteral("???")}},
-    {76, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
-    {77, {QStringLiteral("头部"), QStringLiteral("头部（雪）"), QStringLiteral("身体"), QStringLiteral("身体（雪）"), QStringLiteral("腿"), QStringLiteral("尾巴"), QStringLiteral("尾巴（雪）")}},
-    {78, {QStringLiteral("角"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {79, {QStringLiteral("头部"), QStringLiteral("头部（冰）"), QStringLiteral("身体"), QStringLiteral("身体（冰）"), QStringLiteral("翼"), QStringLiteral("翼（冰）"), QStringLiteral("手臂"), QStringLiteral("手臂（冰）"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {80, {QStringLiteral("头部"), QStringLiteral("背部"), QStringLiteral("尾巴"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("翼")}},
-    {81, {QStringLiteral("左颈（岩石）"), QStringLiteral("右颈（岩石）"), QStringLiteral("头部（岩石）"), QStringLiteral("尾巴（岩石）"), QStringLiteral("左翼（岩石）"), QStringLiteral("右翼（岩石）"), QStringLiteral("左臂（岩石）"), QStringLiteral("右臂（岩石）"), QStringLiteral("腿"), QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("尾巴")}},
-    {87, {QStringLiteral("头部"), QStringLiteral("胸部"), QStringLiteral("翼"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {88, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {89, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {90, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
-    {91, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {92, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {93, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {94, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("背部"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {95, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("背部"), QStringLiteral("手臂"), QStringLiteral("腿"), QStringLiteral("尾巴")}},
-    {96, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("背部"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴"), QStringLiteral("尾尖")}},
-    {97, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("腹部"), QStringLiteral("背部"), QStringLiteral("胸部"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
-    {98, {QStringLiteral("???"), QStringLiteral("???"), QStringLiteral("???")}},
-    {99, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
-    {100, {QStringLiteral("头部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("尾巴")}},
-    {101, {QStringLiteral("头部"), QStringLiteral("颈部"), QStringLiteral("胸部"), QStringLiteral("身体"), QStringLiteral("左臂"), QStringLiteral("右臂"), QStringLiteral("左腿"), QStringLiteral("右腿"), QStringLiteral("左翼"), QStringLiteral("右翼"), QStringLiteral("尾巴")}},
+// Auto-generated: part names + break thresholds
+// 72 monsters
+struct PartSchema { const char* name; const char* thresholds; };
+static const QHash<int, QVector<PartSchema>> kPartSchemas = {
+    {0, {{"头部","5"}, {"身体",""}, {"左腿","3"}, {"右腿","3"}, {"尾巴",""}}},
+    {1, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {4, {{"头部","1"}, {"身体",""}, {"胸部","1"}, {"左臂",""}, {"右臂",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}, {"壳",""}, {"排气管（中）","1"}, {"排气管（头）","1"}, {"排气管 (坑)","1"}, {"排气管（后）","1"}, {"左弱壳","1"}, {"右弱壳","1"}}},
+    {7, {{"头部","2"}, {"身体",""}, {"手臂","1"}, {"腿",""}, {"尾巴",""}, {"腹部","3"}}},
+    {9, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {10, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {11, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {12, {{"头部",""}, {"身体","1"}, {"左翼",""}, {"右翼",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {13, {{"头部",""}, {"身体","1"}, {"左翼",""}, {"右翼",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {14, {{"角","1"}, {"手臂",""}, {"腿",""}}},
+    {15, {{"角","2,3"}, {"头部",""}, {"身体",""}, {"左臂","3"}, {"右臂","3"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {16, {{"头部","1"}, {"身体",""}, {"尾巴",""}, {"左肢",""}, {"右肢",""}, {"翼","2"}}},
+    {17, {{"头部","1"}, {"身体",""}, {"四肢",""}, {"左翼","2"}, {"右翼","2"}, {"尾巴",""}}},
+    {18, {{"头部","1"}, {"身体",""}, {"手臂",""}, {"腿",""}, {"翼","1"}, {"尾巴",""}}},
+    {19, {{"头部","6"}, {"身体","2"}, {"腹部",""}, {"左腿","4"}, {"右腿","4"}, {"尾巴","4"}}},
+    {20, {{"头部","3"}, {"身体",""}, {"胸部","5"}, {"臀部",""}, {"手臂",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {21, {{"头部",""}, {"头部(泥土)","1"}, {"身体",""}, {"BODY_MUD","1"}, {"手臂","1"}, {"手臂(泥土)","1"}, {"左腿","1"}, {"左腿(泥土)","1"}, {"右腿","1"}, {"右腿(泥土)","1"}, {"尾巴",""}, {"尾巴(泥土)","1"}}},
+    {22, {{"颚","1"}, {"头部",""}, {"身体","1"}, {"手臂",""}, {"左腿",""}, {"右腿",""}, {"尾巴","1"}}},
+    {23, {{"鹿角","1,2"}, {"身体",""}, {"腿",""}, {"手臂",""}, {"???",""}}},
+    {24, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {25, {{"角",""}, {"头部",""}, {"身体",""}, {"左臂",""}, {"右臂",""}, {"左腿",""}, {"右腿",""}, {"左翼",""}, {"右翼",""}, {"尾巴",""}}},
+    {26, {{"头部","2"}, {"颈部",""}, {"背部",""}, {"胸部",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"翼","2"}, {"尾巴",""}}},
+    {27, {{"头部","1"}, {"手臂","1"}, {"腿",""}, {"尾巴",""}, {"石头",""}}},
+    {28, {{"头部","2"}, {"头部",""}, {"手臂",""}, {"腿",""}, {"尾巴",""}}},
+    {29, {{"头部","4"}, {"躯干","1"}, {"左腿","2"}, {"右腿","2"}, {"尾巴","3"}, {"头部(泥土)","1"}, {"躯干(泥土)","3"}, {"左腿(泥土)","2"}, {"右腿(泥土)","2"}, {"尾巴(泥土)","1"}}},
+    {30, {{"头部","2"}, {"身体",""}, {"鬃毛","1"}, {"手臂","1"}, {"腿",""}, {"尾巴","4"}}},
+    {31, {{"头部",""}, {"气囊",""}, {"身体","1"}, {"左腿",""}, {"右腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴","1"}}},
+    {32, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴","1"}}},
+    {33, {{"头部","2"}, {"身体",""}, {"手臂","1"}, {"腿",""}, {"尾巴",""}}},
+    {34, {{"头部","1,2"}, {"身体",""}, {"手臂","1"}, {"腿","1"}, {"尾巴","1"}}},
+    {35, {{"头部",""}, {"身体",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}, {"颚","1,2"}, {"背部","1,2"}, {"左骨","1,2"}, {"右骨","1,2"}}},
+    {36, {{"头部","2"}, {"背部",""}, {"胸部","1"}, {"尾巴",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"翼",""}}},
+    {37, {{"头部","5"}, {"身体",""}, {"手臂","1"}, {"腿",""}, {"尾巴",""}}},
+    {38, {{"角","1"}, {"胸部",""}, {"身体",""}, {"左肢",""}, {"右肢",""}, {"尾巴","1"}, {"金角","1"}, {"金鬃毛",""}, {"黄金左胸","1"}, {"黄金右胸","1"}, {"黄金左臂","1"}, {"黄金右臂","1"}, {"黄金左腿","1"}, {"黄金右腿","1"}, {"黄金尾巴（左）","1"}, {"黄金尾巴（右）","1"}}},
+    {39, {{"头部","2"}, {"身体","1"}, {"腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴",""}}},
+    {51, {{"鹿角","1,2"}, {"身体",""}, {"腿",""}, {"手臂",""}, {"???",""}}},
+    {61, {{"头部","1"}, {"身体",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {62, {{"头部","4"}, {"身体",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {63, {{"头部","3"}, {"身体",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {64, {{"头部","2"}, {"身体",""}, {"胸部","2"}, {"臀部",""}, {"手臂",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {65, {{"头部","4"}, {"身体",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {66, {{"头部","1,2"}, {"鳍","1"}, {"身体",""}, {"手臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴","1"}}},
+    {67, {{"头部","1,2"}, {"鳍","1"}, {"身体",""}, {"手臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴","1"}}},
+    {68, {{"头部","5"}, {"身体",""}, {"左腿","3"}, {"右腿","3"}, {"尾巴",""}}},
+    {69, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {70, {{"角",""}, {"头部",""}, {"身体",""}, {"左臂",""}, {"右臂",""}, {"左腿",""}, {"右腿",""}, {"左翼",""}, {"右翼",""}, {"尾巴",""}}},
+    {71, {{"头部","2"}, {"身体",""}, {"鬃毛","1"}, {"手臂","1"}, {"腿",""}, {"尾巴","1"}}},
+    {72, {{"头部",""}, {"气囊",""}, {"身体","1"}, {"左腿",""}, {"右腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴","1"}}},
+    {73, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"腿",""}, {"尾巴","1"}}},
+    {74, {{"头部",""}, {"身体",""}, {"手臂","1"}, {"腿","1"}, {"尾巴","1"}}},
+    {75, {{"头部","3"}, {"背部",""}, {"胸部","1"}, {"尾巴",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"翼",""}, {"???",""}, {"???",""}, {"???",""}, {"???",""}, {"???",""}}},
+    {76, {{"头部","2"}, {"身体","1"}, {"腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴",""}}},
+    {77, {{"头部","2"}, {"头部（雪）","1"}, {"身体","1"}, {"身体（雪）","1"}, {"腿","2"}, {"尾巴","1"}, {"尾巴（雪）","1"}}},
+    {78, {{"角",""}, {"身体",""}, {"左腿","1"}, {"右腿","1"}, {"尾巴",""}}},
+    {79, {{"头部","2"}, {"头部（冰）",""}, {"身体",""}, {"身体（冰）",""}, {"翼","2"}, {"翼（冰）",""}, {"手臂",""}, {"手臂（冰）",""}, {"腿",""}, {"尾巴",""}}},
+    {80, {{"头部","5"}, {"背部",""}, {"尾巴",""}, {"手臂","2"}, {"腿",""}, {"翼","2"}}},
+    {81, {{"左颈（岩石）",""}, {"右颈（岩石）",""}, {"头部（岩石）",""}, {"尾巴（岩石）",""}, {"左翼（岩石）","1"}, {"右翼（岩石）","1"}, {"左臂（岩石）","1,2"}, {"右臂（岩石）","1,2"}, {"腿",""}, {"头部","1"}, {"身体",""}, {"左翼",""}, {"右翼",""}, {"左臂","1"}, {"右臂","1"}, {"尾巴",""}}},
+    {87, {{"头部",""}, {"胸部",""}, {"翼","2"}, {"手臂",""}, {"腿",""}, {"尾巴",""}}},
+    {88, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {89, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {90, {{"头部","2,4"}, {"身体","1"}, {"左腿",""}, {"右腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴",""}}},
+    {91, {{"头部",""}, {"身体",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {92, {{"头部",""}, {"身体",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {93, {{"头部","1"}, {"身体",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {94, {{"头部","2,4"}, {"身体",""}, {"背部","1"}, {"手臂","2"}, {"腿",""}, {"尾巴",""}}},
+    {95, {{"头部","2,4"}, {"身体",""}, {"背部","1"}, {"手臂","3"}, {"腿",""}, {"尾巴",""}}},
+    {96, {{"头部","2"}, {"身体",""}, {"背部",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}, {"尾尖",""}}},
+    {97, {{"头部","5,10"}, {"身体",""}, {"腹部",""}, {"背部","1"}, {"胸部","1"}, {"左臂","7"}, {"右臂","7"}, {"左腿","5"}, {"右腿","5"}, {"左翼","3"}, {"右翼","3"}, {"尾巴",""}}},
+    {98, {{"???",""}, {"???",""}, {"???",""}}},
+    {99, {{"头部","2,4"}, {"身体","1"}, {"左腿",""}, {"右腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴",""}}},
+    {100, {{"头部","1,2"}, {"身体",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
+    {101, {{"头部","3,6"}, {"颈部",""}, {"胸部","2"}, {"身体",""}, {"左臂",""}, {"右臂",""}, {"左腿",""}, {"右腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴",""}}},
 };
+
 
 
 QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
@@ -575,9 +579,21 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 // Index matches partSchema.Id from MonsterData.xml.
                 // Stored as the schema's "String" attribute (e.g. PART_HEAD).
                 // We use HunterPie's localized part names.
-                                const QVector<QString> &schema = kPartSchemas.value(hunterId);
-                QString pname = (i < schema.size()) ? schema[i] : QString();
-                                p.name = cachedPartNames.value(i, pname.isEmpty() ? QStringLiteral("Part[%1]").arg(i) : pname);
+                                const QVector<PartSchema> &schema = kPartSchemas.value(hunterId);
+                const PartSchema *ps = (i < schema.size()) ? &schema[i] : nullptr;
+                QString pname2 = ps ? QString::fromUtf8(ps->name) : QString();
+                // Build threshold suffix
+                QString thSuffix;
+                if (ps && ps->thresholds[0]) {
+                    // Parse first threshold number
+                    int firstTh = 0;
+                    const char *t = ps->thresholds;
+                    while (*t >= '0' && *t <= '9') { firstTh = firstTh * 10 + (*t - '0'); ++t; }
+                    if (firstTh > 0)
+                        thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(firstTh);
+                }
+                pname2 += thSuffix;
+                                p.name = cachedPartNames.value(i, pname2.isEmpty() ? QStringLiteral("Part[%1]").arg(i) : pname2);
                 parts.push_back(p);
             }
         }
@@ -712,6 +728,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         m.enrageSeconds = enrageDuration;
         m.enrageMaxSeconds = enrageMaxDuration;
         m.parts = parts;
+            static int dc=0; if(++dc % 10 == 1) std::fprintf(stderr,"[multi] #%d parts=%zu hp=%d p0=%.0f/%.0f\n", dc, parts.size(), (int)curHP, parts.isEmpty()?0.f:parts[0].health, parts.isEmpty()?0.f:parts[0].maxHealth);
         monsterCache_[comp] = {m, maxHP};
         result.push_back(m);
     }
