@@ -494,8 +494,18 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 // Index matches partSchema.Id from MonsterData.xml.
                 // Stored as the schema's "String" attribute (e.g. PART_HEAD).
                 // We use HunterPie's localized part names.
-                QString pname = QStringLiteral("Part[%1]").arg(i);
-                p.name = cachedPartNames.value(i, pname.isEmpty() ? QStringLiteral("Part[%1]").arg(i) : pname);
+                                static const QHash<int, QString> kPartNames = {
+                    {0, QStringLiteral("头")},
+                    {1, QStringLiteral("身")},
+                    {2, QStringLiteral("前脚")},
+                    {3, QStringLiteral("后脚")},
+                    {4, QStringLiteral("尾")},
+                    {5, QStringLiteral("断尾")},
+                    {6, QStringLiteral("背")},
+                    {7, QStringLiteral("翼")},
+                };
+                QString pname = kPartNames.value(i);
+                                p.name = cachedPartNames.value(i, pname.isEmpty() ? QStringLiteral("[%1]").arg(i) : pname);
                 parts.push_back(p);
             }
         }
