@@ -491,7 +491,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             for (int i = 0; i < 16; ++i) {
                 const std::uintptr_t addr = normalAddr + std::uintptr_t(i) * 0x1F8ULL;
                 std::vector<char> raw(0x78, 0);
-                if (!memory_.readBytes(addr, raw.data(), 0x78, nullptr)) break;
+                if (!memory_.readBytes(addr, raw.data(), 0x78, nullptr)) continue;
                 float mhp = 0.0F, chp = 0.0F, emhp = 0.0F, ehp = 0.0F;
                 std::memcpy(&mhp, raw.data() + 0x0C, 4);
                 std::memcpy(&chp, raw.data() + 0x10, 4);
