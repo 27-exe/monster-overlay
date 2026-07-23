@@ -1,0 +1,28 @@
+MHW Linux Overlay
+Copyright 2024 a27exe
+
+This product includes software developed by the HunterPie contributors
+(https://github.com/HunterPie/HunterPie), licensed under the Apache
+License, Version 2.0. Icon Path data was adapted from HunterPie's
+XAML resources (Resources/Icons/*.xaml, Resources/Abnormalities.xaml,
+etc.) per Apache-2.0 terms. The conversion was performed by
+tools/xaml2svg.py.
+
+This product includes WorkSans (https://github.com/weiweihuanghuang/
+Work-Sans), licensed under the SIL Open Font License, Version 1.1.
+A copy of the OFL text is included as assets/fonts/OFL.txt.
+
+The noise texture (assets/charts/alligator_noise_512x512.jpg) is
+adapted from HunterPie's Assets/Textures/ under the same Apache-2.0
+terms.
+
+The original HunterPie project is at:
+  https://github.com/HunterPie/HunterPie
+The conversion script is committed at:
+  tools/xaml2svg.py
+
+What we do NOT use:
+- qurio_mask.png and any HunterPie asset depicting a Capcom
+  character (qurio, etc.) — see docs/ASSETS.md.
+- Anything extracted from the MHW game binary at runtime. The em\em\*
+  strings in memory are used as data, not as image sources.

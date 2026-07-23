@@ -28,6 +28,7 @@ add_executable(mhw-overlay
     src/overlay_window.cpp
     src/overlay_window.h
     src/resources/resources.qrc
+    src/resources/icons.qrc
 )
 
 target_link_libraries(mhw-overlay PRIVATE
