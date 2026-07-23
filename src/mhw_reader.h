@@ -18,6 +18,7 @@ struct PartSnapshot {
     float extraHealth{};
     float extraMaxHealth{};
     int counter{};
+    int firstThreshold{0};
 };
 
 struct MonsterSnapshot {

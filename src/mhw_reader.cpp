@@ -572,6 +572,9 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 p.index = static_cast<int>(index);
                 p.health = chp;
                 p.maxHealth = mhp;
+                // HunterPie's UpdateBreakableData: when this part has break
+                // thresholds, MaxHealth = threshold * mhp.
+                // This is read from monster's schema via kPartSchemas below.
                 p.extraHealth = ehp;
                 p.extraMaxHealth = emhp;
                 p.counter = counter;
@@ -585,12 +588,25 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 // Build threshold suffix
                 QString thSuffix;
                 if (ps && ps->thresholds[0]) {
-                    // Parse first threshold number
                     int firstTh = 0;
                     const char *t = ps->thresholds;
                     while (*t >= '0' && *t <= '9') { firstTh = firstTh * 10 + (*t - '0'); ++t; }
-                    if (firstTh > 0)
+                    if (firstTh > 0) {
+                        p.firstThreshold = firstTh;
+                        // HunterPie UpdateBreakableData:
+                        //   MaxHealth = firstTh * mhp
+                        //   Health = (max(0, firstTh - counter - 1) * mhp) + data.Health
+                        if (p.counter < firstTh) {
+                            p.maxHealth = firstTh * mhp;
+                            p.health = (firstTh - p.counter - 1) * mhp + chp;
+                            if (p.health > p.maxHealth) p.health = p.maxHealth;
+                        } else {
+                            // Already broken past — show actual layer
+                            p.maxHealth = mhp;
+                            p.health = chp;
+                        }
                         thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(firstTh);
+                    }
                 }
                 pname2 += thSuffix;
                                 p.name = cachedPartNames.value(i, pname2.isEmpty() ? QStringLiteral("Part[%1]").arg(i) : pname2);
