@@ -1445,15 +1445,24 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                     // (body, legs, non-severable tail on Tigrex) — which
                     // is why the default above is required.
                     applyBreakable(p, ps, mhp, chp);
-                    // HunterPie's IsBroken:
+                    // HunterPie's IsBroken formula (MonsterPartContextHandler.cs:120):
                     //   MaxHealth <= 0
                     // || (Health == MaxHealth && (Breaks > 0 || Flinch != MaxFlinch))
-                    // In solo on the local client Health == MaxHealth is the
-                    // steady state for an unhit part, so "Breaks > 0" is the
-                    // meaningful test. The Flinch != MaxFlinch arm is for
-                    // parts still receiving flinch damage after a break.
+                    //
+                    // Translated: a part is "broken" if its layer HP is full
+                    // AND either (a) it has been broken before (Counter > 0)
+                    // or (b) flinch is still accumulating on the current layer
+                    // (Flinch < MaxFlinch — i.e. the part has not been reset
+                    // back to a clean layer). Counter > 0 alone is not enough:
+                    // it just means a previous tier was crossed, not that the
+                    // current one is broken. The previous overlay version used
+                    // `p.counter > 0` and showed "破 1" / "✖" the moment any
+                    // tier was crossed even though the part had been reset and
+                    // was a clean full-HP part again.
+                    const bool flinchNotFull = std::fabs(p.flinch - p.maxFlinch) > 1e-4F;
                     p.isBroken = p.maxHealth <= 0.0F
-                              || (p.counter > 0);
+                              || (std::fabs(p.health - p.maxHealth) <= 1e-4F
+                                  && (p.counter > 0 || flinchNotFull));
                     QString thSuffix;
                     if (p.firstThreshold > 0)
                         thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(p.firstThreshold);
