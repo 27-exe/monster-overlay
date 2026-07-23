@@ -461,12 +461,50 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         const float curHP = hp[1];
         if (maxHP <= 0.0F) continue;
 
-        // Cache hit: name+maxHP unchanged -> reuse, only update curHP
+        // Resolve cache entry first (used for both part name lookup and cache
+        // hit decision below).
         auto cachedIt = monsterCache_.find(comp);
+
+        // Read body parts (always; HP changes on damage). Names are cached.
+        const auto partPtr = memory_.read<std::uintptr_t>(monster + 0x1D058ULL);
+        QVector<PartSnapshot> parts;
+        QHash<int, QString> cachedPartNames;
+        if (cachedIt != monsterCache_.end())
+            for (const auto &p : cachedIt->second.snapshot.parts)
+                cachedPartNames.insert(p.index, p.name);
+        if (partPtr && isSanePointer(*partPtr)) {
+            const std::uintptr_t normalAddr = *partPtr + 0x40ULL;
+            for (int i = 0; i < 16; ++i) {
+                const std::uintptr_t addr = normalAddr + std::uintptr_t(i) * 0x1F8ULL;
+                if (!memory_.readBytes(addr, nullptr, 0, nullptr)) continue; // skip if unreadable
+                std::vector<char> raw(0x78, 0);
+                if (!memory_.readBytes(addr, raw.data(), 0x78, nullptr)) break;
+                float mhp = 0.0F, chp = 0.0F, emhp = 0.0F, ehp = 0.0F;
+                std::memcpy(&mhp, raw.data() + 0x0C, 4);
+                std::memcpy(&chp, raw.data() + 0x10, 4);
+                std::memcpy(&emhp, raw.data() + 0x20, 4);
+                std::memcpy(&ehp, raw.data() + 0x24, 4);
+                int counter = 0; std::memcpy(&counter, raw.data() + 0x18, 4);
+                std::uint32_t index = 0; std::memcpy(&index, raw.data() + 0x70, 4);
+                if (mhp <= 0.0F) continue; // empty slot
+                PartSnapshot p;
+                p.index = static_cast<int>(index);
+                p.health = chp;
+                p.maxHealth = mhp;
+                p.extraHealth = ehp;
+                p.extraMaxHealth = emhp;
+                p.counter = counter;
+                p.name = cachedPartNames.value(p.index);
+                parts.push_back(p);
+            }
+        }
+
+        // Cache hit: name+maxHP unchanged -> reuse, only update curHP+parts
         if (cachedIt != monsterCache_.end() &&
             cachedIt->second.maxHP == maxHP && !cachedIt->second.snapshot.internalName.isEmpty()) {
             MonsterSnapshot m = cachedIt->second.snapshot;
             m.health = curHP;
+            m.parts = parts;
             result.push_back(m);
             continue;
         }
@@ -583,6 +621,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
         m.maxHealth = maxHP;
         m.health = curHP;
+        m.parts = parts;
         monsterCache_[comp] = {m, maxHP};
         result.push_back(m);
     }

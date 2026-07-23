@@ -228,13 +228,28 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
             QString suffix;
             if (monster.enraged)
                 suffix = QStringLiteral("  🔥%1s").arg(monster.enrageSeconds, 0, 'f', 0);
-            monsterLines << QStringLiteral("%1 [ID %2]\nHP  %3 / %4   %5%6")
+            QString main = QStringLiteral("%1 [ID %2]\nHP  %3 / %4   %5%6")
                                 .arg(monster.internalName)
                                 .arg(monster.id)
                                 .arg(monster.health, 0, 'f', 0)
                                 .arg(monster.maxHealth, 0, 'f', 0)
                                 .arg(percentage(monster.health, monster.maxHealth))
                                 .arg(suffix);
+            if (!monster.parts.isEmpty()) {
+                QStringList partLines;
+                for (const auto &p : monster.parts) {
+                    const QString name = p.name.isEmpty()
+                        ? QStringLiteral("Part[%1]").arg(p.index)
+                        : p.name.mid(4); // strip "PART_" prefix
+                    partLines << QStringLiteral("  %1  %2 / %3  (%4%)")
+                                  .arg(name, -10)
+                                  .arg(p.health, 0, 'f', 0)
+                                  .arg(p.maxHealth, 0, 'f', 0)
+                                  .arg(percentage(p.health, p.maxHealth));
+                }
+                main += QLatin1Char('\n') + partLines.join(QLatin1Char('\n'));
+            }
+            monsterLines << main;
         }
         monsters_->setText(monsterLines.isEmpty() ? QStringLiteral("等待大型怪物数据") : monsterLines.join(QStringLiteral("\n\n")));
     } else {

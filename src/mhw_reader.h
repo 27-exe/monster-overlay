@@ -10,6 +10,16 @@
 
 namespace mhw {
 
+struct PartSnapshot {
+    int index{-1};        // part index (matches MHWMonsterPartStructure.Index)
+    QString name;         // e.g. "PART_HEAD"
+    float health{};
+    float maxHealth{};
+    float extraHealth{};
+    float extraMaxHealth{};
+    int counter{};
+};
+
 struct MonsterSnapshot {
     std::uintptr_t address{};
     int id{-1};
@@ -21,6 +31,7 @@ struct MonsterSnapshot {
     float enrageSeconds{};
     float enrageMaxSeconds{};
     bool enraged{};
+    QVector<PartSnapshot> parts;
 };
 
 struct PlayerSnapshot {
