@@ -1,46 +1,155 @@
 # MHW Linux Overlay
 
-Linux-native、仅支持 **Monster Hunter: World** 的无边框透明悬浮窗原型。参考 HunterPie 的 Apache-2.0 源码与 `MonsterHunterWorld.421810.map`，但不运行 HunterPie、WPF 或 Windows DLL 注入器。
+A native-Linux overlay for **Monster Hunter: World** running under
+Steam + GE-Proton. Reads the game's process memory directly via
+`/proc/<pid>/mem` and renders a Qt-based HUD in a KDE Wayland
+layer-shell surface.
 
-## 当前能力
+> **Status: v0.1.** Data layer is feature-equivalent to HunterPie
+> for: monster HP, parts (severable / flinch / breakable), ailments
+> (sleep, paralysis, etc.), enrage (countdown + buildup %), player HP/ST,
+> mantles (active + cooldown), party damage, quest state, zone.
+> UI is a single rectangular panel in the top-right corner.
 
-- Qt 6 + KDE `layer-shell-qt`：Wayland `overlay` 层、透明背景、无边框、鼠标穿透、不抢键盘焦点。
-- 自动发现 Proton 下的 `MonsterHunterWorld.exe` Linux PID。
-- 解析 HunterPie legacy `.map` 的 `Address` / `Offset` 项。
-- 通过 `/proc/<pid>/mem` 只读读取（无写内存、无注入）。
-- MVP 数据：
-  - 大型怪物列表、ID、内部名、HP、耐力、愤怒时间；
-  - 玩家 HP / 耐力；
-  - 任务 ID、星级、状态、剩余时间、猫车次数；
-  - 队员名、武器、MR、游戏自带统计伤害。
+> **Next: v0.2** — UI rebuild: 3 panels (player status, monster HP,
+> DPS chart) + asset pipeline.
 
-## 构建
+---
+
+## Quick start
 
 ```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+# Build
+cmake -B build
+cmake --build build -j$(nproc)
+
+# Run (live, connects to a running MHW)
+./build/mhw-overlay
+
+# Run in demo mode (no MHW needed, shows mock data)
+./build/mhw-overlay --demo
+
+# Run with a specific .map file (HunterPie legacy offset table)
+./build/mhw-overlay --map path/to/MonsterHunterWorld.421810.map
+
+# Use a different UI language
+./build/mhw-overlay --locale en-US
+
+# Tests
 ctest --test-dir build --output-on-failure
 ```
 
-## 运行
+The `421810.map` is bundled in `data/`. It's resolved automatically
+from `MHW_DEFAULT_MAP` (set by CMake) if `--map` is omitted.
 
-```bash
-# 真实读取；请先启动 MHW
-./build/mhw-overlay
+## Requirements
 
-# 只看悬浮窗布局，不读游戏
-./build/mhw-overlay --demo
+- Arch Linux (or any distro with Qt 6.8+)
+- Steam + GE-Proton 10-34 (or Proton 9+)
+- A running `MonsterHunterWorld.exe` process (live mode requires it)
+- KDE Plasma 6 on Wayland for the layer-shell surface
+- Build deps: `qt6-base qt6-declarative qt6-wayland layer-shell-qt cmake ninja`
 
-# 指定地址表
-./build/mhw-overlay --map /path/to/MonsterHunterWorld.421810.map
+## What the overlay shows
+
+```
+┌─────────────────────────────────────┐
+│  狩猎 · 古代树森林                    │  ← context (zone + quest state)
+│  DEMO · KDE Wayland layer-shell...   │  ← status / MHW state
+│  任务 66801 · ★6 · 剩余 41:37 · 猫车 0/3 │  ← quest
+│  猎人  HP 172/200 (86.0%)  ST 130/150 │  ← player
+│  装备  转身 60s · 不动 (冷却) 280s    │  ← mantles (active or cooldown)
+│  A27exe  MR 214  伤害 12840           │  ← party damage
+│  em\em100_00 [ID 100]                │  ← monster
+│  HP  14280 / 20880   68.4%  🔥74s    │  ← total HP + enrage countdown
+│    头部                              │  ← per-part
+│      硬直 3105/3105  100.0%           │
+│    尾巴
+│      硬直 200/200   100.0%  (mp)      │  ← multi: counter only
+└─────────────────────────────────────┘
 ```
 
-## 关键限制：Yama ptrace
+UI strings are externalised to `src/resources/i18n/<locale>.json`;
+all text on the panel is i18n-driven and re-renders without rebuilding
+when the JSON is updated.
 
-本机 `kernel.yama.ptrace_scope=1`。这意味着一个普通的独立进程默认不能读同用户但非子进程的 MHW。程序会明确显示权限错误，不会尝试 sudo 或改系统配置。
+## Repo layout
 
-当前原型已经验证了**本进程自读** (`process_vm_readv` + `/proc/pid/mem` fallback)，但还没有在 MHW 正在运行时验证跨 Proton 进程读取；这一步必须等你实际启动一局 MHW 后做 contract test。产品化时推荐用一个**极小的、有边界的 launcher/reader helper**处理进程关系/权限，而不是让整个 UI 以 root 运行。调试阶段也可以让 Steam 启动 overlay，使 reader 成为同一启动树的一部分；具体路径要在真机启动 MHW 后做 contract test 决定。
+```
+src/
+├── main.cpp                  # entry: --map / --demo / --locale
+├── overlay_window.{h,cpp}    # Qt UI, layer-shell, render loop
+├── mhw_reader.{h,cpp}        # top-level orchestrator (TODO: split in v0.2)
+│
+├── core/                     # foundational types and utilities
+│   └── string_table.{h,cpp}  # mhw::StringTable, QRC JSON loader
+│
+├── resources/                # Qt resources (compiled into the binary)
+│   ├── resources.qrc         # qrc manifest
+│   ├── i18n/                # UI strings (zh-CN.json, en-US.json …)
+│   ├── monsters/             # HunterPie XML-derived tables (parts, ailments)
+│   └── quests/               # quest-state translations (v0.2)
+│
+├── address_map/              # v0.2: extracted from mhw_reader.h
+├── monster/                  # v0.2: HP + parts + ailments + enrage
+├── player/                   # v0.2: HP/ST + 75-slot abnormalities + mantles
+├── quest/                    # v0.2: quest state, timer, deaths
+├── world/                    # v0.2: zone, scene
+└── ui/                       # v0.2: panel widgets, formatters
 
-## 数据来源与许可
+assets/                        # image assets (v0.2)
+├── icons/                     # per-monster / per-status icons
+└── charts/                    # DPS chart textures
 
-参考：<https://github.com/HunterPie/HunterPie>（Apache-2.0）。仓库保留其地址表与怪物 schema 的上游许可说明。原型阶段只内置当前 MHW `421810` 地址表。
+data/
+└── MonsterHunterWorld.421810.map  # HunterPie legacy offset table
+
+tests/                        # ctest targets — 1 unit + 7 diagnostic probes
+├── reader_tests.cpp
+├── string_table_tests.cpp
+├── mhw_probe.cpp                # generic reader probe
+├── mhw_scan.cpp                 # find monster struct table in heap
+├── mhw_probe_parts.cpp          # part table dump (normal + severable)
+├── mhw_probe_ailments.cpp       # one-shot ailment probe
+├── mhw_probe_ailments_watch.cpp # continuous ailment watch
+├── mhw_probe_mantles.cpp        # mantle probe
+├── mhw_probe_mantles_wide.cpp   # full region dump around EQUIPMENT_OFFSETS
+└── mhw_probe_buildup_fast.cpp  # (legacy, not built)
+
+docs/
+├── ARCHITECTURE.md
+├── I18N.md
+└── PROBE-TOOLS.md
+```
+
+## Build details
+
+CMake targets:
+
+| target           | description                                            |
+|------------------|--------------------------------------------------------|
+| `mhw-overlay`    | the GUI binary; the thing you actually run             |
+| `mhw-core`       | static lib: `mhw::StringTable` + future core utilities |
+| `mhw-reader-tests` | schema integrity check (kPartSchemas has 72 entries)  |
+| `mhw-core-tests` | `mhw::StringTable` load / miss / fallback             |
+| `mhw-probe*`     | 7 diagnostic CLIs; skipped by ctest if MHW not running |
+
+`ctest` runs the unit tests. The probe binaries are wired up but
+SKIP_RETURN_CODE'd so they pass on a box that doesn't have MHW running.
+
+## License
+
+The core offsets and struct layouts in `mhw_reader.cpp` are derived
+from the HunterPie project (HunterPie/HunterPie, Apache-2.0). Original
+offsets and layouts are credited in the file comments.
+
+The Linux port glue (`overlay_window.cpp`, `core/string_table.cpp`,
+build system, packaging) is also Apache-2.0.
+
+## See also
+
+- `docs/ARCHITECTURE.md` — how the reader is wired together, why we
+  avoid the QObject::tr ADL trap, the Yama `ptrace_scope` caveat.
+- `docs/I18N.md` — adding a new locale, adding a new UI string.
+- `docs/PROBE-TOOLS.md` — what each `mhw-probe-*` binary does and when
+  to use which.
