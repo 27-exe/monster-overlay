@@ -465,8 +465,9 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         QVector<PartSnapshot> parts;
         QHash<int, QString> cachedPartNames;
         if (cachedIt != monsterCache_.end())
+            int ci = 0;
             for (const auto &p : cachedIt->second.snapshot.parts)
-                            cachedPartNames.insert(p.index, p.name);
+                cachedPartNames.insert(ci++, p.name);
         if (partPtr && isSanePointer(*partPtr)) {
             const std::uintptr_t normalAddr = *partPtr + 0x40ULL;
             for (int i = 0; i < 16; ++i) {
