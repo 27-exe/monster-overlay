@@ -1278,16 +1278,11 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         // Read body parts (always; HP changes on damage). Names are cached.
         const auto partPtr = memory_.read<std::uintptr_t>(monster + 0x1D058ULL);
         QVector<PartSnapshot> parts;
-        // Per-tick cache of part names, keyed by stable identity across ticks.
-        //   key == -1*i  → normal table slot i (0..15)
-        //   key == 1*sid → severable table slot for partSchema.Id == sid
-        QHash<int, QString> cachedPartNames;
-        if (cachedIt != monsterCache_.end()) {
-            for (int ci = 0; ci < cachedIt->second.snapshot.parts.size(); ++ci) {
-                const PartSnapshot &cp = cachedIt->second.snapshot.parts.at(ci);
-                cachedPartNames.insert(cp.index, cp.name);
-            }
-        }
+        // No per-part name cache: the name is recomputed every tick from
+        // the fresh threshold suffix, so the displayed "0/2破" or
+        // "1/2破" stays in sync with the live counter. An earlier version
+        // cached names by part index; that caused the suffix to lag
+        // when the counter ticked up.
         if (partPtr && isSanePointer(*partPtr)) {
             const std::uintptr_t normalAddr    = *partPtr + 0x40ULL;
             const std::uintptr_t severableBase = *partPtr + 0x1FC8ULL;
@@ -1403,9 +1398,14 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                             if (p.firstThreshold > 0)
                                 thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(p.firstThreshold);
                             const QString pname = QString::fromUtf8(ps.name) + thSuffix;
-                            p.name = cachedPartNames.value(p.index, pname.isEmpty()
+                            // pname already encodes the threshold suffix
+                            // for this tick, so we accept it even when a
+                            // cached name exists. Otherwise we'd show a
+                            // stale "0/2破" for a part whose counter just
+                            // ticked up.
+                            p.name = pname.isEmpty()
                                 ? QStringLiteral("Part[%1]").arg(s)
-                                : pname);
+                                : pname;
                             parts.push_back(p);
                             break;
                         }
@@ -1427,14 +1427,23 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                     // first half — MaxFlinch is set unconditionally).
                     p.flinch = chp;
                     p.maxFlinch = mhp;
+                    // Default MaxHealth to the raw per-layer value; parts
+                    // with BreakThresholds get it overwritten by
+                    // applyBreakable below (cumulative threshold math).
+                    // Without this fallback, non-breakable parts end up
+                    // with maxHealth == 0 and the UI shows "削 --".
+                    p.maxHealth = mhp;
+                    p.health = chp;
                     p.extraHealth = ehp;
                     p.extraMaxHealth = emhp;
                     p.counter = counter;
                     p.isSeverable = false;
                     p.isBreakable = ps.thresholds[0] != '\0';
-                    // applyBreakable fills Health/MaxHealth + firstThreshold;
-                    // the per-layer value drives the "is this part already
-                    // past every threshold" flag for IsBroken.
+                    // applyBreakable fills Health/MaxHealth + firstThreshold
+                    // for parts that have BreakThresholds; it leaves
+                    // p.health/p.maxHealth untouched for no-threshold parts
+                    // (body, legs, non-severable tail on Tigrex) — which
+                    // is why the default above is required.
                     applyBreakable(p, ps, mhp, chp);
                     // HunterPie's IsBroken:
                     //   MaxHealth <= 0
@@ -1449,9 +1458,11 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                     if (p.firstThreshold > 0)
                         thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(p.firstThreshold);
                     const QString pname = QString::fromUtf8(ps.name) + thSuffix;
-                    p.name = cachedPartNames.value(p.index, pname.isEmpty()
+                    // Always use the freshly-computed pname (see severable
+                    // branch comment for why cached names were stale).
+                    p.name = pname.isEmpty()
                         ? QStringLiteral("Part[%1]").arg(normalSlotIdx)
-                        : pname);
+                        : pname;
                     parts.push_back(p);
                     ++normalSlotIdx;
                 }
