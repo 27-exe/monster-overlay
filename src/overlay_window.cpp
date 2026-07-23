@@ -226,8 +226,11 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
         QStringList monsterLines;
         for (const auto &monster : snapshot.monsters) {
             QString suffix;
-            if (monster.enraged)
-                suffix = QStringLiteral("  🔥%1s").arg(monster.enrageSeconds, 0, 'f', 0);
+            if (monster.enraged) {
+            float remain = monster.enrageMaxSeconds - monster.enrageSeconds;
+            if (remain > 0.0F)
+                suffix = QStringLiteral("  🔥%1s").arg(remain, 0, 'f', 0);
+        }
             QString main = QStringLiteral("%1 [ID %2]\nHP  %3 / %4   %5%6")
                                 .arg(monster.internalName)
                                 .arg(monster.id)
