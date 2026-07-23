@@ -550,6 +550,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         if (nameStruct && *nameStruct >= 0x10000 && *nameStruct < 0x0000800000000000ULL) {
             memory_.readBytes(*nameStruct + 0xCULL, nameBuf, sizeof(nameBuf) - 1, nullptr);
         }
+        if (nameBuf[0] == 0) continue; // skip monsters with no name
         const QString rawEm = QString::fromUtf8(nameBuf);
         if (rawEm.startsWith(QStringLiteral("em\\ems"))) continue;
         int hunterId = -1;
@@ -890,6 +891,13 @@ GameSnapshot MhwReader::poll()
         return snapshot;
 
     snapshot.zone = readZone(nullptr);
+    static Zone lastZone = Zone::Unknown;
+    if (snapshot.zone != lastZone) {
+        cachedArray_.clear();
+        monsterCache_.clear();
+        cachedArrayBase_ = 0;
+        lastZone = snapshot.zone;
+    }
     static int callCount = 0;
     if (++callCount % 10 == 0)
         qWarning("poll #%d: zone=%d", callCount, static_cast<int>(snapshot.zone));
