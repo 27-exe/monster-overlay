@@ -31,163 +31,163 @@ shipping two PNGs).
 
 ## What we ship in v0.2 (and what we don't)
 
-**We do**: SVG icons, since Qt 6 has first-class SVG support via
-`QSvgRenderer` and Qt Resource System (`<file>` in .qrc).
+### Reuse policy (revised after licence check)
 
-**We don't**: ship actual icon files. Reasons:
+| Source                              | Licence                          | Verdict                          |
+|-------------------------------------|----------------------------------|----------------------------------|
+| HunterPie code (C# / XAML)          | Apache-2.0                       | We are already a derivative work (offsets/structs are copy-pasted with attribution). Copy the licence text and we're done. |
+| HunterPie icon **Path data**        | Apache-2.0 + author-stated "free to use" | **Reuse, convert XAML → SVG, attribute** in our NOTICE. |
+| WorkSans font (TTF, in `Assets/Fonts/`) | SIL OFL 1.1                  | **Reuse directly** in `assets/fonts/`. |
+| `Assets/Textures/alligator_noise_512x512.jpg` | HunterPie/Apache-2.0       | **Reuse** if we ship a noise texture; otherwise skip. |
+| `Assets/Monsters/Masks/qurio_mask.png` | HunterPie (community-drawn but tied to a Capcom character) | **Skip** — Capcom copyright on the character. |
+| MHW in-game assets (Capcom)         | MHW EULA (forbidden)             | **Skip** entirely. |
 
-1. **HunterPie's icons are licensed separately** from the code
-   (Apache-2.0 for code, but assets carry their own terms). Copying
-   them into our binary is a license problem.
-2. **MHW's own art is copyrighted** by Capcom. We can't pull icons out
-   of the game binary. HunterPie doesn't either — its `qurio_mask`
-   is community-drawn.
-3. **Drawing them by hand is cheap** for the small set v0.2 needs:
-   a handful of generic status icons (enrage, mantle, ailment).
-   Custom art per monster is out of scope.
+### What this changes in v0.2
 
-This means the asset story is:
+1. **Icons** — instead of hand-drawing SVG placeholders, we copy
+   HunterPie's `Resources/Icons/*.xaml` path data, run a
+   one-off `xaml2svg.py` script (we'll provide it), and produce
+   `assets/icons/*.svg` files. Attribution: "Icons adapted from
+   HunterPie (Apache-2.0)" in `NOTICE`.
+2. **Fonts** — copy `WorkSans-{Regular,Medium,SemiBold}.ttf` (or all
+   5 weights) into `assets/fonts/`. SIL OFL requires the licence
+   text and copyright notice in our `NOTICE`.
+3. **Noise texture** — copy `Assets/Textures/alligator_noise_512x512.jpg`
+   if we want the same background grain HunterPie uses.
 
-- **v0.2 ships a default skin** with hand-drawn SVG placeholders
-  (e.g. `<circle>` and `<rect>` glyphs for "enrage", "stamina", etc.).
-- **Users can override** by dropping SVGs into `assets/icons/` and
-  adding `<file alias="...">` entries to a v0.2-shipped
-  `assets/icons.qrc`.
-- The runtime path is fixed (`:/icons/...`); only the bundle
-  contents change.
+### What we still don't ship
 
-## SVG / QRC pipeline (v0.2)
+- Game-internal assets (`em\*_st108_*` etc. extracted from the
+  binary at runtime). We **never** read these. The `em\*` strings
+  in memory are used as data, not as image sources.
+- Per-monster icons. HunterPie's `Assets/Monsters/` is empty of
+  per-monster PNGs; the per-monster visual in HunterPie is also
+  generated from the runtime data, not from static assets. We do
+  the same: a generic monster silhouette + `id`-derived colour.
 
-### `assets/icons/` structure
+### Reuse pipeline: `tools/xaml2svg.py`
+
+`HunterPie.UI/Resources/Icons/*.xaml` files contain `DrawingImage`
+elements with `<GeometryDrawing Geometry="F1 ...z M0,0z M..."/>`
+and `<EllipseGeometry>` / `<RectangleGeometry>`. The "F1 M..." path
+data is **literally the same format as SVG's `<path d="M..."/>`** —
+the only conversion is wrapping it in an SVG `<svg viewBox="0 0 W H">`
+element.
+
+The script does:
+- Parse the XAML's `ClipGeometry` to get viewBox dimensions
+- Extract every `<GeometryDrawing>` (paths, ellipses, rects)
+- Emit an SVG file with the right viewBox + `<path>` children
+- Replace Brush="#FFFFFFFF" with `currentColor` so the SVG can be
+  re-tinted at runtime via `QSvgRenderer`
+
+```python
+# tools/xaml2svg.py (v0.2 starter, will live under src/tools/)
+import re, sys
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+WPF_NS = "http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+
+def path_data_to_svg(d):
+    # WPF "F1 Mx,yz Mx,y ..." → SVG "Mx,y ..." (the F1 is a
+    # "fill rule" prefix, F1 = nonzero, default for SVG path).
+    d = re.sub(r'^F1\s+', '', d.strip())
+    d = d.replace(' M', ' M').strip()
+    return d
+
+def convert(xaml_path, out_path):
+    tree = ET.parse(xaml_path)
+    root = tree.getroot()
+    # viewBox: from outermost DrawingGroup.ClipGeometry="M0,0 Vw Hh V0 H0 Z"
+    # where Vw and Hh are the bounds. Simpler: from the file's DrawingImage
+    # if no clip; fall back to 0 0 68 68.
+    viewbox = "0 0 68 68"  # most HunterPie icons are 67.733 x 67.733
+    for dg in root.iter(f"{{{WPF_NS}}}DrawingGroup"):
+        clip = dg.get("ClipGeometry", "")
+        m = re.match(r'M0,0\s+V([\d.]+)\s+H([\d.]+)\s+V0\s+H0', clip)
+        if m:
+            viewbox = f"0 0 {m.group(1)} {m.group(2)}"
+            break
+    paths = []
+    for gd in root.iter(f"{{{WPF_NS}}}GeometryDrawing"):
+        d = gd.get("Geometry", "")
+        if d:
+            paths.append(f'<path d="{path_data_to_svg(d)}"/>')
+    out = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="{viewbox}">
+  <g fill="currentColor">
+    {chr(10).join("    " + p for p in paths)}
+  </g>
+</svg>
+'''
+    Path(out_path).write_text(out)
+
+for src in Path("HunterPie.UI/Resources/Icons").rglob("*.xaml"):
+    out = Path("assets/icons") / (src.stem + ".svg")
+    convert(src, out)
+```
+
+After running this once, we have a 100+ icon library in
+`assets/icons/`. v0.2 picks the 9 we need and bundles them via
+`assets/icons.qrc`.
+
+## What goes in `assets/` after running the script
 
 ```
 assets/
-├── icons.qrc                  # v0.2: bundle manifest
+├── fonts/
+│   ├── OFL.txt                  # required by SIL OFL 1.1
+│   ├── WorkSans-Regular.ttf
+│   ├── WorkSans-Medium.ttf
+│   └── WorkSans-SemiBold.ttf
 ├── icons/
-│   ├── enrage.svg             # 🔥-style flame icon
-│   ├── stamina.svg            # ⚡-style bolt
-│   ├── mantle.svg             # generic mantle shape
-│   ├── ailment_sleep.svg      # Zzz
-│   ├── ailment_paralysis.svg  # lightning
-│   ├── ailment_stun.svg       # stars
-│   ├── ailment_drool.svg      # droplet
-│   ├── part_flinch.svg        # impact mark
-│   ├── part_breakable.svg     # crack
-│   └── part_severable.svg     # scissors
-└── charts/
-    └── dps_grid.svg           # v0.2: DPS chart background grid
+│   ├── enrage.svg               # ← generated from HunterPie Icons.Activities.Something
+│   ├── stamina.svg
+│   ├── mantle.svg
+│   ├── ailment_sleep.svg
+│   ├── ailment_paralysis.svg
+│   ├── ailment_stun.svg
+│   ├── ailment_drool.svg
+│   ├── part_flinch.svg
+│   ├── part_breakable.svg
+│   └── part_severable.svg
+├── charts/
+│   ├── dps_grid.svg             # hand-drawn gridlines (cap on reuse: this is just
+│   │                           # a few horizontal lines, easier to draw fresh)
+│   └── dps_grid_noise.jpg       # ← generated from alligator_noise_512x512.jpg
+├── icons.qrc
+└── NOTICE                       # Apache-2.0 attribution + SIL OFL 1.1 notice
 ```
 
-### `assets/icons.qrc`
+## Attribution template (`assets/NOTICE`)
 
-```xml
-<!DOCTYPE RCC>
-<RCC version="1.0">
-    <qresource prefix="/icons">
-        <file alias="enrage.svg">icons/enrage.svg</file>
-        <file alias="stamina.svg">icons/stamina.svg</file>
-        <file alias="mantle.svg">icons/mantle.svg</file>
-        <file alias="ailment_sleep.svg">icons/ailment_sleep.svg</file>
-        <file alias="ailment_paralysis.svg">icons/ailment_paralysis.svg</file>
-        <file alias="ailment_stun.svg">icons/ailment_stun.svg</file>
-        <file alias="ailment_drool.svg">icons/ailment_drool.svg</file>
-        <file alias="part_flinch.svg">icons/part_flinch.svg</file>
-        <file alias="part_breakable.svg">icons/part_breakable.svg</file>
-        <file alias="part_severable.svg">icons/part_severable.svg</file>
-    </qresource>
-    <qresource prefix="/charts">
-        <file alias="dps_grid.svg">charts/dps_grid.svg</file>
-    </qresource>
-</RCC>
+```
+MHW Linux Overlay
+Copyright 2024 a27exe
+
+This product includes software developed by the HunterPie contributors
+(https://github.com/HunterPie/HunterPie), licensed under the Apache
+License, Version 2.0. Icon Path data was adapted from HunterPie's
+XAML resources (Resources/Icons/*.xaml) per Apache-2.0 terms.
+
+This product includes WorkSans (https://github.com/weiweihuanghuang/
+Work-Sans), licensed under the SIL Open Font License, Version 1.1.
+A copy of the OFL text is included as assets/fonts/OFL.txt.
+
+This product includes software developed by the MHW community at
+large; see README.md for the full list of contributors and source
+repositories.
 ```
 
-### C++ loader (`src/core/icon.h`)
+## v0.2 checklist (revised)
 
-```cpp
-class Icon {
-public:
-    explicit Icon(const QString &qrcPath);   // e.g. ":/icons/enrage.svg"
-    QPixmap render(const QSize &size, const QColor &tint = Qt::white) const;
-    int naturalWidth() const;
-    int naturalHeight() const;
-private:
-    QSvgRenderer renderer_;
-    QByteArray svgBytes_;
-    QSize naturalSize_;
-};
-```
-
-`render()` produces a `QPixmap` of the requested size, optionally
-tinted. This lets the overlay resize icons per-panel without
-maintaining multiple SVGs.
-
-### Caching
-
-`Icon` instances are cheap to construct (one QSvgRenderer, holds
-SVG bytes). They're stored in a `QHash<QString, Icon>` per-panel,
-keyed by alias. Don't share icons across panels — each panel
-re-tints independently.
-
-## v0.2 usage examples
-
-```cpp
-// In a player-status panel
-auto staminaIcon = Icon(QStringLiteral(":/icons/stamina.svg"));
-auto tinted = staminaIcon.render(QSize(24, 24), QColor("#ffd479"));
-staminaLabel_->setPixmap(tinted);
-staminaLabel_->setText(mh::tr("ui.player_stamina_format")
-                         .arg(stamina).arg(maxStamina));
-```
-
-```cpp
-// In a monster panel — per-part icons
-auto icon = part.isSeverable ? Icon(":/icons/part_severable.svg")
-                             : part.isBreakable
-                                ? Icon(":/icons/part_breakable.svg")
-                                : Icon(":/icons/part_flinch.svg");
-partNameLabel_->setPixmap(icon.render(QSize(16, 16)));
-```
-
-## Chart asset (DPS, v0.2)
-
-`assets/charts/dps_grid.svg` is the **background grid** for the
-DPS sparkline. The data series is drawn on top via `QPainter`
-(this is the only place we use raster drawing — SVG only for the
-frame).
-
-Layout:
-- The SVG provides the gridlines (5 horizontal lines at 0%, 25%,
-  50%, 75%, 100% of the panel height, plus tick marks for time).
-- The panel reads `DAMAGE_ADDRESS + DAMAGE_OFFSETS[i*0x2A0]` for
-  each of the 4 party members, samples the 4 cumulative values at
-  1 Hz, computes per-second deltas, and draws a line per member.
-- Member colours come from `i18n/zh-CN.json`'s `ui.member_color_*`
-  keys (so the user can theme).
-
-## Why no auto-update from game assets
-
-HunterPie doesn't extract assets from the running game either. Its
-flow is: developer ships assets, app reads them from the embedded
-resource. We follow the same model. The **game's** assets are off
-limits, both for license and for engineering reasons (we'd need to
-parse `.pak` files inside `/proc/<pid>/mem` to find them, which is
-way out of scope for v0.2).
-
-## Asset checklist for v0.2
-
-| File                                  | Source                             | Status  |
-|---------------------------------------|------------------------------------|---------|
-| `assets/icons.qrc`                    | Generated                          | TODO    |
-| `assets/icons/enrage.svg`             | Hand-drawn / placeholder           | TODO    |
-| `assets/icons/stamina.svg`            | Hand-drawn / placeholder           | TODO    |
-| `assets/icons/mantle.svg`             | Hand-drawn / placeholder           | TODO    |
-| `assets/icons/ailment_*.svg` (4)      | Hand-drawn / placeholder           | TODO    |
-| `assets/icons/part_*.svg` (3)         | Hand-drawn / placeholder           | TODO    |
-| `assets/charts/dps_grid.svg`          | Hand-drawn / placeholder           | TODO    |
-| `src/core/icon.h` + `icon.cpp`        | New                                | TODO    |
-| `src/ui/dps_chart.{h,cpp}`            | New                                | TODO    |
-| `CMakeLists.txt` (link `assets/icons.qrc`) | Update                       | TODO    |
-
-The hand-drawn placeholders can be **really minimal** — a 24×24
-circle or a 16×16 square with a label. The point is the pipeline;
-the visuals are placeholders.
+- [ ] Copy WorkSans TTFs into `assets/fonts/`
+- [ ] Copy `OFL.txt` into `assets/fonts/`
+- [ ] Write `tools/xaml2svg.py` and run it on HunterPie icons
+- [ ] Pick 9-10 icons from generated set, place in `assets/icons/`
+- [ ] Copy `alligator_noise_512x512.jpg` (optional)
+- [ ] Write `assets/icons.qrc` bundling
+- [ ] Write `assets/NOTICE`
+- [ ] Implement `src/core/icon.h` + `icon.cpp` (QSvgRenderer wrapper)
+- [ ] Implement `src/ui/dps_chart.h` + `dps_chart.cpp` (paint + grid + data series)
+- [ ] Update `CMakeLists.txt` to link `assets/icons.qrc`
