@@ -1,4 +1,5 @@
 #include "overlay_window.h"
+#include "core/string_table.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
@@ -49,9 +50,19 @@ int main(int argc, char **argv)
                                  QStringLiteral("path"),
                                  QString::fromUtf8(MHW_DEFAULT_MAP));
     QCommandLineOption demoOption(QStringLiteral("demo"), QStringLiteral("Render mock data without reading MHW"));
+    QCommandLineOption localeOption(QStringLiteral("locale"),
+                                    QStringLiteral("UI locale (e.g. zh-CN, en-US)"),
+                                    QStringLiteral("code"));
     parser.addOption(mapOption);
     parser.addOption(demoOption);
+    parser.addOption(localeOption);
     parser.process(parserArguments);
+
+    if (!mhw::StringTable::instance().load(
+            parser.isSet(localeOption) ? parser.value(localeOption)
+                                        : QStringLiteral("zh-CN"))) {
+        qWarning() << "Failed to load UI strings; falling back to key names.";
+    }
 
     if (launchIndex >= 0 && launchCommand.isEmpty())
         parser.showHelp(2);

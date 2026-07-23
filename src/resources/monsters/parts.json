@@ -1,0 +1,4 @@
+{
+  "_meta": "HunterPie MonsterData.xml 部位中文翻译表 (zh-CN). 格式: {\"<schemaId>\": {\"name\": \"<中文名>\", \"severable\": <bool>, \"thresholds\": [<int>, ...]}}. v0.1: 占位; v0.2: 实际 schema 注入.",
+  "placeholder": "v0.1 占位结构, 由 scripts/gen_schema.py 从 HunterPie MonsterData.xml 自动生成时填充."
+}

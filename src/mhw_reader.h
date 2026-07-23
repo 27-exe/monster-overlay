@@ -38,6 +38,17 @@ struct PartSnapshot {
     bool isBroken{};
 };
 
+struct MonsterAilmentSnapshot {
+    int id{-1};
+    QString name;
+    bool active{};
+    float timer{};
+    float maxTimer{};
+    float buildup{};
+    float maxBuildup{};
+    int counter{};
+};
+
 struct MonsterSnapshot {
     std::uintptr_t address{};
     int id{-1};
@@ -48,8 +59,11 @@ struct MonsterSnapshot {
     float maxStamina{};
     float enrageSeconds{};
     float enrageMaxSeconds{};
+    float enrageBuildup{};       // current anger accumulation (HunterPie MHWMonsterStatusStructure.Buildup)
+    float enrageMaxBuildup{};    // threshold to enrage
     bool enraged{};
     QVector<PartSnapshot> parts;
+    QVector<MonsterAilmentSnapshot> ailments;
 };
 
 struct PlayerSnapshot {
@@ -58,6 +72,27 @@ struct PlayerSnapshot {
     float stamina{};
     float maxStamina{};
     bool valid{};
+    // Gear cooldowns (mantles). Each is the timer in seconds; 0 = inactive.
+    // HunterPie AbnormalityData.xml IDs (offset = (Id-0x38)/4 within the
+    // 75-slot MHWAbnormalityStructure array at abnormalityBase+0x38).
+    float mantleHealthTimer{};     // 体力衣装
+    float mantleHealthLargeTimer{};// 体力衣装(大)
+    float mantleStaminaTimer{};    // 耐力衣装
+    float mantleStaminaLargeTimer{};// 耐力衣装(大)
+    float mantleToolTimer{};       // 道具衣装
+    float mantleToolLargeTimer{};  // 道具衣装(大)
+    float earplugTimer{};          // 耳栓
+    // Mantles (HunterPie MHWPlayer.GetMantlesData): two equipped mantle slots,
+    // each with timer (current seconds remaining) + label.
+    // SpecializedToolType enum: 0=EVASION_MANTLE(转身), 1=AFFINITY_BOOSTER(达人),
+    // 2=ASSASSIN(刺客), 3=ELEMENTAL_RESIST(耐属), 4=IMPACT(免疫), 5=PROVOKER(挑拨),
+    // 6=GLIDER(不动), 7=HEALTH_BOOSTER(生命).
+    int mantleSlot0Id{-1};
+    float mantleSlot0Timer{};
+    float mantleSlot0Cooldown{};   // when unequipped, time until re-equip is allowed
+    int mantleSlot1Id{-1};
+    float mantleSlot1Timer{};
+    float mantleSlot1Cooldown{};
 };
 
 struct PartyMemberSnapshot {
@@ -133,6 +168,10 @@ struct GameSnapshot {
     QVector<PartyMemberSnapshot> party;
     QuestSnapshot quest;
     bool isMultiplayer{false};   // party.size() > 1
+    // Diagnostic: raw bytes at monster+0x1BC40..0x1BD00 each tick.
+    // Populated by readMonsters when --diagnose-ailments is set.
+    QVector<QByteArray> diagnosisAilmentPointers;
+    QByteArray diagnosisAilmentBlock;
 };
 
 class AddressMap {
@@ -221,6 +260,7 @@ private:
     void discoverMonsterTable();
     Zone readZone(QString *error);
     QVector<MonsterSnapshot> readMonsters(QString *error);
+    void readMonsterAilments(MonsterSnapshot &monster);
     PlayerSnapshot readPlayer(QString *error);
     QVector<PartyMemberSnapshot> readParty(QString *error);
     QuestSnapshot readQuest(QString *error);

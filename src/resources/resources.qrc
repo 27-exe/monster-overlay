@@ -1,0 +1,8 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/">
+        <file>i18n/zh-CN.json</file>
+        <file>monsters/parts.json</file>
+        <file>monsters/ailments.json</file>
+    </qresource>
+</RCC>

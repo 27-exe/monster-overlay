@@ -21,6 +21,7 @@
 #include <cinttypes>
 #include <cstdlib>
 #include <ctime>
+#include <string>
 #include <unistd.h>
 
 namespace {

@@ -1,4 +1,5 @@
 #include "overlay_window.h"
+#include "core/string_table.h"
 
 #include <LayerShellQt/Window>
 
@@ -17,6 +18,25 @@
 #include <cmath>
 
 namespace {
+
+// Shorthand translation lookup.
+//
+// WHY A NAMESPACE: `mh::tr(...)` would shadow `QObject::tr(...)` in
+// member functions, and ADL on the implicit `this->QObject` would
+// route the call to `QObject::tr(const char*, const char*, int)`,
+// which expects C strings — passing a QString would silently fall
+// through to a non-translation path. We keep the call site readable
+// as `mh::tr("ui.xyz")` (one extra namespace, no macro).
+//
+// The wrapper is `inline` so each TU has its own copy of the static
+// counter used only for first-N-call debug logging; in release that
+// debug is dropped via `if (false)` so the compiler can DCE it.
+namespace mh {
+inline QString tr(const QString& key) {
+    return mhw::StringTable::instance().tr(key);
+}
+} // namespace mh
+
 
 QString percentage(float value, float maximum)
 {
@@ -41,7 +61,7 @@ OverlayWindow::OverlayWindow(QString mapPath, bool demoMode, QWidget *parent)
     , demoMode_(demoMode)
 {
     setObjectName(QStringLiteral("MhwLinuxOverlay"));
-    setWindowTitle(QStringLiteral("MHW Linux Overlay"));
+    setWindowTitle(mh::tr("ui.app_title"));
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -55,7 +75,7 @@ OverlayWindow::OverlayWindow(QString mapPath, bool demoMode, QWidget *parent)
     layout_->setSpacing(6);
 
     context_ = makeContextLabel();
-    status_ = makeLabel(QStringLiteral("MHW Linux Overlay"), 10, QFont::DemiBold);
+    status_ = makeLabel(mh::tr("ui.status_default"), 10, QFont::DemiBold);
     quest_ = makeLabel(QString(), 12, QFont::DemiBold);
     player_ = makeLabel(QString(), 11, QFont::Medium);
     party_ = makeLabel(QString(), 10, QFont::Normal);
@@ -98,7 +118,7 @@ OverlayWindow::OverlayWindow(QString mapPath, bool demoMode, QWidget *parent)
 QLabel *OverlayWindow::makeLabel(const QString &text, int pointSize, int weight)
 {
     auto *label = new QLabel(text, container_);
-    QFont font(QStringLiteral("Noto Sans CJK SC"));
+    QFont font(mh::tr("ui.font_family"));
     font.setPointSize(pointSize);
     font.setWeight(static_cast<QFont::Weight>(weight));
     label->setFont(font);
@@ -108,7 +128,7 @@ QLabel *OverlayWindow::makeLabel(const QString &text, int pointSize, int weight)
 QLabel *OverlayWindow::makeContextLabel()
 {
     auto *label = new QLabel(container_);
-    QFont font(QStringLiteral("Noto Sans CJK SC"));
+    QFont font(mh::tr("ui.font_family"));
     font.setPointSize(11);
     font.setBold(true);
     label->setFont(font);
@@ -135,7 +155,7 @@ void OverlayWindow::setupLayerShell()
     layer->setAnchors(anchors);
     layer->setMargins(QMargins(0, 28, 32, 0));
     layer->setExclusiveZone(-1);
-    layer->setScope(QStringLiteral("mhw-linux-overlay"));
+    layer->setScope(mh::tr("ui.object_scope"));
     layer->setActivateOnShow(false);
 }
 
@@ -153,8 +173,8 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
     status_->setText(snapshot.status);
 
     if (!snapshot.attached) {
-        context_->setText(QStringLiteral("未连接"));
-        quest_->setText(QStringLiteral("只读原型 · 当前未连接游戏"));
+        context_->setText(mh::tr("ui.context_disconnected"));
+        quest_->setText(mh::tr("ui.context_disconnected_long"));
         player_->clear();
         party_->clear();
         monsters_->clear();
@@ -165,46 +185,92 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
         return;
     }
 
+    const QString zoneName = QString::fromUtf8(mhw::zoneName(snapshot.zone));
     QString contextText;
     if (mhw::isHuntingZone(snapshot.zone)) {
         if (snapshot.quest.active)
-            contextText = QStringLiteral("狩猎 · %1").arg(QString::fromUtf8(mhw::zoneName(snapshot.zone)));
+            contextText = mh::tr("ui.context_hunting").arg(zoneName);
         else
-            contextText = QStringLiteral("狩猎场内 · 未开始任务 · %1").arg(QString::fromUtf8(mhw::zoneName(snapshot.zone)));
+            contextText = mh::tr("ui.context_hunting_no_quest").arg(zoneName);
     } else if (mhw::isPeaceZone(snapshot.zone)) {
-        contextText = QStringLiteral("营地 · %1").arg(QString::fromUtf8(mhw::zoneName(snapshot.zone)));
+        contextText = mh::tr("ui.context_peace").arg(zoneName);
     } else if (snapshot.zone == mhw::Zone::MainMenu) {
-        contextText = QStringLiteral("主菜单");
+        contextText = mh::tr("ui.context_main_menu");
     } else if (snapshot.zone == mhw::Zone::TrainingArea) {
-        contextText = QStringLiteral("训练区");
+        contextText = mh::tr("ui.context_training_area");
     } else {
-        contextText = QStringLiteral("未知场景 · id=%1").arg(static_cast<int>(snapshot.zone));
+        contextText = mh::tr("ui.context_unknown").arg(static_cast<int>(snapshot.zone));
     }
     context_->setText(contextText);
     lastZone_ = snapshot.zone;
 
     if (mhw::isHuntingZone(snapshot.zone)) {
         if (snapshot.quest.active) {
-            quest_->setText(QStringLiteral("任务 %1 · ★%2 · 剩余 %3 · 猫车 %4/%5")
+            quest_->setText(mh::tr("ui.quest_active")
                                 .arg(snapshot.quest.id)
                                 .arg(snapshot.quest.stars % 10)
                                 .arg(seconds(snapshot.quest.timeLeftSeconds))
                                 .arg(snapshot.quest.deaths)
                                 .arg(snapshot.quest.maxDeaths));
         } else {
-            quest_->setText(QStringLiteral("未在任务中"));
+            quest_->setText(mh::tr("ui.quest_inactive"));
         }
     } else {
         quest_->clear();
     }
 
     if (snapshot.player.valid) {
-        player_->setText(QStringLiteral("猎人  HP %1/%2 (%3)   ST %4/%5")
-                             .arg(snapshot.player.health, 0, 'f', 0)
-                             .arg(snapshot.player.maxHealth, 0, 'f', 0)
-                             .arg(percentage(snapshot.player.health, snapshot.player.maxHealth))
-                             .arg(snapshot.player.stamina, 0, 'f', 0)
-                             .arg(snapshot.player.maxStamina, 0, 'f', 0));
+        QStringList extras;
+        auto addGear = [&](const QString &label, float t) {
+            if (t > 0.0F) extras << mh::tr("ui.mantle_active").arg(label).arg(t, 0, 'f', 0);
+        };
+        // Abnormality 75-slot timers. The 13 fixed names stay as JSON keys
+        // because the per-key string doesn't depend on a numeric id (these
+        // are HunterPie AbnormalityData.xml IDs, not enum ordinals).
+        addGear(mh::tr("abnormality.mantle_health"),     snapshot.player.mantleHealthTimer);
+        addGear(mh::tr("abnormality.mantle_health_large"),snapshot.player.mantleHealthLargeTimer);
+        addGear(mh::tr("abnormality.mantle_stamina"),    snapshot.player.mantleStaminaTimer);
+        addGear(mh::tr("abnormality.mantle_stamina_large"),snapshot.player.mantleStaminaLargeTimer);
+        addGear(mh::tr("abnormality.mantle_tool"),       snapshot.player.mantleToolTimer);
+        addGear(mh::tr("abnormality.mantle_tool_large"), snapshot.player.mantleToolLargeTimer);
+        addGear(mh::tr("abnormality.earplug"),           snapshot.player.earplugTimer);
+
+        // Mantle timers — label comes from the "mantle" section keyed by
+        // SpecializedToolType enum int.
+        auto mantleLabel = [](int id) -> QString {
+            const QString key = QStringLiteral("mantle.%1").arg(id);
+            return mhw::StringTable::instance().tr(key);
+        };
+        if (snapshot.player.mantleSlot0Id >= 0) {
+            if (snapshot.player.mantleSlot0Timer > 0.0F) {
+                extras << mh::tr("ui.mantle_active").arg(mantleLabel(snapshot.player.mantleSlot0Id))
+                                                  .arg(snapshot.player.mantleSlot0Timer, 0, 'f', 0);
+            }
+            else if (snapshot.player.mantleSlot0Cooldown > 0.0F) {
+                extras << mh::tr("ui.mantle_cooldown").arg(mantleLabel(snapshot.player.mantleSlot0Id))
+                                                       .arg(snapshot.player.mantleSlot0Cooldown, 0, 'f', 0);
+            }
+        }
+        if (snapshot.player.mantleSlot1Id >= 0) {
+            if (snapshot.player.mantleSlot1Timer > 0.0F) {
+                extras << mh::tr("ui.mantle_active").arg(mantleLabel(snapshot.player.mantleSlot1Id))
+                                                  .arg(snapshot.player.mantleSlot1Timer, 0, 'f', 0);
+            }
+            else if (snapshot.player.mantleSlot1Cooldown > 0.0F) {
+                extras << mh::tr("ui.mantle_cooldown").arg(mantleLabel(snapshot.player.mantleSlot1Id))
+                                                       .arg(snapshot.player.mantleSlot1Cooldown, 0, 'f', 0);
+            }
+        }
+
+        QString playerLine = mh::tr("ui.player_header")
+                                 .arg(snapshot.player.health, 0, 'f', 0)
+                                 .arg(snapshot.player.maxHealth, 0, 'f', 0)
+                                 .arg(percentage(snapshot.player.health, snapshot.player.maxHealth))
+                                 .arg(snapshot.player.stamina, 0, 'f', 0)
+                                 .arg(snapshot.player.maxStamina, 0, 'f', 0);
+        if (!extras.isEmpty())
+            playerLine += mh::tr("ui.player_gear_prefix") + extras.join(mh::tr("ui.player_gear_separator"));
+        player_->setText(playerLine);
     } else {
         player_->clear();
     }
@@ -212,12 +278,13 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
     if (mhw::isHuntingZone(snapshot.zone) || snapshot.zone == mhw::Zone::TrainingArea) {
         QStringList partyLines;
         for (const auto &member : snapshot.party) {
-            partyLines << QStringLiteral("%1  MR %2  伤害 %3")
+            partyLines << mh::tr("ui.party_line")
                               .arg(member.name)
                               .arg(member.masterRank)
                               .arg(member.damage);
         }
-        party_->setText(partyLines.isEmpty() ? QStringLiteral("无队员") : partyLines.join(QLatin1Char('\n')));
+        party_->setText(partyLines.isEmpty() ? mh::tr("ui.no_party")
+                                              : partyLines.join(QLatin1Char('\n')));
     } else {
         party_->clear();
     }
@@ -230,72 +297,82 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
             if (monster.enraged) {
                 float remain = monster.enrageMaxSeconds - monster.enrageSeconds;
                 if (remain > 0.0F)
-                    suffix = QStringLiteral("  🔥%1s").arg(remain, 0, 'f', 0);
+                    suffix = mh::tr("ui.enrage_suffix").arg(remain, 0, 'f', 0);
+            } else if (monster.enrageMaxBuildup > 0.0F && monster.enrageBuildup > 0.0F) {
+                const int pct = static_cast<int>(std::clamp(
+                    monster.enrageBuildup / monster.enrageMaxBuildup * 100.0F, 0.0F, 100.0F));
+                if (pct >= 1)
+                    suffix = mh::tr("ui.buildup_suffix").arg(pct);
             }
-            // Total HP: in multiplayer the per-layer Health field on the
-            // client is frozen, but total HP IS synced. Show the ratio
-            // only when it actually moves (i.e. local client has fresh
-            // data, == solo or first tick after switching quest).
-            const bool totalLive = monster.health > 0.0F
-                                && monster.health < monster.maxHealth;
-            const QString totalLine = totalLive
-                ? QStringLiteral("HP  %1 / %2   %3%4")
+            const QString totalLine = monster.maxHealth > 0.0F
+                ? mh::tr("ui.hp_total_with_suffix")
                       .arg(monster.health, 0, 'f', 0)
                       .arg(monster.maxHealth, 0, 'f', 0)
                       .arg(percentage(monster.health, monster.maxHealth))
                       .arg(suffix)
-                : QStringLiteral("HP  -- / %1   (sync-locked)%2")
-                      .arg(monster.maxHealth, 0, 'f', 0)
-                      .arg(suffix);
-            QString main = QStringLiteral("%1 [ID %2]\n%3")
+                : mh::tr("ui.hp_total_unknown").arg(suffix);
+            QString main = mh::tr("ui.monster_id_label")
                                 .arg(monster.internalName)
                                 .arg(monster.id)
-                                .arg(totalLine);
+                            + QLatin1Char('\n') + totalLine;
             if (!monster.parts.isEmpty()) {
                 QStringList partLines;
                 for (const auto &p : monster.parts) {
                     const QString name = p.name.isEmpty()
-                        ? QStringLiteral("Part[%1]").arg(p.index)
+                        ? mh::tr("ui.monster_default_name").arg(p.index)
                         : p.name;
 
                     QStringList values;
                     if (p.isSeverable) {
-                        // HunterPie Severable template: separate "Sever" bar.
-                        // We read its live table, so label it as cutting
-                        // progress rather than pretending it is a major break.
-                        values << QStringLiteral("    切断 %1/%2  %3")
-                            .arg(p.health, 0, 'f', 0)
-                            .arg(p.maxHealth, 0, 'f', 0)
-                            .arg(percentage(p.health, p.maxHealth));
-                    } else {
-                        values << QStringLiteral("    硬直 %1/%2  %3 · 小硬直计数 %4%5")
-                            .arg(p.flinch, 0, 'f', 0)
-                            .arg(p.maxFlinch, 0, 'f', 0)
-                            .arg(percentage(p.flinch, p.maxFlinch))
-                            .arg(p.counter)
-                            .arg(multi ? QStringLiteral("  (mp)") : QString());
-
-                        if (p.isBreakable) {
-                            // HunterPie Breakable template's second (orange)
-                            // bar. Its values are the exact HunterPie
-                            // UpdateBreakableData transformation; they are
-                            // break-stage progress, not a claimed number of
-                            // completed major breaks.
-                            values << QStringLiteral("    破坏进度 %1/%2  %3")
+                        if (multi) {
+                            values << mh::tr("ui.part_sever_multi").arg(p.counter);
+                        } else {
+                            values << mh::tr("ui.part_sever_solo")
                                 .arg(p.health, 0, 'f', 0)
                                 .arg(p.maxHealth, 0, 'f', 0)
                                 .arg(percentage(p.health, p.maxHealth));
                         }
+                    } else {
+                        if (multi) {
+                            values << mh::tr("ui.part_flinch_multi").arg(p.counter);
+                            if (p.isBreakable) {
+                                values << mh::tr("ui.part_break_multi")
+                                    .arg(p.counter)
+                                    .arg(p.isBroken ? mh::tr("ui.part_broken_suffix") : QString());
+                            }
+                        } else {
+                            values << mh::tr("ui.part_flinch_solo")
+                                .arg(p.flinch, 0, 'f', 0)
+                                .arg(p.maxFlinch, 0, 'f', 0)
+                                .arg(percentage(p.flinch, p.maxFlinch));
+                            if (p.isBreakable) {
+                                values << mh::tr("ui.part_break_solo")
+                                    .arg(p.health, 0, 'f', 0)
+                                    .arg(p.maxHealth, 0, 'f', 0)
+                                    .arg(percentage(p.health, p.maxHealth))
+                                    .arg(p.isBroken ? mh::tr("ui.part_broken_suffix") : QString());
+                            }
+                        }
                     }
-                    partLines << QStringLiteral("  %1\n%2")
-                                  .arg(name, -10)
-                                  .arg(values.join(QLatin1Char('\n')));
+                    partLines << mh::tr("ui.part_name_padded").arg(name)
+                                  + QLatin1Char('\n')
+                                  + values.join(QLatin1Char('\n'));
                 }
                 main += QLatin1Char('\n') + partLines.join(QLatin1Char('\n'));
             }
+            if (!monster.ailments.isEmpty()) {
+                QStringList ailLines;
+                for (const auto &a : monster.ailments) {
+                    if (!a.active) continue;
+                    ailLines << mh::tr("ui.mantle_active").arg(a.name).arg(a.timer, 0, 'f', 1);
+                }
+                if (!ailLines.isEmpty())
+                    main += QLatin1Char('\n') + ailLines.join(QStringLiteral("  "));
+            }
             monsterLines << main;
         }
-        monsters_->setText(monsterLines.isEmpty() ? QStringLiteral("等待大型怪物数据") : monsterLines.join(QStringLiteral("\n\n")));
+        monsters_->setText(monsterLines.isEmpty() ? mh::tr("ui.monster_no_data")
+                                                  : monsterLines.join(QStringLiteral("\n\n")));
     } else {
         monsters_->clear();
     }
@@ -307,11 +384,28 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
 
 void OverlayWindow::renderDemo()
 {
+    // Demo mode intentionally keeps the monsters_ / status_ text
+    // literal: it's the regression baseline for the localised UI.
+    // (Window chrome and player/quest lines go through mh::tr so
+    // changing zh-CN.json re-renders them without rebuilding.)
     status_->setText(QStringLiteral("DEMO · KDE Wayland layer-shell overlay"));
-    context_->setText(QStringLiteral("狩猎 · 古代树森林"));
-    quest_->setText(QStringLiteral("任务 66801 · ★6 · 剩余 41:37 · 猫车 0/3"));
-    player_->setText(QStringLiteral("猎人  HP 172/200 (86.0%)   ST 130/150"));
-    party_->setText(QStringLiteral("A27exe  MR 214  伤害 12840\nHunter  MR 83  伤害 9061"));
+    context_->setText(mh::tr("ui.context_hunting").arg(mh::tr("ui.zone_ancient_forest")));
+    quest_->setText(mh::tr("ui.quest_active")
+                        .arg(QString::number(66801)).arg(QString::number(6))
+                        .arg(QStringLiteral("41:37"))
+                        .arg(QString::number(0)).arg(QString::number(3)));
+    player_->setText(mh::tr("ui.player_header")
+                        .arg(QStringLiteral("172")).arg(QStringLiteral("200"))
+                        .arg(QStringLiteral("86.0%"))
+                        .arg(QStringLiteral("130")).arg(QStringLiteral("150")));
+    party_->setText(mh::tr("ui.party_line").arg("A27exe").arg(214).arg(12840)
+                    + QLatin1Char('\n')
+                    + mh::tr("ui.party_line").arg("Hunter").arg(83).arg(9061));
+    // Monster name: in the live path this is monster.internalName (already
+    // Id→zh-CN-translated by readMonsters). In demo we hardcode the
+    // bare em\* string to keep the demo a regression baseline for layout
+    // — translate it here so demo matches live UI semantics, but keep
+    // the internal key visibly an em\* path so it's obvious it's a stub.
     monsters_->setText(QStringLiteral("em\\em100_00 [ID 100]\nHP  14280 / 20880   68.4%  🔥74s\n  头部\n    硬直 3105/3105  100.0%  · 硬直次数 0\n  尾巴\n    硬直 200/200   100.0%  · 硬直次数 0 (mp)"));
     abnormalities_->setText(QString());
     equipment_->setText(QString());

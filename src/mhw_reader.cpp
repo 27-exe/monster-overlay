@@ -1189,6 +1189,68 @@ const QHash<int, QVector<PartSchema>> kPartSchemas = {
 };
 // END AUTO-GENERATED kPartSchemas
 
+// HunterPie MonsterData.xml Ailment Id -> Chinese name (fixed, not per-TU).
+static const QHash<int, QString> kAilmentNames = {
+    {1, QStringLiteral("毒")},
+    {2, QStringLiteral("麻痹")},
+    {3, QStringLiteral("睡眠")},
+    {4, QStringLiteral("爆破")},
+    {5, QStringLiteral("乘骑")},
+    {6, QStringLiteral("疲劳")},
+    {7, QStringLiteral("眩晕")},
+    {8, QStringLiteral("捕获")},
+    {9, QStringLiteral("闪光")},
+    {11, QStringLiteral("倒地")},
+    {18, QStringLiteral("龙封")},
+    {22, QStringLiteral("爪击")},
+    {23, QStringLiteral("口水硬直")},
+};
+
+void MhwReader::readMonsterAilments(MonsterSnapshot &monster)
+{
+    // HunterPie GetMonsterAilments(): monster+0x1BC40 → pointer array,
+    // each element +0x148 → MHWMonsterAilmentStructure.
+    const std::uintptr_t ailBase = monster.address + 0x1BC40ULL;
+    auto ailPtr = memory_.read<std::uintptr_t>(ailBase);
+    if (!ailPtr || *ailPtr <= 1) return;
+
+    std::uintptr_t cursor = ailBase;
+    for (int i = 0; i < 32; ++i) {
+        auto current = memory_.read<std::uintptr_t>(cursor);
+        if (!current || *current <= 1) break;
+        const std::uintptr_t structAddr = *current + 0x148ULL;
+
+        // Read MHWMonsterAilmentStructure (0x98 bytes total, we only need key fields)
+        // +0x00: Owner (long), +0x08: IsActive (int), +0x0C: Unk1, +0x10: Id (int)
+        // +0x14: MaxDuration (float), +0x34: Buildup (float), +0x50: MaxBuildup (float)
+        // +0x5C: Duration (float), +0x74: Counter (int)
+        struct { std::int64_t owner; std::int32_t active; std::int32_t unk1; std::int32_t id; } header{};
+        if (!memory_.readBytes(structAddr, &header, sizeof(header), nullptr)) break;
+
+        if (header.owner != static_cast<std::int64_t>(monster.address)) break;
+
+        const auto maxDur = memory_.read<float>(structAddr + 0x14ULL);
+        const auto duration = memory_.read<float>(structAddr + 0x5CULL);
+        const auto buildup = memory_.read<float>(structAddr + 0x34ULL);
+        const auto maxBuildup = memory_.read<float>(structAddr + 0x50ULL);
+        const auto counter = memory_.read<std::int32_t>(structAddr + 0x74ULL);
+
+        MonsterAilmentSnapshot ail;
+        ail.id = header.id;
+        ail.name = kAilmentNames.value(header.id, QStringLiteral("异常%1").arg(header.id));
+        ail.active = (header.active != 0) && (duration && *duration > 0.0F);
+        ail.maxTimer = maxDur ? *maxDur : 0.0F;
+        // HunterPie: Timer = Duration (already countdown). Display remaining.
+        ail.timer = duration ? *duration : 0.0F;
+        ail.buildup = buildup ? *buildup : 0.0F;
+        ail.maxBuildup = maxBuildup ? *maxBuildup : 0.0F;
+        ail.counter = counter ? *counter : 0;
+        monster.ailments.push_back(ail);
+
+        cursor += sizeof(std::uintptr_t);
+    }
+}
+
 
 
 QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
@@ -1257,9 +1319,11 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
 
         // Enrage: MHWMonsterStatusStructure at monster+0x1BE30
         float enrageDuration = 0.0F, enrageMaxDuration = 0.0F;
+        float enrageBuildup = 0.0F, enrageMaxBuildup = 0.0F;
         bool isEnraged = false;
         // Enrage: MHWMonsterStatusStructure INLINE at monster+0x1BE30
-        // +0x14 IsActive, +0x24 Duration, +0x28 MaxDuration
+        // +0x14 IsActive, +0x18 Buildup, +0x34 DamageDone,
+        // +0x24 Duration, +0x28 MaxDuration, +0x50 MaxBuildup
         if (const auto dur = memory_.read<float>(monster + 0x1BE30ULL + 0x24ULL)) {
             enrageDuration = *dur;
             if (const auto maxDur = memory_.read<float>(monster + 0x1BE30ULL + 0x28ULL))
@@ -1267,6 +1331,14 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             if (const auto active = memory_.read<int>(monster + 0x1BE30ULL + 0x14ULL))
             isEnraged = (enrageDuration > 0.0F);
         }
+        // Buildup: independent of enrage state. When not enraged, shows
+        // anger accumulation. When enraged, buildup resets to 0.
+        // HunterPie MHWMonsterStatusStructure layout: IsActive=0x14, Buildup=0x18,
+        // Duration=0x24, MaxDuration=0x28, MaxBuildup=0x3C.
+        if (const auto bu = memory_.read<float>(monster + 0x1BE30ULL + 0x18ULL))
+            enrageBuildup = *bu;
+        if (const auto mbu = memory_.read<float>(monster + 0x1BE30ULL + 0x3CULL))
+            enrageMaxBuildup = *mbu;
 
         // Resolve cache entry first (used for both part name lookup and cache
         // hit decision below).
@@ -1499,6 +1571,8 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             m.enraged = isEnraged;
             m.enrageSeconds = enrageDuration;
             m.enrageMaxSeconds = enrageMaxDuration;
+            m.enrageBuildup = enrageBuildup;
+            m.enrageMaxBuildup = enrageMaxBuildup;
             result.push_back(m);
             monsterCache_[comp] = {m, maxHP};
             continue;
@@ -1619,8 +1693,11 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         m.enraged = isEnraged;
         m.enrageSeconds = enrageDuration;
         m.enrageMaxSeconds = enrageMaxDuration;
+        m.enrageBuildup = enrageBuildup;
+        m.enrageMaxBuildup = enrageMaxBuildup;
         m.parts = parts;
             static int dc=0; if(++dc % 10 == 1) std::fprintf(stderr,"[multi] #%d parts=%zu hp=%d p0=%.0f/%.0f\n", dc, parts.size(), (int)curHP, parts.isEmpty()?0.f:parts[0].health, parts.isEmpty()?0.f:parts[0].maxHealth);
+        readMonsterAilments(m);
         monsterCache_[comp] = {m, maxHP};
         result.push_back(m);
     }
@@ -1751,6 +1828,76 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
         result.maxStamina = *maxStamina;
         result.valid = std::isfinite(result.health) && result.maxHealth > 0.0F && result.maxHealth < 10000.0F;
     }
+
+    // HunterPie MHWAbnormalityStructure: 75-slot float array at
+    // ABNORMALITY_BASE + 0x38, NOT at the player struct itself.
+    // ABNORMALITY_BASE = EQUIPMENT_ADDRESS -> ABNORMALITY_OFFSETS.
+    const std::uintptr_t abnormalityBase = followPointerChain(memory_,
+                                                              absolute(QStringLiteral("EQUIPMENT_ADDRESS")),
+                                                              map_.offsets(QStringLiteral("ABNORMALITY_OFFSETS")),
+                                                              nullptr);
+    if (abnormalityBase) {
+        constexpr std::size_t kSlotCount = 75;
+        const auto timers = memory_.readArray<float>(abnormalityBase + 0x38ULL, kSlotCount, nullptr);
+        if (timers.size() == kSlotCount) {
+            auto slot = [&](int abnormalityId) -> float {
+                const int idx = (abnormalityId - 0x38) / 4;
+                if (idx < 0 || idx >= static_cast<int>(kSlotCount)) return 0.0F;
+                const float t = timers[idx];
+                return std::isfinite(t) && t > 0.0F ? t : 0.0F;
+            };
+            // 衣装 timers (HunterPie AbnormalityData.xml IDs)
+            result.mantleHealthTimer      = slot(0x44);   // 体力衣装
+            result.mantleHealthLargeTimer = slot(0x48);   // 体力衣装(大)
+            result.mantleStaminaTimer     = slot(0x4C);   // 耐力衣装
+            result.mantleStaminaLargeTimer= slot(0x50);   // 耐力衣装(大)
+            result.mantleToolTimer        = slot(0x64);   // 道具衣装
+            result.mantleToolLargeTimer   = slot(0x68);   // 道具衣装(大)
+            result.earplugTimer           = slot(0x88);   // 耳栓
+        }
+    }
+
+    // HunterPie MHWPlayer GetMantlesData(): mantles are on EQUIPMENT_ADDRESS
+    // + EQUIPMENT_OFFSETS -> +0x99C (40 cooldowns) / +0xA8C (40 timers).
+    // Layout per SpecializedToolType Id (0..19):
+    //   timers[id + 0]      = current timer (seconds remaining)
+    //   timers[id + 20]     = max timer
+    //   cooldowns[id + 0]   = current cooldown
+    //   cooldowns[id + 20]  = max cooldown
+    const std::uintptr_t equipmentBase = followPointerChain(memory_,
+                                                             absolute(QStringLiteral("EQUIPMENT_ADDRESS")),
+                                                             map_.offsets(QStringLiteral("EQUIPMENT_OFFSETS")),
+                                                             nullptr);
+    if (equipmentBase) {
+        // HunterPie reads equipped mantle IDs at +0x34, but on Wine/Proton this
+        // field appears to be unreliable (probe showed -1/0 even when a mantle
+        // was actively equipped). Scan all 20 timers and cooldowns directly —
+        // any non-zero timer/cooldown means that mantle is in that state.
+        const auto timers = memory_.readArray<float>(equipmentBase + 0xA8CULL, 20, nullptr);
+        const auto cooldowns = memory_.readArray<float>(equipmentBase + 0x99CULL, 20, nullptr);
+        if (timers.size() == 20 && cooldowns.size() == 20) {
+            int slot = 0;
+            for (int id = 0; id < 20; ++id) {
+                const float t = timers[id];
+                const float cd = cooldowns[id];
+                const bool active = std::isfinite(t) && t > 0.0F;
+                const bool cooling = std::isfinite(cd) && cd > 0.0F;
+                if (!active && !cooling) continue;
+                if (slot >= 2) break;
+                if (slot == 0) {
+                    result.mantleSlot0Id = id;
+                    result.mantleSlot0Timer = active ? t : 0.0F;
+                    result.mantleSlot0Cooldown = cooling ? cd : 0.0F;
+                } else {
+                    result.mantleSlot1Id = id;
+                    result.mantleSlot1Timer = active ? t : 0.0F;
+                    result.mantleSlot1Cooldown = cooling ? cd : 0.0F;
+                }
+                ++slot;
+            }
+        }
+    }
+
     return result;
 }
 
