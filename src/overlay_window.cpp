@@ -257,37 +257,33 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
                     const QString name = p.name.isEmpty()
                         ? QStringLiteral("Part[%1]").arg(p.index)
                         : p.name; // already Chinese from kPartNames
-                    // Two bars: Flinch (live, both solo and multi) and
-                    // Health/MaxHealth (live in solo, frozen in multi).
-                    const QString flinchPct = percentage(p.flinch, p.maxFlinch);
-                    // In multiplayer, the Health field is the synced
-                    // per-layer "current"; it stays at 100% on the
-                    // client. Show the ratio as info, but prefix with
-                    // a clear marker so the user knows it's not live.
+                    // Two bars: Flinch (stagger accumulator — resets to 0 when
+                    // the monster flinches) and Counter (number of <Break
+                    // Threshold> tiers already crossed). HunterPie on
+                    // Windows groups these into a single "bloodlust /
+                    // flinch" widget; we render them as two distinct
+                    // numbers so it's obvious which one is live.
                     QString hpLine;
-                    if (p.maxHealth > 0.0F) {
-                        const QString hpPct = percentage(p.health, p.maxHealth);
+                    if (p.maxFlinch > 0.0F) {
+                        const QString flinchPct = percentage(p.flinch, p.maxFlinch);
+                        const bool broken = p.isBroken;
                         if (multi) {
-                            // Multiplayer: Health field frozen client-side
-                            // (see mhw-parts-hp-frozen-on-client-2026-07-23).
-                            // Show only the locally-accurate flinch and
-                            // a "(mp-locked)" marker on the layer HP.
-                            hpLine = QStringLiteral("    削 %1/%2  %3%4  破 %5  (mp)")
+                            hpLine = QStringLiteral("    硬直 %1/%2  %3%4  累计破 %5  (mp)")
                                 .arg(p.flinch, 0, 'f', 0)
                                 .arg(p.maxFlinch, 0, 'f', 0)
                                 .arg(flinchPct)
-                                .arg(p.isBroken ? QStringLiteral(" ✖") : QString())
+                                .arg(broken ? QStringLiteral(" ✖") : QString())
                                 .arg(p.counter);
                         } else {
-                            hpLine = QStringLiteral("    削 %1/%2  %3%4  破 %5")
+                            hpLine = QStringLiteral("    硬直 %1/%2  %3%4  累计破 %5")
                                 .arg(p.flinch, 0, 'f', 0)
                                 .arg(p.maxFlinch, 0, 'f', 0)
                                 .arg(flinchPct)
-                                .arg(p.isBroken ? QStringLiteral(" ✖") : QString())
+                                .arg(broken ? QStringLiteral(" ✖") : QString())
                                 .arg(p.counter);
                         }
                     } else {
-                        hpLine = QStringLiteral("    削 --");
+                        hpLine = QStringLiteral("    硬直 --");
                     }
                     partLines << QStringLiteral("  %1\n%2")
                                   .arg(name, -10)
@@ -314,7 +310,7 @@ void OverlayWindow::renderDemo()
     quest_->setText(QStringLiteral("任务 66801 · ★6 · 剩余 41:37 · 猫车 0/3"));
     player_->setText(QStringLiteral("猎人  HP 172/200 (86.0%)   ST 130/150"));
     party_->setText(QStringLiteral("A27exe  MR 214  伤害 12840\nHunter  MR 83  伤害 9061"));
-    monsters_->setText(QStringLiteral("em\\em100_00 [ID 100]\nHP  14280 / 20880   68.4%  🔥74s\n  头部         (0/2破)\n    削 3105/3105  100.0%  破 0\n  尾巴         (可断)\n    削 200/200   100.0%  破 0 (mp)"));
+    monsters_->setText(QStringLiteral("em\\em100_00 [ID 100]\nHP  14280 / 20880   68.4%  🔥74s\n  头部         (0/2破)\n    硬直 3105/3105  100.0%  累计破 0\n  尾巴         (可断)\n    硬直 200/200   100.0%  累计破 0 (mp)"));
     abnormalities_->setText(QString());
     equipment_->setText(QString());
     lastZone_ = mhw::Zone::AncientForest;
