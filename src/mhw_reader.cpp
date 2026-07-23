@@ -379,85 +379,815 @@ QString MhwReader::joinOffsets() const
     return items.join(QLatin1Char(','));
 }
 
-// Auto-generated from MonsterData.xml + zh-cn.xml
-// 72 monsters
-// Auto-generated: part names + break thresholds
-// 72 monsters
-struct PartSchema { const char* name; const char* thresholds; };
-static const QHash<int, QVector<PartSchema>> kPartSchemas = {
-    {0, {{"头部","5"}, {"身体",""}, {"左腿","3"}, {"右腿","3"}, {"尾巴",""}}},
-    {1, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {4, {{"头部","1"}, {"身体",""}, {"胸部","1"}, {"左臂",""}, {"右臂",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}, {"壳",""}, {"排气管（中）","1"}, {"排气管（头）","1"}, {"排气管 (坑)","1"}, {"排气管（后）","1"}, {"左弱壳","1"}, {"右弱壳","1"}}},
-    {7, {{"头部","2"}, {"身体",""}, {"手臂","1"}, {"腿",""}, {"尾巴",""}, {"腹部","3"}}},
-    {9, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {10, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {11, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {12, {{"头部",""}, {"身体","1"}, {"左翼",""}, {"右翼",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {13, {{"头部",""}, {"身体","1"}, {"左翼",""}, {"右翼",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {14, {{"角","1"}, {"手臂",""}, {"腿",""}}},
-    {15, {{"角","2,3"}, {"头部",""}, {"身体",""}, {"左臂","3"}, {"右臂","3"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {16, {{"头部","1"}, {"身体",""}, {"尾巴",""}, {"左肢",""}, {"右肢",""}, {"翼","2"}}},
-    {17, {{"头部","1"}, {"身体",""}, {"四肢",""}, {"左翼","2"}, {"右翼","2"}, {"尾巴",""}}},
-    {18, {{"头部","1"}, {"身体",""}, {"手臂",""}, {"腿",""}, {"翼","1"}, {"尾巴",""}}},
-    {19, {{"头部","6"}, {"身体","2"}, {"腹部",""}, {"左腿","4"}, {"右腿","4"}, {"尾巴","4"}}},
-    {20, {{"头部","3"}, {"身体",""}, {"胸部","5"}, {"臀部",""}, {"手臂",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {21, {{"头部",""}, {"头部(泥土)","1"}, {"身体",""}, {"BODY_MUD","1"}, {"手臂","1"}, {"手臂(泥土)","1"}, {"左腿","1"}, {"左腿(泥土)","1"}, {"右腿","1"}, {"右腿(泥土)","1"}, {"尾巴",""}, {"尾巴(泥土)","1"}}},
-    {22, {{"颚","1"}, {"头部",""}, {"身体","1"}, {"手臂",""}, {"左腿",""}, {"右腿",""}, {"尾巴","1"}}},
-    {23, {{"鹿角","1,2"}, {"身体",""}, {"腿",""}, {"手臂",""}, {"???",""}}},
-    {24, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {25, {{"角",""}, {"头部",""}, {"身体",""}, {"左臂",""}, {"右臂",""}, {"左腿",""}, {"右腿",""}, {"左翼",""}, {"右翼",""}, {"尾巴",""}}},
-    {26, {{"头部","2"}, {"颈部",""}, {"背部",""}, {"胸部",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"翼","2"}, {"尾巴",""}}},
-    {27, {{"头部","1"}, {"手臂","1"}, {"腿",""}, {"尾巴",""}, {"石头",""}}},
-    {28, {{"头部","2"}, {"头部",""}, {"手臂",""}, {"腿",""}, {"尾巴",""}}},
-    {29, {{"头部","4"}, {"躯干","1"}, {"左腿","2"}, {"右腿","2"}, {"尾巴","3"}, {"头部(泥土)","1"}, {"躯干(泥土)","3"}, {"左腿(泥土)","2"}, {"右腿(泥土)","2"}, {"尾巴(泥土)","1"}}},
-    {30, {{"头部","2"}, {"身体",""}, {"鬃毛","1"}, {"手臂","1"}, {"腿",""}, {"尾巴","4"}}},
-    {31, {{"头部",""}, {"气囊",""}, {"身体","1"}, {"左腿",""}, {"右腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴","1"}}},
-    {32, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴","1"}}},
-    {33, {{"头部","2"}, {"身体",""}, {"手臂","1"}, {"腿",""}, {"尾巴",""}}},
-    {34, {{"头部","1,2"}, {"身体",""}, {"手臂","1"}, {"腿","1"}, {"尾巴","1"}}},
-    {35, {{"头部",""}, {"身体",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}, {"颚","1,2"}, {"背部","1,2"}, {"左骨","1,2"}, {"右骨","1,2"}}},
-    {36, {{"头部","2"}, {"背部",""}, {"胸部","1"}, {"尾巴",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"翼",""}}},
-    {37, {{"头部","5"}, {"身体",""}, {"手臂","1"}, {"腿",""}, {"尾巴",""}}},
-    {38, {{"角","1"}, {"胸部",""}, {"身体",""}, {"左肢",""}, {"右肢",""}, {"尾巴","1"}, {"金角","1"}, {"金鬃毛",""}, {"黄金左胸","1"}, {"黄金右胸","1"}, {"黄金左臂","1"}, {"黄金右臂","1"}, {"黄金左腿","1"}, {"黄金右腿","1"}, {"黄金尾巴（左）","1"}, {"黄金尾巴（右）","1"}}},
-    {39, {{"头部","2"}, {"身体","1"}, {"腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴",""}}},
-    {51, {{"鹿角","1,2"}, {"身体",""}, {"腿",""}, {"手臂",""}, {"???",""}}},
-    {61, {{"头部","1"}, {"身体",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {62, {{"头部","4"}, {"身体",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {63, {{"头部","3"}, {"身体",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {64, {{"头部","2"}, {"身体",""}, {"胸部","2"}, {"臀部",""}, {"手臂",""}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {65, {{"头部","4"}, {"身体",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {66, {{"头部","1,2"}, {"鳍","1"}, {"身体",""}, {"手臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴","1"}}},
-    {67, {{"头部","1,2"}, {"鳍","1"}, {"身体",""}, {"手臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴","1"}}},
-    {68, {{"头部","5"}, {"身体",""}, {"左腿","3"}, {"右腿","3"}, {"尾巴",""}}},
-    {69, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {70, {{"角",""}, {"头部",""}, {"身体",""}, {"左臂",""}, {"右臂",""}, {"左腿",""}, {"右腿",""}, {"左翼",""}, {"右翼",""}, {"尾巴",""}}},
-    {71, {{"头部","2"}, {"身体",""}, {"鬃毛","1"}, {"手臂","1"}, {"腿",""}, {"尾巴","1"}}},
-    {72, {{"头部",""}, {"气囊",""}, {"身体","1"}, {"左腿",""}, {"右腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴","1"}}},
-    {73, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"腿",""}, {"尾巴","1"}}},
-    {74, {{"头部",""}, {"身体",""}, {"手臂","1"}, {"腿","1"}, {"尾巴","1"}}},
-    {75, {{"头部","3"}, {"背部",""}, {"胸部","1"}, {"尾巴",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"翼",""}, {"???",""}, {"???",""}, {"???",""}, {"???",""}, {"???",""}}},
-    {76, {{"头部","2"}, {"身体","1"}, {"腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴",""}}},
-    {77, {{"头部","2"}, {"头部（雪）","1"}, {"身体","1"}, {"身体（雪）","1"}, {"腿","2"}, {"尾巴","1"}, {"尾巴（雪）","1"}}},
-    {78, {{"角",""}, {"身体",""}, {"左腿","1"}, {"右腿","1"}, {"尾巴",""}}},
-    {79, {{"头部","2"}, {"头部（冰）",""}, {"身体",""}, {"身体（冰）",""}, {"翼","2"}, {"翼（冰）",""}, {"手臂",""}, {"手臂（冰）",""}, {"腿",""}, {"尾巴",""}}},
-    {80, {{"头部","5"}, {"背部",""}, {"尾巴",""}, {"手臂","2"}, {"腿",""}, {"翼","2"}}},
-    {81, {{"左颈（岩石）",""}, {"右颈（岩石）",""}, {"头部（岩石）",""}, {"尾巴（岩石）",""}, {"左翼（岩石）","1"}, {"右翼（岩石）","1"}, {"左臂（岩石）","1,2"}, {"右臂（岩石）","1,2"}, {"腿",""}, {"头部","1"}, {"身体",""}, {"左翼",""}, {"右翼",""}, {"左臂","1"}, {"右臂","1"}, {"尾巴",""}}},
-    {87, {{"头部",""}, {"胸部",""}, {"翼","2"}, {"手臂",""}, {"腿",""}, {"尾巴",""}}},
-    {88, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {89, {{"头部","2"}, {"身体","1"}, {"左翼","1"}, {"右翼","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {90, {{"头部","2,4"}, {"身体","1"}, {"左腿",""}, {"右腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴",""}}},
-    {91, {{"头部",""}, {"身体",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {92, {{"头部",""}, {"身体",""}, {"左臂","1"}, {"右臂","1"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {93, {{"头部","1"}, {"身体",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {94, {{"头部","2,4"}, {"身体",""}, {"背部","1"}, {"手臂","2"}, {"腿",""}, {"尾巴",""}}},
-    {95, {{"头部","2,4"}, {"身体",""}, {"背部","1"}, {"手臂","3"}, {"腿",""}, {"尾巴",""}}},
-    {96, {{"头部","2"}, {"身体",""}, {"背部",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}, {"尾尖",""}}},
-    {97, {{"头部","5,10"}, {"身体",""}, {"腹部",""}, {"背部","1"}, {"胸部","1"}, {"左臂","7"}, {"右臂","7"}, {"左腿","5"}, {"右腿","5"}, {"左翼","3"}, {"右翼","3"}, {"尾巴",""}}},
-    {98, {{"???",""}, {"???",""}, {"???",""}}},
-    {99, {{"头部","2,4"}, {"身体","1"}, {"左腿",""}, {"右腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴",""}}},
-    {100, {{"头部","1,2"}, {"身体",""}, {"左臂","2"}, {"右臂","2"}, {"左腿",""}, {"右腿",""}, {"尾巴",""}}},
-    {101, {{"头部","3,6"}, {"颈部",""}, {"胸部","2"}, {"身体",""}, {"左臂",""}, {"右臂",""}, {"左腿",""}, {"右腿",""}, {"左翼","1"}, {"右翼","1"}, {"尾巴",""}}},
+// Auto-generated from MonsterData.xml + zh-cn.xml (HunterPie v2.14.0.461)
+// 72 monsters; each schema entry carries an IsSeverable flag so that
+// readMonsters can dispatch to either the normal table (monster+0x1D058+0x40,
+// stride 0x1F8) or the severable table (monster+0x1D058+0x1FC8, stride 0x78).
+// Without the severable table, multi-player quests display 100% HP on parts
+// that the host only populates on the local player's screen.
+// PartSchema + kPartSchemas extern are declared in mhw_reader.h so that
+// tests can validate the table.
+// BEGIN AUTO-GENERATED kPartSchemas
+const QHash<int, QVector<PartSchema>> kPartSchemas = {
+    {0, {
+        { 1, true, "喉咙", "" },
+        { 0, true, "尾巴", "1" },
+        { 2, false, "头部", "5" },
+        { 3, false, "身体", "" },
+        { 4, false, "左腿", "3" },
+        { 5, false, "右腿", "3" },
+        { 6, false, "尾巴", "" },
+    }},
+    {1, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "2" },
+        { 2, false, "身体", "1" },
+        { 3, false, "左翼", "1" },
+        { 4, false, "右翼", "1" },
+        { 5, false, "左腿", "" },
+        { 6, false, "右腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {4, {
+        { 0, true, "PART_REPEL", "" },
+        { 1, false, "头部", "1" },
+        { 2, false, "身体", "" },
+        { 3, false, "PART_CHEST", "1" },
+        { 4, false, "左臂", "" },
+        { 5, false, "右臂", "" },
+        { 6, false, "左腿", "" },
+        { 7, false, "右腿", "" },
+        { 8, false, "尾巴", "" },
+        { 9, false, "壳", "" },
+        { 10, false, "PART_EXHAUST_ORGAN_CENTRAL", "1" },
+        { 11, false, "PART_EXHAUST_ORGAN_HEAD", "1" },
+        { 12, false, "PART_EXHAUST_ORGAN_CRATER", "1" },
+        { 13, false, "PART_EXHAUST_ORGAN_REAR", "1" },
+        { 14, false, "PART_WEAK_L_SHELL", "1" },
+        { 15, false, "PART_WEAK_R_SHELL", "1" },
+    }},
+    {7, {
+        { 0, false, "头部", "2" },
+        { 1, false, "身体", "" },
+        { 2, false, "手臂", "1" },
+        { 3, false, "腿", "" },
+        { 4, false, "尾巴", "" },
+        { 5, false, "PART_ABDOMEN", "3" },
+    }},
+    {9, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "2" },
+        { 2, false, "身体", "1" },
+        { 3, false, "左翼", "1" },
+        { 4, false, "右翼", "1" },
+        { 5, false, "左腿", "" },
+        { 6, false, "右腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {10, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "2" },
+        { 2, false, "身体", "1" },
+        { 3, false, "左翼", "1" },
+        { 4, false, "右翼", "1" },
+        { 5, false, "左腿", "" },
+        { 6, false, "右腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {11, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "2" },
+        { 2, false, "身体", "1" },
+        { 3, false, "左翼", "1" },
+        { 4, false, "右翼", "1" },
+        { 5, false, "左腿", "" },
+        { 6, false, "右腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {12, {
+        { 0, true, "角", "1,2" },
+        { 1, true, "尾巴", "1" },
+        { 2, false, "头部", "" },
+        { 3, false, "身体", "1" },
+        { 4, false, "左翼", "" },
+        { 5, false, "右翼", "" },
+        { 6, false, "左腿", "" },
+        { 7, false, "右腿", "" },
+        { 8, false, "尾巴", "" },
+    }},
+    {13, {
+        { 0, true, "角", "1,2" },
+        { 1, true, "尾巴", "1" },
+        { 2, false, "头部", "" },
+        { 3, false, "身体", "1" },
+        { 4, false, "左翼", "" },
+        { 5, false, "右翼", "" },
+        { 6, false, "左腿", "" },
+        { 7, false, "右腿", "" },
+        { 8, false, "尾巴", "" },
+    }},
+    {14, {
+        { 0, false, "角", "1" },
+        { 1, false, "手臂", "" },
+        { 2, false, "腿", "" },
+    }},
+    {15, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "角", "2,3" },
+        { 2, false, "头部", "" },
+        { 3, false, "身体", "" },
+        { 4, false, "左臂", "3" },
+        { 5, false, "右臂", "3" },
+        { 6, false, "左腿", "" },
+        { 7, false, "右腿", "" },
+        { 8, false, "尾巴", "" },
+    }},
+    {16, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "1" },
+        { 2, false, "身体", "" },
+        { 3, false, "尾巴", "" },
+        { 4, false, "PART_L_LIMBS", "" },
+        { 5, false, "PART_R_LIMBS", "" },
+        { 6, false, "翼", "2" },
+    }},
+    {17, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "1" },
+        { 2, false, "身体", "" },
+        { 3, false, "PART_LIMBS", "" },
+        { 4, false, "左翼", "2" },
+        { 5, false, "右翼", "2" },
+        { 6, false, "尾巴", "" },
+    }},
+    {18, {
+        { 0, true, "尾巴", "1" },
+        { 1, true, "角", "" },
+        { 2, false, "头部", "1" },
+        { 3, false, "身体", "" },
+        { 4, false, "手臂", "" },
+        { 5, false, "腿", "" },
+        { 6, false, "翼", "1" },
+        { 7, false, "尾巴", "" },
+    }},
+    {19, {
+        { 0, false, "头部", "6" },
+        { 1, false, "身体", "2" },
+        { 2, false, "PART_ABDOMEN", "" },
+        { 3, false, "左腿", "4" },
+        { 4, false, "右腿", "4" },
+        { 5, false, "尾巴", "4" },
+    }},
+    {20, {
+        { 0, true, "尾巴", "1" },
+        { 1, true, "PART_BIG_FLINCH", "" },
+        { 2, false, "头部", "3" },
+        { 3, false, "身体", "" },
+        { 4, false, "PART_CHEST", "5" },
+        { 5, false, "臀部", "" },
+        { 6, false, "手臂", "" },
+        { 7, false, "左腿", "" },
+        { 8, false, "右腿", "" },
+        { 9, false, "尾巴", "" },
+    }},
+    {21, {
+        { 0, true, "头部", "1" },
+        { 1, true, "尾巴", "1" },
+        { 2, false, "头部", "" },
+        { 3, false, "PART_HEAD_MUD", "1" },
+        { 4, false, "身体", "" },
+        { 5, false, "PART_BODY_MUD", "1" },
+        { 6, false, "手臂", "1" },
+        { 7, false, "PART_ARMS_MUD", "1" },
+        { 8, false, "左腿", "1" },
+        { 9, false, "PART_L_LEG_MUD", "1" },
+        { 10, false, "右腿", "1" },
+        { 11, false, "PART_R_LEG_MUD", "1" },
+        { 12, false, "尾巴", "" },
+        { 13, false, "PART_TAIL_MUD", "1" },
+    }},
+    {22, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "PART_JAW", "1" },
+        { 2, false, "头部", "" },
+        { 3, false, "身体", "1" },
+        { 4, false, "手臂", "" },
+        { 5, false, "左腿", "" },
+        { 6, false, "右腿", "" },
+        { 7, false, "尾巴", "1" },
+    }},
+    {23, {
+        { 0, true, "PART_BODY_LEGS", "1" },
+        { 1, false, "PART_ANTLERS", "1,2" },
+        { 2, false, "身体", "" },
+        { 3, false, "腿", "" },
+        { 4, false, "手臂", "" },
+        { 5, false, "PART_UNKNOWN", "" },
+    }},
+    {24, {
+        { 0, true, "头部", "" },
+        { 1, true, "尾巴", "1" },
+        { 2, false, "头部", "2" },
+        { 3, false, "身体", "1" },
+        { 4, false, "左翼", "1" },
+        { 5, false, "右翼", "1" },
+        { 6, false, "左腿", "" },
+        { 7, false, "右腿", "" },
+        { 8, false, "尾巴", "" },
+    }},
+    {25, {
+        { 0, true, "角", "2,3" },
+        { 1, true, "尾巴", "1" },
+        { 2, true, "PART_UNKNOWN", "" },
+        { 3, false, "角", "" },
+        { 4, false, "头部", "" },
+        { 5, false, "身体", "" },
+        { 6, false, "左臂", "" },
+        { 7, false, "右臂", "" },
+        { 8, false, "左腿", "" },
+        { 9, false, "右腿", "" },
+        { 10, false, "左翼", "" },
+        { 11, false, "右翼", "" },
+        { 12, false, "尾巴", "" },
+    }},
+    {26, {
+        { 0, true, "尾巴", "1" },
+        { 1, true, "PART_UNKNOWN", "" },
+        { 2, false, "头部", "2" },
+        { 3, false, "颈部", "" },
+        { 4, false, "背部", "" },
+        { 5, false, "PART_CHEST", "" },
+        { 6, false, "左臂", "2" },
+        { 7, false, "右臂", "2" },
+        { 8, false, "左腿", "" },
+        { 9, false, "右腿", "" },
+        { 10, false, "翼", "2" },
+        { 11, false, "尾巴", "" },
+    }},
+    {27, {
+        { 0, false, "头部", "1" },
+        { 1, false, "手臂", "1" },
+        { 2, false, "腿", "" },
+        { 3, false, "尾巴", "" },
+        { 4, false, "PART_ROCK", "" },
+    }},
+    {28, {
+        { 0, false, "头部", "2" },
+        { 1, false, "头部", "" },
+        { 2, false, "手臂", "" },
+        { 3, false, "腿", "" },
+        { 4, false, "尾巴", "" },
+    }},
+    {29, {
+        { 0, false, "头部", "4" },
+        { 1, false, "身体", "1" },
+        { 2, false, "左腿", "2" },
+        { 3, false, "右腿", "2" },
+        { 4, false, "尾巴", "3" },
+        { 5, false, "PART_HEAD_MUD", "1" },
+        { 6, false, "PART_TORSO_MUD", "3" },
+        { 7, false, "PART_L_LEG_MUD", "2" },
+        { 8, false, "PART_R_LEG_MUD", "2" },
+        { 9, false, "PART_TAIL_MUD", "1" },
+    }},
+    {30, {
+        { 0, false, "头部", "2" },
+        { 1, false, "身体", "" },
+        { 2, false, "PART_MANE", "1" },
+        { 3, false, "手臂", "1" },
+        { 4, false, "腿", "" },
+        { 5, false, "尾巴", "4" },
+    }},
+    {31, {
+        { 0, true, "PART_BALLOON", "1" },
+        { 1, false, "头部", "" },
+        { 2, false, "PART_BALLOON", "" },
+        { 3, false, "身体", "1" },
+        { 4, false, "左腿", "" },
+        { 5, false, "右腿", "" },
+        { 6, false, "左翼", "1" },
+        { 7, false, "右翼", "1" },
+        { 8, false, "尾巴", "1" },
+    }},
+    {32, {
+        { 0, false, "头部", "2" },
+        { 1, false, "身体", "1" },
+        { 2, false, "左翼", "1" },
+        { 3, false, "右翼", "1" },
+        { 4, false, "左腿", "" },
+        { 5, false, "右腿", "" },
+        { 6, false, "尾巴", "1" },
+    }},
+    {33, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "2" },
+        { 2, false, "身体", "" },
+        { 3, false, "手臂", "1" },
+        { 4, false, "腿", "" },
+        { 5, false, "尾巴", "" },
+    }},
+    {34, {
+        { 0, true, "PART_COUNTERATTACK", "" },
+        { 1, true, "尾巴", "1" },
+        { 2, false, "头部", "1,2" },
+        { 3, false, "身体", "" },
+        { 4, false, "手臂", "1" },
+        { 5, false, "腿", "1" },
+        { 6, false, "尾巴", "1" },
+    }},
+    {35, {
+        { 0, true, "尾巴", "1" },
+        { 1, true, "PART_UNKNOWN", "" },
+        { 2, true, "PART_UNKNOWN", "" },
+        { 3, true, "PART_UNKNOWN", "" },
+        { 4, true, "PART_UNKNOWN", "" },
+        { 5, false, "头部", "" },
+        { 6, false, "身体", "" },
+        { 7, false, "左腿", "" },
+        { 8, false, "右腿", "" },
+        { 9, false, "尾巴", "" },
+        { 10, false, "PART_JAW", "1,2" },
+        { 11, false, "背部", "1,2" },
+        { 12, false, "PART_L_BONE", "1,2" },
+        { 13, false, "PART_R_BONE", "1,2" },
+    }},
+    {36, {
+        { 0, true, "PART_EMISSIONS", "" },
+        { 1, true, "尾巴", "1" },
+        { 2, false, "头部", "2" },
+        { 3, false, "背部", "" },
+        { 4, false, "PART_CHEST", "1" },
+        { 5, false, "尾巴", "" },
+        { 6, false, "左臂", "1" },
+        { 7, false, "右臂", "1" },
+        { 8, false, "左腿", "" },
+        { 9, false, "右腿", "" },
+        { 10, false, "翼", "" },
+    }},
+    {37, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "5" },
+        { 2, false, "身体", "" },
+        { 3, false, "手臂", "1" },
+        { 4, false, "腿", "" },
+        { 5, false, "尾巴", "" },
+    }},
+    {38, {
+        { 1, true, "角", "1" },
+        { 0, true, "PART_HORNS_2", "1" },
+        { 2, false, "角", "1" },
+        { 3, false, "PART_CHEST", "" },
+        { 4, false, "身体", "" },
+        { 5, false, "PART_L_LIMBS", "" },
+        { 6, false, "PART_R_LIMBS", "" },
+        { 7, false, "尾巴", "1" },
+        { 8, false, "PART_HORNS_GOLD", "1" },
+        { 9, false, "PART_MANE_GOLD", "" },
+        { 10, false, "PART_L_CHEST_GOLD", "1" },
+        { 11, false, "PART_R_CHEST_GOLD", "1" },
+        { 12, false, "PART_L_ARM_GOLD", "1" },
+        { 13, false, "PART_R_ARM_GOLD", "1" },
+        { 14, false, "PART_L_LEG_GOLD", "1" },
+        { 15, false, "PART_R_LEG_GOLD", "1" },
+        { 16, false, "PART_L_TAIL_GOLD", "1" },
+        { 17, false, "PART_R_TAIL_GOLD", "1" },
+    }},
+    {39, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "2" },
+        { 2, false, "身体", "1" },
+        { 3, false, "腿", "" },
+        { 4, false, "左翼", "1" },
+        { 5, false, "右翼", "1" },
+        { 6, false, "尾巴", "" },
+    }},
+    {51, {
+        { 0, true, "PART_BODY_LEGS", "1" },
+        { 1, false, "PART_ANTLERS", "1,2" },
+        { 2, false, "身体", "" },
+        { 3, false, "腿", "" },
+        { 4, false, "手臂", "" },
+        { 5, false, "PART_UNKNOWN", "" },
+    }},
+    {61, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "1" },
+        { 2, false, "身体", "" },
+        { 3, false, "左臂", "2" },
+        { 4, false, "右臂", "2" },
+        { 5, false, "左腿", "" },
+        { 6, false, "右腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {62, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "4" },
+        { 2, false, "身体", "" },
+        { 3, false, "左臂", "1" },
+        { 4, false, "右臂", "1" },
+        { 5, false, "左腿", "" },
+        { 6, false, "右腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {63, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "3" },
+        { 2, false, "身体", "" },
+        { 3, false, "左臂", "1" },
+        { 4, false, "右臂", "1" },
+        { 5, false, "左腿", "" },
+        { 6, false, "右腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {64, {
+        { 0, true, "尾巴", "1" },
+        { 1, true, "PART_BIG_FLINCH", "" },
+        { 2, true, "PART_COUNTERATTACK", "" },
+        { 3, false, "头部", "2" },
+        { 4, false, "身体", "" },
+        { 5, false, "PART_CHEST", "2" },
+        { 6, false, "臀部", "" },
+        { 7, false, "手臂", "" },
+        { 8, false, "左腿", "" },
+        { 9, false, "右腿", "" },
+        { 10, false, "尾巴", "" },
+    }},
+    {65, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "4" },
+        { 2, false, "身体", "" },
+        { 3, false, "左臂", "2" },
+        { 4, false, "右臂", "2" },
+        { 5, false, "左腿", "" },
+        { 6, false, "右腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {66, {
+        { 1, true, "喉咙", "" },
+        { 0, true, "尾巴", "1" },
+        { 2, false, "头部", "1,2" },
+        { 3, false, "PART_FIN", "1" },
+        { 4, false, "身体", "" },
+        { 5, false, "手臂", "1" },
+        { 6, false, "左腿", "" },
+        { 7, false, "右腿", "" },
+        { 8, false, "尾巴", "1" },
+    }},
+    {67, {
+        { 1, true, "喉咙", "" },
+        { 0, true, "尾巴", "1" },
+        { 2, true, "PART_UNKNOWN", "" },
+        { 3, false, "头部", "1,2" },
+        { 4, false, "PART_FIN", "1" },
+        { 5, false, "身体", "" },
+        { 6, false, "手臂", "1" },
+        { 7, false, "左腿", "" },
+        { 8, false, "右腿", "" },
+        { 9, false, "尾巴", "1" },
+    }},
+    {68, {
+        { 1, true, "喉咙", "" },
+        { 0, true, "尾巴", "1" },
+        { 2, false, "头部", "5" },
+        { 3, false, "身体", "" },
+        { 4, false, "左腿", "3" },
+        { 5, false, "右腿", "3" },
+        { 6, false, "尾巴", "" },
+    }},
+    {69, {
+        { 2, true, "头部", "" },
+        { 0, true, "尾巴", "1" },
+        { 1, true, "PART_INFLATED_TAIL", "" },
+        { 3, false, "头部", "2" },
+        { 4, false, "身体", "1" },
+        { 5, false, "左翼", "1" },
+        { 6, false, "右翼", "1" },
+        { 7, false, "左腿", "" },
+        { 8, false, "右腿", "" },
+        { 9, false, "尾巴", "" },
+    }},
+    {70, {
+        { 0, true, "角", "2,4" },
+        { 1, true, "尾巴", "1" },
+        { 2, true, "PART_UNKNOWN", "" },
+        { 3, true, "PART_SILVER_SPIKES_HEAD", "1" },
+        { 4, true, "PART_SILVER_SPIKES_L_ARM", "1" },
+        { 5, true, "PART_SILVER_SPIKES_R_ARM", "1" },
+        { 6, true, "PART_SILVER_SPIKES_L_WING", "1" },
+        { 7, true, "PART_SILVER_SPIKES_R_WING", "1" },
+        { 8, false, "角", "" },
+        { 9, false, "头部", "" },
+        { 10, false, "身体", "" },
+        { 11, false, "左臂", "" },
+        { 12, false, "右臂", "" },
+        { 13, false, "左腿", "" },
+        { 14, false, "右腿", "" },
+        { 15, false, "左翼", "" },
+        { 16, false, "右翼", "" },
+        { 17, false, "尾巴", "" },
+    }},
+    {71, {
+        { 0, false, "头部", "2" },
+        { 1, false, "身体", "" },
+        { 2, false, "PART_MANE", "1" },
+        { 3, false, "手臂", "1" },
+        { 4, false, "腿", "" },
+        { 5, false, "尾巴", "1" },
+    }},
+    {72, {
+        { 0, true, "PART_BALLOON", "1" },
+        { 1, false, "头部", "" },
+        { 2, false, "PART_BALLOON", "" },
+        { 3, false, "身体", "1" },
+        { 4, false, "左腿", "" },
+        { 5, false, "右腿", "" },
+        { 6, false, "左翼", "1" },
+        { 7, false, "右翼", "1" },
+        { 8, false, "尾巴", "1" },
+    }},
+    {73, {
+        { 0, true, "PART_SKY_FALL", "" },
+        { 1, false, "头部", "2" },
+        { 2, false, "身体", "1" },
+        { 3, false, "左翼", "1" },
+        { 4, false, "右翼", "1" },
+        { 5, false, "腿", "" },
+        { 6, false, "尾巴", "1" },
+    }},
+    {74, {
+        { 0, true, "PART_COUNTERATTACK", "" },
+        { 2, true, "头部", "1,2" },
+        { 1, true, "尾巴", "1" },
+        { 3, false, "头部", "" },
+        { 4, false, "身体", "" },
+        { 5, false, "手臂", "1" },
+        { 6, false, "腿", "1" },
+        { 7, false, "尾巴", "1" },
+    }},
+    {75, {
+        { 1, true, "尾巴", "1" },
+        { 0, true, "PART_EMISSIONS", "" },
+        { 2, false, "头部", "3" },
+        { 3, false, "背部", "" },
+        { 4, false, "PART_CHEST", "1" },
+        { 5, false, "尾巴", "" },
+        { 6, false, "左臂", "1" },
+        { 7, false, "右臂", "1" },
+        { 8, false, "左腿", "" },
+        { 9, false, "右腿", "" },
+        { 10, false, "翼", "" },
+        { 11, false, "PART_UNKNOWN", "" },
+        { 12, false, "PART_UNKNOWN", "" },
+        { 13, false, "PART_UNKNOWN", "" },
+        { 14, false, "PART_UNKNOWN", "" },
+        { 15, false, "PART_UNKNOWN", "" },
+    }},
+    {76, {
+        { 1, true, "PART_GLOWING_HEAD", "" },
+        { 0, true, "尾巴", "1" },
+        { 2, true, "PART_GLOWING_TAIL", "" },
+        { 3, false, "头部", "2" },
+        { 4, false, "身体", "1" },
+        { 5, false, "腿", "" },
+        { 6, false, "左翼", "1" },
+        { 7, false, "右翼", "1" },
+        { 8, false, "尾巴", "" },
+    }},
+    {77, {
+        { 0, true, "PART_EMERGE_SNOW_HEAD", "" },
+        { 1, true, "PART_EMERGE_SNOW_BODY", "" },
+        { 2, true, "PART_EMERGE_SNOW_TAIL", "" },
+        { 3, false, "头部", "2" },
+        { 4, false, "PART_HEAD_SNOW", "1" },
+        { 5, false, "身体", "1" },
+        { 6, false, "PART_BODY_SNOW", "1" },
+        { 7, false, "腿", "2" },
+        { 8, false, "尾巴", "1" },
+        { 9, false, "PART_TAIL_SNOW", "1" },
+    }},
+    {78, {
+        { 0, true, "角", "1,2" },
+        { 1, true, "尾巴", "1" },
+        { 2, true, "PART_UNKNOWN", "" },
+        { 3, false, "角", "" },
+        { 4, false, "身体", "" },
+        { 5, false, "左腿", "1" },
+        { 6, false, "右腿", "1" },
+        { 7, false, "尾巴", "" },
+    }},
+    {79, {
+        { 0, true, "尾巴", "1" },
+        { 1, true, "PART_SKY_FALL", "" },
+        { 2, false, "头部", "2" },
+        { 3, false, "PART_HEAD_ICE", "" },
+        { 4, false, "身体", "" },
+        { 5, false, "PART_BODY_ICE", "" },
+        { 6, false, "翼", "2" },
+        { 7, false, "PART_WINGS_ICE", "" },
+        { 8, false, "手臂", "" },
+        { 9, false, "PART_ARMS_ICE", "" },
+        { 10, false, "腿", "" },
+        { 11, false, "尾巴", "" },
+    }},
+    {80, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "5" },
+        { 2, false, "背部", "" },
+        { 3, false, "尾巴", "" },
+        { 4, false, "手臂", "2" },
+        { 5, false, "腿", "" },
+        { 6, false, "翼", "2" },
+    }},
+    {81, {
+        { 0, true, "PART_HEAD_ROCK", "1,2,3,4" },
+        { 1, true, "PART_HEAD_ROCK", "1,2,3,4" },
+        { 2, true, "PART_CHEST_ROCK", "1,2,3,4,5,6" },
+        { 4, true, "PART_UNKNOWN", "" },
+        { 3, true, "头部", "1" },
+        { 5, false, "PART_L_NECK_ROCK", "" },
+        { 6, false, "PART_R_NECK_ROCK", "" },
+        { 7, false, "PART_HEAD_ROCK", "" },
+        { 8, false, "PART_TAIL_ROCK", "" },
+        { 9, false, "PART_L_WING_ROCK", "1" },
+        { 10, false, "PART_R_WING_ROCK", "1" },
+        { 11, false, "PART_L_ARM_ROCK", "1,2" },
+        { 12, false, "PART_R_ARM_ROCK", "1,2" },
+        { 13, false, "腿", "" },
+        { 14, false, "头部", "1" },
+        { 15, false, "身体", "" },
+        { 16, false, "左翼", "" },
+        { 17, false, "右翼", "" },
+        { 18, false, "左臂", "1" },
+        { 19, false, "右臂", "1" },
+        { 20, false, "尾巴", "" },
+    }},
+    {87, {
+        { 0, true, "角", "1,2" },
+        { 1, true, "尾巴", "1" },
+        { 3, true, "PART_EXPLOSION_WEAKENING", "3" },
+        { 3, false, "头部", "" },
+        { 4, false, "PART_CHEST", "" },
+        { 5, false, "翼", "2" },
+        { 6, false, "手臂", "" },
+        { 7, false, "腿", "" },
+        { 8, false, "尾巴", "" },
+    }},
+    {88, {
+        { 1, true, "PART_BIG_FLINCH", "" },
+        { 0, true, "尾巴", "1" },
+        { 2, false, "头部", "2" },
+        { 3, false, "身体", "1" },
+        { 4, false, "左翼", "1" },
+        { 5, false, "右翼", "1" },
+        { 6, false, "左腿", "" },
+        { 7, false, "右腿", "" },
+        { 8, false, "尾巴", "" },
+    }},
+    {89, {
+        { 1, true, "PART_BIG_FLINCH", "" },
+        { 0, true, "尾巴", "1" },
+        { 2, false, "头部", "2" },
+        { 3, false, "身体", "1" },
+        { 4, false, "左翼", "1" },
+        { 5, false, "右翼", "1" },
+        { 6, false, "左腿", "" },
+        { 7, false, "右腿", "" },
+        { 8, false, "尾巴", "" },
+    }},
+    {90, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "2,4" },
+        { 2, false, "身体", "1" },
+        { 3, false, "左腿", "" },
+        { 4, false, "右腿", "" },
+        { 5, false, "左翼", "1" },
+        { 6, false, "右翼", "1" },
+        { 7, false, "尾巴", "" },
+    }},
+    {91, {
+        { 0, true, "角", "1" },
+        { 2, true, "尾巴", "1" },
+        { 1, true, "PART_HORNS_2", "1" },
+        { 3, true, "PART_RAGE", "" },
+        { 4, false, "头部", "" },
+        { 5, false, "身体", "" },
+        { 6, false, "左臂", "1" },
+        { 7, false, "右臂", "1" },
+        { 8, false, "左腿", "" },
+        { 9, false, "右腿", "" },
+        { 10, false, "尾巴", "" },
+    }},
+    {92, {
+        { 0, true, "角", "1" },
+        { 2, true, "尾巴", "" },
+        { 1, true, "PART_HORNS_2", "1" },
+        { 3, true, "PART_RAGE", "" },
+        { 4, false, "头部", "" },
+        { 5, false, "身体", "" },
+        { 6, false, "左臂", "1" },
+        { 7, false, "右臂", "1" },
+        { 8, false, "左腿", "" },
+        { 9, false, "右腿", "" },
+        { 10, false, "尾巴", "" },
+    }},
+    {93, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "1" },
+        { 2, false, "身体", "" },
+        { 3, false, "左臂", "2" },
+        { 4, false, "右臂", "2" },
+        { 5, false, "左腿", "" },
+        { 6, false, "右腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {94, {
+        { 1, true, "充能角", "" },
+        { 0, true, "尾巴", "1" },
+        { 2, false, "头部", "2,4" },
+        { 3, false, "身体", "" },
+        { 4, false, "背部", "1" },
+        { 5, false, "手臂", "2" },
+        { 6, false, "腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {95, {
+        { 1, true, "充能角", "" },
+        { 0, true, "尾巴", "1" },
+        { 2, false, "头部", "2,4" },
+        { 3, false, "身体", "" },
+        { 4, false, "背部", "1" },
+        { 5, false, "手臂", "3" },
+        { 6, false, "腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {96, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "2" },
+        { 2, false, "身体", "" },
+        { 3, false, "背部", "" },
+        { 4, false, "左臂", "2" },
+        { 5, false, "右臂", "2" },
+        { 6, false, "左腿", "" },
+        { 7, false, "右腿", "" },
+        { 8, false, "尾巴", "" },
+        { 9, false, "PART_TAIL_TIP", "" },
+    }},
+    {97, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "5,10" },
+        { 2, false, "身体", "" },
+        { 3, false, "PART_ABDOMEN", "" },
+        { 4, false, "背部", "1" },
+        { 5, false, "PART_CHEST", "1" },
+        { 6, false, "左臂", "7" },
+        { 7, false, "右臂", "7" },
+        { 8, false, "左腿", "5" },
+        { 9, false, "右腿", "5" },
+        { 10, false, "左翼", "3" },
+        { 11, false, "右翼", "3" },
+        { 12, false, "尾巴", "" },
+    }},
+    {98, {
+        { 0, false, "PART_UNKNOWN", "" },
+        { 1, false, "PART_UNKNOWN", "" },
+        { 2, false, "PART_UNKNOWN", "" },
+    }},
+    {99, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "2,4" },
+        { 2, false, "身体", "1" },
+        { 3, false, "左腿", "" },
+        { 4, false, "右腿", "" },
+        { 5, false, "左翼", "1" },
+        { 6, false, "右翼", "1" },
+        { 7, false, "尾巴", "" },
+    }},
+    {100, {
+        { 0, true, "尾巴", "1" },
+        { 1, false, "头部", "1,2" },
+        { 2, false, "身体", "" },
+        { 3, false, "左臂", "2" },
+        { 4, false, "右臂", "2" },
+        { 5, false, "左腿", "" },
+        { 6, false, "右腿", "" },
+        { 7, false, "尾巴", "" },
+    }},
+    {101, {
+        { 0, true, "PART_KNOCKDOWN", "" },
+        { 1, false, "头部", "3,6" },
+        { 2, false, "颈部", "" },
+        { 3, false, "PART_CHEST", "2" },
+        { 4, false, "身体", "" },
+        { 5, false, "左臂", "" },
+        { 6, false, "右臂", "" },
+        { 7, false, "左腿", "" },
+        { 8, false, "右腿", "" },
+        { 9, false, "左翼", "1" },
+        { 10, false, "右翼", "1" },
+        { 11, false, "尾巴", "" },
+    }},
 };
+// END AUTO-GENERATED kPartSchemas
 
 
 
@@ -548,69 +1278,135 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         // Read body parts (always; HP changes on damage). Names are cached.
         const auto partPtr = memory_.read<std::uintptr_t>(monster + 0x1D058ULL);
         QVector<PartSnapshot> parts;
+        // Per-tick cache of part names, keyed by stable identity across ticks.
+        //   key == -1*i  → normal table slot i (0..15)
+        //   key == 1*sid → severable table slot for partSchema.Id == sid
         QHash<int, QString> cachedPartNames;
         if (cachedIt != monsterCache_.end()) {
-            int ci = 0;
-            for (const auto &p : cachedIt->second.snapshot.parts)
-                cachedPartNames.insert(ci++, p.name);
+            for (int ci = 0; ci < cachedIt->second.snapshot.parts.size(); ++ci) {
+                const PartSnapshot &cp = cachedIt->second.snapshot.parts.at(ci);
+                cachedPartNames.insert(cp.index, cp.name);
+            }
         }
         if (partPtr && isSanePointer(*partPtr)) {
-            const std::uintptr_t normalAddr = *partPtr + 0x40ULL;
-            for (int i = 0; i < 16; ++i) {
-                const std::uintptr_t addr = normalAddr + std::uintptr_t(i) * 0x1F8ULL;
+            const std::uintptr_t normalAddr    = *partPtr + 0x40ULL;
+            const std::uintptr_t severableBase = *partPtr + 0x1FC8ULL;
+            const QVector<PartSchema> &schema = kPartSchemas.value(hunterId);
+
+            // Helper: read a single MHWMonsterPartStructure (0x78 bytes) at addr.
+            // Returns true if MaxHealth > 0 (valid slot).
+            auto readPartStruct = [&](std::uintptr_t addr, float &mhp, float &chp,
+                                      float &emhp, float &ehp, int &counter,
+                                      std::uint32_t &index) -> bool {
                 std::vector<char> raw(0x78, 0);
-                if (!memory_.readBytes(addr, raw.data(), 0x78, nullptr)) continue;
-                float mhp = 0.0F, chp = 0.0F, emhp = 0.0F, ehp = 0.0F;
+                if (!memory_.readBytes(addr, raw.data(), 0x78, nullptr)) return false;
                 std::memcpy(&mhp, raw.data() + 0x0C, 4);
                 std::memcpy(&chp, raw.data() + 0x10, 4);
                 std::memcpy(&emhp, raw.data() + 0x20, 4);
                 std::memcpy(&ehp, raw.data() + 0x24, 4);
-                int counter = 0; std::memcpy(&counter, raw.data() + 0x18, 4);
-                std::uint32_t index = 0; std::memcpy(&index, raw.data() + 0x6C, 4);
-                if (mhp <= 0.0F) continue; // empty slot
-                PartSnapshot p;
-                p.index = static_cast<int>(index);
-                p.health = chp;
-                p.maxHealth = mhp;
-                // HunterPie's UpdateBreakableData: when this part has break
-                // thresholds, MaxHealth = threshold * mhp.
-                // This is read from monster's schema via kPartSchemas below.
-                p.extraHealth = ehp;
-                p.extraMaxHealth = emhp;
-                p.counter = counter;
-                                // HunterPie part schema Id -> name (shared across monsters).
-                // Index matches partSchema.Id from MonsterData.xml.
-                // Stored as the schema's "String" attribute (e.g. PART_HEAD).
-                // We use HunterPie's localized part names.
-                                const QVector<PartSchema> &schema = kPartSchemas.value(hunterId);
-                const PartSchema *ps = (i < schema.size()) ? &schema[i] : nullptr;
-                QString pname2 = ps ? QString::fromUtf8(ps->name) : QString();
-                // Build threshold suffix
-                QString thSuffix;
-                if (ps && ps->thresholds[0]) {
-                    int firstTh = 0;
-                    const char *t = ps->thresholds;
-                    while (*t >= '0' && *t <= '9') { firstTh = firstTh * 10 + (*t - '0'); ++t; }
-                    if (firstTh > 0) {
-                        p.firstThreshold = firstTh;
-                        // HunterPie UpdateBreakableData:
-                        //   MaxHealth = firstTh * mhp
-                        //   Health = (max(0, firstTh - counter - 1) * mhp) + data.Health
-                        if (p.counter < firstTh) {
-                            p.maxHealth = firstTh * mhp;
-                            p.health = (firstTh - p.counter - 1) * mhp + chp;
-                            if (p.health > p.maxHealth) p.health = p.maxHealth;
-                        } else {
-                            // Already broken past — show actual layer
-                            p.maxHealth = mhp;
-                            p.health = chp;
-                        }
-                        thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(firstTh);
-                    }
+                std::memcpy(&counter, raw.data() + 0x18, 4);
+                std::memcpy(&index, raw.data() + 0x6C, 4);
+                return mhp > 0.0F;
+            };
+
+            // Apply break-threshold scaling to a freshly-read part.
+            // HunterPie UpdateBreakableData:
+            //   MaxHealth = firstTh * mhp
+            //   Health   = (max(0, firstTh - Counter - 1) * mhp) + data.Health
+            auto applyBreakable = [&](PartSnapshot &p, const PartSchema &ps, float mhp, float chp) {
+                if (!ps.thresholds[0]) return;
+                int firstTh = 0;
+                const char *t = ps.thresholds;
+                while (*t >= '0' && *t <= '9') { firstTh = firstTh * 10 + (*t - '0'); ++t; }
+                if (firstTh <= 0) return;
+                p.firstThreshold = firstTh;
+                if (p.counter < firstTh) {
+                    p.maxHealth = firstTh * mhp;
+                    p.health = (firstTh - p.counter - 1) * mhp + chp;
+                    if (p.health > p.maxHealth) p.health = p.maxHealth;
+                } else {
+                    // Already broken past — show actual layer
+                    p.maxHealth = mhp;
+                    p.health = chp;
                 }
-                pname2 += thSuffix;
-                                p.name = cachedPartNames.value(i, pname2.isEmpty() ? QStringLiteral("Part[%1]").arg(i) : pname2);
-                parts.push_back(p);
+            };
+
+            // Iterate schema entries in source order, dispatching to the right
+            // memory table for each part. Severable parts match the schema's
+            // Id field against the live Index in the 0x1FC8 table (HunterPie
+            // GetMonsterParts.cs:373-395). Normal parts use 0x1F8 stride from
+            // 0x40 base, in normal-table order.
+            //
+            // The severable table is scanned from base each tick — at ~3.5 KB
+            // (32 slots × 0x78) it's cheap enough that caching the cursor
+            // across schema rows isn't worth the consistency risk when a
+            // part breaks during the quest.
+            int normalSlotIdx = 0;
+            const std::uintptr_t sevEnd = severableBase + 0x78ULL * 32;
+            for (int s = 0; s < schema.size(); ++s) {
+                const PartSchema &ps = schema[s];
+
+                if (ps.isSeverable) {
+                    std::uintptr_t addr = severableBase;
+                    for (int scan = 0; scan < 32 && addr < sevEnd; ++scan) {
+                        // Sentinel check on the first 4 bytes (int32).
+                        if (const auto pad = memory_.read<std::int32_t>(addr, nullptr)) {
+                            if (*pad <= 0xA0) { addr += 0x8ULL; continue; }
+                        }
+                        float mhp = 0, chp = 0, emhp = 0, ehp = 0;
+                        int counter = 0;
+                        std::uint32_t index = 0;
+                        if (!readPartStruct(addr, mhp, chp, emhp, ehp, counter, index))
+                            break;
+                        if (static_cast<int>(index) == ps.id) {
+                            // Match — use schema position s as stable key.
+                            PartSnapshot p;
+                            p.index = 1000 + s; // positive key = severable (offset to avoid clash with normal)
+                            p.health = chp;
+                            p.maxHealth = mhp;
+                            p.extraHealth = ehp;
+                            p.extraMaxHealth = emhp;
+                            p.counter = counter;
+                            applyBreakable(p, ps, mhp, chp);
+                            QString thSuffix;
+                            if (p.firstThreshold > 0)
+                                thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(p.firstThreshold);
+                            const QString pname = QString::fromUtf8(ps.name) + thSuffix;
+                            p.name = cachedPartNames.value(p.index, pname.isEmpty()
+                                ? QStringLiteral("Part[%1]").arg(s)
+                                : pname);
+                            parts.push_back(p);
+                            break;
+                        }
+                        addr += 0x78ULL;
+                    }
+                } else {
+                    // Normal table: stride 0x1F8 from base 0x40.
+                    const std::uintptr_t addr = normalAddr + std::uintptr_t(normalSlotIdx) * 0x1F8ULL;
+                    float mhp = 0, chp = 0, emhp = 0, ehp = 0;
+                    int counter = 0;
+                    std::uint32_t index = 0;
+                    if (!readPartStruct(addr, mhp, chp, emhp, ehp, counter, index))
+                        continue;
+                    if (mhp <= 0.0F) continue; // empty slot
+                    PartSnapshot p;
+                    p.index = -1 - normalSlotIdx; // negative key = normal
+                    p.health = chp;
+                    p.maxHealth = mhp;
+                    p.extraHealth = ehp;
+                    p.extraMaxHealth = emhp;
+                    p.counter = counter;
+                    applyBreakable(p, ps, mhp, chp);
+                    QString thSuffix;
+                    if (p.firstThreshold > 0)
+                        thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(p.firstThreshold);
+                    const QString pname = QString::fromUtf8(ps.name) + thSuffix;
+                    p.name = cachedPartNames.value(p.index, pname.isEmpty()
+                        ? QStringLiteral("Part[%1]").arg(normalSlotIdx)
+                        : pname);
+                    parts.push_back(p);
+                    ++normalSlotIdx;
+                }
             }
         }
 

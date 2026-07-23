@@ -171,6 +171,17 @@ private:
 
 struct HpCluster { std::uintptr_t hpAddr = 0; float maxHealth = 0.0F; };
 
+// One schema entry per Part in HunterPie's MonsterData.xml. `isSeverable`
+// dispatches readMonsters to either the normal table (0x40, stride 0x1F8)
+// or the severable table (0x1FC8, stride 0x78). `id` is the per-monster
+// local part index from MonsterData.xml; for severable parts it is the
+// Index field stored in the live part structure.
+struct PartSchema { int id; bool isSeverable; const char* name; const char* thresholds; };
+
+// Generated from data/MonsterHunterWorld.421810.map / MonsterData.xml.
+// Exposed for tests and diagnostic tooling.
+extern const QHash<int, QVector<PartSchema>> kPartSchemas;
+
 class MhwReader {
 public:
     explicit MhwReader(QString mapPath);
