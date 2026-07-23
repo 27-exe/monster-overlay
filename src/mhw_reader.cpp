@@ -1323,25 +1323,40 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 return mhp > 0.0F;
             };
 
-            // Apply break-threshold scaling to a freshly-read part.
-            // HunterPie UpdateBreakableData:
-            //   MaxHealth = firstTh * mhp
-            //   Health   = (max(0, firstTh - Counter - 1) * mhp) + data.Health
+            // HunterPie UpdateBreakableData, copied semantically:
+            // nextThreshold is the first configured threshold strictly greater
+            // than raw Counter. Note: Counter is NOT a major-break count on
+            // this build (Teostra head: one increment per small flinch), so
+            // this scaled pair remains internal compatibility data only; the
+            // UI must not label it "N/M破".
             auto applyBreakable = [&](PartSnapshot &p, const PartSchema &ps, float mhp, float chp) {
                 if (!ps.thresholds[0]) return;
-                int firstTh = 0;
+
+                int nextThreshold = 0;
                 const char *t = ps.thresholds;
-                while (*t >= '0' && *t <= '9') { firstTh = firstTh * 10 + (*t - '0'); ++t; }
-                if (firstTh <= 0) return;
-                p.firstThreshold = firstTh;
-                if (p.counter < firstTh) {
-                    p.maxHealth = firstTh * mhp;
-                    p.health = (firstTh - p.counter - 1) * mhp + chp;
+                while (*t) {
+                    int threshold = 0;
+                    while (*t >= '0' && *t <= '9') {
+                        threshold = threshold * 10 + (*t - '0');
+                        ++t;
+                    }
+                    if (threshold > p.counter) {
+                        nextThreshold = threshold;
+                        break;
+                    }
+                    while (*t && *t != ',') ++t;
+                    if (*t == ',') ++t;
+                }
+
+                if (nextThreshold > 0) {
+                    p.firstThreshold = nextThreshold;
+                    p.maxHealth = nextThreshold * mhp;
+                    p.health = std::max(0, nextThreshold - p.counter - 1) * mhp + chp;
                     if (p.health > p.maxHealth) p.health = p.maxHealth;
                 } else {
-                    // Already broken past — show actual layer
+                    // HunterPie: all configured thresholds have been crossed.
                     p.maxHealth = mhp;
-                    p.health = chp;
+                    p.health = mhp;
                 }
             };
 
@@ -1394,15 +1409,12 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                             // and the layer HP is no longer updated.
                             p.isBroken = counter > 0
                                       || (p.maxHealth > 0.0F && p.health <= 0.0F);
-                            QString thSuffix;
-                            if (p.firstThreshold > 0)
-                                thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(p.firstThreshold);
-                            const QString pname = QString::fromUtf8(ps.name) + thSuffix;
-                            // pname already encodes the threshold suffix
-                            // for this tick, so we accept it even when a
-                            // cached name exists. Otherwise we'd show a
-                            // stale "0/2破" for a part whose counter just
-                            // ticked up.
+                            // Raw Counter is the observed small-flinch count;
+                            // major-break count is not yet decoded, so keep the
+                            // localized base name free of a false "N/M破" suffix.
+                            const QString pname = QString::fromUtf8(ps.name);
+                            // pname is static but recomputed every tick to
+                            // avoid stale per-part name cache state.
                             p.name = pname.isEmpty()
                                 ? QStringLiteral("Part[%1]").arg(s)
                                 : pname;
@@ -1463,12 +1475,12 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                     p.isBroken = p.maxHealth <= 0.0F
                               || (std::fabs(p.health - p.maxHealth) <= 1e-4F
                                   && (p.counter > 0 || flinchNotFull));
-                    QString thSuffix;
-                    if (p.firstThreshold > 0)
-                        thSuffix = QStringLiteral(" (%1/%2破)").arg(p.counter).arg(p.firstThreshold);
-                    const QString pname = QString::fromUtf8(ps.name) + thSuffix;
-                    // Always use the freshly-computed pname (see severable
-                    // branch comment for why cached names were stale).
+                    // Raw Counter is the observed small-flinch count;
+                    // major-break count is not yet decoded, so do not derive
+                    // an "N/M破" suffix from this field.
+                    const QString pname = QString::fromUtf8(ps.name);
+                    // Always use the localized base name. It is deliberately
+                    // not decorated with live Counter-derived text.
                     p.name = pname.isEmpty()
                         ? QStringLiteral("Part[%1]").arg(normalSlotIdx)
                         : pname;

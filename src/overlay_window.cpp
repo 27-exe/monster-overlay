@@ -256,38 +256,40 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
                 for (const auto &p : monster.parts) {
                     const QString name = p.name.isEmpty()
                         ? QStringLiteral("Part[%1]").arg(p.index)
-                        : p.name; // already Chinese from kPartNames
-                    // Two bars: Flinch (stagger accumulator — resets to 0 when
-                    // the monster flinches) and Counter (number of <Break
-                    // Threshold> tiers already crossed). HunterPie on
-                    // Windows groups these into a single "bloodlust /
-                    // flinch" widget; we render them as two distinct
-                    // numbers so it's obvious which one is live.
-                    QString hpLine;
-                    if (p.maxFlinch > 0.0F) {
-                        const QString flinchPct = percentage(p.flinch, p.maxFlinch);
-                        const bool broken = p.isBroken;
-                        if (multi) {
-                            hpLine = QStringLiteral("    硬直 %1/%2  %3%4  累计破 %5  (mp)")
-                                .arg(p.flinch, 0, 'f', 0)
-                                .arg(p.maxFlinch, 0, 'f', 0)
-                                .arg(flinchPct)
-                                .arg(broken ? QStringLiteral(" ✖") : QString())
-                                .arg(p.counter);
-                        } else {
-                            hpLine = QStringLiteral("    硬直 %1/%2  %3%4  累计破 %5")
-                                .arg(p.flinch, 0, 'f', 0)
-                                .arg(p.maxFlinch, 0, 'f', 0)
-                                .arg(flinchPct)
-                                .arg(broken ? QStringLiteral(" ✖") : QString())
-                                .arg(p.counter);
-                        }
+                        : p.name;
+
+                    QStringList values;
+                    if (p.isSeverable) {
+                        // HunterPie Severable template: separate "Sever" bar.
+                        // We read its live table, so label it as cutting
+                        // progress rather than pretending it is a major break.
+                        values << QStringLiteral("    切断 %1/%2  %3")
+                            .arg(p.health, 0, 'f', 0)
+                            .arg(p.maxHealth, 0, 'f', 0)
+                            .arg(percentage(p.health, p.maxHealth));
                     } else {
-                        hpLine = QStringLiteral("    硬直 --");
+                        values << QStringLiteral("    硬直 %1/%2  %3 · 小硬直计数 %4%5")
+                            .arg(p.flinch, 0, 'f', 0)
+                            .arg(p.maxFlinch, 0, 'f', 0)
+                            .arg(percentage(p.flinch, p.maxFlinch))
+                            .arg(p.counter)
+                            .arg(multi ? QStringLiteral("  (mp)") : QString());
+
+                        if (p.isBreakable) {
+                            // HunterPie Breakable template's second (orange)
+                            // bar. Its values are the exact HunterPie
+                            // UpdateBreakableData transformation; they are
+                            // break-stage progress, not a claimed number of
+                            // completed major breaks.
+                            values << QStringLiteral("    破坏进度 %1/%2  %3")
+                                .arg(p.health, 0, 'f', 0)
+                                .arg(p.maxHealth, 0, 'f', 0)
+                                .arg(percentage(p.health, p.maxHealth));
+                        }
                     }
                     partLines << QStringLiteral("  %1\n%2")
                                   .arg(name, -10)
-                                  .arg(hpLine);
+                                  .arg(values.join(QLatin1Char('\n')));
                 }
                 main += QLatin1Char('\n') + partLines.join(QLatin1Char('\n'));
             }
@@ -310,7 +312,7 @@ void OverlayWindow::renderDemo()
     quest_->setText(QStringLiteral("任务 66801 · ★6 · 剩余 41:37 · 猫车 0/3"));
     player_->setText(QStringLiteral("猎人  HP 172/200 (86.0%)   ST 130/150"));
     party_->setText(QStringLiteral("A27exe  MR 214  伤害 12840\nHunter  MR 83  伤害 9061"));
-    monsters_->setText(QStringLiteral("em\\em100_00 [ID 100]\nHP  14280 / 20880   68.4%  🔥74s\n  头部         (0/2破)\n    硬直 3105/3105  100.0%  累计破 0\n  尾巴         (可断)\n    硬直 200/200   100.0%  累计破 0 (mp)"));
+    monsters_->setText(QStringLiteral("em\\em100_00 [ID 100]\nHP  14280 / 20880   68.4%  🔥74s\n  头部\n    硬直 3105/3105  100.0%  · 硬直次数 0\n  尾巴\n    硬直 200/200   100.0%  · 硬直次数 0 (mp)"));
     abnormalities_->setText(QString());
     equipment_->setText(QString());
     lastZone_ = mhw::Zone::AncientForest;

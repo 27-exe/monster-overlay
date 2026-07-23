@@ -26,11 +26,16 @@ struct PartSnapshot {
     // when the part has BreakThresholds; otherwise the per-hit cap.
     float flinch{};
     float maxFlinch{};
-    int counter{};        // number of BreakThresholds already crossed
+    // Raw MHWMonsterPartStructure.Counter. HunterPie forwards it verbatim
+    // to its Breaks badge; it does not define a completed-major-break
+    // semantic. The overlay presents this only as neutral part counter.
+    int counter{};
     int firstThreshold{0};
     bool isSeverable{false};   // from MonsterData.xml IsSeverable
     bool isBreakable{false};   // BreakThresholds.Count > 0
-    bool isBroken{false};      // computed: Counter >= last threshold OR part severed
+    // Kept for raw-data compatibility only. The UI does not infer a major
+    // break from it: MHW Counter is the observed small-flinch count.
+    bool isBroken{};
 };
 
 struct MonsterSnapshot {
