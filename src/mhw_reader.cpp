@@ -466,17 +466,13 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         float enrageDuration = 0.0F, enrageMaxDuration = 0.0F;
         bool isEnraged = false;
         if (const auto es = memory_.read<std::uintptr_t>(monster + 0x1BE30ULL)) {
-            // Read Duration and MaxDuration from the enrage struct
-            // Struct: +0x00 Reference, +0x08 Unk0, +0x10 Unk1, +0x14 IsActive,
-            // +0x18 Buildup, +0x1C DamageDone, +0x20 Unk3,
-            // +0x24 Duration, +0x28 MaxDuration
-            std::array<char, 0x30> eraw{};
-            if (memory_.readBytes(*es + 0x24ULL, eraw.data(), 0x0C, nullptr)) {
-                std::memcpy(&enrageDuration, eraw.data(), 4);
-                std::memcpy(&enrageMaxDuration, eraw.data() + 4, 4);
-                int isActive = 0;
-                std::memcpy(&isActive, eraw.data() + 8, 4);
-                isEnraged = (isActive > 0 && enrageDuration > 0.0F);
+            // MHWMonsterStatusStructure: IsActive at +0x14, Duration at +0x24, MaxDuration at +0x28
+            if (const auto dur = memory_.read<float>(*es + 0x24ULL)) {
+                enrageDuration = *dur;
+                if (const auto maxDur = memory_.read<float>(*es + 0x28ULL))
+                    enrageMaxDuration = *maxDur;
+                if (const auto active = memory_.read<int>(*es + 0x14ULL))
+                    isEnraged = (*active > 0 && enrageDuration > 0.0F);
             }
         }
 
@@ -529,7 +525,8 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                     {9, QStringLiteral("前腿")},
                     {10, QStringLiteral("后腿")},
                 };
-                p.name = cachedPartNames.value(p.index, kPartNames.value(p.index));
+                QString pname = kPartNames.value(p.index);
+                p.name = cachedPartNames.value(p.index, pname.isEmpty() ? QStringLiteral("Part[%1]").arg(p.index) : pname);
                 parts.push_back(p);
             }
         }
