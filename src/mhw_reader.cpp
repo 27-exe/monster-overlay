@@ -12,6 +12,7 @@
 #include <QStringConverter>
 #include <QTextStream>
 
+#include <array>
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -461,6 +462,24 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         const float curHP = hp[1];
         if (maxHP <= 0.0F) continue;
 
+        // Enrage: MHWMonsterStatusStructure at monster+0x1BE30
+        float enrageDuration = 0.0F, enrageMaxDuration = 0.0F;
+        bool isEnraged = false;
+        if (const auto es = memory_.read<std::uintptr_t>(monster + 0x1BE30ULL)) {
+            // Read Duration and MaxDuration from the enrage struct
+            // Struct: +0x00 Reference, +0x08 Unk0, +0x10 Unk1, +0x14 IsActive,
+            // +0x18 Buildup, +0x1C DamageDone, +0x20 Unk3,
+            // +0x24 Duration, +0x28 MaxDuration
+            std::array<char, 0x30> eraw{};
+            if (memory_.readBytes(*es + 0x24ULL, eraw.data(), 0x0C, nullptr)) {
+                std::memcpy(&enrageDuration, eraw.data(), 4);
+                std::memcpy(&enrageMaxDuration, eraw.data() + 4, 4);
+                int isActive = 0;
+                std::memcpy(&isActive, eraw.data() + 8, 4);
+                isEnraged = (isActive > 0 && enrageDuration > 0.0F);
+            }
+        }
+
         // Resolve cache entry first (used for both part name lookup and cache
         // hit decision below).
         auto cachedIt = monsterCache_.find(comp);
@@ -484,7 +503,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 std::memcpy(&emhp, raw.data() + 0x20, 4);
                 std::memcpy(&ehp, raw.data() + 0x24, 4);
                 int counter = 0; std::memcpy(&counter, raw.data() + 0x18, 4);
-                std::uint32_t index = 0; std::memcpy(&index, raw.data() + 0x70, 4);
+                std::uint32_t index = 0; std::memcpy(&index, raw.data() + 0x6C, 4);
                 if (mhp <= 0.0F) continue; // empty slot
                 PartSnapshot p;
                 p.index = static_cast<int>(index);
@@ -493,7 +512,24 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 p.extraHealth = ehp;
                 p.extraMaxHealth = emhp;
                 p.counter = counter;
-                p.name = cachedPartNames.value(p.index);
+                                // HunterPie part schema Id -> name (shared across monsters).
+                // Index matches partSchema.Id from MonsterData.xml.
+                // Stored as the schema's "String" attribute (e.g. PART_HEAD).
+                // We use HunterPie's localized part names.
+                static const QHash<int, QString> kPartNames = {
+                    {0, QStringLiteral("头部")},
+                    {1, QStringLiteral("躯干")},
+                    {2, QStringLiteral("手臂")},
+                    {3, QStringLiteral("左腿")},
+                    {4, QStringLiteral("右腿")},
+                    {5, QStringLiteral("尾巴")},
+                    {6, QStringLiteral("背部")},
+                    {7, QStringLiteral("翼")},
+                    {8, QStringLiteral("颈部")},
+                    {9, QStringLiteral("前腿")},
+                    {10, QStringLiteral("后腿")},
+                };
+                p.name = cachedPartNames.value(p.index, kPartNames.value(p.index));
                 parts.push_back(p);
             }
         }
@@ -504,6 +540,9 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             MonsterSnapshot m = cachedIt->second.snapshot;
             m.health = curHP;
             m.parts = parts;
+            m.enraged = isEnraged;
+            m.enrageSeconds = enrageDuration;
+            m.enrageMaxSeconds = enrageMaxDuration;
             result.push_back(m);
             continue;
         }
@@ -622,6 +661,9 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
         m.maxHealth = maxHP;
         m.health = curHP;
+        m.enraged = isEnraged;
+        m.enrageSeconds = enrageDuration;
+        m.enrageMaxSeconds = enrageMaxDuration;
         m.parts = parts;
         monsterCache_[comp] = {m, maxHP};
         result.push_back(m);
