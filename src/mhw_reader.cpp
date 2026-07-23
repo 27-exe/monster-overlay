@@ -616,9 +616,8 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         m.address = monster;
         m.internalName = displayName;
 
-        // HunterPie 2.14.0.461 reads the ID at +0x1228C (not +0x12280 in
-        // the old .map). The struct layout shifted; use the live offset.
-        if (const auto id = memory_.read<std::int32_t>(monster + 0x1228CULL))
+        // HunterPie reads the schema Id at +0x12280; 0x1228C is the slot index (0..N-1) in MonsterList, not the schema Id.
+        if (const auto id = memory_.read<std::int32_t>(monster + 0x12280ULL))
             m.id = hunterId;
 
         // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
