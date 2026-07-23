@@ -530,18 +530,6 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             }
         }
 
-        // Cache hit: name+maxHP unchanged -> reuse, only update curHP+parts
-        if (cachedIt != monsterCache_.end() &&
-            cachedIt->second.maxHP == maxHP && !cachedIt->second.snapshot.internalName.isEmpty()) {
-            MonsterSnapshot m = cachedIt->second.snapshot;
-            m.health = curHP;
-            m.parts = parts;
-            m.enraged = isEnraged;
-            m.enrageSeconds = enrageDuration;
-            m.enrageMaxSeconds = enrageMaxDuration;
-            result.push_back(m);
-            continue;
-        }
 
         // Cache miss: read name
         char nameBuf[64] = {0};
