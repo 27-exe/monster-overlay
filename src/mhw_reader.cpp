@@ -398,25 +398,6 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         // Still cheap to re-read 1024 bytes once per tick to detect spawns,
         // but if identical to cache, skip per-component work below.
         const std::vector<std::uintptr_t> fresh = memory_.readArray<std::uintptr_t>(arrayBase, 128, error);
-        if (fresh.size() == 128 && fresh == cachedArray_) {
-            // Array unchanged - check HP from cache for each live slot
-            for (const std::uintptr_t comp : cachedArray_) {
-                if (comp < 0x10000 || comp >= 0x0000800000000000ULL) continue;
-                auto cachedIt = monsterCache_.find(comp);
-                if (cachedIt == monsterCache_.end()) continue;
-                const std::uintptr_t monster = cachedIt->second.snapshot.address;
-                const auto healthPtr = memory_.read<std::uintptr_t>(monster + 0x7670ULL);
-                if (!healthPtr || !isSanePointer(*healthPtr)) continue;
-                const auto hp = memory_.readArray<float>(*healthPtr + 0x60ULL, 2);
-                if (hp.size() != 2) continue;
-                MonsterSnapshot m = cachedIt->second.snapshot;
-                m.maxHealth = hp[0];
-                m.health = hp[1];
-                cachedIt->second.maxHP = hp[0];
-                result.push_back(m);
-            }
-            return result;
-        }
         components = fresh;
         cachedArray_ = fresh;
     } else {
