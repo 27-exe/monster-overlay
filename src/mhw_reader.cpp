@@ -472,7 +472,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             if (const auto maxDur = memory_.read<float>(monster + 0x1BE30ULL + 0x28ULL))
                 enrageMaxDuration = *maxDur;
             if (const auto active = memory_.read<int>(monster + 0x1BE30ULL + 0x14ULL))
-                isEnraged = (*active > 0 && enrageDuration > 0.0F);
+            isEnraged = (enrageDuration > 0.0F);
         }
 
         // Resolve cache entry first (used for both part name lookup and cache
@@ -524,9 +524,8 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                     {9, QStringLiteral("前腿")},
                     {10, QStringLiteral("后腿")},
                 };
-                QString pname = kPartNames.value(p.index);
-                p.name = cachedPartNames.value(p.index, pname.isEmpty() ? QStringLiteral("Part[%1]").arg(p.index) : pname);
-                static int pc = 0; if (++pc <= 3) qWarning("part i=%d idx=%d mhp=%.0f name=|%s|", i, p.index, p.maxHealth, qPrintable(p.name));
+                QString pname = kPartNames.value(i);
+                p.name = cachedPartNames.value(i, pname.isEmpty() ? QStringLiteral("Part[%1]").arg(i) : pname);
                 parts.push_back(p);
             }
         }
