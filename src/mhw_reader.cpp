@@ -515,11 +515,13 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         if (nameStruct && *nameStruct >= 0x10000 && *nameStruct < 0x0000800000000000ULL) {
             memory_.readBytes(*nameStruct + 0xCULL, nameBuf, sizeof(nameBuf) - 1, nullptr);
         }
-        QString displayName = QString::fromUtf8(nameBuf);
-        if (displayName.isEmpty() || displayName.startsWith(QStringLiteral("em\\ems")))
-            continue;
-        if (displayName.startsWith(QStringLiteral("em\\em")))
-            displayName = displayName.mid(5);
+        const QString rawEm = QString::fromUtf8(nameBuf);
+        if (rawEm.startsWith(QStringLiteral("em\\ems"))) continue;
+        int hunterId = -1;
+        if (const auto id = memory_.read<std::int32_t>(monster + 0x12280ULL))
+            hunterId = *id;
+        QString displayName = QString::number(hunterId);
+
 
         // HunterPie 421810 zh-cn.xml Id -> name. The 421810 build reads
         // monster Id at monster+0x12280 and HunterPie's zh-cn.xml maps
@@ -609,6 +611,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         if (it != kNameTable.end())
             displayName = *it;
 
+
         MonsterSnapshot m;
         m.address = monster;
         m.internalName = displayName;
@@ -616,7 +619,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         // HunterPie 2.14.0.461 reads the ID at +0x1228C (not +0x12280 in
         // the old .map). The struct layout shifted; use the live offset.
         if (const auto id = memory_.read<std::int32_t>(monster + 0x1228CULL))
-            m.id = *id;
+            m.id = hunterId;
 
         // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
         m.maxHealth = maxHP;
