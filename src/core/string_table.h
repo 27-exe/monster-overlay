@@ -43,4 +43,15 @@ private:
     QString currentLocale_;
 };
 
+// Returns the localized mantle name from zh-CN.json.
+// Falls back to "Mantle #<id>" if the key is missing.
+inline QString mantleName(int id)
+{
+    const QString key = QStringLiteral("mantle.%1").arg(id);
+    const QString val = StringTable::instance().tr(key);
+    if (val != key)
+        return val;
+    return QStringLiteral("Mantle #%1").arg(id);
+}
+
 } // namespace mhw

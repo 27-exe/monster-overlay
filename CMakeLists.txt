@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Svg)
 find_package(LayerShellQt REQUIRED)
 
 # Core library: foundational types, memory reader, string table.
@@ -32,9 +32,12 @@ add_executable(mhw-overlay
     src/player/player_reader.cpp
     src/quest/quest_reader.cpp
     src/world/world_reader.cpp
-    src/overlay_window.cpp
-    src/overlay_window.h
     src/ui/formatters.cpp
+    src/ui/icon.cpp
+    src/ui/panel.cpp
+    src/ui/panel_monster.cpp
+    src/ui/panel_player.cpp
+    src/ui/panel_damage.cpp
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -44,6 +47,7 @@ target_link_libraries(mhw-overlay PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
+    Qt6::Svg
     LayerShellQt::Interface
     mhw-core
 )

@@ -80,7 +80,14 @@
     "part_break_solo": "    破坏进度 %1/%2  %3%4",
     "part_break_multi": "    破坏计数 %1%2",
     "part_broken_suffix": " ✖",
-    "part_name_padded": "  %1"
+    "part_name_padded": "  %1",
+    "monster_title": "怪物",
+    "player_title": "猎人状态",
+    "damage_title": "伤害统计",
+    "damage_waiting": "等待伤害数据...",
+    "part_severable_tag": " (切断)",
+    "part_breakable_tag": " (破坏)",
+    "enrage_buildup": "怒气 %1%"
   },
   "mantle": {
     "_meta": "SpecializedToolType (HunterPie 2.14.0.461). ID 用 enum 数值; 名称按社区常见叫法, ID=1 (Temporal) 命名为 '转身' (中文语境下与 ID=13 EvasionMantle '回避' 区分).",

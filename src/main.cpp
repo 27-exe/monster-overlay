@@ -1,12 +1,15 @@
-#include "overlay_window.h"
+#include "core/game_snapshot.h"
 #include "core/string_table.h"
+#include "mhw_reader.h"
+#include "ui/panel_damage.h"
+#include "ui/panel_monster.h"
+#include "ui/panel_player.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
-#include <QDir>
-#include <QProcess>
 #include <QTimer>
+
 #include <cstdio>
 
 void messageHandler(QtMsgType type, const QMessageLogContext &, const QString &msg)
@@ -29,34 +32,39 @@ int main(int argc, char **argv)
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("mhw-linux-overlay"));
     QApplication::setApplicationDisplayName(QStringLiteral("MHW Linux Overlay"));
-    QApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+    QApplication::setApplicationVersion(QStringLiteral("0.2.0"));
     QApplication::setOrganizationName(QStringLiteral("a27exe"));
     app.setQuitOnLastWindowClosed(true);
 
-    QStringList parserArguments = QCoreApplication::arguments();
-    QStringList launchCommand;
-    const qsizetype launchIndex = parserArguments.indexOf(QStringLiteral("--launch"));
-    if (launchIndex >= 0) {
-        launchCommand = parserArguments.mid(launchIndex + 1);
-        parserArguments = parserArguments.mid(0, launchIndex);
-    }
-
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Monster Hunter: World native Linux overlay prototype"));
+    parser.setApplicationDescription(
+        QStringLiteral("Monster Hunter: World native Linux overlay (v0.2 panel UI)"));
     parser.addHelpOption();
     parser.addVersionOption();
-    QCommandLineOption mapOption({QStringLiteral("m"), QStringLiteral("map")},
-                                 QStringLiteral("HunterPie legacy map path"),
-                                 QStringLiteral("path"),
-                                 QString::fromUtf8(MHW_DEFAULT_MAP));
-    QCommandLineOption demoOption(QStringLiteral("demo"), QStringLiteral("Render mock data without reading MHW"));
-    QCommandLineOption localeOption(QStringLiteral("locale"),
-                                    QStringLiteral("UI locale (e.g. zh-CN, en-US)"),
-                                    QStringLiteral("code"));
+
+    QCommandLineOption mapOption(
+        {QStringLiteral("m"), QStringLiteral("map")},
+        QStringLiteral("HunterPie legacy map path"),
+        QStringLiteral("path"),
+        QString::fromUtf8(MHW_DEFAULT_MAP));
+    QCommandLineOption localeOption(
+        QStringLiteral("locale"),
+        QStringLiteral("UI locale (e.g. zh-CN)"),
+        QStringLiteral("code"));
+    QCommandLineOption editOption(
+        QStringLiteral("edit"),
+        QStringLiteral("Enter edit mode: drag panels, scroll to scale, save on exit"));
+    QCommandLineOption pollOption(
+        QStringLiteral("poll"),
+        QStringLiteral("Polling interval in ms"),
+        QStringLiteral("ms"),
+        QStringLiteral("250"));
+
     parser.addOption(mapOption);
-    parser.addOption(demoOption);
     parser.addOption(localeOption);
-    parser.process(parserArguments);
+    parser.addOption(editOption);
+    parser.addOption(pollOption);
+    parser.process(app);
 
     if (!mhw::StringTable::instance().load(
             parser.isSet(localeOption) ? parser.value(localeOption)
@@ -64,26 +72,68 @@ int main(int argc, char **argv)
         qWarning() << "Failed to load UI strings; falling back to key names.";
     }
 
-    if (launchIndex >= 0 && launchCommand.isEmpty())
-        parser.showHelp(2);
+    const bool editMode = parser.isSet(editOption);
+    const int pollMs = qBound(30, parser.value(pollOption).toInt(), 5000);
 
-    OverlayWindow window(parser.value(mapOption), parser.isSet(demoOption));
-    window.show();
+    PlayerPanel playerPanel;
+    MonsterPanel monsterPanel;
+    DamagePanel damagePanel;
 
-    QProcess child;
-    if (!launchCommand.isEmpty()) {
-        child.setProcessChannelMode(QProcess::ForwardedChannels);
-        child.setWorkingDirectory(QDir::currentPath());
-        QObject::connect(&child, &QProcess::errorOccurred, &app, [&child](QProcess::ProcessError) {
-            qCritical().noquote() << QStringLiteral("启动游戏命令失败：%1").arg(child.errorString());
-            QCoreApplication::exit(3);
-        });
-        QObject::connect(&child,
-                         qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
-                         &app,
-                         [](int exitCode, QProcess::ExitStatus) { QCoreApplication::exit(exitCode); });
-        child.start(launchCommand.first(), launchCommand.mid(1));
+    playerPanel.setEditMode(editMode);
+    monsterPanel.setEditMode(editMode);
+    damagePanel.setEditMode(editMode);
+
+    playerPanel.show();
+    monsterPanel.show();
+    damagePanel.show();
+
+    mhw::MhwReader reader(parser.value(mapOption));
+    QTimer timer;
+
+    QObject::connect(&timer, &QTimer::timeout, [&] {
+        const mhw::GameSnapshot snap = reader.poll();
+
+        // Player panel: only meaningful when we have a live player.
+        if (snap.player.valid) {
+            playerPanel.setVisible(true);
+            playerPanel.update(snap.player);
+            // Feed the local player's weapon id (lives in party data).
+            for (const auto &member : snap.party) {
+                if (member.local) {
+                    playerPanel.setWeaponId(member.weaponId);
+                    break;
+                }
+            }
+        } else {
+            playerPanel.setVisible(false);
+        }
+
+        // Monster panel displays the first live large monster only (v0.2).
+        // Multiple monsters are planned for a later version.
+        if (!snap.monsters.isEmpty()) {
+            monsterPanel.setVisible(true);
+            monsterPanel.update(snap.monsters.first());
+        } else {
+            monsterPanel.setVisible(false);
+        }
+
+        // Damage panel only shown when party damage data exists.
+        if (!snap.party.isEmpty()) {
+            damagePanel.setVisible(true);
+            damagePanel.update(snap);
+        } else {
+            damagePanel.setVisible(false);
+        }
+    });
+    timer.start(pollMs);
+
+    const int code = app.exec();
+
+    if (editMode) {
+        playerPanel.saveConfig();
+        monsterPanel.saveConfig();
+        damagePanel.saveConfig();
     }
 
-    return app.exec();
+    return code;
 }
