@@ -16,6 +16,8 @@ find_package(LayerShellQt REQUIRED)
 add_library(mhw-core STATIC
     src/core/string_table.h
     src/core/string_table.cpp
+    src/world/world_types.h
+    src/world/world_types.cpp
 )
 target_include_directories(mhw-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(mhw-core PUBLIC Qt6::Core)
@@ -27,6 +29,7 @@ add_executable(mhw-overlay
     src/mhw_reader.h
     src/overlay_window.cpp
     src/overlay_window.h
+    src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -52,7 +55,7 @@ if(BUILD_TESTING)
         src/mhw_reader.cpp
         src/mhw_reader.h
     )
-    target_link_libraries(mhw-reader-tests PRIVATE Qt6::Core)
+    target_link_libraries(mhw-reader-tests PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-reader-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(mhw-reader-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME mhw-reader-tests COMMAND mhw-reader-tests)
@@ -62,7 +65,7 @@ if(BUILD_TESTING)
         src/mhw_reader.cpp
         src/mhw_reader.h
     )
-    target_link_libraries(mhw-probe PRIVATE Qt6::Core)
+    target_link_libraries(mhw-probe PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(mhw-probe PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
     target_compile_definitions(mhw-probe PRIVATE MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map")
@@ -72,7 +75,7 @@ if(BUILD_TESTING)
         src/mhw_reader.cpp
         src/mhw_reader.h
     )
-    target_link_libraries(mhw-scan PRIVATE Qt6::Core)
+    target_link_libraries(mhw-scan PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-scan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(mhw-scan PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
     target_compile_definitions(mhw-scan PRIVATE MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map")
@@ -82,7 +85,7 @@ if(BUILD_TESTING)
         src/mhw_reader.cpp
         src/mhw_reader.h
     )
-    target_link_libraries(mhw-probe-parts PRIVATE Qt6::Core)
+    target_link_libraries(mhw-probe-parts PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe-parts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(mhw-probe-parts PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
     target_compile_definitions(mhw-probe-parts PRIVATE MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map")
@@ -92,7 +95,7 @@ if(BUILD_TESTING)
         src/mhw_reader.cpp
         src/mhw_reader.h
     )
-    target_link_libraries(mhw-probe-ailments PRIVATE Qt6::Core)
+    target_link_libraries(mhw-probe-ailments PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe-ailments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(mhw-probe-ailments PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
@@ -101,7 +104,7 @@ if(BUILD_TESTING)
         src/mhw_reader.cpp
         src/mhw_reader.h
     )
-    target_link_libraries(mhw-probe-ailments-watch PRIVATE Qt6::Core)
+    target_link_libraries(mhw-probe-ailments-watch PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe-ailments-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(mhw-probe-ailments-watch PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
@@ -110,7 +113,7 @@ if(BUILD_TESTING)
         src/mhw_reader.cpp
         src/mhw_reader.h
     )
-    target_link_libraries(mhw-probe-mantles PRIVATE Qt6::Core)
+    target_link_libraries(mhw-probe-mantles PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe-mantles PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(mhw-probe-mantles PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
@@ -119,7 +122,7 @@ if(BUILD_TESTING)
         src/mhw_reader.cpp
         src/mhw_reader.h
     )
-    target_link_libraries(mhw-probe-mantles-wide PRIVATE Qt6::Core)
+    target_link_libraries(mhw-probe-mantles-wide PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe-mantles-wide PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(mhw-probe-mantles-wide PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
