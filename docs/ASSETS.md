@@ -131,33 +131,32 @@ After running this once, we have a 100+ icon library in
 `assets/icons/`. v0.2 picks the 9 we need and bundles them via
 `assets/icons.qrc`.
 
-## What goes in `assets/` after running the script
+## What goes in `assets/`
 
 ```
 assets/
 ├── fonts/
-│   ├── OFL.txt                  # required by SIL OFL 1.1
-│   ├── WorkSans-Regular.ttf
-│   ├── WorkSans-Medium.ttf
-│   └── WorkSans-SemiBold.ttf
+│   ├── OFL.txt                  # SIL OFL 1.1 (required)
+│   └── WorkSans-{Regular,Medium,SemiBold,Light,ExtraLight}.ttf
 ├── icons/
-│   ├── enrage.svg               # ← generated from HunterPie Icons.Activities.Something
-│   ├── stamina.svg
-│   ├── mantle.svg
-│   ├── ailment_sleep.svg
-│   ├── ailment_paralysis.svg
-│   ├── ailment_stun.svg
-│   ├── ailment_drool.svg
-│   ├── part_flinch.svg
-│   ├── part_breakable.svg
-│   └── part_severable.svg
+│   ├── Weapons/                 # 14 weapon types × 12 ranks = 168 files
+│   │   ├── Bow/Bow_Rank_01.svg … Bow_Rank_12.svg
+│   │   ├── Great_Sword/Great_Sword_Rank_01.svg … Rank_12.svg
+│   │   └── …
+│   ├── crowns/                  # 3 files (crown_mini/large/king)
+│   ├── Decorations/             # 76 files
+│   ├── Hunter/                  # 7 files (Arms, Charm, Chest, …)
+│   ├── Mantles/                 # 17 files
+│   ├── Tools/                   # 3 files
+│   ├── Traps/                   # 2 files
+│   └── LICENSE                  # MIT, copied from upstream
 ├── charts/
-│   ├── dps_grid.svg             # hand-drawn gridlines (cap on reuse: this is just
-│   │                           # a few horizontal lines, easier to draw fresh)
-│   └── dps_grid_noise.jpg       # ← generated from alligator_noise_512x512.jpg
-├── icons.qrc
-└── NOTICE                       # Apache-2.0 attribution + SIL OFL 1.1 notice
+│   └── alligator_noise_512x512.jpg
+├── icons.qrc                    # Qt resource manifest
+└── NOTICE                       # attribution summary
 ```
+
+Total: **278 SVG icons + 5 fonts + 1 texture + 1 LICENSE + 1 NOTICE**.
 
 ## Attribution template (`assets/NOTICE`)
 

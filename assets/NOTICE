@@ -3,10 +3,23 @@ Copyright 2024 a27exe
 
 This product includes software developed by the HunterPie contributors
 (https://github.com/HunterPie/HunterPie), licensed under the Apache
-License, Version 2.0. Icon Path data was adapted from HunterPie's
-XAML resources (Resources/Icons/*.xaml, Resources/Abnormalities.xaml,
-etc.) per Apache-2.0 terms. The conversion was performed by
-tools/xaml2svg.py.
+License, Version 2.0. Path data for status/ailment icons was adapted
+from HunterPie's XAML resources; the SVG icons in assets/icons/ come
+directly from the upstream source.
+
+The icons in assets/icons/Weapons/, assets/icons/Mantles/,
+assets/icons/Decorations/, assets/icons/crowns/, assets/icons/Hunter/,
+assets/icons/Tools/, assets/icons/Traps/ are sourced from:
+
+    MHW_Icons_SVG — copyright 2020 Thibault "Othello" BENOIT
+    https://github.com/OthelloRhin/MHW_Icons_SVG
+    licensed under the MIT License.
+
+A copy of the MIT text is included as assets/icons/LICENSE (or see
+upstream). The original XAML resources from HunterPie
+(assets/icons/Abnormalities.*, the ICON_* PNG-style icons) were
+replaced by the equivalent OthelloRhin SVG files where applicable.
+This commit retires the tools/xaml2svg.py conversion pipeline.
 
 This product includes WorkSans (https://github.com/weiweihuanghuang/
 Work-Sans), licensed under the SIL Open Font License, Version 1.1.
@@ -18,11 +31,14 @@ terms.
 
 The original HunterPie project is at:
   https://github.com/HunterPie/HunterPie
-The conversion script is committed at:
-  tools/xaml2svg.py
+The original MHW_Icons_SVG project is at:
+  https://github.com/OthelloRhin/MHW_Icons_SVG
 
 What we do NOT use:
-- qurio_mask.png and any HunterPie asset depicting a Capcom
-  character (qurio, etc.) — see docs/ASSETS.md.
 - Anything extracted from the MHW game binary at runtime. The em\em\*
   strings in memory are used as data, not as image sources.
+- Anything derived from MHW game assets (Capcom EULA forbids).
+
+Conversion script archived at:
+  tools/archive/xaml2svg.py (kept for reference only; no longer used
+  by the build system).
