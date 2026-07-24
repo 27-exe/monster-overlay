@@ -1447,6 +1447,20 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             for (int s = 0; s < schema.size(); ++s) {
                 const PartSchema &ps = schema[s];
 
+                // HunterPie behaviour: skip state-specific parts (PART_*_ROCK,
+                // _MUD, _ICE, _SNOW, _GOLD, _GLOWING, _SPIDERS, etc.) — these
+                // are tracked internally to drive body-part state
+                // transitions (e.g. 煌啼龙 stone-shedding, 煌黑龙 gold
+                // shell, 雪人防冰雪, 冰呪龍冰甲) but are NOT displayed on
+                // the overlay. Also skip "PART_UNKNOWN" sentinels.
+                // Rationale: kPartSchemas is auto-generated from the raw
+                // HunterPie XML which contains these enum-named entries
+                // verbatim. Showing them confuses users — they want to see
+                // "头部/身体/尾巴", not "PART_HEAD_ROCK".
+                if (QString::fromUtf8(ps.name).startsWith(QStringLiteral("PART_"))) {
+                    continue;
+                }
+
                 if (ps.isSeverable) {
                     std::uintptr_t addr = severableBase;
                     for (int scan = 0; scan < 32 && addr < sevEnd; ++scan) {
