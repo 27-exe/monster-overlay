@@ -34,6 +34,7 @@ add_executable(mhw-overlay
     src/world/world_reader.cpp
     src/overlay_window.cpp
     src/overlay_window.h
+    src/ui/formatters.cpp
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc

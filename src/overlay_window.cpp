@@ -1,5 +1,6 @@
 #include "overlay_window.h"
 #include "core/string_table.h"
+#include "ui/formatters.h"
 
 #include <LayerShellQt/Window>
 
@@ -36,22 +37,6 @@ inline QString tr(const QString& key) {
     return mhw::StringTable::instance().tr(key);
 }
 } // namespace mh
-
-
-QString percentage(float value, float maximum)
-{
-    if (!std::isfinite(value) || !std::isfinite(maximum) || maximum <= 0.0F)
-        return QStringLiteral("--");
-    return QStringLiteral("%1%").arg(std::clamp(value / maximum * 100.0F, 0.0F, 999.0F), 0, 'f', 1);
-}
-
-QString seconds(float value)
-{
-    if (!std::isfinite(value) || value <= 0.0F)
-        return QStringLiteral("--");
-    const int total = static_cast<int>(value);
-    return QStringLiteral("%1:%2").arg(total / 60, 2, 10, QLatin1Char('0')).arg(total % 60, 2, 10, QLatin1Char('0'));
-}
 
 } // namespace
 
@@ -209,7 +194,7 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
             quest_->setText(mh::tr("ui.quest_active")
                                 .arg(snapshot.quest.id)
                                 .arg(snapshot.quest.stars % 10)
-                                .arg(seconds(snapshot.quest.timeLeftSeconds))
+                                .arg(mhw::seconds(snapshot.quest.timeLeftSeconds))
                                 .arg(snapshot.quest.deaths)
                                 .arg(snapshot.quest.maxDeaths));
         } else {
@@ -265,7 +250,7 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
         QString playerLine = mh::tr("ui.player_header")
                                  .arg(snapshot.player.health, 0, 'f', 0)
                                  .arg(snapshot.player.maxHealth, 0, 'f', 0)
-                                 .arg(percentage(snapshot.player.health, snapshot.player.maxHealth))
+                                 .arg(mhw::percentage(snapshot.player.health, snapshot.player.maxHealth))
                                  .arg(snapshot.player.stamina, 0, 'f', 0)
                                  .arg(snapshot.player.maxStamina, 0, 'f', 0);
         if (!extras.isEmpty())
@@ -308,7 +293,7 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
                 ? mh::tr("ui.hp_total_with_suffix")
                       .arg(monster.health, 0, 'f', 0)
                       .arg(monster.maxHealth, 0, 'f', 0)
-                      .arg(percentage(monster.health, monster.maxHealth))
+                      .arg(mhw::percentage(monster.health, monster.maxHealth))
                       .arg(suffix)
                 : mh::tr("ui.hp_total_unknown").arg(suffix);
             QString main = mh::tr("ui.monster_id_label")
@@ -330,7 +315,7 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
                             values << mh::tr("ui.part_sever_solo")
                                 .arg(p.health, 0, 'f', 0)
                                 .arg(p.maxHealth, 0, 'f', 0)
-                                .arg(percentage(p.health, p.maxHealth));
+                                .arg(mhw::percentage(p.health, p.maxHealth));
                         }
                     } else {
                         if (multi) {
@@ -344,12 +329,12 @@ void OverlayWindow::render(const mhw::GameSnapshot &snapshot)
                             values << mh::tr("ui.part_flinch_solo")
                                 .arg(p.flinch, 0, 'f', 0)
                                 .arg(p.maxFlinch, 0, 'f', 0)
-                                .arg(percentage(p.flinch, p.maxFlinch));
+                                .arg(mhw::percentage(p.flinch, p.maxFlinch));
                             if (p.isBreakable) {
                                 values << mh::tr("ui.part_break_solo")
                                     .arg(p.health, 0, 'f', 0)
                                     .arg(p.maxHealth, 0, 'f', 0)
-                                    .arg(percentage(p.health, p.maxHealth))
+                                    .arg(mhw::percentage(p.health, p.maxHealth))
                                     .arg(p.isBroken ? mh::tr("ui.part_broken_suffix") : QString());
                             }
                         }
