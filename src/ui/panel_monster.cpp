@@ -51,7 +51,7 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 } // namespace mh
 
 MonsterPanel::MonsterPanel(QWidget *parent)
-    : Panel(QStringLiteral("monster"), QPoint(1200, 20), parent)
+    : Panel(QStringLiteral("monster"), Corner::TopRight, parent)
 {
     setWindowTitle(mh::tr("ui.monster_title"));
 }
@@ -150,6 +150,52 @@ void MonsterPanel::paintPanel(QPainter &p)
                    Qt::AlignLeft | Qt::AlignVCenter,
                    mhw::percentage(part.health, part.maxHealth));
 
+        y += kPartBarH + kRowGap;
+    }
+}
+
+void MonsterPanel::paintDemo(QPainter &p)
+{
+    // Sample content shown in edit mode when no real monster data is
+    // available, so the user can identify and position this panel.
+    const int demoParts = 3;
+    const int totalH = kMargin + 22 + kRowGap + kTotalBarH + kRowGap
+                     + demoParts * (kPartBarH + kRowGap) + kMargin;
+    setContentSize(kPanelWidth, totalH);
+
+    int y = kMargin;
+
+    // Title
+    p.setPen(QColor(120, 180, 255));
+    p.setFont(QFont(QStringLiteral("Work Sans"), 10, QFont::Bold));
+    p.drawText(kMargin, y + 12, QStringLiteral("怪物血量 (示例) — Monster"));
+    y += 22 + kRowGap;
+
+    // Big total HP bar
+    drawBar(p, QRectF(kMargin, y, kPanelWidth - 2 * kMargin, kTotalBarH),
+            0.65F, healthColor(0.65F));
+    p.setPen(Qt::white);
+    p.setFont(QFont(QStringLiteral("Work Sans"), 11, QFont::Bold));
+    p.drawText(QRectF(kMargin + 6, y, kPanelWidth - 2 * kMargin - 12, kTotalBarH),
+               Qt::AlignLeft | Qt::AlignVCenter,
+               QStringLiteral("示例怪物  65000/100000 65%"));
+    y += kTotalBarH + kRowGap;
+
+    // Sample part bars
+    p.setFont(QFont(QStringLiteral("Work Sans"), 8));
+    const char *demoPartNames[] = {"头部", "尾巴", "左翼"};
+    const float demoPartPct[] = {0.85F, 0.30F, 0.55F};
+    for (int i = 0; i < demoParts; ++i) {
+        drawBar(p, QRectF(kMargin + 100, y, kPanelWidth - 2 * kMargin - 100, kPartBarH),
+                demoPartPct[i], healthColor(demoPartPct[i]));
+        p.setPen(QColor(200, 200, 200));
+        p.drawText(QRectF(kMargin, y, 96, kPartBarH),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   QString::fromUtf8(demoPartNames[i]));
+        p.setPen(Qt::white);
+        p.drawText(QRectF(kMargin + 104, y, kPanelWidth - 2 * kMargin - 108, kPartBarH),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   QStringLiteral("%1%").arg(static_cast<int>(demoPartPct[i] * 100)));
         y += kPartBarH + kRowGap;
     }
 }

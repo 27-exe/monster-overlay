@@ -35,7 +35,7 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 } // namespace mh
 
 DamagePanel::DamagePanel(QWidget *parent)
-    : Panel(QStringLiteral("dps"), QPoint(1200, 400), parent)
+    : Panel(QStringLiteral("dps"), Corner::BottomRight, parent)
 {
     setWindowTitle(mh::tr("ui.damage_title"));
 }
@@ -205,5 +205,40 @@ void DamagePanel::paintPanel(QPainter &p)
                        QStringLiteral("%1%").arg(static_cast<int>(share * 100)));
             bx += w;
         }
+    }
+}
+
+void DamagePanel::paintDemo(QPainter &p)
+{
+    // Sample content shown in edit mode when no real party data is
+    // available, so the user can identify and position this panel.
+    const int demoPlayers = 4;
+    const int totalH = kMargin + 16 + demoPlayers * kRowH + kMargin;
+    setContentSize(kPanelW, totalH);
+
+    int y = kMargin;
+
+    // Title
+    p.setPen(QColor(120, 180, 255));
+    p.setFont(QFont(QStringLiteral("Work Sans"), 10, QFont::Bold));
+    p.drawText(kMargin, y + 12, QStringLiteral("伤害统计 (示例) — Damage"));
+    y += 16;
+
+    // Sample player rows
+    const char *demoNames[] = {"猎人A", "猎人B", "猎人C", "猎人D"};
+    const int demoDmg[] = {52000, 38000, 29000, 18000};
+    p.setFont(QFont(QStringLiteral("Work Sans"), 9));
+    for (int i = 0; i < demoPlayers; ++i) {
+        p.setPen(kPlayerColors[i % kMaxPlayers]);
+        p.drawText(QRectF(kMargin, y, 70, kRowH),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   QString::fromUtf8(demoNames[i]));
+        p.setPen(Qt::white);
+        p.drawText(QRectF(kMargin + 75, y, kPanelW - 2 * kMargin - 75, kRowH),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   QStringLiteral("MR999  %1  DPS %2")
+                       .arg(demoDmg[i])
+                       .arg(demoDmg[i] / 180));
+        y += kRowH;
     }
 }

@@ -3,12 +3,14 @@
 #include <LayerShellQt/Window>
 
 #include <QGuiApplication>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScreen>
 #include <QWheelEvent>
 #include <QWindow>
 
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -26,66 +28,140 @@ QSettings &settings()
     return s;
 }
 
+// Default margin (offset from the anchored edges) per corner. Chosen
+// so the three panels (player=top-left, monster=top-right,
+// damage=bottom-right) do not overlap on a typical screen.
+QMargins defaultMarginsFor(Corner corner)
+{
+    switch (corner) {
+    case Corner::TopLeft:     return QMargins(20, 20, 0, 0);
+    case Corner::TopRight:    return QMargins(0, 20, 20, 0);
+    case Corner::BottomLeft:  return QMargins(20, 0, 0, 20);
+    case Corner::BottomRight: return QMargins(0, 0, 20, 20);
+    }
+    return QMargins(20, 20, 0, 0);
+}
+
+// Clamp a margin component to a sane non-negative range so a panel
+// can never be dragged off-screen.
+int clampMargin(int v)
+{
+    return std::clamp(v, 0, 8000);
+}
+
 } // namespace
 
-Panel::Panel(const QString &settingsKey, const QPoint &defaultPos, QWidget *parent)
+Panel::Panel(const QString &settingsKey, Corner corner, QWidget *parent)
     : QMainWindow(parent)
     , key_(settingsKey)
-    , defaultPos_(defaultPos)
+    , corner_(corner)
+    , margins_(defaultMarginsFor(corner))
 {
     setObjectName(QStringLiteral("mhw-panel-%1").arg(settingsKey));
     setAttribute(Qt::WA_TranslucentBackground);
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     setMouseTracking(true);
 
-    // Safety net: give the panel a sane default size immediately.
-    // Subclasses normally call canvas()->setFixedSize(...) once they
-    // have data, but before the first data arrives a top-level
-    // frameless window would otherwise expand to fill the screen.
+    // Safety-net default size so the surface is never 0x0. Subclasses
+    // call setContentSize() once they know their real content size.
     setFixedSize(320, 120);
 
-    // Layer-shell: overlay on top of everything. Force native window
-    // creation via winId(), then configure the layer on the QWindow.
+    // Load persisted config, then set up the layer-shell surface
+    // (anchors + margins) BEFORE the window is shown. Showing first
+    // and configuring layer-shell after triggers "already has a shell
+    // integration" warnings.
+    loadConfig();
+    applyGeometry();
+}
+
+void Panel::applyGeometry()
+{
+    // Ensure a native window exists before touching layer-shell state.
     QWindow *native = windowHandle();
     if (!native) {
         (void)winId();
         native = windowHandle();
     }
-    if (native) {
-        LayerShellQt::Window *layer = LayerShellQt::Window::get(native);
-        layer->setLayer(LayerShellQt::Window::LayerOverlay);
-        layer->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityNone);
-        layer->setExclusiveZone(-1);
-        layer->setScope(QStringLiteral("mhw-linux-overlay"));
-        layer->setActivateOnShow(false);
-    }
+    if (!native)
+        return;
 
-    loadConfig();
+    LayerShellQt::Window *layer = LayerShellQt::Window::get(native);
+    if (!layer)
+        return;
+
+    layer->setLayer(LayerShellQt::Window::LayerOverlay);
+    // Pointer interactivity is the deciding factor for whether the
+    // panel receives mouse events:
+    //   - edit mode  -> OnDemand  (panel is clickable/draggable)
+    //   - normal mode-> None      (clicks pass through to the game)
+    // A KeyboardInteractivityNone surface NEVER receives pointer
+    // events, which is why dragging was impossible before.
+    layer->setKeyboardInteractivity(editMode_
+        ? LayerShellQt::Window::KeyboardInteractivityOnDemand
+        : LayerShellQt::Window::KeyboardInteractivityNone);
+    layer->setExclusiveZone(-1);
+    layer->setScope(QStringLiteral("mhw-linux-overlay"));
+    layer->setActivateOnShow(false);
+
+    // Anchor the panel to its corner. This is the KEY difference from
+    // the buggy version: without anchors, layer-shell expands the
+    // overlay to fill the entire screen (locking the user out).
+    LayerShellQt::Window::Anchors anchors;
+    switch (corner_) {
+    case Corner::TopLeft:
+        anchors |= LayerShellQt::Window::AnchorTop;
+        anchors |= LayerShellQt::Window::AnchorLeft;
+        break;
+    case Corner::TopRight:
+        anchors |= LayerShellQt::Window::AnchorTop;
+        anchors |= LayerShellQt::Window::AnchorRight;
+        break;
+    case Corner::BottomLeft:
+        anchors |= LayerShellQt::Window::AnchorBottom;
+        anchors |= LayerShellQt::Window::AnchorLeft;
+        break;
+    case Corner::BottomRight:
+        anchors |= LayerShellQt::Window::AnchorBottom;
+        anchors |= LayerShellQt::Window::AnchorRight;
+        break;
+    }
+    layer->setAnchors(anchors);
+    layer->setMargins(margins_);
+
+    // Tell the compositor the desired surface size (the free,
+    // non-anchored dimensions for a corner anchor).
+    layer->setDesiredSize(size());
 }
 
 void Panel::loadConfig()
 {
+    const QMargins def = defaultMarginsFor(corner_);
     settings().beginGroup(key_);
-    const int x = settings().value(QStringLiteral("x"), defaultPos_.x()).toInt();
-    const int y = settings().value(QStringLiteral("y"), defaultPos_.y()).toInt();
+    margins_.setLeft(clampMargin(settings().value(QStringLiteral("ml"), def.left()).toInt()));
+    margins_.setTop(clampMargin(settings().value(QStringLiteral("mt"), def.top()).toInt()));
+    margins_.setRight(clampMargin(settings().value(QStringLiteral("mr"), def.right()).toInt()));
+    margins_.setBottom(clampMargin(settings().value(QStringLiteral("mb"), def.bottom()).toInt()));
     scale_ = settings().value(QStringLiteral("scale"), 1.0).toDouble();
     opacity_ = settings().value(QStringLiteral("opacity"), 0.85).toDouble();
-    const bool vis = settings().value(QStringLiteral("visible"), true).toBool();
     settings().endGroup();
 
     scale_ = std::clamp(scale_, kMinScale, kMaxScale);
     opacity_ = std::clamp(opacity_, 0.1, 1.0);
 
-    move(x, y);
-    setVisible(vis);
+    // Note: visibility is NOT applied here. The window must not be
+    // shown until after applyGeometry() configures the layer-shell
+    // surface (anchors + margins); showing first triggers "already
+    // has a shell integration" warnings. main.cpp shows the panels.
     setWindowOpacity(opacity_);
 }
 
 void Panel::saveConfig()
 {
     settings().beginGroup(key_);
-    settings().setValue(QStringLiteral("x"), pos().x());
-    settings().setValue(QStringLiteral("y"), pos().y());
+    settings().setValue(QStringLiteral("ml"), margins_.left());
+    settings().setValue(QStringLiteral("mt"), margins_.top());
+    settings().setValue(QStringLiteral("mr"), margins_.right());
+    settings().setValue(QStringLiteral("mb"), margins_.bottom());
     settings().setValue(QStringLiteral("scale"), scale_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
     settings().setValue(QStringLiteral("visible"), isVisible());
@@ -98,6 +174,13 @@ void Panel::setEditMode(bool on)
     editMode_ = on;
     setAttribute(Qt::WA_TransparentForMouseEvents, !on);
     setCursor(on ? Qt::SizeAllCursor : Qt::ArrowCursor);
+
+    // The keyboard/pointer interactivity was fixed at construction
+    // time (applyGeometry), but setEditMode is called afterwards by
+    // main.cpp. Re-apply so the layer-shell surface actually becomes
+    // interactive (OnDemand) — otherwise a None surface never gets
+    // pointer events and dragging is impossible.
+    applyGeometry();
     update();
 }
 
@@ -113,7 +196,26 @@ void Panel::setContentSize(int w, int h)
     // never clipped at scale != 1.0.
     const int aw = static_cast<int>(std::lround(w * scale_));
     const int ah = static_cast<int>(std::lround(h * scale_));
+
+    // Idempotent guard: paintDemo/paintPanel call setContentSize() on
+    // every repaint, and a drag fires update() each frame. Re-issuing
+    // setFixedSize() + setDesiredSize() every frame makes the
+    // compositor reconfigure the surface repeatedly — that's the
+    // flicker. Only touch the compositor when the size actually
+    // changed.
+    if (size() == QSize(aw, ah))
+        return;
+
     setFixedSize(aw, ah);
+
+    // Keep the layer-shell desired size in sync so the compositor
+    // allocates the right surface dimensions.
+    QWindow *native = windowHandle();
+    if (native) {
+        LayerShellQt::Window *layer = LayerShellQt::Window::get(native);
+        if (layer)
+            layer->setDesiredSize(QSize(aw, ah));
+    }
 }
 
 void Panel::paintEvent(QPaintEvent *)
@@ -134,21 +236,86 @@ void Panel::paintEvent(QPaintEvent *)
     if (scale_ != 1.0)
         p.scale(scale_, scale_);
 
+    // In edit mode with no real game data, draw demo content so the
+    // panel stays visible and identifiable for positioning.
+    if (editMode_ && !hasContent()) {
+        paintDemo(p);
+        return;
+    }
+
     paintPanel(p);
 }
 
 void Panel::mousePressEvent(QMouseEvent *e)
 {
-    if (editMode_ && e->button() == Qt::LeftButton) {
-        dragging_ = true;
-        dragStart_ = e->globalPosition().toPoint() - pos();
-    }
+    // Click-to-focus in edit mode so this panel receives keyboard
+    // events (arrow-key nudge). No dragging — every mouse-event-based
+    // drag approach (globalPosition, localPosition, QCursor polling)
+    // hits the same Wayland feedback loop between surface reposition
+    // and cursor coordinate reporting.
+    if (editMode_ && e->button() == Qt::LeftButton)
+        setFocus();
 }
 
-void Panel::mouseMoveEvent(QMouseEvent *e)
+void Panel::keyPressEvent(QKeyEvent *e)
 {
-    if (dragging_ && editMode_)
-        move(e->globalPosition().toPoint() - dragStart_);
+    if (!editMode_)
+        return QMainWindow::keyPressEvent(e);
+
+    constexpr int kStep = 10;
+    constexpr int kBigStep = 50;
+    const int step = (e->modifiers() & Qt::ShiftModifier) ? kBigStep : kStep;
+
+    int dx = 0, dy = 0;
+    switch (e->key()) {
+    case Qt::Key_Left:  dx = -step; break;
+    case Qt::Key_Right: dx =  step; break;
+    case Qt::Key_Up:    dy = -step; break;
+    case Qt::Key_Down:  dy =  step; break;
+    case Qt::Key_S:
+        if (e->modifiers() & Qt::ControlModifier) {
+            saveConfig();
+            return;
+        }
+        break;
+    default:
+        return QMainWindow::keyPressEvent(e);
+    }
+
+    if (dx != 0 || dy != 0)
+        nudgeMargins(dx, dy);
+}
+
+void Panel::nudgeMargins(int dx, int dy)
+{
+    QMargins m = margins_;
+    switch (corner_) {
+    case Corner::TopLeft:
+        m.setLeft(clampMargin(m.left() + dx));
+        m.setTop(clampMargin(m.top() + dy));
+        break;
+    case Corner::TopRight:
+        m.setRight(clampMargin(m.right() - dx));
+        m.setTop(clampMargin(m.top() + dy));
+        break;
+    case Corner::BottomLeft:
+        m.setLeft(clampMargin(m.left() + dx));
+        m.setBottom(clampMargin(m.bottom() - dy));
+        break;
+    case Corner::BottomRight:
+        m.setRight(clampMargin(m.right() - dx));
+        m.setBottom(clampMargin(m.bottom() - dy));
+        break;
+    }
+    margins_ = m;
+
+    QWindow *native = windowHandle();
+    if (native) {
+        LayerShellQt::Window *layer = LayerShellQt::Window::get(native);
+        if (layer)
+            layer->setMargins(margins_);
+    }
+    update();
 }
 
 void Panel::wheelEvent(QWheelEvent *e)

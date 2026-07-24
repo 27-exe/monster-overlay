@@ -93,16 +93,26 @@ int main(int argc, char **argv)
     QObject::connect(&timer, &QTimer::timeout, [&] {
         const mhw::GameSnapshot snap = reader.poll();
 
+        // In edit mode, always show all panels so the user can
+        // position them even without game data.
+        const bool showAll = editMode;
+
         // Player panel: only meaningful when we have a live player.
-        if (snap.player.valid) {
+        if (snap.player.valid || showAll) {
             playerPanel.setVisible(true);
-            playerPanel.update(snap.player);
-            // Feed the local player's weapon id (lives in party data).
-            for (const auto &member : snap.party) {
-                if (member.local) {
-                    playerPanel.setWeaponId(member.weaponId);
-                    break;
+            if (snap.player.valid) {
+                playerPanel.update(snap.player);
+                // Feed the local player's weapon id (lives in party data).
+                for (const auto &member : snap.party) {
+                    if (member.local) {
+                        playerPanel.setWeaponId(member.weaponId);
+                        break;
+                    }
                 }
+            } else if (editMode) {
+                // In edit mode without game data, repaint to commit
+                // the layer-shell surface so margin changes apply.
+                playerPanel.triggerUpdate();
             }
         } else {
             playerPanel.setVisible(false);
@@ -110,22 +120,28 @@ int main(int argc, char **argv)
 
         // Monster panel displays the first live large monster only (v0.2).
         // Multiple monsters are planned for a later version.
-        if (!snap.monsters.isEmpty()) {
+        if (!snap.monsters.isEmpty() || showAll) {
             monsterPanel.setVisible(true);
-            monsterPanel.update(snap.monsters.first());
+            if (!snap.monsters.isEmpty())
+                monsterPanel.update(snap.monsters.first());
+            else if (editMode)
+                monsterPanel.triggerUpdate();
         } else {
             monsterPanel.setVisible(false);
         }
 
         // Damage panel only shown when party damage data exists.
-        if (!snap.party.isEmpty()) {
+        if (!snap.party.isEmpty() || showAll) {
             damagePanel.setVisible(true);
-            damagePanel.update(snap);
+            if (!snap.party.isEmpty())
+                damagePanel.update(snap);
+            else if (editMode)
+                damagePanel.triggerUpdate();
         } else {
             damagePanel.setVisible(false);
         }
     });
-    timer.start(pollMs);
+    timer.start(pollMs);  // consistent poll rate regardless of mode
 
     const int code = app.exec();
 

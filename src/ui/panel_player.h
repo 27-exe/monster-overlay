@@ -14,6 +14,8 @@ public:
 
 protected:
     void paintPanel(QPainter &p) override;
+    void paintDemo(QPainter &p) override;
+    bool hasContent() const override { return hasData_; }
 
 private:
     mhw::PlayerSnapshot player_;

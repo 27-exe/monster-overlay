@@ -5,14 +5,16 @@ Steam + GE-Proton. Reads the game's process memory directly via
 `/proc/<pid>/mem` and renders a Qt-based HUD in a KDE Wayland
 layer-shell surface.
 
-> **Status: v0.1.** Data layer is feature-equivalent to HunterPie
-> for: monster HP, parts (severable / flinch / breakable), ailments
-> (sleep, paralysis, etc.), enrage (countdown + buildup %), player HP/ST,
-> mantles (active + cooldown), party damage, quest state, zone.
-> UI is a single rectangular panel in the top-right corner.
+> **Status: v0.2.** UI rebuilt as 3 independent Wayland layer-shell
+> panels (player status / monster HP / party damage), positioned by
+> keyboard nudge (arrow keys) and anchored to screen corners. Idle CPU
+> ≈ 2 % (was 99 % in v0.1). Live-data path unchanged from v0.1.
+> See `docs/V0.2-STATUS.md` for the full status snapshot and the
+> Wayland drag-feedback-loop writeup that drove the keyboard-nudge
+> design.
 
-> **Next: v0.2** — UI rebuild: 3 panels (player status, monster HP,
-> DPS chart) + asset pipeline.
+> **Next: v0.3** — live-game validation + multi-monster stacking +
+> DPS chart (was previously planned under v0.2).
 
 ---
 
@@ -25,6 +27,13 @@ cmake --build build -j$(nproc)
 
 # Run (live, connects to a running MHW)
 ./build/mhw-overlay
+
+# Run in edit mode (no MHW needed; position the 3 panels with keyboard)
+./build/mhw-overlay --edit --poll 250
+#   click a panel to focus it, then:
+#     ←↑↓→   nudge 10 px  |  Shift + ←↑↓→   nudge 50 px
+#     wheel               zoom 0.5× – 2×
+#     Ctrl + S            persist position to ~/.config/mhw-linux-overlay/panels.ini
 
 # Run in demo mode (no MHW needed, shows mock data)
 ./build/mhw-overlay --demo

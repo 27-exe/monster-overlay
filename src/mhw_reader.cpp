@@ -260,12 +260,19 @@ std::optional<qint64> MhwReader::findGamePid()
     static qint64 cachedPid = -1;
     static qint64 lastScanMs = 0;
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+
+    // Cache hit (found): skip rescan for 5 s.
     if (cachedPid > 0 && (nowMs - lastScanMs) < 5000) {
-        // Verify cached PID is still alive
         if (QFile::exists(QStringLiteral("/proc/%1/maps").arg(cachedPid)))
             return cachedPid;
-        cachedPid = -1; // stale, fall through to rescan
+        cachedPid = -1;
     }
+    // Cache hit (not found): skip rescan for 5 s as well.
+    // Without this, a poll loop in edit mode fires 60 times/sec
+    // and every call walks /proc → 100 % CPU.
+    if (cachedPid <= 0 && (nowMs - lastScanMs) < 5000)
+        return std::nullopt;
+
     lastScanMs = nowMs;
 
     QDir proc(QStringLiteral("/proc"));

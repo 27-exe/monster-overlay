@@ -54,7 +54,7 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 } // namespace mh
 
 PlayerPanel::PlayerPanel(QWidget *parent)
-    : Panel(QStringLiteral("player"), QPoint(20, 20), parent)
+    : Panel(QStringLiteral("player"), Corner::TopLeft, parent)
 {
     setWindowTitle(mh::tr("ui.player_title"));
 }
@@ -136,4 +136,36 @@ void PlayerPanel::paintPanel(QPainter &p)
     };
     drawMantle(player_.mantleSlot0Id, player_.mantleSlot0Timer, player_.mantleSlot0Cooldown);
     drawMantle(player_.mantleSlot1Id, player_.mantleSlot1Timer, player_.mantleSlot1Cooldown);
+}
+
+void PlayerPanel::paintDemo(QPainter &p)
+{
+    // Sample content shown in edit mode when no real player data is
+    // available, so the user can identify and position this panel.
+    p.setPen(Qt::white);
+    p.setFont(QFont(QStringLiteral("Work Sans"), 10));
+
+    const int totalH = kMargin + 16 + kRowGap + kBarH + kRowGap + kBarH + kMargin;
+    setContentSize(kPanelW, totalH);
+
+    int y = kMargin;
+
+    // Panel title
+    p.setPen(QColor(120, 180, 255));
+    p.setFont(QFont(QStringLiteral("Work Sans"), 10, QFont::Bold));
+    p.drawText(kMargin, y + 12, QStringLiteral("猎人状态 (示例) — Player"));
+    y += 16 + kRowGap;
+
+    // Sample HP bar
+    p.setPen(Qt::white);
+    p.setFont(QFont(QStringLiteral("Work Sans"), 9, QFont::Bold));
+    drawBar(p, QRectF(kMargin, y, kPanelW - 2 * kMargin, kBarH), 0.78F, hpColor(0.78F));
+    p.drawText(QRectF(kMargin + 6, y, kPanelW - 2 * kMargin - 12, kBarH),
+               Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("HP 117/150 78%"));
+    y += kBarH + kRowGap;
+
+    // Sample ST bar
+    drawBar(p, QRectF(kMargin, y, kPanelW - 2 * kMargin, kBarH), 0.60F, stColor(0.60F));
+    p.drawText(QRectF(kMargin + 6, y, kPanelW - 2 * kMargin - 12, kBarH),
+               Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("ST 90/150 60%"));
 }
