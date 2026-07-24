@@ -61,4 +61,7 @@ struct PartSchema {
 // Generated from data/MonsterHunterWorld.421810.map / MonsterData.xml.
 extern const QHash<int, QVector<PartSchema>> kPartSchemas;
 
+// Generated from HunterPie/Localization zh-cn.xml (AilmentData).
+extern const QHash<int, QString> kAilmentNames;
+
 } // namespace mhw

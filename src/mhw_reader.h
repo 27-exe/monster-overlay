@@ -12,6 +12,21 @@
 
 namespace mhw {
 
+// Shared helpers used by the per-domain reader functions (monster, player,
+// quest — each lives in its own .cpp linked into the same target).
+inline bool isSanePointer(std::uintptr_t value)
+{
+    return value >= 0x10000 && value < 0x0000800000000000ULL;
+}
+
+#pragma pack(push, 1)
+struct QuestData {
+    std::int32_t maxDeaths;
+    std::int32_t deaths;
+};
+#pragma pack(pop)
+static_assert(sizeof(QuestData) == 8);
+
 class AddressMap {
 public:
     bool load(const QString &path, QString *error = nullptr);

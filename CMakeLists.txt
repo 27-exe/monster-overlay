@@ -27,6 +27,11 @@ add_executable(mhw-overlay
     src/main.cpp
     src/mhw_reader.cpp
     src/mhw_reader.h
+    src/monster/part_schemas.cpp
+    src/monster/monster_reader.cpp
+    src/player/player_reader.cpp
+    src/quest/quest_reader.cpp
+    src/world/world_reader.cpp
     src/overlay_window.cpp
     src/overlay_window.h
     src/world/world_types.cpp
@@ -50,10 +55,20 @@ target_compile_options(mhw-overlay PRIVATE -Wall -Wextra -Wpedantic)
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(mhw-reader-tests
-        tests/reader_tests.cpp
+    # All reader-dependent targets need these sources since MhwReader member
+    # functions are defined across multiple .cpp files (one per domain).
+    set(MHW_READER_SOURCES
         src/mhw_reader.cpp
         src/mhw_reader.h
+        src/monster/part_schemas.cpp
+        src/monster/monster_reader.cpp
+        src/player/player_reader.cpp
+        src/quest/quest_reader.cpp
+        src/world/world_reader.cpp
+    )
+    add_executable(mhw-reader-tests
+        tests/reader_tests.cpp
+        ${MHW_READER_SOURCES}
     )
     target_link_libraries(mhw-reader-tests PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-reader-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -62,8 +77,7 @@ if(BUILD_TESTING)
 
     add_executable(mhw-probe
         tests/mhw_probe.cpp
-        src/mhw_reader.cpp
-        src/mhw_reader.h
+        ${MHW_READER_SOURCES}
     )
     target_link_libraries(mhw-probe PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -72,8 +86,7 @@ if(BUILD_TESTING)
 
     add_executable(mhw-scan
         tests/mhw_scan.cpp
-        src/mhw_reader.cpp
-        src/mhw_reader.h
+        ${MHW_READER_SOURCES}
     )
     target_link_libraries(mhw-scan PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-scan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -82,8 +95,7 @@ if(BUILD_TESTING)
 
     add_executable(mhw-probe-parts
         tests/mhw_probe_parts.cpp
-        src/mhw_reader.cpp
-        src/mhw_reader.h
+        ${MHW_READER_SOURCES}
     )
     target_link_libraries(mhw-probe-parts PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe-parts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -92,8 +104,7 @@ if(BUILD_TESTING)
 
     add_executable(mhw-probe-ailments
         tests/mhw_probe_ailments.cpp
-        src/mhw_reader.cpp
-        src/mhw_reader.h
+        ${MHW_READER_SOURCES}
     )
     target_link_libraries(mhw-probe-ailments PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe-ailments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -101,8 +112,7 @@ if(BUILD_TESTING)
 
     add_executable(mhw-probe-ailments-watch
         tests/mhw_probe_ailments_watch.cpp
-        src/mhw_reader.cpp
-        src/mhw_reader.h
+        ${MHW_READER_SOURCES}
     )
     target_link_libraries(mhw-probe-ailments-watch PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe-ailments-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -110,8 +120,7 @@ if(BUILD_TESTING)
 
     add_executable(mhw-probe-mantles
         tests/mhw_probe_mantles.cpp
-        src/mhw_reader.cpp
-        src/mhw_reader.h
+        ${MHW_READER_SOURCES}
     )
     target_link_libraries(mhw-probe-mantles PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe-mantles PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -119,8 +128,7 @@ if(BUILD_TESTING)
 
     add_executable(mhw-probe-mantles-wide
         tests/mhw_probe_mantles_wide.cpp
-        src/mhw_reader.cpp
-        src/mhw_reader.h
+        ${MHW_READER_SOURCES}
     )
     target_link_libraries(mhw-probe-mantles-wide PRIVATE Qt6::Core mhw-core)
     target_include_directories(mhw-probe-mantles-wide PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
