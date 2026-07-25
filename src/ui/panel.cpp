@@ -238,6 +238,12 @@ void Panel::paintEvent(QPaintEvent *)
     if (scale_ != 1.0)
         p.scale(scale_, scale_);
 
+    // Minimized: small colored block with panel initial.
+    if (minimized_) {
+        paintMinimized(p);
+        return;
+    }
+
     // In edit mode, draw demo content so the panel stays visible
     // and identifiable for positioning. In live mode, paintPanel()
     // handles both the connected (real data) and disconnected
@@ -302,6 +308,17 @@ void Panel::keyPressEvent(QKeyEvent *e)
         saveConfig();
         QCoreApplication::quit();
         return;
+    case Qt::Key_Space:
+        // Space: toggle minimized / restored.
+        minimized_ = !minimized_;
+        if (minimized_) {
+            normalSize_ = logicalSize_;
+            setContentSize(32, 32);
+        } else {
+            setContentSize(normalSize_.width(), normalSize_.height());
+        }
+        update();
+        return;
     default:
         return QMainWindow::keyPressEvent(e);
     }
@@ -344,6 +361,25 @@ void Panel::nudgeMargins(int dx, int dy)
     // Saves only happen in edit mode (this method isn't called
     // otherwise), so live mode never pays this cost.
     saveConfig();
+}
+
+void Panel::paintMinimized(QPainter &p)
+{
+    // Small 32×32 rounded square with the panel's first letter.
+    const QColor bg(40, 40, 50, 100);
+    const QColor fg(160, 180, 220, 120);
+    p.setPen(Qt::NoPen);
+    p.setBrush(bg);
+    p.drawRoundedRect(0, 0, 32, 32, 6, 6);
+    p.setPen(QPen(QColor(120, 180, 255, 60), 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(0.5, 0.5, 31, 31, 6, 6);
+    // First letter of the settings key as identifier.
+    const QString letter = key_.isEmpty() ? QStringLiteral("?")
+                                          : key_.left(1).toUpper();
+    p.setPen(fg);
+    p.setFont(QFont(QStringLiteral("Work Sans"), 12, QFont::Bold));
+    p.drawText(QRectF(0, 0, 32, 32), Qt::AlignCenter, letter);
 }
 
 void Panel::wheelEvent(QWheelEvent *e)

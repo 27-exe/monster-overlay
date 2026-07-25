@@ -54,9 +54,14 @@ protected:
     void keyPressEvent(QKeyEvent *e) override;
     void wheelEvent(QWheelEvent *e) override;
 
+    // Minimized: show a small colored block with the panel's
+    // first letter instead of the full layout. Toggle with Space.
+    bool minimized() const { return minimized_; }
+
 private:
     void applyGeometry();
     void nudgeMargins(int dx, int dy);
+    void paintMinimized(QPainter &p);
 
     QString key_;
     Corner corner_;
@@ -66,4 +71,6 @@ private:
     double opacity_{0.85};
     bool editMode_{false};
     bool m_quitArmed{false};
+    bool minimized_{false};
+    QSize normalSize_;   // remembered full-layout size
 };
