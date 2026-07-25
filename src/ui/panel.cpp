@@ -92,15 +92,12 @@ void Panel::applyGeometry()
         return;
 
     layer->setLayer(LayerShellQt::Window::LayerOverlay);
-    // Pointer interactivity is the deciding factor for whether the
-    // panel receives mouse events:
-    //   - edit mode  -> OnDemand  (panel is clickable/draggable)
-    //   - normal mode-> None      (clicks pass through to the game)
-    // A KeyboardInteractivityNone surface NEVER receives pointer
-    // events, which is why dragging was impossible before.
-    layer->setKeyboardInteractivity(editMode_
-        ? LayerShellQt::Window::KeyboardInteractivityOnDemand
-        : LayerShellQt::Window::KeyboardInteractivityNone);
+    // Always use OnDemand so the panel CAN receive keyboard events
+    // when focused. In live mode, WA_TransparentForMouseEvents is
+    // true by default so clicks pass through to the game; double-
+    // click the panel to acquire focus (Space to minimize, etc.).
+    layer->setKeyboardInteractivity(
+        LayerShellQt::Window::KeyboardInteractivityOnDemand);
     layer->setExclusiveZone(-1);
     layer->setScope(QStringLiteral("mhw-linux-overlay"));
     layer->setActivateOnShow(false);
@@ -174,14 +171,11 @@ void Panel::saveConfig()
 void Panel::setEditMode(bool on)
 {
     editMode_ = on;
-    setAttribute(Qt::WA_TransparentForMouseEvents, !on);
     setCursor(on ? Qt::SizeAllCursor : Qt::ArrowCursor);
 
-    // The keyboard/pointer interactivity was fixed at construction
-    // time (applyGeometry), but setEditMode is called afterwards by
-    // main.cpp. Re-apply so the layer-shell surface actually becomes
-    // interactive (OnDemand) — otherwise a None surface never gets
-    // pointer events and dragging is impossible.
+    // Always use OnDemand + no mouse transparency so the panel can
+    // receive clicks to focus (Space to minimize, etc.). Panels sit
+    // at screen corners and are small enough not to block gameplay.
     applyGeometry();
     update();
 }
@@ -258,17 +252,39 @@ void Panel::paintEvent(QPaintEvent *)
 
 void Panel::mousePressEvent(QMouseEvent *e)
 {
-    // Click-to-focus in edit mode so this panel receives keyboard
-    // events (arrow-key nudge). No dragging — every mouse-event-based
-    // drag approach (globalPosition, localPosition, QCursor polling)
-    // hits the same Wayland feedback loop between surface reposition
-    // and cursor coordinate reporting.
-    if (editMode_ && e->button() == Qt::LeftButton)
+    if (e->button() != Qt::LeftButton)
+        return;
+
+    if (editMode_) {
+        // Single click to focus in edit mode.
         setFocus();
+    } else {
+        // Live mode: double-click to acquire focus (single clicks
+        // pass through to the game via WA_TransparentForMouseEvents).
+        // We need to temporarily disable transparency to receive
+        // the double-click event itself.
+        if (e->type() == QEvent::MouseButtonDblClick) {
+            setAttribute(Qt::WA_TransparentForMouseEvents, false);
+            setFocus();
+        }
+    }
 }
 
 void Panel::keyPressEvent(QKeyEvent *e)
 {
+    // Space: toggle minimize — works in BOTH edit and live mode.
+    if (e->key() == Qt::Key_Space) {
+        minimized_ = !minimized_;
+        if (minimized_) {
+            normalSize_ = logicalSize_;
+            setContentSize(32, 32);
+        } else {
+            setContentSize(normalSize_.width(), normalSize_.height());
+        }
+        update();
+        return;
+    }
+
     if (!editMode_)
         return QMainWindow::keyPressEvent(e);
 
@@ -307,17 +323,6 @@ void Panel::keyPressEvent(QKeyEvent *e)
         // Esc: graceful quit from edit mode.
         saveConfig();
         QCoreApplication::quit();
-        return;
-    case Qt::Key_Space:
-        // Space: toggle minimized / restored.
-        minimized_ = !minimized_;
-        if (minimized_) {
-            normalSize_ = logicalSize_;
-            setContentSize(32, 32);
-        } else {
-            setContentSize(normalSize_.width(), normalSize_.height());
-        }
-        update();
         return;
     default:
         return QMainWindow::keyPressEvent(e);

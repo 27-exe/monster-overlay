@@ -32,6 +32,7 @@ private:
     QVector<QString> names_;
     QVector<int> weaponIds_;
     QVector<int> masterRanks_;
+    QVector<int> slots_;            // party slot (0-3) for color assignment
     bool hasData_{false};
     bool questEnded_{false};         // freeze after quest completes (Success/Completed/Failed)
 };

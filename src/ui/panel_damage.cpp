@@ -23,11 +23,15 @@ constexpr int kMaxSamples = 900;
 constexpr int kMaxPlayers = 4;
 constexpr int kRowGap = 6;
 
+// HunterPie default damage meter colors (PlayerConfigHelper.cs):
+// slot 0 = #F24891 (pink), slot 1 = #50C5B7 (teal),
+// slot 2 = #49CFF5 (sky blue), slot 3 = #FF8040 (orange).
+// Self override = #A74FFF (purple) when isSelf.
 const QColor kPlayerColors[] = {
-    QColor(76, 175, 80),
-    QColor(33, 150, 243),
-    QColor(255, 193, 7),
-    QColor(244, 67, 54),
+    QColor(0xF2, 0x48, 0x91),  // slot 0 — pink
+    QColor(0x50, 0xC5, 0xB7),  // slot 1 — teal
+    QColor(0x49, 0xCF, 0xF5),  // slot 2 — sky blue
+    QColor(0xFF, 0x80, 0x40),  // slot 3 — orange
 };
 
 } // namespace
@@ -62,10 +66,10 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
     }
 
     const bool wasEmpty = !hasData_;
-    // During quest-end freeze, party may be empty (zone changed to
-    // non-hunting) but we keep the frozen data visible — UNTIL the
-    // player returns to the main menu / ready screen (state 0 or 1),
-    // at which point we clear everything.
+    // During quest-end freeze, keep the frozen data visible — the
+    // party will be empty (zone changed to non-hunting) but we
+    // don't need fresh party data to render the last snapshot.
+    // Clear only when back at lobby / ready screen (state 0 or 1).
     if (questEnded_) {
         if (qstate <= 1) {
             // Back at lobby / ready — wipe the frozen data.
@@ -78,9 +82,7 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
             canvas()->update();
             return;
         }
-        // Still in quest-end transition (success/failed screen etc.)
-        if (!snap.party.isEmpty())
-            hasData_ = true;  // still have data, stay visible
+        // Still in settlement — keep frozen data, just repaint.
         canvas()->update();
         return;
     }
@@ -99,6 +101,7 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
     names_.resize(n);
     weaponIds_.resize(n);
     masterRanks_.resize(n);
+    slots_.resize(n);
 
     // Per-player first-hit tracking. Resize on party-size change.
     firstHitTick_.resize(n);
@@ -108,6 +111,7 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
         names_[i] = snap.party[i].name;
         weaponIds_[i] = snap.party[i].weaponId;
         masterRanks_[i] = snap.party[i].masterRank;
+        slots_[i] = snap.party[i].slot;
 
         // HunterPie: baseline captured when THIS player first deals damage.
         if (firstHitTick_[i] == 0 && snap.party[i].damage > 0) {
@@ -169,7 +173,7 @@ void DamagePanel::paintPanel(QPainter &p)
         }
 
         // Name + MR
-        p.setPen(kPlayerColors[i % kMaxPlayers]);
+        p.setPen(kPlayerColors[(slots_.value(i, i) % kMaxPlayers + kMaxPlayers) % kMaxPlayers]);
         p.setFont(QFont(QStringLiteral("Work Sans"), 9, QFont::Bold));
         p.drawText(kMargin + kIconSize + 4, y + kRowH - 5,
                    QStringLiteral("%1  MR%2").arg(names_[i]).arg(masterRanks_[i]));
@@ -254,7 +258,7 @@ void DamagePanel::paintDemo(QPainter &p)
     const int demoDmg[] = {12840, 6420, 3210};
 
     for (int i = 0; i < demoPlayers; ++i) {
-        p.setPen(kPlayerColors[i % kMaxPlayers]);
+        p.setPen(kPlayerColors[(slots_.value(i, i) % kMaxPlayers + kMaxPlayers) % kMaxPlayers]);
         p.setFont(QFont(QStringLiteral("Work Sans"), 9, QFont::Bold));
         p.drawText(kMargin, y, QString::fromUtf8(demoNames[i]));
 

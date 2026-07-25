@@ -42,6 +42,7 @@ struct PartyMemberSnapshot {
     int masterRank{};
     int damage{};
     bool local{};
+    int slot{-1};  // party slot 0-3, used for color assignment
 };
 
 } // namespace mhw

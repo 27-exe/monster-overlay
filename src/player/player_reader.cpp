@@ -152,6 +152,7 @@ QVector<PartyMemberSnapshot> MhwReader::readParty(QString *error)
 
         PartyMemberSnapshot member;
         member.name = name;
+        member.slot = index;
         if (const auto rank = memory_.read<std::int16_t>(*memberAddress + 0x70 + 0x2))
             member.masterRank = *rank;
         if (const auto weapon = memory_.read<std::uint8_t>(*memberAddress + 0x7C))
