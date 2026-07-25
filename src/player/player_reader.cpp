@@ -90,9 +90,45 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
         }
     }
 
+    // Debuffs (HunterPie AbnormalityData.xml <Debuffs> section).
+    // Each is a float Timer at abnormalityBase + offset. Timer > 0 = active.
+    // Blastscourge (0x63C) requires a precondition check at 0x62C == 1.
+    if (abnormalityBase) {
+        struct DebuffDef { int offset; const char *name; int dependsOn; int withValue; };
+        static const DebuffDef kDebuffs[] = {
+            {0x5DC, "毒",       0, 0},
+            {0x5E0, "猛毒",     0, 0},
+            {0x5EC, "火异常",   0, 0},
+            {0x5F0, "雷异常",   0, 0},
+            {0x5F4, "水异常",   0, 0},
+            {0x5F8, "冰异常",   0, 0},
+            {0x5FC, "龙异常",   0, 0},
+            {0x600, "裂伤",     0, 0},
+            {0x608, "瘴气",     0, 0},
+            {0x60C, "防御↓",   0, 0},
+            {0x614, "耐性↓",   0, 0},
+            {0x620, "爆破",     0, 0},
+            {0x63C, "爆破灾祸", 0x62C, 1},
+        };
+        for (const auto &d : kDebuffs) {
+            if (d.dependsOn != 0) {
+                const auto pre = memory_.read<std::int32_t>(abnormalityBase + static_cast<std::uintptr_t>(d.dependsOn));
+                if (!pre || *pre != d.withValue)
+                    continue;
+            }
+            const auto timer = memory_.read<float>(abnormalityBase + static_cast<std::uintptr_t>(d.offset));
+            if (!timer || !std::isfinite(*timer) || *timer <= 0.0F)
+                continue;
+            PlayerAbnormality ab;
+            ab.offset = d.offset;
+            ab.name = QString::fromUtf8(d.name);
+            ab.timer = *timer;
+            result.debuffs.push_back(ab);
+        }
+    }
+
     return result;
 }
-
 
 QVector<PartyMemberSnapshot> MhwReader::readParty(QString *error)
 {

@@ -4,8 +4,10 @@
 #include "core/game_snapshot.h"
 #include "player/player_types.h"
 
+#include <QHash>
+
 // Player status panel: zone + quest + connection status + memory address,
-// then HP / ST bars + weapon icon + mantle timers.
+// then HP / ST bars + weapon icon + mantle timers + debuff bars.
 class PlayerPanel : public Panel {
     Q_OBJECT
 public:
@@ -38,4 +40,6 @@ private:
     QString status_;
     int weaponId_{-1};
     bool hasData_{false};
+    // Track max timer per debuff offset for progress bar scaling.
+    QHash<int, float> debuffMaxTimers_;
 };

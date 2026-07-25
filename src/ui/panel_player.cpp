@@ -8,6 +8,7 @@
 #include "world/world_types.h"
 
 #include <QPainter>
+#include <QSet>
 #include <cmath>
 
 using mhw::Icon;
@@ -118,6 +119,24 @@ void PlayerPanel::update(const mhw::GameSnapshot &snap)
     imageBase_ = snap.imageBase;
     status_    = snap.status;
     hasData_   = snap.player.valid;
+
+    // Track max timer per debuff for progress bar scaling.
+    // Remove entries for debuffs no longer active.
+    QSet<int> activeOffsets;
+    for (const auto &d : player_.debuffs) {
+        activeOffsets.insert(d.offset);
+        const auto it = debuffMaxTimers_.find(d.offset);
+        if (it == debuffMaxTimers_.end() || d.timer > *it)
+            debuffMaxTimers_[d.offset] = d.timer;
+    }
+    // Prune stale entries
+    for (auto it = debuffMaxTimers_.begin(); it != debuffMaxTimers_.end(); ) {
+        if (!activeOffsets.contains(it.key()))
+            it = debuffMaxTimers_.erase(it);
+        else
+            ++it;
+    }
+
     canvas()->update();
 }
 
@@ -160,6 +179,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     // Compute height up-front so paintDemo/paintPanel use the same layout.
     const int mantleCount = (player_.mantleSlot0Id >= 0 ? 1 : 0)
                           + (player_.mantleSlot1Id >= 0 ? 1 : 0);
+    const int debuffCount = player_.debuffs.size();
     const int totalH =
           kMargin
         + kHeaderH                                  // connection row
@@ -171,6 +191,7 @@ void PlayerPanel::paintPanel(QPainter &p)
         + kBarH + kRowGap                           // HP
         + kBarH + kRowGap                           // ST
         + (mantleCount > 0 ? kIconSize + kRowGap : 0)  // weapon + mantles
+        + (debuffCount > 0 ? 14 + kBarH + kRowGap : 0) // debuff row
         + kMargin;
     setContentSize(kPanelW, totalH);
 
@@ -277,6 +298,34 @@ void PlayerPanel::paintPanel(QPainter &p)
     };
     drawMantle(player_.mantleSlot0Id, player_.mantleSlot0Timer, player_.mantleSlot0Cooldown);
     drawMantle(player_.mantleSlot1Id, player_.mantleSlot1Timer, player_.mantleSlot1Cooldown);
+    if (mantleCount > 0)
+        y += kIconSize + kRowGap;
+
+    // Row 7: Debuffs (horizontal, auto-width, same style as monster ailments)
+    if (debuffCount > 0) {
+        const int gap = 6;
+        const int cw = (kPanelW - 2 * kMargin - (debuffCount - 1) * gap) / debuffCount;
+        p.setFont(QFont(QStringLiteral("Work Sans"), 7));
+        for (int i = 0; i < debuffCount; ++i) {
+            const auto &d = player_.debuffs[i];
+            const int cx = kMargin + i * (cw + gap);
+            // Name
+            p.setPen(QColor(220, 200, 200));
+            p.drawText(QRectF(cx, y, cw, 14),
+                       Qt::AlignLeft | Qt::AlignVCenter, d.name);
+            // Bar
+            const float maxT = debuffMaxTimers_.value(d.offset, d.timer);
+            const float pct = (maxT > 0.0F) ? std::clamp(d.timer / maxT, 0.0F, 1.0F) : 0.0F;
+            const QRectF barRect(cx, y + 14, cw, kBarH - 2);
+            drawBar(p, barRect, pct, QColor(244, 67, 54));
+            p.setPen(Qt::white);
+            p.setFont(QFont(QStringLiteral("Work Sans"), 7, QFont::Bold));
+            p.drawText(barRect, Qt::AlignCenter,
+                       QStringLiteral("%1s").arg(static_cast<int>(d.timer)));
+            p.setFont(QFont(QStringLiteral("Work Sans"), 7));
+        }
+        y += 14 + kBarH + kRowGap;
+    }
 }
 
 void PlayerPanel::paintDemo(QPainter &p)
@@ -285,6 +334,7 @@ void PlayerPanel::paintDemo(QPainter &p)
     // the user can see roughly what the panel will look like in-game.
     p.setFont(QFont(QStringLiteral("Work Sans"), 9));
 
+    const int demoDebuffs = 2;
     const int totalH =
           kMargin
         + kHeaderH + kRowGap
@@ -292,7 +342,8 @@ void PlayerPanel::paintDemo(QPainter &p)
         + kHeaderH + kRowGap
         + kBarH + kRowGap
         + kBarH + kRowGap
-        + kIconSize
+        + kIconSize + kRowGap
+        + 14 + kBarH + kRowGap          // debuff row
         + kMargin;
     setContentSize(kPanelW, totalH);
 
@@ -342,4 +393,30 @@ void PlayerPanel::paintDemo(QPainter &p)
     p.setPen(QColor(180, 180, 180));
     p.setFont(QFont(QStringLiteral("Work Sans"), 8));
     p.drawText(kMargin, y + kIconSize - 3, QStringLiteral("[武器] [衣装A 60s] [衣装B 冷却 280s]"));
+    y += kIconSize + kRowGap;
+
+    // Sample debuff row (horizontal)
+    struct { const char *name; float pct; QString text; } demoDebuff[] = {
+        {"毒", 0.65F, QStringLiteral("39s")},
+        {"防御↓", 0.40F, QStringLiteral("24s")},
+    };
+    {
+        const int gap = 6;
+        const int cw = (kPanelW - 2 * kMargin - (demoDebuffs - 1) * gap) / demoDebuffs;
+        p.setFont(QFont(QStringLiteral("Work Sans"), 7));
+        for (int i = 0; i < demoDebuffs; ++i) {
+            const auto &d = demoDebuff[i];
+            const int cx = kMargin + i * (cw + gap);
+            p.setPen(QColor(220, 200, 200));
+            p.drawText(QRectF(cx, y, cw, 14),
+                       Qt::AlignLeft | Qt::AlignVCenter, QString::fromUtf8(d.name));
+            const QRectF barRect(cx, y + 14, cw, kBarH - 2);
+            drawBar(p, barRect, d.pct, QColor(244, 67, 54));
+            p.setPen(Qt::white);
+            p.setFont(QFont(QStringLiteral("Work Sans"), 7, QFont::Bold));
+            p.drawText(barRect, Qt::AlignCenter, d.text);
+            p.setFont(QFont(QStringLiteral("Work Sans"), 7));
+        }
+        y += 14 + kBarH + kRowGap;
+    }
 }

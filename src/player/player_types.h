@@ -1,8 +1,16 @@
 #pragma once
 
 #include <QString>
+#include <QVector>
 
 namespace mhw {
+
+struct PlayerAbnormality {
+    int offset;          // memory offset for identification
+    QString name;        // Chinese display name
+    float timer{0.0F};   // remaining seconds (>0 = active)
+    float maxTimer{0.0F};// tracked max for progress bar scaling
+};
 
 struct PlayerSnapshot {
     float health{};
@@ -24,6 +32,8 @@ struct PlayerSnapshot {
     int mantleSlot1Id{-1};
     float mantleSlot1Timer{};
     float mantleSlot1Cooldown{};
+    // Debuffs (poison, paralysis, blast, etc.)
+    QVector<PlayerAbnormality> debuffs;
 };
 
 struct PartyMemberSnapshot {
