@@ -509,7 +509,6 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         m.enrageBuildup = enrageBuildup;
         m.enrageMaxBuildup = enrageMaxBuildup;
         m.parts = parts;
-            static int dc=0; if(++dc % 10 == 1) std::fprintf(stderr,"[multi] #%d parts=%zu hp=%d p0=%.0f/%.0f\n", dc, parts.size(), (int)curHP, parts.isEmpty()?0.f:parts[0].health, parts.isEmpty()?0.f:parts[0].maxHealth);
         readMonsterAilments(m);
         monsterCache_[comp] = {m, maxHP};
         result.push_back(m);

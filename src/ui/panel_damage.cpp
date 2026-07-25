@@ -1,32 +1,34 @@
 #include "panel_damage.h"
 
-#include "core/game_snapshot.h"
 #include "core/string_table.h"
+#include "player/player_types.h"
+#include "quest/quest_types.h"
 #include "ui/formatters.h"
 #include "ui/icon.h"
 
 #include <QPainter>
 #include <QPainterPath>
-#include <cmath>
+#include <QFontMetrics>
 
 using mhw::Icon;
 
 namespace {
 
-constexpr int kPanelW = 400;
+constexpr int kPanelW = 320;
 constexpr int kMargin = 10;
 constexpr int kRowH = 22;
-constexpr int kChartH = 120;
-constexpr int kIconSize = 18;
-constexpr int kMaxSamples = 180; // 3 minutes at 1 Hz
+constexpr int kIconSize = 20;
+constexpr int kChartH = 60;
+constexpr int kMaxSamples = 900;
+constexpr int kMaxPlayers = 4;
+constexpr int kRowGap = 6;
 
 const QColor kPlayerColors[] = {
-    QColor(66, 165, 245),   // blue  — local player
-    QColor(255, 167, 38),   // orange
-    QColor(102, 187, 106),  // green
-    QColor(171, 71, 188),   // purple
+    QColor(76, 175, 80),
+    QColor(33, 150, 243),
+    QColor(255, 193, 7),
+    QColor(244, 67, 54),
 };
-constexpr int kMaxPlayers = 4;
 
 } // namespace
 
@@ -42,30 +44,88 @@ DamagePanel::DamagePanel(QWidget *parent)
 
 void DamagePanel::update(const mhw::GameSnapshot &snap)
 {
-    hasData_ = !snap.party.isEmpty();
-    if (!hasData_) {
+    // Check for quest end: state changes from 2 (InQuest) to something else.
+    const int qstate = snap.quest.state;
+    if (qstate != 2 && !questEnded_) {
+        questEnded_ = true;
+        // Keep showing the last snapshot but don't record new samples.
+        canvas()->update();
+        return;
+    }
+    // Reset on new quest.
+    if (qstate == 2 && questEnded_) {
+        questEnded_ = false;
         history_.clear();
+        tick_ = 0;
+        firstHitTick_.clear();
+        baselineDamage_.clear();
+    }
+
+    const bool wasEmpty = !hasData_;
+    // During quest-end freeze, party may be empty (zone changed to
+    // non-hunting) but we keep the frozen data visible — UNTIL the
+    // player returns to the main menu / ready screen (state 0 or 1),
+    // at which point we clear everything.
+    if (questEnded_) {
+        if (qstate <= 1) {
+            // Back at lobby / ready — wipe the frozen data.
+            questEnded_ = false;
+            hasData_ = false;
+            history_.clear();
+            tick_ = 0;
+            firstHitTick_.clear();
+            baselineDamage_.clear();
+            canvas()->update();
+            return;
+        }
+        // Still in quest-end transition (success/failed screen etc.)
+        if (!snap.party.isEmpty())
+            hasData_ = true;  // still have data, stay visible
         canvas()->update();
         return;
     }
 
-    // Update player metadata
+    hasData_ = !snap.party.isEmpty();
+    if (!hasData_) {
+        history_.clear();
+        tick_ = 0;
+        firstHitTick_.clear();
+        baselineDamage_.clear();
+        canvas()->update();
+        return;
+    }
+
     const int n = std::min(static_cast<int>(snap.party.size()), kMaxPlayers);
     names_.resize(n);
     weaponIds_.resize(n);
     masterRanks_.resize(n);
+
+    // Per-player first-hit tracking. Resize on party-size change.
+    firstHitTick_.resize(n);
+    baselineDamage_.resize(n);
+
     for (int i = 0; i < n; ++i) {
         names_[i] = snap.party[i].name;
         weaponIds_[i] = snap.party[i].weaponId;
         masterRanks_[i] = snap.party[i].masterRank;
+
+        // HunterPie: baseline captured when THIS player first deals damage.
+        if (firstHitTick_[i] == 0 && snap.party[i].damage > 0) {
+            firstHitTick_[i] = tick_;
+            baselineDamage_[i] = snap.party[i].damage;
+        }
     }
 
     // Record sample
     Sample s;
     s.tick = tick_++;
     s.damage.resize(n);
-    for (int i = 0; i < n; ++i)
-        s.damage[i] = snap.party[i].damage;
+    for (int i = 0; i < n; ++i) {
+        if (firstHitTick_[i] > 0)
+            s.damage[i] = snap.party[i].damage - baselineDamage_[i];
+        else
+            s.damage[i] = 0;
+    }
     history_.append(s);
     if (history_.size() > kMaxSamples)
         history_.removeFirst();
@@ -88,16 +148,17 @@ void DamagePanel::paintPanel(QPainter &p)
 
     int y = kMargin;
 
-    // --- Player rows ---
+    // Player rows
     for (int i = 0; i < n; ++i) {
         const int dmg = history_.isEmpty() ? 0 : history_.last().damage.value(i, 0);
-        // DPS = damage delta over last 60 samples (1 min window)
+
+        // HunterPie DPS = total_damage / seconds_since_first_hit.
+        // Each poll tick is 250 ms, so divide tick delta by 4 for seconds.
         int dps = 0;
-        if (history_.size() >= 2) {
-            const int idx = std::max(0, static_cast<int>(history_.size()) - 60);
-            const int elapsed = history_.last().tick - history_[idx].tick;
-            if (elapsed > 0)
-                dps = (dmg - history_[idx].damage.value(i, 0)) / elapsed;
+        if (firstHitTick_[i] > 0 && tick_ > firstHitTick_[i]) {
+            const int elapsedTicks = history_.last().tick - firstHitTick_[i];
+            if (elapsedTicks > 0)
+                dps = dmg * 4 / elapsedTicks;
         }
 
         // Weapon icon
@@ -116,9 +177,9 @@ void DamagePanel::paintPanel(QPainter &p)
         // Damage + DPS (right-aligned)
         p.setPen(QColor(220, 220, 220));
         p.setFont(QFont(QStringLiteral("Work Sans"), 8));
-        const QString dmgStr = QStringLiteral("%1  DPS %2")
-                                   .arg(dmg)
-                                   .arg(dps);
+        const QString dmgStr = questEnded_
+            ? QStringLiteral("%1").arg(dmg)
+            : QStringLiteral("%1  DPS %2").arg(dmg).arg(dps);
         p.drawText(QRectF(kMargin, y, kPanelW - 2 * kMargin, kRowH),
                    Qt::AlignRight | Qt::AlignVCenter, dmgStr);
         y += kRowH;
@@ -126,119 +187,82 @@ void DamagePanel::paintPanel(QPainter &p)
 
     y += kMargin;
 
-    // --- Line chart: cumulative damage over time ---
+    // Line chart: cumulative damage over time
     const QRectF chartRect(kMargin + 30, y, kPanelW - 2 * kMargin - 30, kChartH);
 
-    // Background
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(30, 30, 30, 160));
     p.drawRoundedRect(chartRect, 4, 4);
 
     if (history_.size() < 2) {
         p.setPen(QColor(150, 150, 150));
-        p.drawText(chartRect, Qt::AlignCenter, mh::tr("ui.damage_waiting"));
+        p.setFont(QFont(QStringLiteral("Work Sans"), 8));
+        p.drawText(chartRect, Qt::AlignCenter, QStringLiteral("等待数据..."));
         return;
     }
 
-    // Find max damage for scaling
-    int maxDmg = 1;
-    for (const auto &s : history_)
-        for (int d : s.damage)
-            maxDmg = std::max(maxDmg, d);
-
-    // Grid lines (4 horizontal)
-    p.setPen(QPen(QColor(80, 80, 80, 100), 1, Qt::DotLine));
-    for (int g = 1; g <= 4; ++g) {
-        const float gy = chartRect.bottom() - chartRect.height() * g / 4.0F;
-        p.drawLine(QPointF(chartRect.left(), gy), QPointF(chartRect.right(), gy));
-        // Y-axis label
-        p.setPen(QColor(150, 150, 150));
-        p.setFont(QFont(QStringLiteral("Work Sans"), 6));
-        p.drawText(QRectF(kMargin, gy - 8, 28, 16), Qt::AlignRight | Qt::AlignVCenter,
-                   QStringLiteral("%1k").arg(maxDmg * g / 4000));
-        p.setPen(QPen(QColor(80, 80, 80, 100), 1, Qt::DotLine));
+    // Compute Y range
+    int maxDmg = 0;
+    for (const auto &s : history_) {
+        for (int i = 0; i < s.damage.size(); ++i)
+            if (s.damage[i] > maxDmg) maxDmg = s.damage[i];
     }
+    if (maxDmg == 0) maxDmg = 1;
 
-    // Draw one polyline per player
-    const float xStep = chartRect.width() / static_cast<float>(kMaxSamples - 1);
-    for (int i = 0; i < n; ++i) {
+    const int firstTick = history_.first().tick;
+    const int lastTick = history_.last().tick;
+    const int tickSpan = lastTick - firstTick;
+    if (tickSpan <= 0) return;
+
+    // Draw line per player
+    for (int pi = 0; pi < n; ++pi) {
+        p.setPen(QPen(kPlayerColors[pi % kMaxPlayers], 1.5));
         QPainterPath path;
         bool first = true;
-        for (int j = 0; j < history_.size(); ++j) {
-            const float x = chartRect.left() + j * xStep;
-            const float yv = chartRect.bottom()
-                           - chartRect.height()
-                                 * std::clamp(static_cast<float>(history_[j].damage.value(i, 0))
-                                                  / static_cast<float>(maxDmg),
-                                              0.0F, 1.0F);
-            if (first) { path.moveTo(x, yv); first = false; }
-            else path.lineTo(x, yv);
+        for (const auto &s : history_) {
+            const float x = chartRect.x()
+                + (float)(s.tick - firstTick) / (float)tickSpan * chartRect.width();
+            const float d = s.damage.value(pi, 0);
+            const float y = chartRect.bottom() - (d / (float)maxDmg) * chartRect.height();
+            if (first) { path.moveTo(x, y); first = false; }
+            else path.lineTo(x, y);
         }
-        p.setPen(QPen(kPlayerColors[i % kMaxPlayers], 2));
         p.setBrush(Qt::NoBrush);
         p.drawPath(path);
     }
 
-    // --- Percentage share bar at the bottom ---
-    y = chartRect.bottom() + 6;
-    const int totalDmg = [&] {
-        int sum = 0;
-        if (!history_.isEmpty())
-            for (int d : history_.last().damage) sum += d;
-        return sum;
-    }();
-
-    if (totalDmg > 0) {
-        float bx = kMargin;
-        const float barW = kPanelW - 2 * kMargin;
-        for (int i = 0; i < n; ++i) {
-            const float share = static_cast<float>(history_.last().damage.value(i, 0))
-                              / static_cast<float>(totalDmg);
-            const float w = barW * share;
-            p.setPen(Qt::NoPen);
-            p.setBrush(kPlayerColors[i % kMaxPlayers]);
-            p.drawRoundedRect(QRectF(bx, y, w, 8), 2, 2);
-            // Percentage label
-            p.setPen(Qt::white);
-            p.setFont(QFont(QStringLiteral("Work Sans"), 6));
-            p.drawText(QRectF(bx, y - 1, w, 10), Qt::AlignCenter,
-                       QStringLiteral("%1%").arg(static_cast<int>(share * 100)));
-            bx += w;
-        }
-    }
+    // Legend label
+    p.setPen(QColor(150, 150, 150));
+    p.setFont(QFont(QStringLiteral("Work Sans"), 8));
+    p.drawText(chartRect.adjusted(0, 4, 0, 0), Qt::AlignRight | Qt::AlignTop,
+               QStringLiteral("%1").arg(maxDmg));
 }
 
 void DamagePanel::paintDemo(QPainter &p)
 {
-    // Sample content shown in edit mode when no real party data is
-    // available, so the user can identify and position this panel.
-    const int demoPlayers = 4;
-    const int totalH = kMargin + 16 + demoPlayers * kRowH + kMargin;
-    setContentSize(kPanelW, totalH);
-
-    int y = kMargin;
-
-    // Title
     p.setPen(QColor(120, 180, 255));
     p.setFont(QFont(QStringLiteral("Work Sans"), 10, QFont::Bold));
-    p.drawText(kMargin, y + 12, QStringLiteral("伤害统计 (示例) — Damage"));
-    y += 16;
+    p.drawText(kMargin, 18, QStringLiteral("伤害统计 (示例) — Damage"));
 
-    // Sample player rows
-    const char *demoNames[] = {"猎人A", "猎人B", "猎人C", "猎人D"};
-    const int demoDmg[] = {52000, 38000, 29000, 18000};
-    p.setFont(QFont(QStringLiteral("Work Sans"), 9));
+    const int demoPlayers = 3;
+    const int totalH = kMargin + 16 + demoPlayers * kRowH + kMargin + kChartH + kMargin;
+    setContentSize(kPanelW, totalH);
+
+    int y = kMargin + 16 + kRowGap;
+
+    const char *demoNames[] = {"A27exe  MR999", "队友B  MR500", "队友C  MR300"};
+    const int demoDmg[] = {12840, 6420, 3210};
+
     for (int i = 0; i < demoPlayers; ++i) {
         p.setPen(kPlayerColors[i % kMaxPlayers]);
-        p.drawText(QRectF(kMargin, y, 70, kRowH),
-                   Qt::AlignLeft | Qt::AlignVCenter,
-                   QString::fromUtf8(demoNames[i]));
-        p.setPen(Qt::white);
-        p.drawText(QRectF(kMargin + 75, y, kPanelW - 2 * kMargin - 75, kRowH),
-                   Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("MR999  %1  DPS %2")
-                       .arg(demoDmg[i])
-                       .arg(demoDmg[i] / 180));
+        p.setFont(QFont(QStringLiteral("Work Sans"), 9, QFont::Bold));
+        p.drawText(kMargin, y, QString::fromUtf8(demoNames[i]));
+
+        p.setPen(QColor(220, 220, 220));
+        p.setFont(QFont(QStringLiteral("Work Sans"), 8));
+        p.drawText(QRectF(kMargin, y, kPanelW - 2 * kMargin, kRowH),
+                   Qt::AlignRight | Qt::AlignVCenter,
+                   QStringLiteral("%1  DPS %2").arg(demoDmg[i]).arg(demoDmg[i] / 10));
         y += kRowH;
     }
 }

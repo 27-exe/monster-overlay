@@ -65,4 +65,5 @@ private:
     double scale_{1.0};
     double opacity_{0.85};
     bool editMode_{false};
+    bool m_quitArmed{false};
 };

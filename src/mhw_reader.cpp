@@ -383,19 +383,25 @@ GameSnapshot MhwReader::poll()
     }
     static int callCount = 0;
     if (++callCount % 10 == 0)
-        qWarning("poll #%d: zone=%d", callCount, static_cast<int>(snapshot.zone));
+        qDebug("poll #%d: zone=%d", callCount, static_cast<int>(snapshot.zone));
     QString error;
     if (isHuntingZone(snapshot.zone)) {
         const auto t0 = std::chrono::steady_clock::now();
         snapshot.monsters = readMonsters(&error);
         const auto t1 = std::chrono::steady_clock::now();
         if (callCount % 10 == 0)
-            qWarning("poll: monsters=%zu in %lldus", snapshot.monsters.size(),
+            qDebug("poll: monsters=%zu in %lldus", snapshot.monsters.size(),
                      std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
     }
     snapshot.player = readPlayer(nullptr);
     snapshot.quest = readQuest(nullptr);
-    snapshot.party = readParty(nullptr);
+    // readParty always probes 4 slots; stale names in memory linger
+    // after leaving a quest, which would keep the damage panel
+    // pinned to the now-meaningless last-quest data. Force-clear
+    // party whenever we're not in a hunting zone (where party
+    // damage is actually meaningful).
+    snapshot.party = isHuntingZone(snapshot.zone) ? readParty(nullptr)
+                                                   : QVector<PartyMemberSnapshot>{};
     snapshot.isMultiplayer = (snapshot.party.size() > 1);
     if (!error.isEmpty() && snapshot.monsters.isEmpty())
         snapshot.status += QStringLiteral(" · 部分读取失败: %1").arg(error);

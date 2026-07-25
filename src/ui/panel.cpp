@@ -2,11 +2,13 @@
 
 #include <LayerShellQt/Window>
 
+#include <QCoreApplication>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScreen>
+#include <QTimer>
 #include <QWheelEvent>
 #include <QWindow>
 
@@ -236,9 +238,11 @@ void Panel::paintEvent(QPaintEvent *)
     if (scale_ != 1.0)
         p.scale(scale_, scale_);
 
-    // In edit mode with no real game data, draw demo content so the
-    // panel stays visible and identifiable for positioning.
-    if (editMode_ && !hasContent()) {
+    // In edit mode, draw demo content so the panel stays visible
+    // and identifiable for positioning. In live mode, paintPanel()
+    // handles both the connected (real data) and disconnected
+    // ("not connected" placeholder) cases itself.
+    if (editMode_) {
         paintDemo(p);
         return;
     }
@@ -278,6 +282,26 @@ void Panel::keyPressEvent(QKeyEvent *e)
             return;
         }
         break;
+    case Qt::Key_Q:
+        if (e->modifiers() & Qt::ControlModifier) {
+            // Ctrl+Q is intercepted by KWin (global shortcut), so we
+            // never receive it. Use plain Esc/Q as the fallback.
+        }
+        if (!m_quitArmed) {
+            // First press — arm and bail.
+            m_quitArmed = true;
+            QTimer::singleShot(400, this, [this] { m_quitArmed = false; });
+            return;
+        }
+        // Second press within the window → graceful quit.
+        saveConfig();
+        QCoreApplication::quit();
+        return;
+    case Qt::Key_Escape:
+        // Esc: graceful quit from edit mode.
+        saveConfig();
+        QCoreApplication::quit();
+        return;
     default:
         return QMainWindow::keyPressEvent(e);
     }
@@ -316,6 +340,10 @@ void Panel::nudgeMargins(int dx, int dy)
             layer->setMargins(margins_);
     }
     update();
+    // Persist immediately so a SIGTERM / crash doesn't lose position.
+    // Saves only happen in edit mode (this method isn't called
+    // otherwise), so live mode never pays this cost.
+    saveConfig();
 }
 
 void Panel::wheelEvent(QWheelEvent *e)
@@ -329,4 +357,5 @@ void Panel::wheelEvent(QWheelEvent *e)
     if (logicalSize_.isValid())
         setContentSize(logicalSize_.width(), logicalSize_.height());
     update();
+    saveConfig();
 }

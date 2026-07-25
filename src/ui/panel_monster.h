@@ -13,6 +13,7 @@ public:
     explicit MonsterPanel(QWidget *parent = nullptr);
 
     void update(const mhw::MonsterSnapshot &m);
+    void setMultiplayer(bool on) { multiplayer_ = on; }
 
 protected:
     void paintPanel(QPainter &p) override;
@@ -22,4 +23,5 @@ protected:
 private:
     mhw::MonsterSnapshot monster_;
     bool hasData_{false};
+    bool multiplayer_{false};
 };

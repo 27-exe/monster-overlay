@@ -97,11 +97,14 @@ int main(int argc, char **argv)
         // position them even without game data.
         const bool showAll = editMode;
 
-        // Player panel: only meaningful when we have a live player.
+        // Player panel: always shown in live mode too, so the user
+        // sees a clear "not connected" placeholder when MHW isn't
+        // running (v0.1 behavior). It draws a status pill instead of
+        // the full HP/ST stack when attached_ == false.
         if (snap.player.valid || showAll) {
             playerPanel.setVisible(true);
+            playerPanel.update(snap);
             if (snap.player.valid) {
-                playerPanel.update(snap.player);
                 // Feed the local player's weapon id (lives in party data).
                 for (const auto &member : snap.party) {
                     if (member.local) {
@@ -110,16 +113,18 @@ int main(int argc, char **argv)
                     }
                 }
             } else if (editMode) {
-                // In edit mode without game data, repaint to commit
-                // the layer-shell surface so margin changes apply.
                 playerPanel.triggerUpdate();
             }
         } else {
-            playerPanel.setVisible(false);
+            // v0.1 behavior: keep player panel visible with a
+            // "not connected" placeholder.
+            playerPanel.update(snap);
+            playerPanel.setVisible(true);
         }
 
         // Monster panel displays the first live large monster only (v0.2).
         // Multiple monsters are planned for a later version.
+        monsterPanel.setMultiplayer(snap.isMultiplayer);
         if (!snap.monsters.isEmpty() || showAll) {
             monsterPanel.setVisible(true);
             if (!snap.monsters.isEmpty())

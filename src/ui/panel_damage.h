@@ -27,8 +27,11 @@ private:
 
     QVector<Sample> history_;
     int tick_{0};
+    QVector<int>  firstHitTick_;     // poll tick when this player first dealt damage
+    QVector<int>  baselineDamage_;   // damage at first-hit tick
     QVector<QString> names_;
     QVector<int> weaponIds_;
     QVector<int> masterRanks_;
     bool hasData_{false};
+    bool questEnded_{false};         // freeze after quest completes (Success/Completed/Failed)
 };
