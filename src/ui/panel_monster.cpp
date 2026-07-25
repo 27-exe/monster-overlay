@@ -73,49 +73,89 @@ void MonsterPanel::paintPanel(QPainter &p)
     p.setPen(Qt::white);
     p.setFont(QFont(QStringLiteral("Work Sans"), 10));
 
-    // Panel size: title (22) + total bar + rows of 3 part cells.
+    // Panel size: title (22) + total bar + status row + rows of 3 part cells.
     const int partCount = monster_.parts.size();
     const int partRows  = (partCount + kCols - 1) / kCols;
+
+    // Collect visible statuses into a list for horizontal layout.
+    struct StatusEntry {
+        QString name;
+        QColor color;
+        float pct;
+        QString text;
+        int counter;
+    };
+    QVector<StatusEntry> statuses;
+
+    // Enrage first
+    const bool enrageVisible = (monster_.enraged && monster_.enrageSeconds > 0.0F)
+                            || (monster_.enrageMaxBuildup > 0.0F && monster_.enrageBuildup > 0.0F);
+    if (enrageVisible) {
+        StatusEntry e;
+        e.name = QStringLiteral("激怒");
+        if (monster_.enraged && monster_.enrageSeconds > 0.0F) {
+            const int remaining = static_cast<int>(
+                monster_.enrageMaxSeconds > 0.0F
+                    ? std::max(0.0F, monster_.enrageMaxSeconds - monster_.enrageSeconds)
+                    : monster_.enrageSeconds);
+            e.pct = (monster_.enrageMaxSeconds > 0.0F)
+                ? std::clamp(static_cast<float>(remaining) / monster_.enrageMaxSeconds, 0.0F, 1.0F) : 0.0F;
+            e.text = QStringLiteral("%1s").arg(remaining);
+            e.color = QColor(255, 140, 60);
+        } else {
+            e.pct = std::clamp(monster_.enrageBuildup / monster_.enrageMaxBuildup, 0.0F, 1.0F);
+            e.text = QStringLiteral("%1%").arg(static_cast<int>(e.pct * 100));
+            e.color = QColor(255, 190, 60);
+        }
+        e.counter = 0;
+        statuses.append(e);
+    }
+
+    // Ailments: only show if timer > 0, buildup > 0, or counter > 0
+    for (const auto &ail : monster_.ailments) {
+        if (ail.timer <= 0.0F && ail.buildup <= 0.0F && ail.counter <= 0)
+            continue;
+        StatusEntry e;
+        e.name = ail.name;
+        e.counter = ail.counter;
+        switch (ail.id) {
+        case 1:  e.color = QColor(156, 39, 176);  break; // 毒
+        case 2:  e.color = QColor(255, 193, 7);   break; // 麻痹
+        case 3:  e.color = QColor(33, 150, 243);  break; // 睡眠
+        case 4:  e.color = QColor(244, 67, 54);   break; // 爆破
+        case 5:  e.color = QColor(76, 175, 80);   break; // 毒(上位)
+        default: e.color = QColor(158, 158, 158); break;
+        }
+        if (ail.active && ail.maxTimer > 0.0F) {
+            e.pct = std::clamp(ail.timer / ail.maxTimer, 0.0F, 1.0F);
+            e.text = QStringLiteral("%1s").arg(static_cast<int>(ail.timer));
+        } else if (ail.maxBuildup > 0.0F) {
+            e.pct = std::clamp(ail.buildup / ail.maxBuildup, 0.0F, 1.0F);
+            e.text = QStringLiteral("%1%").arg(static_cast<int>(e.pct * 100));
+        } else {
+            e.pct = 0.0F;
+            e.text.clear();
+        }
+        statuses.append(e);
+    }
+
+    const int statusCount = statuses.size();
+    const int statusRowH = (statusCount > 0) ? (kPartBarH + 12 + kRowGap) : 0;
+
     const int totalH = kMargin + 22 + kRowGap + kTotalBarH + kRowGap
+                     + statusRowH
                      + partRows * kPartRowH + (partRows > 0 ? (partRows - 1) * kRowGap : 0)
                      + kMargin;
     setContentSize(kPanelWidth, totalH);
 
     int y = kMargin;
 
-    // Row 1: Name + enrage
+    // Row 1: Name
     QString name = monster_.internalName;
     if (name.isEmpty())
         name = QStringLiteral("Monster %1").arg(monster_.id);
     QString header = QStringLiteral("%1  [ID %2]").arg(name).arg(monster_.id);
-
-    // TODO v0.2+: crown icon once MonsterSnapshot carries crown data.
     p.drawText(kMargin, y + 22 - 8, header);
-
-    // Enrage timer (right-aligned). Show a clear label so the
-    // player doesn't miss it.
-    const QRectF enrageRect(kMargin, y, kPanelWidth - 2 * kMargin, 22);
-    if (monster_.enraged && monster_.enrageSeconds > 0.0F) {
-        // Show remaining enrage time (v0.1 behavior), not elapsed.
-        const int remaining = static_cast<int>(
-            monster_.enrageMaxSeconds > 0.0F
-                ? std::max(0.0F, monster_.enrageMaxSeconds - monster_.enrageSeconds)
-                : monster_.enrageSeconds);
-        const QString enrageText = QStringLiteral("激怒: ! %1s").arg(remaining);
-        p.setPen(QColor(255, 140, 60));  // orange, hard to miss
-        p.setFont(QFont(QStringLiteral("Work Sans"), 9, QFont::Bold));
-        p.drawText(enrageRect, Qt::AlignRight | Qt::AlignVCenter, enrageText);
-    } else if (monster_.enrageMaxBuildup > 0.0F && monster_.enrageBuildup > 0.0F) {
-        const int pct = static_cast<int>(
-            std::clamp(monster_.enrageBuildup / monster_.enrageMaxBuildup * 100.0F,
-                       0.0F, 100.0F));
-        if (pct >= 1) {
-            const QString angerText = mh::tr("ui.enrage_buildup").arg(pct);
-            p.setPen(QColor(255, 190, 60));  // amber, pre-enrage
-            p.setFont(QFont(QStringLiteral("Work Sans"), 9, QFont::Bold));
-            p.drawText(enrageRect, Qt::AlignRight | Qt::AlignVCenter, angerText);
-        }
-    }
 
     y += 22 + kRowGap;
 
@@ -125,7 +165,6 @@ void MonsterPanel::paintPanel(QPainter &p)
     drawBar(p, QRectF(kMargin, y, kPanelWidth - 2 * kMargin, kTotalBarH),
             hpPct, healthColor(hpPct));
 
-    // HP text on bar
     p.setPen(Qt::white);
     p.setFont(QFont(QStringLiteral("Work Sans"), 9, QFont::Bold));
     const QString hpText = QStringLiteral("%1 / %2  %3")
@@ -136,10 +175,36 @@ void MonsterPanel::paintPanel(QPainter &p)
                Qt::AlignLeft | Qt::AlignVCenter, hpText);
     y += kTotalBarH + kRowGap;
 
-    // Rows 3+: parts arranged in a 3-column grid. In single-player
-    // each cell shows a mini HP bar + percentage; in multiplayer the
-    // game does not expose real HP, so cells show flinch/break
-    // counters instead (matching v0.1 / HunterPie behavior).
+    // Status row: all statuses in one horizontal row, auto-width
+    if (statusCount > 0) {
+        const int gap = 6;
+        const int cellW = (kPanelWidth - 2 * kMargin - (statusCount - 1) * gap) / statusCount;
+        p.setFont(QFont(QStringLiteral("Work Sans"), 7));
+
+        for (int i = 0; i < statusCount; ++i) {
+            const auto &s = statuses[i];
+            const int cx = kMargin + i * (cellW + gap);
+
+            // Name + counter on top
+            QString label = s.name;
+            if (s.counter > 0)
+                label += QStringLiteral(" ×%1").arg(s.counter);
+            p.setPen(QColor(200, 200, 200));
+            p.drawText(QRectF(cx, y, cellW, 12),
+                       Qt::AlignLeft | Qt::AlignVCenter, label);
+
+            // Bar below
+            const QRectF barRect(cx, y + 12, cellW, kPartBarH);
+            drawBar(p, barRect, s.pct, s.color);
+            p.setPen(Qt::white);
+            p.setFont(QFont(QStringLiteral("Work Sans"), 7, QFont::Bold));
+            p.drawText(barRect, Qt::AlignCenter, s.text);
+            p.setFont(QFont(QStringLiteral("Work Sans"), 7));
+        }
+        y += statusRowH;
+    }
+
+    // Parts: 3-column grid
     const int cellW = (kPanelWidth - 2 * kMargin - (kCols - 1) * kCellGap) / kCols;
     p.setFont(QFont(QStringLiteral("Work Sans"), 8));
 
@@ -199,12 +264,11 @@ void MonsterPanel::paintPanel(QPainter &p)
 
 void MonsterPanel::paintDemo(QPainter &p)
 {
-    // Sample content shown in edit mode when no real monster data is
-    // available, so the user can identify and position this panel.
-    // Mirrors paintPanel's 3-column part layout.
     const int demoParts = 6;
     const int demoRows = (demoParts + kCols - 1) / kCols;
+    const int demoAilments = 3;  // 激怒 + 麻痹 active + 睡眠 buildup
     const int totalH = kMargin + 22 + kRowGap + kTotalBarH + kRowGap
+                     + demoAilments * (kPartBarH + kRowGap)
                      + demoRows * kPartRowH + (demoRows > 0 ? (demoRows - 1) * kRowGap : 0)
                      + kMargin;
     setContentSize(kPanelWidth, totalH);
@@ -227,12 +291,40 @@ void MonsterPanel::paintDemo(QPainter &p)
                QStringLiteral("示例怪物  65000/100000 65%"));
     y += kTotalBarH + kRowGap;
 
-    // 6 sample parts in a 2x3 grid (matches typical monster: head,
-    // body, tail, wing-l, wing-r, leg).
+    // Sample status row: horizontal, auto-width (mirrors paintPanel)
+    struct { const char *name; QColor color; float pct; QString text; int counter; } demoAil[] = {
+        {"激怒", QColor(255, 140, 60), 0.70F, QStringLiteral("42s"), 0},
+        {"麻痹", QColor(255, 193, 7), 0.60F, QStringLiteral("12s"), 1},
+        {"睡眠", QColor(33, 150, 243), 0.45F, QStringLiteral("45%"), 0},
+    };
+    const int demoStatusCount = 3;
+    {
+        const int gap = 6;
+        const int sw = (kPanelWidth - 2 * kMargin - (demoStatusCount - 1) * gap) / demoStatusCount;
+        p.setFont(QFont(QStringLiteral("Work Sans"), 7));
+        for (int i = 0; i < demoStatusCount; ++i) {
+            const auto &a = demoAil[i];
+            const int cx = kMargin + i * (sw + gap);
+            QString label = QString::fromUtf8(a.name);
+            if (a.counter > 0)
+                label += QStringLiteral(" ×%1").arg(a.counter);
+            p.setPen(QColor(200, 200, 200));
+            p.drawText(QRectF(cx, y, sw, 12),
+                       Qt::AlignLeft | Qt::AlignVCenter, label);
+            const QRectF barRect(cx, y + 12, sw, kPartBarH);
+            drawBar(p, barRect, a.pct, a.color);
+            p.setPen(Qt::white);
+            p.setFont(QFont(QStringLiteral("Work Sans"), 7, QFont::Bold));
+            p.drawText(barRect, Qt::AlignCenter, a.text);
+            p.setFont(QFont(QStringLiteral("Work Sans"), 7));
+        }
+        y += kPartBarH + 12 + kRowGap;
+    }
+
+    // 6 sample parts in a 2x3 grid
     const int cellW = (kPanelWidth - 2 * kMargin - (kCols - 1) * kCellGap) / kCols;
     const char *demoNames[] = {"头部", "身体", "尾巴", "左翼", "右翼", "左腿"};
     const float demoPct[] = {0.85F, 0.60F, 0.30F, 0.55F, 0.45F, 0.70F};
-    p.setFont(QFont(QStringLiteral("Work Sans"), 8));
 
     for (int row = 0; row < demoRows; ++row) {
         const int cy = y + row * (kPartRowH + kRowGap);
@@ -241,17 +333,14 @@ void MonsterPanel::paintDemo(QPainter &p)
             if (idx >= demoParts) break;
             const int cx = kMargin + col * (cellW + kCellGap);
 
-            // Label
             p.setPen(QColor(210, 210, 210));
             p.drawText(QRectF(cx, cy, cellW, kPartBarH),
                        Qt::AlignLeft | Qt::AlignVCenter,
                        QString::fromUtf8(demoNames[idx]));
 
-            // Mini bar
             const QRectF barRect(cx, cy + kPartBarH, cellW, kPartBarH);
             drawBar(p, barRect, demoPct[idx], healthColor(demoPct[idx]));
 
-            // Percent
             p.setPen(Qt::white);
             p.setFont(QFont(QStringLiteral("Work Sans"), 8, QFont::Bold));
             p.drawText(barRect, Qt::AlignCenter,
