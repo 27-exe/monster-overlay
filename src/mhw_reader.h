@@ -131,6 +131,9 @@ private:
     // pin.  Address comes from MONSTER_QUEST_TARGET_ADDRESS →
     // MONSTER_QUEST_TARGET_OFFSETS → 0x48,0x1760,0x100.
     std::uintptr_t questTargetAddress_ = 0;
+    // HunterPie LockOn mode: LOCKON chain resolves a list node whose +0x950
+    // contains the targeted monster's double-linked-list index.
+    int lockOnTargetIndex_ = -1;
 };
 
 } // namespace mhw

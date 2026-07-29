@@ -57,6 +57,20 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
 {
     QVector<MonsterSnapshot> result;
 
+    // HunterPie default mode is LockOn (MHWMonster.GetLockedOnMonster):
+    // LOCKON_ADDRESS -> LOCKEDON_MONSTER_INDEX_OFFSETS, then read +0x950.
+    lockOnTargetIndex_ = -1;
+    const std::uintptr_t lockOnAddress = absolute(QStringLiteral("LOCKON_ADDRESS"));
+    if (lockOnAddress) {
+        const auto lockNode = followPointerChain(
+            memory_, lockOnAddress,
+            map_.offsets(QStringLiteral("LOCKEDON_MONSTER_INDEX_OFFSETS")), nullptr);
+        if (lockNode >= 0x10000) {
+            if (const auto index = memory_.read<std::int32_t>(lockNode + 0x950ULL))
+                lockOnTargetIndex_ = *index;
+        }
+    }
+
     // Refresh the manual-target pointer once per poll. When the player
     // pins a monster on the in-game map (or the quest itself marks one),
     // MHWMapMonsterSelectionStructure.SelectedMonster points at that
@@ -440,6 +454,10 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             m.enrageMaxSeconds = enrageMaxDuration;
             m.enrageBuildup = enrageBuildup;
             m.enrageMaxBuildup = enrageMaxBuildup;
+            if (const auto index = memory_.read<std::int32_t>(monster + 0x1228CULL))
+                m.doubleLinkedListIndex = *index;
+            m.isLockOnTarget = lockOnTargetIndex_ >= 0
+                            && m.doubleLinkedListIndex == lockOnTargetIndex_;
             // Re-evaluate manual target every tick: the cache hit path
             // skips the rest of monster construction so we must apply
             // it here too.
@@ -585,6 +603,10 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         m.enrageMaxSeconds = enrageMaxDuration;
         m.enrageBuildup = enrageBuildup;
         m.enrageMaxBuildup = enrageMaxBuildup;
+        if (const auto index = memory_.read<std::int32_t>(monster + 0x1228CULL))
+            m.doubleLinkedListIndex = *index;
+        m.isLockOnTarget = lockOnTargetIndex_ >= 0
+                        && m.doubleLinkedListIndex == lockOnTargetIndex_;
         // Mark this monster as the player's manual target. The component
         // address we got from the list matches the one stored in
         // MHWMapMonsterSelectionStructure.SelectedMonster.

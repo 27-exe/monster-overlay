@@ -48,6 +48,8 @@ struct MonsterSnapshot {
     float enrageBuildup{};
     float enrageMaxBuildup{};
     bool enraged{};
+    int doubleLinkedListIndex{-1}; // HunterPie: Monster + 0x1228C
+    bool isLockOnTarget{};         // LOCKON chain index equals the above
     bool isManuallyTargeted{};   // legacy OR alias: isManualTargeted || isQuestTargeted
     bool isManualTargeted{};    // HunterPie manual map pin (player pinned)
     bool isQuestTargeted{};     // HunterPie quest pin (capture / investigation)

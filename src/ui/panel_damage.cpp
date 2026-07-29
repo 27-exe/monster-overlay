@@ -153,6 +153,13 @@ DamagePanel::DamagePanel(QWidget *parent)
 
 void DamagePanel::update(const mhw::GameSnapshot &snap)
 {
+    // HunterPie: capture the real quest elapsed time before any
+    // quest-end early-return so the title-row timer stays correct
+    // after the freeze kicks in. The in-game timer pointer is
+    // typically invalid in the settlement screen.
+    if (snap.quest.maxTimerSeconds > 0.0F)
+        lastElapsedSeconds_ = snap.quest.elapsedSeconds;
+
     // Check for quest end: state changes from 2 (InQuest) to something else.
     const int qstate = snap.quest.state;
     if (qstate != 2 && !questEnded_) {
@@ -168,6 +175,7 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
         tick_ = 0;
         firstHitTick_.clear();
         baselineDamage_.clear();
+        lastElapsedSeconds_ = 0.0F;
     }
 
     const bool wasEmpty = !hasData_;
@@ -292,10 +300,9 @@ void DamagePanel::paintPanel(QPainter &p)
     p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
                QStringLiteral("伤害统计 DAMAGE"));
     // Right-aligned quest timer (HTML spec: <i>任务计时 06:41</i>)
-    if (history_.size() > 1) {
-        const qint64 elapsedSec = (history_.last().tick - history_.first().tick) / 4;
-        const int mm = static_cast<int>(elapsedSec / 60);
-        const int ss = static_cast<int>(elapsedSec % 60);
+    if (lastElapsedSeconds_ > 0.0F) {
+        const int mm = static_cast<int>(lastElapsedSeconds_ / 60);
+        const int ss = static_cast<int>(lastElapsedSeconds_) % 60;
         p.setFont(QFont(QStringLiteral("Chakra Petch"), 8));
         p.setPen(QColor(150, 150, 150));
         p.drawText(titleRect, Qt::AlignRight | Qt::AlignVCenter,
@@ -668,5 +675,9 @@ void DamagePanel::setupDemoData()
         }
         history_.append(s);
     }
+    // Seed the title-row quest timer with a representative value so
+    // the new "任务计时 mm:ss" is visible in demo / edit mode (no
+    // real game running → no snap.quest data).
+    lastElapsedSeconds_ = 411.0F;     // 6:51 (matches HTML mockup)
     hasData_ = true;
 }

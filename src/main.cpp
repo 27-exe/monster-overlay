@@ -5,6 +5,7 @@
 #include "ui/panel_damage.h"
 #include "ui/panel_monster.h"
 #include "ui/panel_player.h"
+#include "monster/target_selector.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
@@ -157,6 +158,7 @@ int main(int argc, char **argv)
     damagePanel.show();
 
     mhw::MhwReader reader(parser.value(mapOption));
+    std::uintptr_t displayedMonsterAddress = 0;
     QTimer timer;
 
     QObject::connect(&timer, &QTimer::timeout, [&] {
@@ -191,37 +193,15 @@ int main(int argc, char **argv)
             if (skipUpdate(monsterPanel)) {
                 monsterPanel.triggerUpdate();
             } else if (!snap.monsters.isEmpty()) {
-                // Selection priority (mirrors HunterPie MHWMonster.GetManualTargetedMonster
-            // isSelected logic):
-            //   1. Quest target (导虫 / 任务追踪) — survives map UI close,
-            //      set by MHW when the player marks a monster on the map
-            //      so it follows them around. Read from
-            //      MONSTER_QUEST_TARGET_ADDRESS.
-            //   2. Map UI selection — only valid while the map is open
-            //      (MapInsectsRef + GuiRadarRef both set). Read from
-            //      MONSTER_MANUAL_TARGET_ADDRESS → SelectedMonster.
-            //   3. Largest maxHealth (multi-target primary), tiebreak
-            //      by enraged.
-            auto pickFlagged = [&](bool mhw::MonsterSnapshot::*flag) {
-                return std::find_if(snap.monsters.begin(),
-                                    snap.monsters.end(),
-                                    [flag](const auto &m) {
-                                        return m.*flag;
-                                    });
-            };
-            auto it = pickFlagged(&mhw::MonsterSnapshot::isQuestTargeted);
-            if (it == snap.monsters.end())
-                it = pickFlagged(&mhw::MonsterSnapshot::isManualTargeted);
-            if (it == snap.monsters.end()) {
-                it = std::max_element(snap.monsters.begin(),
-                                      snap.monsters.end(),
-                                      [](const auto &a, const auto &b) {
-                                          if (a.enraged != b.enraged)
-                                              return !a.enraged;
-                                          return a.maxHealth < b.maxHealth;
-                                      });
-            }
-            monsterPanel.update(*it);
+                // HunterPie defaults to TargetMode.LockOn. In our single-panel
+                // layout, keep the current live monster stable while unlocked;
+                // never switch merely because another monster enraged.
+                const int selected = mhw::selectMonsterTarget(
+                    snap.monsters, displayedMonsterAddress);
+                if (selected >= 0) {
+                    displayedMonsterAddress = snap.monsters[selected].address;
+                    monsterPanel.update(snap.monsters[selected]);
+                }
             }
         } else {
             monsterPanel.setVisible(false);

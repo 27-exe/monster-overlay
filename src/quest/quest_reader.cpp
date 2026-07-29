@@ -28,12 +28,20 @@ QuestSnapshot MhwReader::readQuest(QString *error)
         }
     }
 
+    // HunterPie: the same quest-timer pointer dereferences to
+    //   +0x00 uint64  ticks remaining
+    //   +0x10 uint32  raw max ticks (snapped to MaxQuestTimers later)
+    // Source: MHWGame.cs:104-145 + MHWGameUtils.MaxQuestTimers.
     const std::uintptr_t timer = followPointerChain(memory_, absolute(QStringLiteral("QUEST_DATA_ADDRESS")),
                                                     map_.offsets(QStringLiteral("QUEST_TIMER_OFFSETS")), nullptr);
     if (timer) {
         if (const auto ticks = memory_.read<std::uint64_t>(timer))
             result.timeLeftSeconds = static_cast<float>(*ticks) / 60.0F;
+        if (const auto maxRaw = memory_.read<std::uint32_t>(timer + 0x10ULL))
+            result.maxTimerSeconds = questMaxTimerSeconds(*maxRaw);
     }
+    result.elapsedSeconds = questElapsedSeconds(
+        result.maxTimerSeconds, result.timeLeftSeconds);
 
     result.active = result.id > 0 && result.state == 2;
     return result;

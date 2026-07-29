@@ -30,6 +30,7 @@ add_executable(mhw-overlay
     src/mhw_reader.h
     src/monster/part_schemas.cpp
     src/monster/monster_reader.cpp
+    src/monster/target_selector.cpp
     src/player/player_reader.cpp
     src/quest/quest_reader.cpp
     src/world/world_reader.cpp
@@ -83,6 +84,7 @@ if(BUILD_TESTING)
         src/mhw_reader.h
         src/monster/part_schemas.cpp
         src/monster/monster_reader.cpp
+        src/monster/target_selector.cpp
         src/player/player_reader.cpp
         src/quest/quest_reader.cpp
         src/world/world_reader.cpp

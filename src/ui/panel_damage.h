@@ -38,6 +38,12 @@ private:
     QVector<bool> locals_;           // self flag (HunterPie name match)
     bool hasData_{false};
     bool questEnded_{false};         // freeze after quest completes (Success/Completed/Failed)
+    // HunterPie: real quest elapsed time = max(0, maxTimer - timeLeft).
+    // We cache the last non-zero value so the title-row timer keeps
+    // showing the correct "task complete" time after the freeze kicks
+    // in (the in-game timer pointer is no longer valid in the
+    // settlement screen).
+    float lastElapsedSeconds_{0.0F};
 
     // paintPanel helpers — extracted to keep the main layout short.
     void drawChart(QPainter &p, const QRectF &chartRect);
