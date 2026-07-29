@@ -25,7 +25,7 @@ public:
 
 protected:
     void paintPanel(QPainter &p) override;
-    void paintDemo(QPainter &p) override;
+    void setupDemoData() override;
     bool hasContent() const override { return true; }
 
 private:
@@ -40,6 +40,9 @@ private:
     QString status_;
     int weaponId_{-1};
     bool hasData_{false};
+    int  playerMR_{0};                 // mirrored from party slot 0 MR
+    QString playerName_;                // mirrored from party slot 0 name
+    int     partyCount_{0};             // mirrored from party snapshot size
     // Track max timer per debuff offset for progress bar scaling.
     QHash<int, float> debuffMaxTimers_;
 };

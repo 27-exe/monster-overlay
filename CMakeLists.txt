@@ -8,6 +8,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Svg)
+find_package(Qt6 6.8 REQUIRED COMPONENTS WebEngineWidgets)
 find_package(LayerShellQt REQUIRED)
 
 # Core library: foundational types, memory reader, string table.
@@ -57,6 +58,21 @@ target_compile_definitions(mhw-overlay PRIVATE
 )
 
 target_compile_options(mhw-overlay PRIVATE -Wall -Wextra -Wpedantic)
+
+# WebEngine spike: prove transparent layer-shell + Chromium rendering.
+# Builds a separate binary `mhw-overlay-web` so the main mhw-overlay
+# binary stays unchanged. If the spike succeeds, we wire the same
+# widget into the main binary as a fallback / low-memory mode.
+add_executable(mhw-overlay-web src/spike_web.cpp)
+target_link_libraries(mhw-overlay-web PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::WebEngineWidgets
+    LayerShellQt::Interface
+)
+target_compile_definitions(mhw-overlay-web PRIVATE)
+target_compile_options(mhw-overlay-web PRIVATE -Wall -Wextra -Wpedantic)
 
 include(CTest)
 if(BUILD_TESTING)

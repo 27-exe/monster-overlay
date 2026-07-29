@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* html, body must be transparent for QWebEnginePage transparency */
+  html, body { background: transparent; margin: 0; padding: 0; color: #f5f6f7;
+    font-family: 'Work Sans', 'Noto Sans CJK SC', sans-serif; }
+
+  /* spike panel: single Monster-style chrome */
+  .panel {
+    position: fixed; top: 0; right: 0; width: 320px;
+    background: rgba(22,24,26,0.94);
+    border: 1px solid #2a2d2f;
+    border-left: 2px solid #ff7043;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+    padding: 11px 13px;
+    margin-top: 60px; margin-right: 60px;
+    box-sizing: border-box;
+  }
+  .ptitle {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 11px; font-weight: 700; letter-spacing: 1px; color: #f5f6f7;
+    margin-bottom: 8px;
+  }
+  .poll { font-size: 9px; color: #5a5d5f; }
+  .poll .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: #f44336; animation: blink 1.2s steps(2) infinite;
+    margin-right: 4px;
+  }
+  @keyframes blink { 50% { opacity: 0.15 } }
+
+  .mname { font-size: 14px; font-weight: 700; color: #f5f6f7; }
+  .mr { font-size: 9px; color: #5a5d5f; margin-left: 6px; }
+
+  .bar {
+    height: 18px; background: #1d2022; border: 1px solid #2a2d2f;
+    position: relative; overflow: hidden; margin-bottom: 6px;
+    border-radius: 2px;
+  }
+  .bar .fill {
+    height: 100%;
+    background: linear-gradient(180deg, #66bb6a 0%, #4caf50 50%, #388e3c 100%);
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .bar .fill::after {
+    content: ''; position: absolute; left: 0; right: 0; top: 0;
+    height: 1px; background: rgba(255,255,255,0.35);
+  }
+  .bar .lbl {
+    position: absolute; left: 8px; top: 0; bottom: 0;
+    display: flex; align-items: center;
+    font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .bar .pct {
+    position: absolute; right: 8px; top: 0; bottom: 0;
+    display: flex; align-items: center;
+    font-size: 11px; font-weight: 700;
+  }
+
+  .er {
+    display: inline-block; padding: 2px 6px;
+    background: rgba(255,112,67,0.15);
+    border: 1px solid rgba(255,112,67,0.4);
+    font-size: 11px; font-weight: 700; color: #ff7043;
+    text-shadow: 0 0 6px rgba(255,112,67,0.6);
+    animation: erpulse 1.6s ease-in-out infinite;
+  }
+  @keyframes erpulse { 0%,100%{opacity:0.7} 50%{opacity:1} }
+
+  .meta {
+    margin-top: 10px; padding-top: 8px;
+    border-top: 1px solid #2a2d2f;
+    font-size: 9px; color: #5a5d5f;
+    display: flex; justify-content: space-between;
+  }
+  .meta b { color: #f5f6f7; font-weight: 500; }
+
+  /* webview debug indicator — proves we're actually rendering web */
+  .tag {
+    position: fixed; bottom: 8px; left: 8px;
+    font-size: 9px; color: #50c5b7;
+    background: rgba(0,0,0,0.6); padding: 3px 6px;
+    border: 1px solid #50c5b7;
+  }
+</style>
+</head>
+<body>
+
+<div class="panel">
+  <div class="ptitle">
+    <span>怪物 MONSTER</span>
+    <span class="poll"><span class="dot"></span>POLL 250ms</span>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px">
+    <span id="hex" style="display:inline-block; width:48px; height:54px;
+      background: #141719; clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
+      border: 1.6px solid #ff7043; line-height: 54px; text-align: center;
+      font-size: 22px; color: #ff7043;">火</span>
+    <div>
+      <div><span class="mname" id="mname">火龙</span>
+        <span class="mr">MR 247</span></div>
+      <div style="margin-top: 4px">
+        <span class="er" id="enrage">激怒 32s</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="bar">
+    <div class="fill" id="hpfill" style="width: 71%"></div>
+    <span class="lbl" id="hptxt">18420 / 25800</span>
+    <span class="pct" id="hppct">71%</span>
+  </div>
+
+  <div class="meta">
+    <span>帧 <b id="frame">0</b></span>
+    <span>内存 <b id="mem">0 MB</b></span>
+    <span>Chromium 子进程 <b id="proc">?</b></span>
+  </div>
+</div>
+
+<div class="tag">QWebEngineView spike · KDE Wayland · transparent</div>
+
+<script>
+  // window.mhw.update(json) is called from C++ via runJavaScript()
+  window.mhw = {
+    update: (j) => {
+      // j = {hpPct, hpCur, hpMax, enrageSec, frame, memMb, procs}
+      if (j.hpPct !== undefined) {
+        document.getElementById('hpfill').style.width = j.hpPct + '%';
+        document.getElementById('hppct').textContent = Math.round(j.hpPct) + '%';
+      }
+      if (j.hpCur !== undefined && j.hpMax !== undefined) {
+        document.getElementById('hptxt').textContent =
+          j.hpCur.toLocaleString() + ' / ' + j.hpMax.toLocaleString();
+      }
+      if (j.enrageSec !== undefined) {
+        document.getElementById('enrage').textContent = '激怒 ' + j.enrageSec + 's';
+      }
+      if (j.frame !== undefined) document.getElementById('frame').textContent = j.frame;
+      if (j.memMb !== undefined) document.getElementById('mem').textContent = j.memMb + ' MB';
+      if (j.procs !== undefined) document.getElementById('proc').textContent = j.procs;
+    }
+  };
+</script>
+
+</body>
+</html>

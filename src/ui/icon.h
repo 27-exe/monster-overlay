@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QPixmap>
+#include <QSize>
 #include <QString>
 
 namespace mhw {
@@ -18,12 +19,19 @@ public:
     static QPixmap render(const QString &path, int size,
                           const QColor &tint = QColor());
 
+    static QPixmap renderRect(const QString &path, const QSize &target,
+                              const QColor &tint = QColor());
+
     // Convenience: weapon icon path from HunterPie weapon enum ID (0..13).
     // rank is the upgrade tier (1..12); higher rank = shinier icon.
     static QString weaponPath(int weaponId, int rank);
 
     // Mantle icon path from the in-game item ID.
     static QString mantlePath(int itemId);
+
+    // Monster head icon path from the in-game monster ID (e.g. 1 = Rathian).
+    // Falls back to Unknown.png when the ID has no matching icon file.
+    static QString monsterPath(int monsterId);
 };
 
 } // namespace mhw

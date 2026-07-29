@@ -394,7 +394,18 @@ GameSnapshot MhwReader::poll()
                      std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
     }
     snapshot.player = readPlayer(nullptr);
+    // HunterPie: persistent identity (name, MR) comes from the save
+    // header, which is valid whenever the player is logged in (zone !=
+    // MainMenu). readPlayer() handles HP/ST/mantle; this fills the
+    // identity fields that player_reader no longer puts in PlayerSnapshot.
+    refreshPlayerIdentity(snapshot.player);
     snapshot.quest = readQuest(nullptr);
+    // Clear stale quest data when we're in a non-hunting zone (e.g.
+    // gathering hub). The quest struct in memory can retain the
+    // previous quest's state/id/maxDeaths after returning to town.
+    if (!isHuntingZone(snapshot.zone))
+        snapshot.quest = {};
+
     // readParty always probes 4 slots; stale names in memory linger
     // after leaving a quest, which would keep the damage panel
     // pinned to the now-meaningless last-quest data. Force-clear

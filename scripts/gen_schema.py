@@ -60,8 +60,15 @@ def cn(part_string):
 
 md = ET.parse(MONSTER_DATA).getroot()
 monsters = {}
+captures = {}
 for mon in md.findall("./Monsters/Monster"):
     mid = int(mon.attrib["Id"])
+    # Capture: Capcom-defined per-monster capture HP threshold (%).
+    # HunterPie exposes it via MonsterData.xml; we mirror it so the
+    # monster HP bar can switch to the "capturable" colour per game
+    # mechanics (HR default 25, MR equivalent 10–15, 0 = uncapturable).
+    cap_raw = mon.attrib.get("Capture", "0")
+    captures[mid] = int(cap_raw)
     parts_block = mon.find("Parts")
     if parts_block is None:
         continue
@@ -76,6 +83,14 @@ for mon in md.findall("./Monsters/Monster"):
             "thresholds": ",".join(str(b) for b in breaks),
         })
     monsters[mid] = parts
+
+
+# Capture-threshold table — used by MonsterPanel::paintPanel to switch the
+# HP fill colour to "capturable" (red) at the right percentage.
+print(f"const QHash<int, int> kMonsterCaptureThresholds = {{")
+for mid in sorted(captures):
+    print(f"    {{ {mid}, {captures[mid]} }},")
+print("};")
 
 
 print("// Auto-generated from MonsterData.xml + zh-cn.xml (HunterPie v2.14.0.461)")

@@ -13,10 +13,17 @@ struct PlayerAbnormality {
 };
 
 struct PlayerSnapshot {
+    QString name;          // character name (HunterPie MHWPlayer.Name)
     float health{};
     float maxHealth{};
     float stamina{};
     float maxStamina{};
+    // Self-only fields read directly from the local player struct so
+    // PlayerPanel can show them even when the party array is empty
+    // (e.g. in the gathering hub before joining a quest).
+    int masterRank{};      // MHWPlayerLevelStructure.MasterRank (+0x70+0x2)
+    int highRank{};        // save header +0x90 (int16)
+    int weaponId{-1};      // MHWPlayerEquipmentData.WeaponType (+0x7C)
     bool valid{};
     // Mantle equipped timers
     float mantleHealthTimer{};
@@ -29,9 +36,11 @@ struct PlayerSnapshot {
     int mantleSlot0Id{-1};
     float mantleSlot0Timer{};
     float mantleSlot0Cooldown{};
+    float mantleSlot0CooldownMax{270.0F};  // HunterPie cooldowns[id+20]
     int mantleSlot1Id{-1};
     float mantleSlot1Timer{};
     float mantleSlot1Cooldown{};
+    float mantleSlot1CooldownMax{270.0F};
     // Debuffs (poison, paralysis, blast, etc.)
     QVector<PlayerAbnormality> debuffs;
 };

@@ -1,7 +1,7 @@
 <!DOCTYPE RCC>
 <RCC version="1.0">
     <!-- 353 SVG icons from MHW_Icons_SVG (MIT, by Thibault BENOIT). See assets/NOTICE. -->
-    <qresource prefix="/icons">
+    <qresource prefix="/">
         <file>icons/Decorations/Color_00_Rank_1.svg</file>
         <file>icons/Decorations/Color_00_Rank_2.svg</file>
         <file>icons/Decorations/Color_00_Rank_3.svg</file>
@@ -196,18 +196,18 @@
         <file>icons/Weapons/Bow/Bow_Rank_10.svg</file>
         <file>icons/Weapons/Bow/Bow_Rank_11.svg</file>
         <file>icons/Weapons/Bow/Bow_Rank_12.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_01.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_02.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_03.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_04.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_05.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_06.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_07.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_08.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_09.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_10.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_11.svg</file>
-        <file>icons/Weapons/Charge_Blade/Charge_Blade_rank_12.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_01.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_02.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_03.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_04.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_05.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_06.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_07.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_08.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_09.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_10.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_11.svg</file>
+        <file>icons/Weapons/Charge_Blade/Charge_Blade_Rank_12.svg</file>
         <file>icons/Weapons/Dual_Blades/Dual_Blades_Rank_01.svg</file>
         <file>icons/Weapons/Dual_Blades/Dual_Blades_Rank_02.svg</file>
         <file>icons/Weapons/Dual_Blades/Dual_Blades_Rank_03.svg</file>
@@ -355,9 +355,86 @@
         <file>icons/crowns/crown_king.svg</file>
         <file>icons/crowns/crown_large.svg</file>
         <file>icons/crowns/crown_mini.svg</file>
+        <!-- Monster head icons (512x512 PNG, from HunterPie v2.0.23 release) — 71/72 MonsterData.xml IDs -->
+        <file>icons/Monsters/Unknown.png</file>
+        <file>icons/Monsters/World_00.png</file>
+        <file>icons/Monsters/World_01.png</file>
+        <file>icons/Monsters/World_04.png</file>
+        <file>icons/Monsters/World_07.png</file>
+        <file>icons/Monsters/World_09.png</file>
+        <file>icons/Monsters/World_10.png</file>
+        <file>icons/Monsters/World_11.png</file>
+        <file>icons/Monsters/World_12.png</file>
+        <file>icons/Monsters/World_13.png</file>
+        <file>icons/Monsters/World_14.png</file>
+        <file>icons/Monsters/World_15.png</file>
+        <file>icons/Monsters/World_16.png</file>
+        <file>icons/Monsters/World_17.png</file>
+        <file>icons/Monsters/World_18.png</file>
+        <file>icons/Monsters/World_19.png</file>
+        <file>icons/Monsters/World_20.png</file>
+        <file>icons/Monsters/World_21.png</file>
+        <file>icons/Monsters/World_22.png</file>
+        <file>icons/Monsters/World_23.png</file>
+        <file>icons/Monsters/World_24.png</file>
+        <file>icons/Monsters/World_25.png</file>
+        <file>icons/Monsters/World_26.png</file>
+        <file>icons/Monsters/World_27.png</file>
+        <file>icons/Monsters/World_28.png</file>
+        <file>icons/Monsters/World_29.png</file>
+        <file>icons/Monsters/World_30.png</file>
+        <file>icons/Monsters/World_31.png</file>
+        <file>icons/Monsters/World_32.png</file>
+        <file>icons/Monsters/World_33.png</file>
+        <file>icons/Monsters/World_34.png</file>
+        <file>icons/Monsters/World_35.png</file>
+        <file>icons/Monsters/World_36.png</file>
+        <file>icons/Monsters/World_37.png</file>
+        <file>icons/Monsters/World_38.png</file>
+        <file>icons/Monsters/World_39.png</file>
+        <file>icons/Monsters/World_51.png</file>
+        <file>icons/Monsters/World_61.png</file>
+        <file>icons/Monsters/World_62.png</file>
+        <file>icons/Monsters/World_63.png</file>
+        <file>icons/Monsters/World_64.png</file>
+        <file>icons/Monsters/World_65.png</file>
+        <file>icons/Monsters/World_66.png</file>
+        <file>icons/Monsters/World_67.png</file>
+        <file>icons/Monsters/World_68.png</file>
+        <file>icons/Monsters/World_69.png</file>
+        <file>icons/Monsters/World_70.png</file>
+        <file>icons/Monsters/World_71.png</file>
+        <file>icons/Monsters/World_72.png</file>
+        <file>icons/Monsters/World_73.png</file>
+        <file>icons/Monsters/World_74.png</file>
+        <file>icons/Monsters/World_75.png</file>
+        <file>icons/Monsters/World_76.png</file>
+        <file>icons/Monsters/World_77.png</file>
+        <file>icons/Monsters/World_78.png</file>
+        <file>icons/Monsters/World_79.png</file>
+        <file>icons/Monsters/World_80.png</file>
+        <file>icons/Monsters/World_81.png</file>
+        <file>icons/Monsters/World_87.png</file>
+        <file>icons/Monsters/World_88.png</file>
+        <file>icons/Monsters/World_89.png</file>
+        <file>icons/Monsters/World_90.png</file>
+        <file>icons/Monsters/World_92.png</file>
+        <file>icons/Monsters/World_93.png</file>
+        <file>icons/Monsters/World_94.png</file>
+        <file>icons/Monsters/World_95.png</file>
+        <file>icons/Monsters/World_96.png</file>
+        <file>icons/Monsters/World_97.png</file>
+        <file>icons/Monsters/World_98.png</file>
+        <file>icons/Monsters/World_99.png</file>
+        <file>icons/Monsters/World_100.png</file>
+        <file>icons/Monsters/World_101.png</file>
     </qresource>
 
     <qresource prefix="/fonts">
+        <file>fonts/ChakraPetch-Regular.ttf</file>
+        <file>fonts/ChakraPetch-Medium.ttf</file>
+        <file>fonts/ChakraPetch-SemiBold.ttf</file>
+        <file>fonts/ChakraPetch-Bold.ttf</file>
         <file>fonts/WorkSans-ExtraLight.ttf</file>
         <file>fonts/WorkSans-Light.ttf</file>
         <file>fonts/WorkSans-Medium.ttf</file>

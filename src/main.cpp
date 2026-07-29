@@ -1,5 +1,6 @@
 #include "core/game_snapshot.h"
 #include "core/string_table.h"
+#include "monster/monster_types.h"
 #include "mhw_reader.h"
 #include "ui/panel_damage.h"
 #include "ui/panel_monster.h"
@@ -8,7 +9,11 @@
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QFile>
+#include <QFontDatabase>
+#include <QResource>
 #include <QTimer>
+#include <algorithm>
 
 #include <cstdio>
 
@@ -35,6 +40,70 @@ int main(int argc, char **argv)
     QApplication::setApplicationVersion(QStringLiteral("0.2.0"));
     QApplication::setOrganizationName(QStringLiteral("a27exe"));
     app.setQuitOnLastWindowClosed(true);
+
+    // Register font families.
+    //   Work Sans    — UI font (already shipped in qrc /fonts).
+    //   Chakra Petch — display font from the HTML v8 design spec
+    //                  (numerals / chart labels / titles).
+    //
+    // Two paths are tried in order for each font:
+    //   1. Load from qrc resource via addApplicationFontFromData
+    //      (binary self-contained — works without system fontconfig).
+    //   2. Fall back to addApplicationFont on the qrc path.
+    //      (older Qt platforms where FromData isn't supported).
+    // If both fail, log a warning but continue — Qt will fall back to
+    // a system font at draw time, so the app still works.
+    auto tryLoad = [](const QString &qrcPath, const char *label) {
+        // 1) Read bytes via QResource. QFile::open on a qrc path can
+        //    fail with OpenError on Qt 6.11 if called too early in main;
+        //    QResource::data() is the documented safe way to read
+        //    embedded resource bytes regardless of init order.
+        QResource res(qrcPath);
+        if (res.isValid()) {
+            const QByteArray bytes = QByteArray(reinterpret_cast<const char *>(res.data()),
+                                                 static_cast<int>(res.size()));
+            const int id = QFontDatabase::addApplicationFontFromData(bytes);
+            if (id >= 0) {
+                qInfo("Font %s loaded from qrc bytes (%lld B), id=%d, "
+                      "families=%s",
+                      label,
+                      static_cast<long long>(bytes.size()), id,
+                      qPrintable(QFontDatabase::applicationFontFamilies(id)
+                                     .join(", ")));
+                return;
+            }
+            qWarning("Font %s: FromData(%lld B) returned %d",
+                     label,
+                     static_cast<long long>(bytes.size()), id);
+        } else {
+            qWarning("Font %s: QResource(%s) invalid",
+                     label, qPrintable(qrcPath));
+        }
+        // 2) Fallback to file-path API.
+        const int id = QFontDatabase::addApplicationFont(qrcPath);
+        if (id >= 0) {
+            qInfo("Font %s loaded via addApplicationFont path, id=%d",
+                  label, id);
+            return;
+        }
+        qWarning("Font %s FAILED to load from %s — will rely on "
+                 "system fontconfig",
+                 label, qPrintable(qrcPath));
+    };
+    tryLoad(QStringLiteral(":/fonts/fonts/ChakraPetch-Regular.ttf"),
+            "ChakraPetch-Regular");
+    tryLoad(QStringLiteral(":/fonts/fonts/ChakraPetch-Medium.ttf"),
+            "ChakraPetch-Medium");
+    tryLoad(QStringLiteral(":/fonts/fonts/ChakraPetch-SemiBold.ttf"),
+            "ChakraPetch-SemiBold");
+    tryLoad(QStringLiteral(":/fonts/fonts/ChakraPetch-Bold.ttf"),
+            "ChakraPetch-Bold");
+    tryLoad(QStringLiteral(":/fonts/fonts/WorkSans.ttf"),  "WorkSans");
+    tryLoad(QStringLiteral(":/fonts/fonts/WorkSans-Medium.ttf"), "WorkSans-Medium");
+    tryLoad(QStringLiteral(":/fonts/fonts/WorkSans-SemiBold.ttf"), "WorkSans-SemiBold");
+    tryLoad(QStringLiteral(":/fonts/fonts/WorkSans-Light.ttf"),   "WorkSans-Light");
+    tryLoad(QStringLiteral(":/fonts/fonts/WorkSans-ExtraLight.ttf"), "WorkSans-ExtraLight");
+    QApplication::setFont(QFont(QStringLiteral("Work Sans"), 10));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
@@ -92,28 +161,22 @@ int main(int argc, char **argv)
 
     QObject::connect(&timer, &QTimer::timeout, [&] {
         const mhw::GameSnapshot snap = reader.poll();
-
-        // In edit mode, always show all panels so the user can
-        // position them even without game data.
         const bool showAll = editMode;
 
-        // Player panel: always shown in live mode too, so the user
-        // sees a clear "not connected" placeholder when MHW isn't
-        // running (v0.1 behavior). It draws a status pill instead of
-        // the full HP/ST stack when attached_ == false.
+        // Once edit-mode demo data is seeded, each panel keeps its
+        // mock state internally and we only need a paint kick — the
+        // real `reader.poll()` snapshot would clobber attached_ /
+        // weaponId_ / party stats back to "not running" every tick.
+        auto skipUpdate = [&](const Panel &p) {
+            return editMode && p.demoPrimed();
+        };
+
         if (snap.player.valid || showAll) {
             playerPanel.setVisible(true);
-            playerPanel.update(snap);
-            if (snap.player.valid) {
-                // Feed the local player's weapon id (lives in party data).
-                for (const auto &member : snap.party) {
-                    if (member.local) {
-                        playerPanel.setWeaponId(member.weaponId);
-                        break;
-                    }
-                }
-            } else if (editMode) {
+            if (skipUpdate(playerPanel)) {
                 playerPanel.triggerUpdate();
+            } else {
+                playerPanel.update(snap);
             }
         } else {
             // v0.1 behavior: keep player panel visible with a
@@ -122,26 +185,55 @@ int main(int argc, char **argv)
             playerPanel.setVisible(true);
         }
 
-        // Monster panel displays the first live large monster only (v0.2).
-        // Multiple monsters are planned for a later version.
         monsterPanel.setMultiplayer(snap.isMultiplayer);
         if (!snap.monsters.isEmpty() || showAll) {
             monsterPanel.setVisible(true);
-            if (!snap.monsters.isEmpty())
-                monsterPanel.update(snap.monsters.first());
-            else if (editMode)
+            if (skipUpdate(monsterPanel)) {
                 monsterPanel.triggerUpdate();
+            } else if (!snap.monsters.isEmpty()) {
+                // Selection priority (mirrors HunterPie MHWMonster.GetManualTargetedMonster
+            // isSelected logic):
+            //   1. Quest target (导虫 / 任务追踪) — survives map UI close,
+            //      set by MHW when the player marks a monster on the map
+            //      so it follows them around. Read from
+            //      MONSTER_QUEST_TARGET_ADDRESS.
+            //   2. Map UI selection — only valid while the map is open
+            //      (MapInsectsRef + GuiRadarRef both set). Read from
+            //      MONSTER_MANUAL_TARGET_ADDRESS → SelectedMonster.
+            //   3. Largest maxHealth (multi-target primary), tiebreak
+            //      by enraged.
+            auto pickFlagged = [&](bool mhw::MonsterSnapshot::*flag) {
+                return std::find_if(snap.monsters.begin(),
+                                    snap.monsters.end(),
+                                    [flag](const auto &m) {
+                                        return m.*flag;
+                                    });
+            };
+            auto it = pickFlagged(&mhw::MonsterSnapshot::isQuestTargeted);
+            if (it == snap.monsters.end())
+                it = pickFlagged(&mhw::MonsterSnapshot::isManualTargeted);
+            if (it == snap.monsters.end()) {
+                it = std::max_element(snap.monsters.begin(),
+                                      snap.monsters.end(),
+                                      [](const auto &a, const auto &b) {
+                                          if (a.enraged != b.enraged)
+                                              return !a.enraged;
+                                          return a.maxHealth < b.maxHealth;
+                                      });
+            }
+            monsterPanel.update(*it);
+            }
         } else {
             monsterPanel.setVisible(false);
         }
 
-        // Damage panel only shown when party damage data exists.
         if (!snap.party.isEmpty() || showAll) {
             damagePanel.setVisible(true);
-            if (!snap.party.isEmpty())
-                damagePanel.update(snap);
-            else if (editMode)
+            if (skipUpdate(damagePanel)) {
                 damagePanel.triggerUpdate();
+            } else if (!snap.party.isEmpty()) {
+                damagePanel.update(snap);
+            }
         } else {
             damagePanel.setVisible(false);
         }

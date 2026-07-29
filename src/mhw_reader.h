@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/game_snapshot.h"
+#include "monster/monster_types.h"
 
 #include <QHash>
 #include <QString>
@@ -99,6 +100,7 @@ private:
     std::uintptr_t absolute(const QString &key) const;
     QString readUtf8(std::uintptr_t address, std::size_t maxLength) const;
     QString joinOffsets() const;
+    void refreshPlayerIdentity(PlayerSnapshot &player);
     void discoverMonsterTable();
     Zone readZone(QString *error);
     QVector<MonsterSnapshot> readMonsters(QString *error);
@@ -119,6 +121,16 @@ private:
     std::unordered_map<std::uintptr_t, CachedMonster> monsterCache_;
     std::vector<std::uintptr_t> cachedArray_;
     std::uintptr_t cachedArrayBase_ = 0;
+    // Last manual target the player pinned on the map (zero if none / map
+    // closed). Read once per poll from MHWMapMonsterSelectionStructure.
+    std::uintptr_t manualTargetAddress_ = 0;
+    // Last quest-pinned monster pointer. HunterPie reads both:
+    //   quest target (cap quest / investigation mark)
+    //   manual map pin (player opened map and pinned)
+    // Each monster picks quest target first, falling back to manual
+    // pin.  Address comes from MONSTER_QUEST_TARGET_ADDRESS →
+    // MONSTER_QUEST_TARGET_OFFSETS → 0x48,0x1760,0x100.
+    std::uintptr_t questTargetAddress_ = 0;
 };
 
 } // namespace mhw

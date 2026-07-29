@@ -1,7 +1,9 @@
 #pragma once
 
+#include <QColor>
 #include <QMainWindow>
 #include <QMargins>
+#include <QRectF>
 #include <QSettings>
 #include <QWidget>
 
@@ -37,6 +39,13 @@ public:
     void setEditMode(bool on);
     bool editMode() const { return editMode_; }
 
+    // Edit-mode demo data is built once on first paint after entering
+    // edit mode, then reused — keeps paint() O(display).
+    virtual void setupDemoData() {}
+    bool demoPrimed() const { return demoPrimed_; }
+    void markDemoPrimed() { demoPrimed_ = true; }
+    void resetDemoPrimed() { demoPrimed_ = false; }
+
     void setVisible(bool visible);
 
 protected:
@@ -54,6 +63,14 @@ protected:
     void keyPressEvent(QKeyEvent *e) override;
     void wheelEvent(QWheelEvent *e) override;
 
+    // v0.3 visual helpers — match mhw-overlay-concept.html tokens.
+    enum class Accent { Player, Monster, Damage };
+    void drawV03Chrome(QPainter &p, Accent accent) const;
+    QColor accentColor(Accent a) const;
+    // Status-coloured bar (HTML: --c-hi gradient over --c).
+    void drawBarV03(QPainter &p, const QRectF &rect, float pct,
+                    const QColor &c, int radius = 3) const;
+
     // Minimized: show a small colored block with the panel's
     // first letter instead of the full layout. Toggle with Space.
     bool minimized() const { return minimized_; }
@@ -62,6 +79,8 @@ private:
     void applyGeometry();
     void nudgeMargins(int dx, int dy);
     void paintMinimized(QPainter &p);
+
+    bool demoPrimed_{false};
 
     QString key_;
     Corner corner_;

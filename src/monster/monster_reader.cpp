@@ -2,6 +2,7 @@
 #include <QFile>
 #include <QIODevice>
 #include <QSet>
+#include <cmath>
 
 namespace mhw {
 
@@ -55,6 +56,59 @@ void MhwReader::readMonsterAilments(MonsterSnapshot &monster)
 QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
 {
     QVector<MonsterSnapshot> result;
+
+    // Refresh the manual-target pointer once per poll. When the player
+    // pins a monster on the in-game map (or the quest itself marks one),
+    // MHWMapMonsterSelectionStructure.SelectedMonster points at that
+    // monster's component address. We mirror HunterPie's "ManualTarget ==
+    // Self" semantics: prefer the manually-pinned monster, fall back to
+    // largest maxHealth when nothing is pinned.
+    const std::uintptr_t manualTargetAddr = absolute(QStringLiteral(
+        "MONSTER_MANUAL_TARGET_ADDRESS"));
+    if (manualTargetAddr) {
+        const auto selPtr = memory_.read<std::uintptr_t>(manualTargetAddr);
+        // Offset 0x148 inside MHWMapMonsterSelectionStructure holds the
+        // SelectedMonster pointer. Treat a stale / unmapped value as
+        // "no manual target" rather than chasing it as a real pointer.
+        if (selPtr && *selPtr >= 0x10000) {
+            // HunterPie only treats the selection as "manual target"
+            // when both MapInsectsRef (0x128) and GuiRadarRef (0x160)
+            // are set — i.e. the player actually opened the map and
+            // pinned the monster there. Without those checks the
+            // pointer at 0x148 holds the last targeted monster even
+            // when the map UI is closed, which causes the panel to
+            // silently switch after every quest.
+            const auto mapInsectsRef = memory_.read<std::uintptr_t>(
+                *selPtr + 0x128ULL);
+            const auto guiRadarRef = memory_.read<std::uintptr_t>(
+                *selPtr + 0x160ULL);
+            const bool uiOpen = mapInsectsRef && *mapInsectsRef != 0
+                             && guiRadarRef && *guiRadarRef != 0;
+            if (uiOpen) {
+                const auto sel = memory_.read<std::uintptr_t>(
+                    *selPtr + 0x148ULL);
+                manualTargetAddress_ = (sel && *sel >= 0x10000) ? *sel : 0;
+            } else {
+                manualTargetAddress_ = 0;
+            }
+        } else {
+            manualTargetAddress_ = 0;
+        }
+    }
+
+    // HunterPie also reads the quest-pinned monster (capture quest,
+    // investigation, etc.) and prefers it over the manual map pin.
+    // MONSTER_QUEST_TARGET_ADDRESS → MONSTER_QUEST_TARGET_OFFSETS
+    // (0x48,0x1760,0x100) is just a pointer deref chain ending in the
+    // monster's component address.
+    const std::uintptr_t questTargetAddr = absolute(QStringLiteral(
+        "MONSTER_QUEST_TARGET_ADDRESS"));
+    if (questTargetAddr) {
+        const auto questPtr = followPointerChain(memory_, questTargetAddr,
+            map_.offsets(QStringLiteral("MONSTER_QUEST_TARGET_OFFSETS")),
+            nullptr);
+        questTargetAddress_ = (questPtr >= 0x10000) ? questPtr : 0;
+    }
 
     // With mhw_fix.so, the MonsterList chain is now functional.
     // Follow HunterPie's path: MONSTER_LIST_ADDRESS -> deref -> +0x38 -> Component*[].
@@ -386,6 +440,17 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             m.enrageMaxSeconds = enrageMaxDuration;
             m.enrageBuildup = enrageBuildup;
             m.enrageMaxBuildup = enrageMaxBuildup;
+            // Re-evaluate manual target every tick: the cache hit path
+            // skips the rest of monster construction so we must apply
+            // it here too.
+            // HunterPie: quest target wins over manual pin. We surface three
+            // flags so main.cpp can pick the right priority:
+            //   isManualTargeted — player pinned on the map
+            //   isQuestTargeted  — capture / investigation quest
+            //   isManuallyTargeted — OR of the above (legacy compat)
+            m.isManualTargeted  = (comp == manualTargetAddress_);
+            m.isQuestTargeted   = (comp == questTargetAddress_);
+            m.isManuallyTargeted = m.isManualTargeted || m.isQuestTargeted;
             result.push_back(m);
             monsterCache_[comp] = {m, maxHP};
             continue;
@@ -503,11 +568,34 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
         m.maxHealth = maxHP;
         m.health = curHP;
+
+        // Size (HunterPie GetMonsterCrownData):
+        //   sizeModifier = +0x7730 (sanity: <=0 or >=2 -> 1)
+        //   displayed size multiplier = sizeMultiplier(+0x184) / sizeModifier
+        if (const auto sizeMul = memory_.read<float>(monster + 0x184ULL)) {
+            float sizeMod = 1.0F;
+            if (const auto raw = memory_.read<float>(monster + 0x7730ULL))
+                if (*raw > 0.0F && *raw < 2.0F) sizeMod = *raw;
+            if (*sizeMul > 0.0F)
+                m.size = std::round(*sizeMul / sizeMod * 100.0F) / 100.0F;
+        }
+
         m.enraged = isEnraged;
         m.enrageSeconds = enrageDuration;
         m.enrageMaxSeconds = enrageMaxDuration;
         m.enrageBuildup = enrageBuildup;
         m.enrageMaxBuildup = enrageMaxBuildup;
+        // Mark this monster as the player's manual target. The component
+        // address we got from the list matches the one stored in
+        // MHWMapMonsterSelectionStructure.SelectedMonster.
+        // HunterPie: quest target wins over manual pin. We surface three
+            // flags so main.cpp can pick the right priority:
+            //   isManualTargeted — player pinned on the map
+            //   isQuestTargeted  — capture / investigation quest
+            //   isManuallyTargeted — OR of the above (legacy compat)
+            m.isManualTargeted  = (comp == manualTargetAddress_);
+            m.isQuestTargeted   = (comp == questTargetAddress_);
+            m.isManuallyTargeted = m.isManualTargeted || m.isQuestTargeted;
         m.parts = parts;
         readMonsterAilments(m);
         monsterCache_[comp] = {m, maxHP};
