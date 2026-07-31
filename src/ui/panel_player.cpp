@@ -659,7 +659,8 @@ void PlayerPanel::paintPanel(QPainter &p)
                  questTxt,
                  QrowStyle{&qFontL, &qFontL10,
                            QColor(146, 148, 149),          // --t3 label
-                           QColor(255, 214, 107)});         // .qrow.zq .qr gold #ffd66b
+                           QColor(255, 214, 107),           // .qrow.zq .qr gold #ffd66b
+                           false, QColor()});
     }
 
     // Row 3: 剩余  +  41:37
@@ -671,7 +672,8 @@ void PlayerPanel::paintPanel(QPainter &p)
                  timerTxt,
                  QrowStyle{&qFontL, &qFontL12,
                            QColor(146, 148, 149),
-                           QColor(80, 197, 183)});          // .qrow.timer .qr teal #50c5b7
+                           QColor(80, 197, 183),            // .qrow.timer .qr teal #50c5b7
+                           false, QColor()});
     }
 
     // Row 4: 猫车  +  0 / 3
@@ -684,7 +686,8 @@ void PlayerPanel::paintPanel(QPainter &p)
                  cart,
                  QrowStyle{&qFontL, &qFontL10,
                            QColor(146, 148, 149),
-                           QColor(255, 118, 118)});         // .qrow.cart .qr red #ff7676
+                           QColor(255, 118, 118),           // .qrow.cart .qr red #ff7676
+                           false, QColor()});
     }
 
     y -= kGapQrow;          // last qrow has no trailing inter-row gap

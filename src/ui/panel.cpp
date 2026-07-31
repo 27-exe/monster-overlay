@@ -4,6 +4,7 @@
 
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QFocusEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -105,12 +106,12 @@ void Panel::applyGeometry()
         return;
 
     layer->setLayer(LayerShellQt::Window::LayerOverlay);
-    // Always use OnDemand so the panel CAN receive keyboard events
-    // when focused. In live mode, WA_TransparentForMouseEvents is
-    // true by default so clicks pass through to the game; double-
-    // click the panel to acquire focus (Space to minimize, etc.).
+    // Default: KeyboardInteractivityNone — the surface is invisible
+    // to the compositor's focus chain. Show/hide never steals focus,
+    // no taskbar entry, game stays fullscreen. Clicking the panel
+    // dynamically switches to OnDemand (see mousePressEvent).
     layer->setKeyboardInteractivity(
-        LayerShellQt::Window::KeyboardInteractivityOnDemand);
+        LayerShellQt::Window::KeyboardInteractivityNone);
     layer->setExclusiveZone(-1);
     layer->setScope(QStringLiteral("mhw-linux-overlay"));
     layer->setActivateOnShow(false);
@@ -164,7 +165,7 @@ void Panel::loadConfig()
     // shown until after applyGeometry() configures the layer-shell
     // surface (anchors + margins); showing first triggers "already
     // has a shell integration" warnings. main.cpp shows the panels.
-    setWindowOpacity(1.0);   // v0.3: full opacity — icons were washing out
+    setWindowOpacity(opacity_);
 }
 
 void Panel::saveConfig()
@@ -185,11 +186,10 @@ void Panel::setEditMode(bool on)
 {
     editMode_ = on;
     setCursor(on ? Qt::SizeAllCursor : Qt::ArrowCursor);
-
-    // Always use OnDemand + no mouse transparency so the panel can
-    // receive clicks to focus (Space to minimize, etc.). Panels sit
-    // at screen corners and are small enough not to block gameplay.
+    // Edit mode needs keyboard from the start (arrow keys, Esc).
+    // applyGeometry() resets to None, so override afterwards.
     applyGeometry();
+    setLayerKeyboardInteractivity(on);
     update();
 }
 
@@ -277,20 +277,35 @@ void Panel::mousePressEvent(QMouseEvent *e)
 {
     if (e->button() != Qt::LeftButton)
         return;
+    // Dynamically enter the focus chain: switch layer-shell keyboard
+    // interactivity from None → OnDemand, then request activation.
+    // The compositor grants keyboard focus; Esc/Space become usable.
+    setLayerKeyboardInteractivity(true);
+    if (QWindow *w = windowHandle())
+        w->requestActivate();
+    setFocus();
+}
 
-    if (editMode_) {
-        // Single click to focus in edit mode.
-        setFocus();
-    } else {
-        // Live mode: double-click to acquire focus (single clicks
-        // pass through to the game via WA_TransparentForMouseEvents).
-        // We need to temporarily disable transparency to receive
-        // the double-click event itself.
-        if (e->type() == QEvent::MouseButtonDblClick) {
-            setAttribute(Qt::WA_TransparentForMouseEvents, false);
-            setFocus();
-        }
-    }
+void Panel::focusOutEvent(QFocusEvent *e)
+{
+    QMainWindow::focusOutEvent(e);
+    // Drop out of the focus chain so the next show/hide cycle is
+    // invisible to the compositor (no focus steal, no taskbar entry).
+    if (!editMode_)
+        setLayerKeyboardInteractivity(false);
+}
+
+void Panel::setLayerKeyboardInteractivity(bool interactive)
+{
+    QWindow *native = windowHandle();
+    if (!native)
+        return;
+    LayerShellQt::Window *layer = LayerShellQt::Window::get(native);
+    if (!layer)
+        return;
+    layer->setKeyboardInteractivity(interactive
+        ? LayerShellQt::Window::KeyboardInteractivityOnDemand
+        : LayerShellQt::Window::KeyboardInteractivityNone);
 }
 
 void Panel::keyPressEvent(QKeyEvent *e)
@@ -318,6 +333,7 @@ void Panel::keyPressEvent(QKeyEvent *e)
     if (!editMode_)
         return QMainWindow::keyPressEvent(e);
 
+    // Arrow keys: nudge panel margins (edit mode only).
     constexpr int kStep = 10;
     constexpr int kBigStep = 50;
     const int step = (e->modifiers() & Qt::ShiftModifier) ? kBigStep : kStep;
@@ -328,17 +344,6 @@ void Panel::keyPressEvent(QKeyEvent *e)
     case Qt::Key_Right: dx =  step; break;
     case Qt::Key_Up:    dy = -step; break;
     case Qt::Key_Down:  dy =  step; break;
-    case Qt::Key_Q:
-        // First press — arm and bail.
-        m_quitArmed = true;
-        QTimer::singleShot(400, this, [this] { m_quitArmed = false; });
-        return;
-    case Qt::Key_Q | Qt::ShiftModifier:
-    case Qt::Key_F10:
-        // Second press within the window → graceful quit.
-        saveConfig();
-        QCoreApplication::quit();
-        return;
     default:
         return QMainWindow::keyPressEvent(e);
     }

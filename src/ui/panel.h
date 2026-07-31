@@ -61,6 +61,7 @@ protected:
     void paintEvent(QPaintEvent *e) override;
     void mousePressEvent(QMouseEvent *e) override;
     void keyPressEvent(QKeyEvent *e) override;
+    void focusOutEvent(QFocusEvent *e) override;
     void wheelEvent(QWheelEvent *e) override;
 
     // v0.3 visual helpers — match mhw-overlay-concept.html tokens.
@@ -77,6 +78,7 @@ protected:
 
 private:
     void applyGeometry();
+    void setLayerKeyboardInteractivity(bool interactive);
     void nudgeMargins(int dx, int dy);
     void paintMinimized(QPainter &p);
 
@@ -89,7 +91,6 @@ private:
     double scale_{1.0};
     double opacity_{0.85};
     bool editMode_{false};
-    bool m_quitArmed{false};
     bool minimized_{false};
     QSize normalSize_;   // remembered full-layout size
 };
