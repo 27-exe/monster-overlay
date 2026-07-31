@@ -1,5 +1,6 @@
 #include "mhw_reader.h"
 
+
 namespace mhw {
 
 // ===================================================================
@@ -251,6 +252,152 @@ QVector<PartyMemberSnapshot> MhwReader::readParty(QString *error)
         result.push_back(member);
     }
     return result;
+}
+
+
+// ===================================================================
+// readSharpness — HunterPie MHWMeleeWeapon.GetWeaponSharpness
+//
+// Reads the local player's weapon sharpness. Returns a zero-initialised
+// snapshot when:
+//   - the equipped weapon is ranged (bow / hbg / lbg), which have no
+//     sharpness bar
+//   - the memory read fails (game not running, address not mapped)
+//   - the in-game sharpness level is Broken or Invalid
+//
+// Mem path (all pre-resolved in data/MonsterHunterWorld.421810.map):
+//   WEAPON_ADDRESS + WEAPON_SHARPNESS_OFFSETS
+//     +0x1D10 int MaxLevel            (Purple = 6, max possible)
+//     +0x20F8 int Sharpness           (raw hit count, current segment)
+//     +0x20FC int Level               (enum Red=0..Purple=6, Broken=-1)
+//   WEAPON_ADDRESS + WEAPON_ID_OFFSETS
+//     int weaponId                    (HunterPie 0..13, <-1 on failure)
+//   WEAPON_DATA_ADDRESS + WEAPON_DATA_OFFSETS
+//     then [weaponId * 8 + 0xC] deref → short[7]  per-level upper bounds
+//   MINIMUM_SHARPNESSES_ADDRESS + 0..7 * 4 int  minimum hits per level
+//
+// Thresholds are cached per-weapon; the per-tick cost after the first
+// read is just one 8-byte struct read + 1 int read.
+// ===================================================================
+SharpnessSnapshot MhwReader::readSharpness(int weaponId, QString *error)
+{
+    SharpnessSnapshot result;
+    // HunterPie MHWMeleeWeapon.GetWeaponSharpness:
+    //   1. always read the sharpness struct first
+    //   2. only return early if the in-game Level field is invalid
+    //   3. weaponId is only used for the (cached) per-weapon threshold
+    //      array, not for gating the read.
+    //
+    // We previously early-returned on weaponId<0 — that produced an
+    // empty bar even when the game WAS feeding valid sharpness data
+    // because the parallel weaponId read sometimes lags by a tick.
+    // Removing the early return lets the panel render as soon as the
+    // sharpness struct is valid in memory.
+    const std::uintptr_t sharpPtr = followPointerChain(
+        memory_,
+        absolute(QStringLiteral("WEAPON_ADDRESS")),
+        map_.offsets(QStringLiteral("WEAPON_SHARPNESS_OFFSETS")),
+        error);
+    if (!sharpPtr) {
+        // Reset the cache so we don't stay stuck on a stale weaponId.
+        cachedSharpnessThresholdsValid_ = false;
+        return result;
+    }
+
+    const auto level = memory_.read<std::int32_t>(sharpPtr + 0x20FCULL);
+    if (!level) {
+        return result;
+    }
+    if (*level < 0 || *level > 6) {
+        return result;
+    }
+    result.level = *level;
+
+    if (const auto raw = memory_.read<std::int32_t>(sharpPtr + 0x20F8ULL))
+        result.currentHits = *raw;
+
+    // Always re-fetch thresholds when the weaponId changes. The caller
+    // may pass -1 on first tick before the player struct's weapon byte
+    // resolves; fall back to WEAPON_ID_OFFSETS as a second source.
+    int sharpWeaponId = weaponId;
+    if (sharpWeaponId < 0 || sharpWeaponId > 13) {
+        const std::uintptr_t idPtr = followPointerChain(
+            memory_,
+            absolute(QStringLiteral("WEAPON_ADDRESS")),
+            map_.offsets(QStringLiteral("WEAPON_ID_OFFSETS")),
+            nullptr);
+        if (idPtr) {
+            if (const auto w = memory_.read<std::int32_t>(idPtr))
+                sharpWeaponId = *w;
+        }
+    }
+    // Ranged weapons (Bow=11, HBG=13, LBG=14) have no sharpness.
+    if (sharpWeaponId == 11 || sharpWeaponId == 13 || sharpWeaponId == 14) {
+        return result;
+    }
+    if (sharpWeaponId < 0 || sharpWeaponId > 10) {
+        return result;
+    }
+
+    if (cachedSharpnessWeaponId_ != sharpWeaponId || !cachedSharpnessThresholdsValid_) {
+        const std::uintptr_t dataPtr = followPointerChain(
+            memory_,
+            absolute(QStringLiteral("WEAPON_DATA_ADDRESS")),
+            map_.offsets(QStringLiteral("WEAPON_DATA_OFFSETS")),
+            nullptr);
+        if (!dataPtr) {
+            return result;
+        }
+
+        // HunterPie reads the per-weapon thresholds array via a
+        // 2-level pointer chain starting from weaponDataPtr:
+        //   Memory.ReadAsync<NUInt>(weaponDataPtr, {weaponId*8, 0xC})
+        // We previously read it as a flat 8-byte value at
+        // dataPtr + weaponId*8 + 0xC, which always returned 0 because
+        // the chain is two dereferences deep, not one.
+        const std::uintptr_t arrayPtr = followPointerChain(
+            memory_,
+            dataPtr,
+            {static_cast<std::uintptr_t>(sharpWeaponId) * 8ULL, 0xCULL},
+            nullptr);
+        if (!arrayPtr) {
+            return result;
+        }
+        if (!isSanePointer(arrayPtr)) {
+            return result;
+        }
+        const auto shorts = memory_.readArray<std::int16_t>(arrayPtr, 7);
+        if (shorts.size() != 7) {
+            return result;
+        }
+
+        for (int i = 0; i < 7; ++i)
+            cachedSharpnessThresholds_[i] = static_cast<int>(shorts[i]);
+        cachedSharpnessWeaponId_ = sharpWeaponId;
+        cachedSharpnessThresholdsValid_ = true;
+    }
+    for (int i = 0; i < 7; ++i)
+        result.thresholds[i] = cachedSharpnessThresholds_[i];
+
+    result.threshold = (result.level <= 0) ? 0 : result.thresholds[result.level - 1];
+
+    const int base = result.thresholds[result.level];
+    result.maxHits = base + 50;
+    if (result.maxHits > 400)
+        result.maxHits = 400;
+
+    result.valid = true;
+    return result;
+}
+
+// ===================================================================
+// isMeleeWeapon — HunterPie Weapon enum: 0..10 are melee, 11..14 ranged.
+// Inline so the panel can filter without dragging the reader into the
+// UI translation unit.
+// ===================================================================
+inline bool isMeleeWeapon(int weaponId)
+{
+    return weaponId >= 0 && weaponId <= 10;
 }
 
 } // namespace mhw

@@ -309,6 +309,7 @@ void PlayerPanel::update(const mhw::GameSnapshot &snap)
     playerMR_   = snap.player.masterRank;
     playerName_ = snap.player.name;
     weaponId_   = snap.player.weaponId;
+    sharpness_  = snap.player.sharpness;
     partyCount_ = snap.party.size();
 
     // When party has a local=true snapshot it carries the same fields;
@@ -346,6 +347,157 @@ void PlayerPanel::update(const mhw::GameSnapshot &snap)
     }
 
     canvas()->update();
+}
+
+// ===================================================================
+// drawSharpnessBar — HunterPie WeaponSharpnessView.xaml: 7-segment
+// coloured bar + numeric badge, mounted on the right edge of the
+// player row. Mirrors the HTML v8 concept (.shp-wrap) and the HunterPie
+// SharpnessToColorConverter palette.
+// ===================================================================
+namespace {
+// Qt A,R,G,B conversion utility for shorthand literal initialisers.
+constexpr QRgb kSharpColors[8] = {
+    0xFFF41162, // Broken
+    0xFFFF0000, // Red
+    0xFFFF7F00, // Orange
+    0xFFFFD400, // Yellow
+    0xFF0DBA1C, // Green
+    0xFF3399FF, // Blue
+    0xFFFFFFFF, // White
+    0xFFD040FF, // Purple
+};
+constexpr int kShpNum   = 30;   // numeric badge edge — wide enough for 3-digit hits
+constexpr int kShpGH    = 13;   // gauge height
+constexpr int kShpGap   = 14;   // gap between gauge and badge (HSpie-style breath room)
+constexpr int kShpSkew  = 22;   // -22deg per-segment transform
+} // namespace
+
+// Returns the gauge's left X on success (so the caller can trim
+// the MR/name rect to avoid overlap). Returns `rightX` (no shrink)
+// when the snapshot is invalid / ranged weapon — caller keeps the
+// full row width for MR/name.
+static int drawSharpnessBar(QPainter &p, const mhw::SharpnessSnapshot &s,
+                            int rightX, int rowY, int rowH)
+{
+    if (!s.valid || s.level < 0 || s.level > 6)
+        return rightX;
+
+    // Skip when the weapon can't reach the current level (allows zero
+    // thresholds from the in-game data to clip the bar cleanly).
+    constexpr int kMinWidth = 3;   // pixels — a 0-width segment collapses
+    const int numX  = rightX - kShpNum;
+    const int numY  = rowY + (rowH - kShpNum) / 2;
+    const int gX    = numX - kShpGap - 130;
+    const int gY    = rowY + (rowH - kShpGH) / 2;
+    const int gRight = gX + 130;
+
+    // Compute per-segment widths from thresholds[i]-thresholds[i-1].
+    // Fallback to a 5px stub when the in-game array has a 0 (weapons
+    // that don't reach that level).
+    int widths[7];
+    int prev = 0;
+    int total = 0;
+    for (int i = 0; i < 7; ++i) {
+        const int hi = s.thresholds[i];
+        const int w  = (hi > prev) ? (hi - prev) : kMinWidth;
+        widths[i] = w;
+        total += w;
+        prev = hi;
+    }
+    // Scale to fit 130px without distortion (long weapons can have
+    // > 130 raw hits across all 7 segments).
+    qreal scale = 130.0 / total;
+    if (scale > 1.0) scale = 1.0; // never stretch — never width-inflate
+    int cumX = gX;
+    for (int i = 0; i < 7; ++i) {
+        const int w = std::max(kMinWidth, qRound(widths[i] * scale));
+        const QRectF seg(cumX, gY, w, kShpGH);
+        cumX += w;
+        // background: segment colour, dim when not current level
+        const QColor segCol = QColor(kSharpColors[i + 1]);
+        const bool active = (i == s.level);
+        const qreal alpha = active ? 1.0 : 0.18;
+        QColor fill = segCol;
+        fill.setAlphaF(alpha);
+        p.fillRect(seg, fill);
+        // 1px dark divider between segments so the colour gradient
+        // stays readable when two adjacent levels share the hue
+        // family (e.g. white→purple). Skipped on the last segment so
+        // the right edge stays clean.
+        if (i < 6) {
+            p.fillRect(QRectF(seg.right() - 1.0, seg.top(), 1.0, seg.height()),
+                       QColor(11, 13, 14, 220));
+        }
+        if (active) {
+            // 1px white inner border so the active segment pops
+            QPen pen(QColor(255, 255, 255, 80));
+            pen.setWidth(1);
+            p.setPen(pen);
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(seg.adjusted(0, 0, -1, -1));
+        }
+    }
+
+    // Current-segment fill overlay: show currentHits / segment width.
+    // Walk the active segment and only fill up to (currentHits/段宽)
+    // of it so the bar can never over-fill into the next segment.
+    {
+        int ax = gX;
+        for (int i = 0; i < s.level; ++i)
+            ax += std::max(kMinWidth, qRound(widths[i] * scale));
+        const int activeW = std::max(kMinWidth, qRound(widths[s.level] * scale));
+        float ratio = 0.0F;
+        // HunterPie: ratio = currentHits / maxHits (maxHits includes
+        // the handicraft bonus, not just the level's natural width).
+        // maxHits is the same value used in the sketch HTML for the
+        // 47/120 readout; widths[s.level] is the level's natural
+        // length which can be much smaller (e.g. 20 for Purple).
+        if (s.maxHits > 0)
+            ratio = static_cast<float>(s.currentHits)
+                  / static_cast<float>(s.maxHits);
+        if (ratio < 0.0F) ratio = 0.0F;
+        if (ratio > 1.0F) ratio = 1.0F;
+        const int fillW = qRound(activeW * ratio);
+        if (fillW > 0) {
+            const QRectF fillRect(ax, gY, fillW, kShpGH);
+            QColor fillCol = QColor(kSharpColors[s.level + 1]);
+            fillCol.setAlphaF(1.0);
+            p.fillRect(fillRect, fillCol);
+        }
+    }
+
+    // Whole-gauge border + dark background to fill gaps between
+    // segments (e.g. when total < 130px).
+    if (cumX < gRight) {
+        p.fillRect(QRectF(cumX, gY, gRight - cumX, kShpGH),
+                   QColor(26, 29, 34));
+    }
+
+    // ---- Numeric badge (22x22, current level colour) ----
+    const QRectF numRect(numX, numY, kShpNum, kShpNum);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(33, 40, 51));
+    p.drawRect(numRect);
+    QColor levelCol = QColor(kSharpColors[s.level + 1]);
+    // glow
+    QColor glow = levelCol;
+    glow.setAlphaF(0.55);
+    for (int o = 0; o < 3; ++o) {
+        QColor go = glow;
+        go.setAlphaF(glow.alphaF() * (0.55 - 0.15 * o));
+        p.setPen(QPen(go, 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(numRect.adjusted(-o - 1, -o - 1, o + 1, o + 1));
+    }
+    // Number text
+    QFont numFont(QStringLiteral("Chakra Petch"), 11, QFont::Medium);
+    numFont.setStyleStrategy(QFont::PreferAntialias);
+    numFont.setStyleHint(QFont::SansSerif);
+    p.setFont(numFont);
+    p.setPen(levelCol);
+    p.drawText(numRect, Qt::AlignCenter, QString::number(s.currentHits));
+    return gX;
 }
 
 void PlayerPanel::paintPanel(QPainter &p)
@@ -548,24 +700,76 @@ void PlayerPanel::paintPanel(QPainter &p)
 
         QFont nFont(QStringLiteral("Chakra Petch"), 12, QFont::Medium);
         nFont.setStyleStrategy(QFont::PreferAntialias);
-        p.setFont(nFont);
-        p.setPen(QColor(245, 246, 247));
-        const QRectF nameRect(slotRect.right() + 8, y,
-                              innerW - kWslot - 8, prowH);
+        // Layout, left→right: [wslot] [name] [MR] ... [gauge] [47]
+        // Per HTML v8 .pname/.mr sit in the same flex row with gap:8,
+        // so MR is glued to the name (not the right edge).
+        // Mount the sharpness bar first to recover gaugeLeftX, then
+        // place MR immediately after the name using QFontMetrics.
+        const int gapNameMR = 8;        // HTML .prow gap → 8 between siblings
+        const int gapToMR = 8;          // gap between MR and gauge
+        // Center the [gauge + gap + 47] block horizontally in the
+        // inner row. The 130px gauge total is a draw-time constant
+        // inside drawSharpnessBar; keep them in sync here.
+        const int kShpGaugeTotal = 130;
+        const int shpTotalW = kShpGaugeTotal + kShpGap + kShpNum;
+        const int shpCenterX = innerLeft + (innerW - shpTotalW) / 2;
+        const int compRightX = shpCenterX + shpTotalW;
+        const int gaugeLeftX = drawSharpnessBar(p, sharpness_,
+                                                compRightX, y, prowH);
+        const int gaugeLeftEffective = (gaugeLeftX < compRightX)
+            ? gaugeLeftX - gapToMR : innerRight;
+        const int nameLeftX = static_cast<int>(slotRect.right()) + 8;
+
+        // Compute name width so we can place MR right after it.
         const QString nm = playerName_.isEmpty()
             ? QStringLiteral("--")   // no local player in party yet
             : playerName_;
-        p.drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter, nm);
+        p.setFont(nFont);
+        const QFontMetrics fmName(nFont);
+        const int nameWidth = fmName.horizontalAdvance(nm);
 
-        QFont mrFont(QStringLiteral("Chakra Petch"), 9);
-        mrFont.setStyleStrategy(QFont::PreferAntialias);
-        p.setFont(mrFont);
-        p.setPen(QColor(146, 148, 149));
+        // MR text + width
         const int mr = playerMR_ > 0 ? playerMR_ : 0;
         const QString mrTxt = playerMR_ > 0
             ? QStringLiteral("MR %1").arg(mr)
             : QStringLiteral("MR --");
-        p.drawText(nameRect, Qt::AlignRight | Qt::AlignVCenter, mrTxt);
+        QFont mrFont(QStringLiteral("Chakra Petch"), 9);
+        mrFont.setStyleStrategy(QFont::PreferAntialias);
+        p.setFont(mrFont);
+        const QFontMetrics fmMr(mrFont);
+        const int mrWidth = fmMr.horizontalAdvance(mrTxt);
+
+        // MR sits flush after the name (gapNameMR). If it would
+        // overlap the gauge, fall back to the trimmed right-aligned
+        // layout to avoid colliding. nameRect stays a single rect for
+        // text drawing only (MR position is computed separately).
+        const int mrLeftX = nameLeftX + nameWidth + gapNameMR;
+        const int mrRightX = nameLeftX + nameWidth + gapNameMR + mrWidth;
+        const bool fits = mrRightX <= gaugeLeftEffective;
+        if (fits) {
+            // MR glued to name
+            p.setPen(QColor(245, 246, 247));
+            p.drawText(QRectF(nameLeftX, y, nameWidth, prowH),
+                       Qt::AlignLeft | Qt::AlignVCenter, nm);
+            p.setFont(mrFont);
+            p.setPen(QColor(146, 148, 149));
+            p.drawText(QRectF(mrLeftX, y, mrWidth, prowH),
+                       Qt::AlignLeft | Qt::AlignVCenter, mrTxt);
+        } else {
+            // Overflow: trim name with ellipsis, push MR flush right
+            // of the (trimmed) name, before the gauge.
+            QString trimmed = fmName.elidedText(nm, Qt::ElideRight,
+                                                std::max(0, gaugeLeftEffective - nameLeftX - mrWidth - gapNameMR));
+            const int trimmedW = fmName.horizontalAdvance(trimmed);
+            p.setPen(QColor(245, 246, 247));
+            p.drawText(QRectF(nameLeftX, y, trimmedW, prowH),
+                       Qt::AlignLeft | Qt::AlignVCenter, trimmed);
+            const int overflowMRX = nameLeftX + trimmedW + gapNameMR;
+            p.setFont(mrFont);
+            p.setPen(QColor(146, 148, 149));
+            p.drawText(QRectF(overflowMRX, y, mrWidth, prowH),
+                       Qt::AlignLeft | Qt::AlignVCenter, mrTxt);
+        }
         y += prowH;
     }
 
@@ -720,6 +924,21 @@ void PlayerPanel::setupDemoData()
     playerMR_ = 247;
     playerName_ = QStringLiteral("苍蓝星");   // demo local player name
     partyCount_ = 4;                         // demo party size
+
+    // Sharpness demo (matches HTML v8 concept — Purple 47/120).
+    // Hand-crafted thresholds[7] for a Purple-able Great Sword.
+    sharpness_.valid = true;
+    sharpness_.level = 6;        // Purple
+    sharpness_.currentHits = 47;
+    sharpness_.maxHits = 120;
+    sharpness_.threshold = 80;
+    sharpness_.thresholds[0] = 5;
+    sharpness_.thresholds[1] = 15;
+    sharpness_.thresholds[2] = 30;
+    sharpness_.thresholds[3] = 60;
+    sharpness_.thresholds[4] = 80;
+    sharpness_.thresholds[5] = 110;
+    sharpness_.thresholds[6] = 130;
     {
         PlayerAbnormality d1;
         d1.offset = 0; d1.name = QStringLiteral("毒");

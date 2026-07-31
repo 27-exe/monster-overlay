@@ -152,8 +152,8 @@ int main(int argc, char **argv)
     QApplication::setApplicationName(QStringLiteral("mhw-overlay-web"));
     QApplication::setOrganizationName(QStringLiteral("a27exe"));
 
-    const QString htmlPath = QStringLiteral(
-        "/home/a27exe/experiment/system/mhw-linux-overlay/web/spike.html");
+    const QString htmlPath =
+        QStringLiteral(SPIKE_HTML_PATH);
     SpikeWindow w(htmlPath);
     w.show();
 

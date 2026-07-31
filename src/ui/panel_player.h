@@ -45,4 +45,8 @@ private:
     int     partyCount_{0};             // mirrored from party snapshot size
     // Track max timer per debuff offset for progress bar scaling.
     QHash<int, float> debuffMaxTimers_;
+    // Sharpness — mirrored from PlayerSnapshot.sharpness on every
+    // poll. valid=false means the equipped weapon is ranged (or the
+    // memory read failed) and the panel should hide the bar.
+    mhw::SharpnessSnapshot sharpness_;
 };

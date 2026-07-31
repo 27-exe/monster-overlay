@@ -7,7 +7,6 @@
 #include <QFile>
 #include <QHash>
 #include <QFileInfo>
-#include <QDateTime>
 #include <QRegularExpression>
 #include <QStringConverter>
 #include <QTextStream>
@@ -399,6 +398,10 @@ GameSnapshot MhwReader::poll()
     // MainMenu). readPlayer() handles HP/ST/mantle; this fills the
     // identity fields that player_reader no longer puts in PlayerSnapshot.
     refreshPlayerIdentity(snapshot.player);
+    // Sharpness — only emitted for melee weapons (0..10). Ranged
+    // weapons (bow/hbg/lbg) keep valid=false so the panel can hide
+    // the bar entirely.
+    snapshot.player.sharpness = readSharpness(snapshot.player.weaponId, nullptr);
     snapshot.quest = readQuest(nullptr);
     // Clear stale quest data when we're in a non-hunting zone (e.g.
     // gathering hub). The quest struct in memory can retain the

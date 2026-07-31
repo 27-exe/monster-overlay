@@ -108,6 +108,11 @@ private:
     PlayerSnapshot readPlayer(QString *error);
     QVector<PartyMemberSnapshot> readParty(QString *error);
     QuestSnapshot readQuest(QString *error);
+    // Sharpness — HunterPie MHWMeleeWeapon.GetWeaponSharpness. Returns
+    // a zero-initialised snapshot when the equipped weapon is ranged
+    // (bow, hbg, lbg) or the memory read fails. Force a fresh read on
+    // every poll so the bar tracks sharpening / hitting in real time.
+    SharpnessSnapshot readSharpness(int weaponId, QString *error);
 
     AddressMap map_;
     ProcessMemory memory_;
@@ -131,6 +136,13 @@ private:
     // pin.  Address comes from MONSTER_QUEST_TARGET_ADDRESS →
     // MONSTER_QUEST_TARGET_OFFSETS → 0x48,0x1760,0x100.
     std::uintptr_t questTargetAddress_ = 0;
+    // Sharpness cache: thresholds depend on the equipped weapon id,
+    // so we re-read them only when the weapon changes. knocks the
+    // ~7 pointer-chase + 7 short reads out of the per-tick critical
+    // path during sustained combat.
+    int  cachedSharpnessWeaponId_ = -1;
+    int  cachedSharpnessThresholds_[7] = {0,0,0,0,0,0,0};
+    bool cachedSharpnessThresholdsValid_ = false;
     // HunterPie LockOn mode: LOCKON chain resolves a list node whose +0x950
     // contains the targeted monster's double-linked-list index.
     int lockOnTargetIndex_ = -1;

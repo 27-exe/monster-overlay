@@ -19,7 +19,7 @@
 // =============================================================================
 //
 // MonsterPanel — a 1:1 rewrite of the .op.monster block in
-// /home/a27exe/Downloads/mhw-overlay-concept 副本.html (v8).
+// mhw-overlay-concept (v8) HTML (assets/mhw-overlay-concept 副本.html).
 //
 // HTML field order, from top to bottom:
 //   .ptitle               9px Chakra Bold, letter-spacing 2.5

@@ -5,6 +5,28 @@
 
 namespace mhw {
 
+// Sharpness - HunterPie MHWMeleeWeapon.GetWeaponSharpness. The
+// player panel renders a 7-segment coloured bar (red->purple) plus
+// a numeric badge showing the current segment's remaining hits.
+//
+//   level         Red=0..Purple=6, Broken=-1, Invalid=7
+//   currentHits   raw int read from weaponSharpness+0x20F8
+//   maxHits       currentLevel fixed upper bound + handicraft bonus
+//   threshold     end-of-previous-level value (where the coloured
+//                 bar segment starts)
+//   thresholds[7] per-weapon fixed upper bounds (red..purple) read
+//                 from the in-game weapon data array; zero entries
+//                 mean the weapon doesn't reach that level.
+struct SharpnessSnapshot {
+    int level{-1};          // Sharpness enum value; -1 = invalid
+    int currentHits{0};
+    int maxHits{0};
+    int threshold{0};
+    int thresholds[7]{};
+    bool valid{false};      // true once a melee weapon is equipped
+                            // and the memory read succeeded
+};
+
 struct PlayerAbnormality {
     int offset;          // memory offset for identification
     QString name;        // Chinese display name
@@ -43,6 +65,10 @@ struct PlayerSnapshot {
     float mantleSlot1CooldownMax{270.0F};
     // Debuffs (poison, paralysis, blast, etc.)
     QVector<PlayerAbnormality> debuffs;
+    // Sharpness — valid only when the equipped weapon is melee.
+    // Ranged weapons leave valid=false; the panel hides the bar in
+    // that case.
+    SharpnessSnapshot sharpness;
 };
 
 struct PartyMemberSnapshot {

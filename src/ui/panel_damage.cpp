@@ -3,6 +3,7 @@
 #include "core/string_table.h"
 #include "player/player_types.h"
 #include "quest/quest_types.h"
+#include "world/world_types.h"
 #include "ui/formatters.h"
 #include "ui/icon.h"
 
@@ -160,42 +161,37 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
     if (snap.quest.maxTimerSeconds > 0.0F)
         lastElapsedSeconds_ = snap.quest.elapsedSeconds;
 
-    // Check for quest end: state changes from 2 (InQuest) to something else.
-    const int qstate = snap.quest.state;
-    if (qstate != 2 && !questEnded_) {
+    // HunterPie: InHuntingZone = ZoneId != Stage.MainMenu. We mirror
+    // that here so the panel stays live in free-roam zones like the
+    // Guiding Lands (zone=109, not a quest id) where party damage
+    // still accumulates but quest.state never enters 2.
+    const bool inHuntingZone = isHuntingZone(snap.zone);
+    if (!inHuntingZone && !questEnded_) {
         questEnded_ = true;
         // Keep showing the last snapshot but don't record new samples.
         canvas()->update();
         return;
     }
-    // Reset on new quest.
-    if (qstate == 2 && questEnded_) {
+    // Reset when returning to a hunting zone (new quest / Guiding Lands).
+    if (inHuntingZone && questEnded_) {
         questEnded_ = false;
         history_.clear();
         tick_ = 0;
         firstHitTick_.clear();
         baselineDamage_.clear();
+        rawDamage_.clear();
         lastElapsedSeconds_ = 0.0F;
     }
 
     const bool wasEmpty = !hasData_;
-    // During quest-end freeze, keep the frozen data visible — the
-    // party will be empty (zone changed to non-hunting) but we
-    // don't need fresh party data to render the last snapshot.
-    // Clear only when back at lobby / ready screen (state 0 or 1).
+    // During quest-end freeze, keep the frozen data visible. The party
+    // pointer is still valid in the settlement screen because the
+    // engine keeps the party array alive while we're at the results
+    // UI. We only wipe when we leave the hunting zone entirely (back
+    // to lobby / Astera / mission select) — handled by the early
+    // !inHuntingZone branch above.
     if (questEnded_) {
-        if (qstate <= 1) {
-            // Back at lobby / ready — wipe the frozen data.
-            questEnded_ = false;
-            hasData_ = false;
-            history_.clear();
-            tick_ = 0;
-            firstHitTick_.clear();
-            baselineDamage_.clear();
-            canvas()->update();
-            return;
-        }
-        // Still in settlement — keep frozen data, just repaint.
+        // Settlement screen — keep frozen data, just repaint.
         canvas()->update();
         return;
     }
@@ -206,11 +202,39 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
         tick_ = 0;
         firstHitTick_.clear();
         baselineDamage_.clear();
+        rawDamage_.clear();
         canvas()->update();
         return;
     }
 
     const int n = std::min(static_cast<int>(snap.party.size()), kMaxPlayers);
+
+    // MHW keeps party damage counters alive across the result screen and can
+    // repopulate the party before the zone transition is observable. Treat a
+    // counter rollback as the authoritative new-hunt boundary; otherwise the
+    // old chart/ticks continue and DPS is divided by multiple hunts' time.
+    bool damageCounterReset = rawDamage_.size() == n && !history_.isEmpty();
+    bool comparedActiveCounter = false;
+    if (damageCounterReset) {
+        for (int i = 0; i < n; ++i) {
+            if (rawDamage_[i] > 0) {
+                comparedActiveCounter = true;
+                if (snap.party[i].damage >= rawDamage_[i]) {
+                    damageCounterReset = false;
+                    break;
+                }
+            }
+        }
+        damageCounterReset = damageCounterReset && comparedActiveCounter;
+    }
+    if (damageCounterReset) {
+        history_.clear();
+        tick_ = 0;
+        firstHitTick_.fill(0, n);
+        baselineDamage_.fill(0, n);
+        lastElapsedSeconds_ = snap.quest.elapsedSeconds;
+    }
+
     // Detect party-size shrink so we don't leak stale baselines from
     // players who have left the party this tick. resize() only zeroes
     // the new tail, leaving the old ones in place — that's exactly the
@@ -229,8 +253,11 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
     // Per-player first-hit tracking. Resize on party-size change.
     firstHitTick_.resize(n);
     baselineDamage_.resize(n);
+    rawDamage_.resize(n);
 
     for (int i = 0; i < n; ++i) {
+        const QString previousName = names_.value(i);
+        const int previousWeaponId = weaponIds_.value(i, -1);
         names_[i] = snap.party[i].name;
         weaponIds_[i] = snap.party[i].weaponId;
         masterRanks_[i] = snap.party[i].masterRank;
@@ -241,8 +268,8 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
         // Reset the baseline if the player joined fresh (slot/signature
         // changed) so we don't blend pre-join damage with post-join.
         const bool playerChanged = firstHitTick_[i] != 0
-            && (weaponIds_[i] != snap.party[i].weaponId
-             || names_[i]    != snap.party[i].name);
+            && (previousWeaponId != snap.party[i].weaponId
+             || previousName     != snap.party[i].name);
         if (playerChanged) {
             firstHitTick_[i] = 0;
             baselineDamage_[i] = 0;
@@ -258,10 +285,22 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
     s.tick = tick_++;
     s.damage.resize(n);
     for (int i = 0; i < n; ++i) {
-        if (firstHitTick_[i] > 0)
-            s.damage[i] = snap.party[i].damage - baselineDamage_[i];
-        else
+        const int raw = static_cast<int>(snap.party[i].damage);
+        if (firstHitTick_[i] > 0) {
+            if (raw >= baselineDamage_[i]) {
+                s.damage[i] = raw - baselineDamage_[i];
+            } else {
+                // raw dropped below baseline — memory reset
+                // (quest cleared, party updated, etc). Rebaseline
+                // so the next samples start fresh at 0 instead of
+                // producing a giant negative spike in the chart.
+                baselineDamage_[i] = raw;
+                s.damage[i] = 0;
+            }
+        } else {
             s.damage[i] = 0;
+        }
+        rawDamage_[i] = raw;
     }
     history_.append(s);
     if (history_.size() > kMaxSamples)
@@ -650,7 +689,7 @@ void DamagePanel::setupDemoData()
 
     names_.clear();       weaponIds_.clear();
     masterRanks_.clear(); slots_.clear();
-    firstHitTick_.clear(); baselineDamage_.clear();
+    firstHitTick_.clear(); baselineDamage_.clear(); rawDamage_.clear();
     history_.clear();     tick_ = 0;
     for (int i = 0; i < kDemoPlayers; ++i) {
         names_.append(kDemoParty[i].name);

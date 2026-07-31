@@ -207,16 +207,15 @@ int main(int argc, char **argv)
             monsterPanel.setVisible(false);
         }
 
-        if (!snap.party.isEmpty() || showAll) {
-            damagePanel.setVisible(true);
-            if (skipUpdate(damagePanel)) {
-                damagePanel.triggerUpdate();
-            } else if (!snap.party.isEmpty()) {
-                damagePanel.update(snap);
-            }
+        if (skipUpdate(damagePanel)) {
+            damagePanel.triggerUpdate();
         } else {
-            damagePanel.setVisible(false);
+            // Always deliver empty/non-hunting snapshots too. DamagePanel owns
+            // the hunt lifecycle; skipping these updates leaves the previous
+            // chart and DPS tick counter alive into the next quest.
+            damagePanel.update(snap);
         }
+        damagePanel.setVisible(!snap.party.isEmpty() || showAll);
     });
     timer.start(pollMs);  // consistent poll rate regardless of mode
 

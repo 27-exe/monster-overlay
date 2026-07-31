@@ -65,6 +65,43 @@ target_compile_options(mhw-overlay PRIVATE -Wall -Wextra -Wpedantic)
 # binary stays unchanged. If the spike succeeds, we wire the same
 # widget into the main binary as a fallback / low-memory mode.
 add_executable(mhw-overlay-web src/spike_web.cpp)
+target_compile_definitions(mhw-overlay-web PRIVATE
+    SPIKE_HTML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/web/spike.html")
+
+# Offscreen snapshot of the player panel in edit/demo mode. Used for
+# visual regression testing without launching the layer-shell overlay
+# (which would steal keyboard focus and lock the user out of the
+# desktop — see ~/.hermes/memory KDE/overlay testing note).
+add_executable(snap-player-demo
+    tests/snap_player_demo.cpp
+    src/mhw_reader.cpp
+    src/mhw_reader.h
+    src/player/player_reader.cpp
+    src/quest/quest_reader.cpp
+    src/world/world_reader.cpp
+    src/monster/monster_reader.cpp
+    src/monster/part_schemas.cpp
+    src/monster/target_selector.cpp
+    src/ui/formatters.cpp
+    src/ui/icon.cpp
+    src/ui/panel.cpp
+    src/ui/panel_player.cpp
+    src/ui/panel_damage.cpp
+    src/ui/panel_monster.cpp
+    src/world/world_types.cpp
+    src/resources/resources.qrc
+    assets/icons.qrc
+)
+target_link_libraries(snap-player-demo PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+    LayerShellQt::Interface
+    mhw-core
+)
+target_include_directories(snap-player-demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(snap-player-demo PRIVATE
+    MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
+)
+target_compile_options(snap-player-demo PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(mhw-overlay-web PRIVATE
     Qt6::Core
     Qt6::Gui

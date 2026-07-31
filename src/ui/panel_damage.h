@@ -31,6 +31,7 @@ private:
     int tick_{0};
     QVector<int>  firstHitTick_;     // poll tick when this player first dealt damage
     QVector<int>  baselineDamage_;   // damage at first-hit tick
+    QVector<int>  rawDamage_;        // latest raw counter, used to detect a new hunt
     QVector<QString> names_;
     QVector<int> weaponIds_;
     QVector<int>  masterRanks_;
