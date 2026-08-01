@@ -9,11 +9,13 @@
 // No connection to a running mhw-overlay process yet — pure preview.
 
 #include "ui/control_panel.h"
+#include "ui/screen_query.h"
 #include "core/string_table.h"
 
 #include <QApplication>
 #include <QDebug>
 #include <QString>
+#include <cstdio>
 
 int main(int argc, char *argv[])
 {
@@ -29,6 +31,27 @@ int main(int argc, char *argv[])
 
     if (!::mhw::StringTable::instance().load(QStringLiteral("zh-CN")))
         qWarning("failed to load zh-CN strings; falling back to keys");
+
+    for (int i = 1; i < argc; ++i) {
+        const QString a = QString::fromLocal8Bit(argv[i]);
+        // Debug: print screen detection result and exit. Use this to
+        // verify what Qt + xrandr/kscreen-doctor/wlr-randr report
+        // before launching the GUI.
+        if (a == QStringLiteral("--print-screen-info")) {
+            const screen_query::Result r = screen_query::detect();
+            // qInfo is suppressed by Qt 6's default log filter, so
+            // print to stdout directly. The agent greps for "physical="
+            // and "source=" to confirm the dispatch landed where
+            // expected.
+            printf("physical=%dx%d logical=%dx%d dpr=%.3f source=%s\n",
+                   r.physical.width(), r.physical.height(),
+                   r.logical.width(),  r.logical.height(),
+                   r.dpr,
+                   qPrintable(screen_query::sourceLabel(r.source)));
+            fflush(stdout);
+            return 0;
+        }
+    }
 
     ControlPanel cp;
     cp.show();

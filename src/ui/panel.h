@@ -5,6 +5,7 @@
 #include <QMargins>
 #include <QRectF>
 #include <QSettings>
+#include <QSize>
 #include <QWidget>
 #include <cstdint>
 
@@ -67,6 +68,15 @@ public:
     void setVisible(bool visible);
     [[nodiscard]] QSize contentSize() const { return logicalSize_; }
 
+    // Read-only geometry/state for the control console's preview canvas.
+    // The console paints the panels at the position they will actually
+    // occupy on screen: anchor corner + persisted margins, scaled by the
+    // user's zoom. Keeping these as getters (not setters) means the
+    // canvas is always a passive view, never a driver of state.
+    [[nodiscard]] Corner corner() const { return corner_; }
+    [[nodiscard]] QMargins margins() const { return margins_; }
+    [[nodiscard]] double scale() const { return scale_; }
+
 protected:
     virtual void paintPanel(QPainter &p) = 0;
     virtual void paintDemo(QPainter &) {}
@@ -74,7 +84,6 @@ protected:
     virtual void onSnapshot(const mhw::GameSnapshot &) { update(); }
     QWidget *canvas() { return this; }
     void setContentSize(int w, int h);
-    double scale() const { return scale_; }
     double opacity() const { return opacity_; }
 
     void paintEvent(QPaintEvent *e) override;

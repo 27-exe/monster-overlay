@@ -11,6 +11,7 @@ class QCheckBox;
 class QFrame;
 class QLabel;
 class QPushButton;
+class QStackedWidget;
 class QWidget;
 class Panel;
 class PlayerPanel;
@@ -18,6 +19,7 @@ class MonsterPanel;
 class DamagePanel;
 class ToggleChip;
 class SectionRow;
+class HudCanvas;
 
 // Standalone control console for the MHW overlay. NOT a layer-shell
 // surface — a plain QMainWindow the user can move, focus and close like
@@ -38,6 +40,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *e) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     // L2: persistent mask state lives at ~/.config/MHW Overlay/mhw-overlay.conf
@@ -55,12 +58,19 @@ private:
         // mhw::*Section::names() in panel_sections.h.
         QVector<SectionRow *> subs;
         QLabel *preview = nullptr;
+        QWidget *navButton = nullptr;
+        QLabel *navSummary = nullptr;
+        QLabel *countLabel = nullptr;
     };
 
-    QWidget *buildGroup(const QString &title, const QString &sub,
-                        const QStringList &labels, int idx);
+    QWidget *buildInspector(const QString &title, const QString &sub,
+                            const QStringList &labels, int idx);
+    QWidget *buildObjectButton(const QString &letter, const QString &title,
+                               const QString &summary, int idx);
     QWidget *buildRule();
     QWidget *buildEditModeBlock();
+    void selectPanel(int idx);
+    void updatePanelSummary(int idx);
     void launchOverlay(bool editMode);
     void onOverlayExited();
     void rebuildAndRender(int idx);
@@ -76,6 +86,9 @@ private:
     // they're not per-panel, just per-window.
     QPushButton *startBtn_ = nullptr;
     QPushButton *editBtn_  = nullptr;
+    QStackedWidget *inspectorStack_ = nullptr;
+    HudCanvas *canvas_ = nullptr;
+    int selectedPanel_ = 0;
 
     // L4: status badge in the top-right, shows "READY" by default and
     // flips to "RUNNING pid NNNN since HH:MM:SS" while the overlay is

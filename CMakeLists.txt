@@ -154,6 +154,12 @@ add_executable(mhw-control
     src/ui/panel_damage.cpp
     src/ui/panel_monster.cpp
     src/ui/control_panel.cpp
+    src/ui/hud_canvas.cpp
+    src/ui/hud_canvas.h
+    src/ui/panel_source.cpp
+    src/ui/panel_source.h
+    src/ui/screen_query.cpp
+    src/ui/screen_query.h
     src/ui/toggle_chip.cpp
     src/ui/toggle_chip.h
     src/ui/section_row.cpp
@@ -168,6 +174,30 @@ target_link_libraries(mhw-control PRIVATE
     mhw-core
 )
 target_include_directories(mhw-control PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# Private QtGui headers (qpa/qplatformscreen.h) live under
+# /usr/include/qt6/QtGui/<ver>/QtGui/qpa/. Locate the active
+# version's include root and expose it to the mhw-control target
+# so screen_query.cpp can use QPlatformScreen::geometry() — the
+# only public-ish way to get the backend-native screen size in
+# physical pixels without guessing from
+# QScreen::geometry() × devicePixelRatio().
+file(GLOB _qt6_gui_version_dirs
+    LIST_DIRECTORIES true
+    /usr/include/qt6/QtGui/*
+)
+set(_QT6_GUI_PRIVATE_INCLUDE_DIR "")
+foreach(_d IN LISTS _qt6_gui_version_dirs)
+    if(IS_DIRECTORY ${_d}/QtGui/qpa)
+        set(_QT6_GUI_PRIVATE_INCLUDE_DIR ${_d}/QtGui)
+        break()
+    endif()
+endforeach()
+if(NOT _QT6_GUI_PRIVATE_INCLUDE_DIR)
+    message(FATAL_ERROR "Could not locate Qt6 qpa headers under /usr/include/qt6")
+endif()
+target_include_directories(mhw-control PRIVATE
+    ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
+)
 target_compile_definitions(mhw-control PRIVATE
     MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
 )
@@ -195,6 +225,12 @@ add_executable(mhw-control-l2-smoke
     src/ui/panel_damage.cpp
     src/ui/panel_monster.cpp
     src/ui/control_panel.cpp
+    src/ui/hud_canvas.cpp
+    src/ui/hud_canvas.h
+    src/ui/panel_source.cpp
+    src/ui/panel_source.h
+    src/ui/screen_query.cpp
+    src/ui/screen_query.h
     src/ui/toggle_chip.cpp
     src/ui/toggle_chip.h
     src/ui/section_row.cpp
@@ -209,6 +245,9 @@ target_link_libraries(mhw-control-l2-smoke PRIVATE
     mhw-core
 )
 target_include_directories(mhw-control-l2-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(mhw-control-l2-smoke PRIVATE
+    ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
+)
 target_compile_definitions(mhw-control-l2-smoke PRIVATE
     MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
 )

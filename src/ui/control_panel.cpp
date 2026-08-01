@@ -7,10 +7,14 @@
 #include "ui/panel_sections.h"
 #include "ui/toggle_chip.h"
 #include "ui/section_row.h"
+#include "ui/hud_canvas.h"
+#include "ui/panel_source.h"
 #include "core/string_table.h"
 
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QEvent>
+#include <QMouseEvent>
 #include <QFrame>
 #include <QPushButton>
 #include <QGroupBox>
@@ -18,6 +22,9 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QScrollArea>
+#include <QStackedWidget>
+#include <QStyle>
+#include <QGridLayout>
 #include <QPixmap>
 #include <QPainter>
 #include <QFrame>
@@ -32,10 +39,6 @@
 #include <sys/types.h>
 
 namespace {
-
-const char *kPanelBg = "#101416";
-const char *kPanelFg = "#d3d4d5";
-const char *kAccent  = "#ff8040";
 
 QString qssBase()
 {
@@ -119,6 +122,37 @@ QString qssBase()
         "QLabel#previewTitle{color:#6f7375;font-family:'Chakra Petch';"
         " font-weight:600;font-size:11px;letter-spacing:4px;"
         " background:transparent;border:none;}"
+        // v0.5 A shell: object rail, focused inspector, unified canvas.
+        "QFrame#objectRail{background:#0b0e0f;border-right:1px solid #24282a;}"
+        "QFrame#inspectorHost{background:#0d1011;border-right:1px solid #24282a;}"
+        "QFrame#stage{background:#07090a;}"
+        "QLabel#railBrand{font-family:'Chakra Petch';font-size:15px;letter-spacing:2px;color:#e7e8e9;}"
+        "QLabel#railBrandSub,QLabel#railHint{font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;color:#676d6f;}"
+        "QLabel#sectionCap{font-family:'Chakra Petch';font-size:9px;letter-spacing:2px;color:#555b5d;}"
+        "QFrame#navPlayer,QFrame#navMonster,QFrame#navDamage{background:transparent;border:1px solid transparent;border-radius:3px;border-left-width:2px;}"
+        "QFrame#navPlayer:hover,QFrame#navMonster:hover,QFrame#navDamage:hover{background:#121617;}"
+        "QFrame#navPlayer[selected=\"true\"]   {background:#15191a;border-color:#303638;border-left-color:#a74fff;}"
+        "QFrame#navMonster[selected=\"true\"]  {background:#15191a;border-color:#303638;border-left-color:#ff7043;}"
+        "QFrame#navDamage[selected=\"true\"]   {background:#15191a;border-color:#303638;border-left-color:#50c5b7;}"
+        "QFrame#navPlayer   > QLabel#navEnabled {color:#a74fff;}"
+        "QFrame#navMonster  > QLabel#navEnabled {color:#ff7043;}"
+        "QFrame#navDamage   > QLabel#navEnabled {color:#50c5b7;}"
+        "QLabel#navTitle{font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;color:#dfe1e2;}"
+        "QLabel#navSummary{font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;color:#777d7f;}"
+        "QLabel#navEnabled{font-size:8px;color:#50c5b7;}"
+        "QPushButton#railAction{background:transparent;color:#a2a6a8;border:1px solid #303638;border-radius:3px;"
+        "text-align:left;padding:7px 10px;font-family:'Chakra Petch';font-size:10px;letter-spacing:1px;}"
+        "QPushButton#railAction:hover{background:#15191a;color:#e7e8e9;}"
+        "QPushButton#railAction:disabled{color:#616769;}"
+        "QLabel#inspectorTitle{font-family:'Chakra Petch';font-size:22px;letter-spacing:2px;color:#e7e8e9;}"
+        "QLabel#inspectorSub{font-family:'Noto Sans SC';font-size:11px;color:#787e80;}"
+        "QLabel#countLabel{font-family:'Chakra Petch';font-size:10px;letter-spacing:1px;color:#aeb2b3;}"
+        "QPushButton#foldout{background:transparent;color:#8d9294;border:1px solid #292e30;border-radius:3px;"
+        "text-align:left;padding:9px 12px;font-family:'Chakra Petch';font-size:10px;letter-spacing:1px;}"
+        "QPushButton#resetButton{background:transparent;color:#9da1a3;border:1px solid #313638;border-radius:3px;"
+        "padding:7px 10px;font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;}"
+        "QLabel#modified{font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;color:#777d7f;}"
+        "QScrollBar:vertical{width:7px;background:#0d1011;}QScrollBar::handle:vertical{background:#303638;min-height:24px;}"
         );
 }
 
@@ -130,7 +164,8 @@ ControlPanel::ControlPanel(QWidget *parent)
     setObjectName("mhw-control-panel");
     setStyleSheet(qssBase());
     setWindowTitle(QStringLiteral("MHW Overlay Control"));
-    resize(1180, 980);
+    resize(1440, 900);
+    setMinimumSize(1160, 720);
 
     // Real panel instances, rendered off-screen only. WA_DontShowOnScreen
     // lets show()/repaint() run the full paint path (demo data + the
@@ -152,133 +187,117 @@ ControlPanel::ControlPanel(QWidget *parent)
         // layer-shell surface. show() alone would map it; the attribute
         // alone (without show) leaves isVisible()==false and the backing
         // store stuck at the 320×120 safety-net size, which truncates the
-        // grab to the top slice.
+        // preview.
         p->show();
     }
+    // Wire the canvas to each panel's real geometry so the preview shows
+    // the position the live overlay will sit at on the user's screen.
+    // This is done after the canvas is constructed (below) — see the
+    // canvas creation block.
 
-    auto *root = new QVBoxLayout();
-    root->setContentsMargins(36, 22, 36, 22);   // R1: wider gutters to
-                                                // give the logo row room,
-                                                // matching HTML v0.4
-    root->setSpacing(18);
+    auto *root = new QHBoxLayout();
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
 
-    // ---- R1: logo row (MHW OVERLAY CONTROL + sub + PREVIEW badge) ----
-    auto *logo = new QHBoxLayout();
-    logo->setSpacing(12);
+    // v0.5 A: object rail → focused inspector → unified canvas.
+    auto *rail = new QFrame();
+    rail->setObjectName("objectRail");
+    rail->setFixedWidth(214);
+    auto *railLayout = new QVBoxLayout(rail);
+    railLayout->setContentsMargins(20, 22, 20, 18);
+    railLayout->setSpacing(8);
 
-    auto *leftStack = new QVBoxLayout();
-    leftStack->setSpacing(4);
-    auto *logoRow = new QHBoxLayout();
-    logoRow->setSpacing(0);
-    auto *l1 = new QLabel(QStringLiteral("MHW "));
-    l1->setObjectName("logoTitle");
-    auto *l2 = new QLabel(QStringLiteral("OVERLAY "));
-    l2->setObjectName("logoAccent");
-    auto *l3 = new QLabel(QStringLiteral("CONTROL"));
-    l3->setObjectName("logoTitle");
-    logoRow->addWidget(l1);
-    logoRow->addWidget(l2);
-    logoRow->addWidget(l3);
-    logoRow->addStretch(1);
-    leftStack->addLayout(logoRow);
-    auto *sub = new QLabel(QStringLiteral("v0.4 · MOCK PREVIEW"));
-    sub->setObjectName("logoSub");
-    leftStack->addWidget(sub);
-    logo->addLayout(leftStack, 1);
+    auto *brand = new QLabel(QStringLiteral("MHW  OVERLAY"));
+    brand->setObjectName("railBrand");
+    auto *brandSub = new QLabel(QStringLiteral("CONTROL CONSOLE  ·  0.5"));
+    brandSub->setObjectName("railBrandSub");
+    railLayout->addWidget(brand);
+    railLayout->addWidget(brandSub);
+    railLayout->addSpacing(22);
 
-    // Right side: PREVIEW badge (● PREVIEW, teal dot + label).
-    auto *badge = new QHBoxLayout();
-    badge->setSpacing(6);
-    badge->addStretch(1);
-    auto *dot = new QLabel(QStringLiteral("●"));
-    dot->setObjectName("logoBadgeDot");
-    auto *label = new QLabel(QStringLiteral("PREVIEW"));
-    label->setObjectName("logoBadge");
-    badge->addWidget(dot);
-    badge->addWidget(label);
-    logo->addLayout(badge, 0);
+    auto *ready = new QLabel(QStringLiteral("●   OVERLAY READY"));
+    ready->setObjectName("statusBadge");
+    statusBadge_ = ready;
+    railLayout->addWidget(ready);
+    railLayout->addSpacing(24);
 
-    // L4: status badge — added as a sibling of the PREVIEW badge, right
-    // aligned to the right edge of the row. We reuse the same logo
-    // layout (no nesting, no re-parenting) so the existing layout
-    // state stays simple and PREVIEW keeps its place.
-    auto *status = new QLabel(QStringLiteral("READY"));
-    status->setObjectName("statusBadge");
-    status->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    logo->addWidget(status, 0, Qt::AlignRight | Qt::AlignVCenter);
-    statusBadge_ = status;
+    auto *objectsTitle = new QLabel(QStringLiteral("HUD OBJECTS"));
+    objectsTitle->setObjectName("sectionCap");
+    railLayout->addWidget(objectsTitle);
+    railLayout->addWidget(buildObjectButton(QStringLiteral("P"), QStringLiteral("PLAYER"),
+                                             QStringLiteral("玩家状态"), 0));
+    railLayout->addWidget(buildObjectButton(QStringLiteral("M"), QStringLiteral("MONSTER"),
+                                             QStringLiteral("怪物 HP"), 1));
+    railLayout->addWidget(buildObjectButton(QStringLiteral("D"), QStringLiteral("DAMAGE"),
+                                             QStringLiteral("DPS / 占比"), 2));
+    railLayout->addSpacing(20);
 
-    root->addLayout(logo);
+    auto *workspaceTitle = new QLabel(QStringLiteral("WORKSPACE"));
+    workspaceTitle->setObjectName("sectionCap");
+    railLayout->addWidget(workspaceTitle);
+    editBtn_ = new QPushButton(QStringLiteral("◇   LAYOUT MODE"));
+    editBtn_->setObjectName("railAction");
+    editBtn_->setCursor(Qt::PointingHandCursor);
+    railLayout->addWidget(editBtn_);
+    auto *presets = new QPushButton(QStringLiteral("▱   PRESETS"));
+    presets->setObjectName("railAction");
+    presets->setEnabled(false); // visual placeholder; no preset API yet
+    railLayout->addWidget(presets);
+    railLayout->addStretch(1);
 
-    // ---- Two-column body: left = switches, right = previews ----
-    auto *body = new QHBoxLayout();
-    body->setSpacing(28);
+    startBtn_ = new QPushButton(QStringLiteral("▶   START OVERLAY"));
+    startBtn_->setObjectName("startBtn");
+    startBtn_->setCursor(Qt::PointingHandCursor);
+    railLayout->addWidget(startBtn_);
+    auto *hint = new QLabel(QStringLiteral("ESC TO RETURN · CONFIG AUTO-SAVED"));
+    hint->setObjectName("railHint");
+    hint->setAlignment(Qt::AlignCenter);
+    railLayout->addWidget(hint);
+    root->addWidget(rail);
 
-    // ---- Left column: switches ----
-    auto *left = new QVBoxLayout();
-    left->setSpacing(12);
-    left->addWidget(buildGroup(QStringLiteral("PLAYER"),
-                               QStringLiteral("玩家状态"),
-                               mhw::PlayerSection::displayNames(), 0));
-    left->addWidget(buildRule());   // R5: hairline PLAYER | MONSTER
-    left->addWidget(buildGroup(QStringLiteral("MONSTER"),
-                               QStringLiteral("怪物 HP"),
-                               mhw::MonsterSection::displayNames(), 1));
-    left->addWidget(buildRule());   // R5: hairline MONSTER | DAMAGE
-    left->addWidget(buildGroup(QStringLiteral("DAMAGE"),
-                               QStringLiteral("DPS / 占比"),
-                               mhw::DamageSection::displayNames(), 2));
-    left->addWidget(buildRule());   // R5: hairline DAMAGE | EDIT MODE
-    left->addWidget(buildEditModeBlock());
-    left->addStretch(1);
+    auto *inspectorHost = new QFrame();
+    inspectorHost->setObjectName("inspectorHost");
+    inspectorHost->setFixedWidth(358);
+    auto *inspectorLayout = new QVBoxLayout(inspectorHost);
+    inspectorLayout->setContentsMargins(0, 0, 0, 0);
+    inspectorStack_ = new QStackedWidget();
+    inspectorStack_->setObjectName("inspectorStack");
+    inspectorStack_->addWidget(buildInspector(QStringLiteral("PLAYER"),
+                                               QStringLiteral("玩家状态面板"),
+                                               mhw::PlayerSection::displayNames(), 0));
+    inspectorStack_->addWidget(buildInspector(QStringLiteral("MONSTER"),
+                                               QStringLiteral("怪物状态面板"),
+                                               mhw::MonsterSection::displayNames(), 1));
+    inspectorStack_->addWidget(buildInspector(QStringLiteral("DAMAGE"),
+                                               QStringLiteral("队伍伤害面板"),
+                                               mhw::DamageSection::displayNames(), 2));
+    inspectorLayout->addWidget(inspectorStack_);
+    root->addWidget(inspectorHost);
 
-    auto *leftScroll = new QScrollArea();
-    leftScroll->setWidgetResizable(true);
-    leftScroll->setMaximumWidth(360);
-    auto *leftHost = new QWidget();
-    leftHost->setLayout(left);
-    leftScroll->setWidget(leftHost);
-    body->addWidget(leftScroll, 0);
-
-    // ---- Right column: live previews ----
-    auto *right = new QVBoxLayout();
-    // R6: right column has a small "MOCK PREVIEW" header at the very top
-    // (HTML v0.4 styling — grey, wide tracking, no chrome). Then the
-    // three live preview tiles.
-    right->setSpacing(18);
-    auto *rightTitle = new QLabel(QStringLiteral("MOCK PREVIEW"));
-    rightTitle->setObjectName("previewTitle");
-    right->addWidget(rightTitle);
-    for (int i = 0; i < 3; ++i) {
-        auto *lab = new QLabel();
-        lab->setObjectName("previewFrame");
-        lab->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-        lab->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-        ctl_[i].preview = lab;
-        right->addWidget(lab, 0, Qt::AlignLeft);
-    }
-    right->addStretch(1);
-    auto *rightScroll = new QScrollArea();
-    rightScroll->setWidgetResizable(true);
-    auto *rightHost = new QWidget();
-    rightHost->setLayout(right);
-    rightScroll->setWidget(rightHost);
-    body->addWidget(rightScroll, 1);
-
-    root->addLayout(body, 1);   // R1: body stretches below the logo
+    auto *stage = new QFrame();
+    stage->setObjectName("stage");
+    auto *stageLayout = new QVBoxLayout(stage);
+    stageLayout->setContentsMargins(0, 0, 0, 0);
+    canvas_ = new HudCanvas();
+    stageLayout->addWidget(canvas_);
+    canvas_->bindPanel(0, new PanelSourceAdapter(static_cast<Panel*>(player_)));
+    canvas_->bindPanel(1, new PanelSourceAdapter(static_cast<Panel*>(monster_)));
+    canvas_->bindPanel(2, new PanelSourceAdapter(static_cast<Panel*>(damage_)));
+    root->addWidget(stage, 1);
 
     auto *central = new QWidget();
     central->setLayout(root);
     setCentralWidget(central);
 
-    // L2: pull persisted mask state from disk BEFORE the first render so
-    // the section checkboxes and master toggles open in the user's last
-    // configuration. Missing file = all-on (default mask).
-    loadMaskFromDisk();
+    connect(startBtn_, &QPushButton::clicked, this,
+            [this]{ launchOverlay(/*editMode=*/false); });
+    connect(editBtn_, &QPushButton::clicked, this,
+            [this]{ launchOverlay(/*editMode=*/true); });
 
-    // First render with everything on.
+    loadMaskFromDisk();
     for (int i = 0; i < 3; ++i)
         rebuildAndRender(i);
+    selectPanel(0);
 }
 
 ControlPanel::~ControlPanel()
@@ -317,114 +336,170 @@ void ControlPanel::closeEvent(QCloseEvent *e)
     QMainWindow::closeEvent(e);
 }
 
-QWidget *ControlPanel::buildGroup(const QString &title, const QString &sub,
-                                   const QStringList &labels, int idx)
+bool ControlPanel::eventFilter(QObject *watched, QEvent *event)
 {
-    // R2: group is a plain QWidget (not QGroupBox) so we control the
-    // title chrome ourselves: a LetterBadge (P/M/D coloured block) +
-    // title label + subtitle on a single horizontal row, matching the
-    // HTML v0.4 side-bar layout. QGroupBox's title subcontrol would
-    // have forced us through stylesheet and fought us on alignment.
-    auto *box = new QWidget();
-    auto *vl = new QVBoxLayout();
-    vl->setSpacing(10);
-    vl->setContentsMargins(0, 14, 0, 0);   // gutter between groups
-
-    // ---- Title row: [Badge] PANEL  ← subtitle on a new line
-    auto *titleRow = new QHBoxLayout();
-    titleRow->setSpacing(10);
-    titleRow->setContentsMargins(0, 0, 0, 0);
-
-    auto *badge = new QLabel(idx == 0 ? QStringLiteral("P")
-                                       : idx == 1 ? QStringLiteral("M")
-                                                   : QStringLiteral("D"));
-    badge->setObjectName(idx == 0 ? QStringLiteral("badgeP")
-                                  : idx == 1 ? QStringLiteral("badgeM")
-                                              : QStringLiteral("badgeD"));
-    badge->setFixedSize(22, 22);
-    badge->setAlignment(Qt::AlignCenter);
-
-    auto *titleLab = new QLabel(title);
-    titleLab->setObjectName("groupTitle");
-    titleLab->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
-
-    titleRow->addWidget(badge);
-    titleRow->addWidget(titleLab, 1);
-
-    auto *subLab = new QLabel(sub);
-    subLab->setObjectName("groupSub");
-    subLab->setAlignment(Qt::AlignBottom | Qt::AlignLeft);
-    titleRow->addWidget(subLab, 0);
-
-    vl->addLayout(titleRow);
-
-    // R3+R4: Master row = ToggleChip on the left + descriptive label
-    // "面板启用" + small caption "关闭后预渲染面板置灰". Then sub-rows
-    // are SectionRow instances: dot + Chinese label + grey english key,
-    // laid out in a 2-column grid inside a separate subGrid container so
-    // long lists wrap cleanly without disturbing the title row.
-    auto *masterRow = new QHBoxLayout();
-    masterRow->setSpacing(10);
-    auto *master = new ToggleChip();
-    master->setChecked(true);
-    ctl_[idx].master = master;
-    masterRow->addWidget(master);
-    auto *masterLab = new QLabel(QStringLiteral("面板启用"));
-    masterLab->setStyleSheet(QStringLiteral(
-        "color:#e7e8e9;font-family:'Noto Sans SC';font-size:12px;"
-        "background:transparent;border:none;"));
-    masterRow->addWidget(masterLab);
-    auto *masterCap = new QLabel(QStringLiteral("关闭后预渲染面板置灰"));
-    masterCap->setStyleSheet(QStringLiteral(
-        "color:#6f7375;font-family:'Noto Sans SC';font-size:10px;"
-        "background:transparent;border:none;padding-left:6px;"));
-    masterRow->addWidget(masterCap);
-    masterRow->addStretch(1);
-    vl->addLayout(masterRow);
-
-    // ---- Sub-switches (R4b): SectionRow per section, in a 2-col grid ----
-    // Matches HTML v0.4 layout: each row pair lives on a single line
-    // (2-column grid), wrapping to a new line every 2 items. Layout
-    // order: item0 item1 / item2 item3 / item4 item5.
-    auto *subGrid = new QGridLayout();
-    subGrid->setContentsMargins(0, 0, 0, 0);
-    subGrid->setHorizontalSpacing(8);   // gap between the two columns
-    subGrid->setVerticalSpacing(6);
-    const QStringList &keys =
-        idx == 0 ? mhw::PlayerSection::names() :
-        idx == 1 ? mhw::MonsterSection::names() :
-                   mhw::DamageSection::names();
-    for (int b = 0; b < labels.size(); ++b) {
-        auto *sr = new SectionRow(labels[b],
-                                 b < keys.size() ? keys[b] : QString());
-        sr->setChecked(true);
-        ctl_[idx].subs.push_back(sr);
-        const int row = b / 2;
-        const int col = b % 2;
-        subGrid->addWidget(sr, row, col, 1, 1);
+    if (event->type() == QEvent::MouseButtonRelease) {
+        for (int i = 0; i < 3; ++i) {
+            if (watched == ctl_[i].navButton) {
+                selectPanel(i);
+                return true;
+            }
+        }
     }
-    // Make the two columns share width evenly so a one-item final row
-    // doesn't leave a giant gap.
-    subGrid->setColumnStretch(0, 1);
-    subGrid->setColumnStretch(1, 1);
-    vl->addLayout(subGrid);
-    box->setLayout(vl);
+    return QMainWindow::eventFilter(watched, event);
+}
 
-    // Wire signals: any switch in this group rebuilds + re-renders. PMF
-    // syntax needs the concrete signal signature; lambda with sender is
-    // the alternative but we already have idx in scope.
-    auto rewire = [this, idx](int){ rebuildAndRender(idx); };
-    connect(master, &ToggleChip::stateChanged, this, rewire);
-    for (auto *sr : ctl_[idx].subs)
-        connect(sr, &SectionRow::stateChanged, this, rewire);
+void ControlPanel::selectPanel(int idx)
+{
+    if (idx < 0 || idx >= 3) return;
+    selectedPanel_ = idx;
+    if (inspectorStack_) inspectorStack_->setCurrentIndex(idx);
+    if (canvas_) canvas_->setSelectedPanel(idx);
+    for (int i = 0; i < 3; ++i) {
+        if (!ctl_[i].navButton) continue;
+        ctl_[i].navButton->setProperty("selected", i == idx);
+        ctl_[i].navButton->style()->unpolish(ctl_[i].navButton);
+        ctl_[i].navButton->style()->polish(ctl_[i].navButton);
+    }
+}
+
+void ControlPanel::updatePanelSummary(int idx)
+{
+    int on = 0;
+    for (auto *row : ctl_[idx].subs)
+        if (row->isChecked()) ++on;
+    const int total = ctl_[idx].subs.size();
+    if (ctl_[idx].countLabel)
+        ctl_[idx].countLabel->setText(QStringLiteral("%1 OF %2 SECTIONS VISIBLE").arg(on).arg(total));
+    if (ctl_[idx].navSummary)
+        ctl_[idx].navSummary->setText(ctl_[idx].master->isChecked()
+            ? QStringLiteral("%1 / %2 SECTIONS").arg(on).arg(total)
+            : QStringLiteral("PANEL DISABLED"));
+}
+
+QWidget *ControlPanel::buildObjectButton(const QString &letter,
+                                         const QString &title,
+                                         const QString &summary, int idx)
+{
+    auto *box = new QFrame();
+    box->setObjectName(idx == 0 ? "navPlayer"
+                       : idx == 1 ? "navMonster"
+                                  : "navDamage");
+    box->setProperty("navObject", true);
+    box->setProperty("panelIndex", idx);
+    box->setCursor(Qt::PointingHandCursor);
+    box->installEventFilter(this);
+    auto *row = new QHBoxLayout(box);
+    row->setContentsMargins(10, 9, 8, 9);
+    row->setSpacing(10);
+
+    auto *badge = new QLabel(letter);
+    badge->setObjectName(idx == 0 ? "badgeP" : idx == 1 ? "badgeM" : "badgeD");
+    badge->setFixedSize(26, 26);
+    badge->setAlignment(Qt::AlignCenter);
+    row->addWidget(badge);
+
+    auto *texts = new QVBoxLayout();
+    texts->setSpacing(2);
+    auto *titleLabel = new QLabel(title);
+    titleLabel->setObjectName("navTitle");
+    auto *summaryLabel = new QLabel(summary);
+    summaryLabel->setObjectName("navSummary");
+    texts->addWidget(titleLabel);
+    texts->addWidget(summaryLabel);
+    row->addLayout(texts, 1);
+    auto *enabled = new QLabel(QStringLiteral("●"));
+    enabled->setObjectName("navEnabled");
+    row->addWidget(enabled);
+
+    ctl_[idx].navButton = box;
+    ctl_[idx].navSummary = summaryLabel;
     return box;
 }
 
-// R5: 1px hairline between groups (QFrame with HLine shape + custom QSS).
+QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
+                                      const QStringList &labels, int idx)
+{
+    auto *host = new QWidget();
+    auto *scroll = new QScrollArea(host);
+    scroll->setWidgetResizable(true);
+    auto *outer = new QVBoxLayout(host);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->addWidget(scroll);
+
+    auto *content = new QWidget();
+    auto *vl = new QVBoxLayout(content);
+    vl->setContentsMargins(24, 24, 24, 24);
+    vl->setSpacing(10);
+
+    auto *eyebrow = new QLabel(QStringLiteral("SELECTED OBJECT  /  0%1").arg(idx + 1));
+    eyebrow->setObjectName("sectionCap");
+    vl->addWidget(eyebrow);
+
+    auto *head = new QHBoxLayout();
+    auto *titles = new QVBoxLayout();
+    auto *titleLabel = new QLabel(title);
+    titleLabel->setObjectName("inspectorTitle");
+    auto *subLabel = new QLabel(sub);
+    subLabel->setObjectName("inspectorSub");
+    titles->addWidget(titleLabel);
+    titles->addWidget(subLabel);
+    head->addLayout(titles, 1);
+    auto *master = new ToggleChip();
+    ctl_[idx].master = master;
+    head->addWidget(master, 0, Qt::AlignVCenter);
+    vl->addLayout(head);
+
+    auto *count = new QLabel();
+    count->setObjectName("countLabel");
+    ctl_[idx].countLabel = count;
+    vl->addWidget(count);
+    vl->addSpacing(10);
+    auto *contentCap = new QLabel(QStringLiteral("CONTENT"));
+    contentCap->setObjectName("sectionCap");
+    vl->addWidget(contentCap);
+
+    const QStringList &keys = idx == 0 ? mhw::PlayerSection::names()
+                            : idx == 1 ? mhw::MonsterSection::names()
+                                       : mhw::DamageSection::names();
+    for (int b = 0; b < labels.size(); ++b) {
+        auto *row = new SectionRow(labels[b], b < keys.size() ? keys[b] : QString());
+        ctl_[idx].subs.push_back(row);
+        vl->addWidget(row);
+    }
+
+    vl->addSpacing(12);
+    for (const auto &text : {QStringLiteral("BEHAVIOR  ›"),
+                             QStringLiteral("APPEARANCE  ›")}) {
+        auto *placeholder = new QPushButton(text);
+        placeholder->setObjectName("foldout");
+        placeholder->setEnabled(false); // presentation only in this phase
+        vl->addWidget(placeholder);
+    }
+    vl->addStretch(1);
+    auto *foot = new QHBoxLayout();
+    auto *reset = new QPushButton(QStringLiteral("↶  RESET %1").arg(title));
+    reset->setObjectName("resetButton");
+    reset->setEnabled(false); // reset API is deliberately deferred
+    foot->addWidget(reset);
+    foot->addStretch(1);
+    auto *modified = new QLabel(QStringLiteral("AUTO-SAVED  ●"));
+    modified->setObjectName("modified");
+    foot->addWidget(modified);
+    vl->addLayout(foot);
+
+    scroll->setWidget(content);
+    auto rewire = [this, idx](int){ rebuildAndRender(idx); };
+    connect(master, &ToggleChip::stateChanged, this, rewire);
+    for (auto *row : ctl_[idx].subs)
+        connect(row, &SectionRow::stateChanged, this, rewire);
+    return host;
+}
+
+// Legacy helpers retained for ABI/source stability; the v0.5 shell no longer uses them.
 QWidget *ControlPanel::buildRule()
 {
     auto *line = new QFrame();
-    line->setObjectName("rule");
     line->setFrameShape(QFrame::HLine);
     line->setFixedHeight(1);
     return line;
@@ -690,7 +765,9 @@ void ControlPanel::rebuildAndRender(int idx)
     else panel = damage_;
 
     auto *lab = ctl_[idx].preview;
+    updatePanelSummary(idx);
     if (!ctl_[idx].master->isChecked()) {
+        if (canvas_) canvas_->setPanelPixmap(idx, QPixmap(), false);
         // Master off: show a flat disabled placeholder. The panel is not
         // painted at all (matches live setVisible(false) gate).
         QPixmap ph(378, 90);
@@ -702,7 +779,7 @@ void ControlPanel::rebuildAndRender(int idx)
         p.setFont(f);
         p.drawText(ph.rect(), Qt::AlignCenter, QStringLiteral("PANEL DISABLED"));
         p.end();
-        lab->setPixmap(ph);
+        if (lab) lab->setPixmap(ph);
         return;
     }
 
@@ -711,7 +788,11 @@ void ControlPanel::rebuildAndRender(int idx)
         if (ctl_[idx].subs[b]->isChecked())
             mask |= (1u << b);
     panel->setSectionMask(mask);   // also calls update()
-    lab->setPixmap(renderPreview(panel));
+    const QPixmap pix = renderPreview(panel);
+    if (lab) lab->setPixmap(pix);
+    if (canvas_) {
+        canvas_->setPanelPixmap(idx, pix, true);
+    }
 }
 
 QPixmap ControlPanel::renderPreview(Panel *p)
