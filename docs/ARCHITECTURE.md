@@ -1,5 +1,19 @@
 # Architecture
 
+> **v0.4 reader/layout overview** — see `docs/V0.4-STATUS.md` for the
+> v0.4 status snapshot and the v0.5 design notes. **The v0.2 split plan
+> in §"What goes where" below is now landed** — `src/monster/`,
+> `src/player/`, `src/quest/`, `src/world/`, and `src/ui/panel_*.{h,cpp}`
+> exist exactly as described. The reader at `src/mhw_reader.cpp` is
+> an orchestrator over the per-domain readers.
+>
+> For the v0.4 control console architecture (mhw-control subprocess,
+> section masks, master visibility), see `docs/CONTROL_CONSOLE.md`.
+
+---
+
+# Architecture
+
 ## Goals (and how we get there)
 
 1. **Pluggable readers.** `mhw_reader.cpp` is a top-level orchestrator
