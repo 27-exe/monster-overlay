@@ -324,14 +324,13 @@ void HudCanvas::paintEvent(QPaintEvent *)
         const QRectF target = logicalToCanvas(lrect);
 
         if (!s.pixmap.isNull() && s.enabled) {
-            // The pixmap already carries the panel's user opacity as
-            // pixel alpha (paintEvent composites it), so multiplying by
-            // src->opacity() here would double-apply it. Only the
-            // selection dimming (unselected panels fade to 55%) belongs to
-            // the canvas; save/restore keeps it from leaking to the frame.
+            // The pixmap is rendered at full alpha (renderPreview disables
+            // the QGraphicsOpacityEffect before render). Apply the panel's
+            // user opacity here, plus the canvas's own selection dimming.
+            const double srcOpac = s.src ? s.src->opacity() : 1.0;
             const double selDim  = (i == selected_) ? 1.0 : 0.55;
             p.save();
-            p.setOpacity(selDim);
+            p.setOpacity(srcOpac * selDim);
             p.drawPixmap(target, s.pixmap, s.pixmap.rect());
             p.restore();
         } else {

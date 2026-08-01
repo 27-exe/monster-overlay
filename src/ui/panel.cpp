@@ -13,6 +13,7 @@
 #include <QScreen>
 #include <QTimer>
 #include <QWheelEvent>
+#include <QGraphicsOpacityEffect>
 #include <QWindow>
 
 #include <algorithm>
@@ -88,6 +89,16 @@ Panel::Panel(const QString &settingsKey, Corner corner, QWidget *parent)
     // integration" warnings.
     loadConfig();
     applyGeometry();
+
+    // v0.5: compositor-proof opacity. QGraphicsOpacityEffect tells the
+    // compositor to blend this surface at the given alpha — verified on
+    // KWin Wayland (KDE Discuss #44611). setWindowOpacity is structurally
+    // unsupported by QWaylandWindow (no overload), and paintEvent-level
+    // QPainter::setOpacity doesn't reliably update the surface's alpha
+    // buffer / opaque region on layer-shell. The effect does.
+    opacEffect_ = new QGraphicsOpacityEffect(this);
+    opacEffect_->setOpacity(opacity_);
+    setGraphicsEffect(opacEffect_);
 }
 
 void Panel::applyGeometry()
@@ -199,6 +210,11 @@ void Panel::saveAppearance()
     settings().sync();
 }
 
+void Panel::setCompositingEnabled(bool on)
+{
+    if (opacEffect_) opacEffect_->setEnabled(on);
+}
+
 void Panel::setEditMode(bool on)
 {
     editMode_ = on;
@@ -290,14 +306,6 @@ void Panel::paintEvent(QPaintEvent *)
     if (scale_ != 1.0)
         p.scale(scale_, scale_);
 
-    // v0.5: composite the panel at the user's opacity. This is the ONLY
-    // portable way to make the live overlay translucent — wayland
-    // layer-shell and the offscreen QPA both reject setWindowOpacity, so
-    // the alpha has to live in the pixels we draw. paintPanel() /
-    // paintMinimized() inherit it, and the console canvas preview picks it
-    // up too because renderPreview() grabs these same pixels into a pixmap
-    // that already carries the alpha.
-    p.setOpacity(opacity_);
 
     // Minimized: small colored block with panel initial.
     if (minimized_) {
@@ -596,14 +604,12 @@ void Panel::setOpacity(qreal a, bool persist)
     if (qFuzzyCompare(clamped, opacity_))
         return;
     opacity_ = clamped;
-    // Opacity is composited at the PIXEL level in paintEvent via
-    // QPainter::setOpacity — the only portable path. wayland layer-shell
-    // (the live / edit overlay window) and the offscreen QPA both REJECT
-    // setWindowOpacity, so a window-level call is neither effective nor
-    // portable; on X11 it would also double-apply (window alpha * pixel
-    // alpha = opacity^2). A plain update() re-runs paintEvent at the new
-    // alpha, which is exactly what the live window and the console's
-    // renderPreview pixmap both need.
+    // QGraphicsOpacityEffect is the compositor-proof path (KWin Wayland
+    // verified). It tells the compositor to blend the surface at this
+    // alpha — no pixel-level hacks, no setWindowOpacity (structurally
+    // unsupported by QWaylandWindow). update() repaints so the console
+    // preview stays in sync.
+    if (opacEffect_) opacEffect_->setOpacity(opacity_);
     update();
     if (persist && editMode_)
         saveConfig();
@@ -617,6 +623,7 @@ void Panel::resetToDefaults()
     margins_      = defaultMarginsFor(corner_);
     if (logicalSize_.isValid())
         setContentSize(logicalSize_.width(), logicalSize_.height());
-    update();   // paintEvent re-composites at the reset alpha (0.85)
+    if (opacEffect_) opacEffect_->setOpacity(opacity_);
+    update();
     saveConfig();
 }

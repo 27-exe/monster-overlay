@@ -9,6 +9,8 @@
 #include <QWidget>
 #include <cstdint>
 
+class QGraphicsOpacityEffect;
+
 namespace mhw {
 struct GameSnapshot;
 }
@@ -97,6 +99,11 @@ public:
     // and re-sync the layer-shell surface. Always persists.
     void resetToDefaults();
     void saveAppearance();
+    // Toggle the compositing effect for off-screen render() calls.
+    // render() + enabled QGraphicsOpacityEffect produces a=0 (broken);
+    // the console's renderPreview disables the effect, renders at full
+    // alpha, and lets HudCanvas apply srcOpac itself.
+    void setCompositingEnabled(bool on);
 
 protected:
     virtual void paintPanel(QPainter &p) = 0;
@@ -131,6 +138,7 @@ private:
     void paintMinimized(QPainter &p);
 
     bool demoPrimed_{false};
+    QGraphicsOpacityEffect *opacEffect_{nullptr};
 
     // See setSectionMask(). Each subclass interprets the bits via the
     // matching namespace in panel_sections.h (PlayerSection / ...).
