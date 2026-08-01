@@ -2,8 +2,10 @@
 
 #include <QMainWindow>
 #include <QStringList>
+#include <QTimer>
 #include <QVector>
 #include <array>
+#include <QtGlobal>
 
 class QCheckBox;
 class QFrame;
@@ -32,8 +34,20 @@ class ControlPanel : public QMainWindow {
     Q_OBJECT
 public:
     explicit ControlPanel(QWidget *parent = nullptr);
+    ~ControlPanel() override;
+
+protected:
+    void closeEvent(QCloseEvent *e) override;
 
 private:
+    // L2: persistent mask state lives at ~/.config/MHW Overlay/mhw-overlay.conf
+    // so the user's last toggle choices survive across console restarts. The
+    // console writes on exit (and any time we explicitly call saveMask());
+    // reads happen once at construction so the checkboxes open with the
+    // previous session's state.
+    void loadMaskFromDisk();
+    void saveMaskToDisk() const;
+
     struct PanelCtl {
         Panel *panel = nullptr;
         ToggleChip *master = nullptr;
@@ -47,6 +61,8 @@ private:
                         const QStringList &labels, int idx);
     QWidget *buildRule();
     QWidget *buildEditModeBlock();
+    void launchOverlay(bool editMode);
+    void onOverlayExited();
     void rebuildAndRender(int idx);
     QPixmap renderPreview(Panel *p);
 
@@ -54,4 +70,21 @@ private:
     MonsterPanel *monster_ = nullptr;
     DamagePanel *damage_ = nullptr;
     std::array<PanelCtl, 3> ctl_{};
+
+    // L3: handles for the EDIT MODE block launcher buttons (one START,
+    // one ENTER EDIT). Stored as plain members — not in ctl_ — because
+    // they're not per-panel, just per-window.
+    QPushButton *startBtn_ = nullptr;
+    QPushButton *editBtn_  = nullptr;
+
+    // L4: status badge in the top-right, shows "READY" by default and
+    // flips to "RUNNING pid NNNN since HH:MM:SS" while the overlay is
+    // alive. Flipped back to "READY" by onOverlayExited().
+    QLabel *statusBadge_ = nullptr;
+
+    // L3: state for the running mhw-overlay subprocess. overlayPid_ is
+    // 0 when nothing is running; overlayWatch_ fires every 250ms while
+    // a process is alive, polling kill(pid,0) for liveness.
+    qint64       overlayPid_ = 0;
+    QTimer      *overlayWatch_ = nullptr;
 };

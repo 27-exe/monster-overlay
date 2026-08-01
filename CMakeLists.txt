@@ -173,6 +173,47 @@ target_compile_definitions(mhw-control PRIVATE
 )
 target_compile_options(mhw-control PRIVATE -Wall -Wextra -Wpedantic)
 
+# L2 smoke test for the control-panel mask persistence round-trip.
+# Rebuilds an in-process ControlPanel, flips switches via the public
+# SectionRow API (found by findChildren), lets the dtor save to disk,
+# then re-opens and verifies the load applied the same state.
+add_executable(mhw-control-l2-smoke
+    tests/control_l2_smoke.cpp
+    src/mhw_reader.cpp
+    src/mhw_reader.h
+    src/player/player_reader.cpp
+    src/quest/quest_reader.cpp
+    src/world/world_reader.cpp
+    src/monster/monster_reader.cpp
+    src/monster/part_schemas.cpp
+    src/monster/target_selector.cpp
+    src/core/string_table.cpp
+    src/ui/formatters.cpp
+    src/ui/icon.cpp
+    src/ui/panel.cpp
+    src/ui/panel_player.cpp
+    src/ui/panel_damage.cpp
+    src/ui/panel_monster.cpp
+    src/ui/control_panel.cpp
+    src/ui/toggle_chip.cpp
+    src/ui/toggle_chip.h
+    src/ui/section_row.cpp
+    src/ui/section_row.h
+    src/world/world_types.cpp
+    src/resources/resources.qrc
+    assets/icons.qrc
+)
+target_link_libraries(mhw-control-l2-smoke PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+    LayerShellQt::Interface
+    mhw-core
+)
+target_include_directories(mhw-control-l2-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(mhw-control-l2-smoke PRIVATE
+    MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
+)
+target_compile_options(mhw-control-l2-smoke PRIVATE -Wall -Wextra -Wpedantic)
+
 target_link_libraries(mhw-overlay-web PRIVATE
     Qt6::Core
     Qt6::Gui

@@ -10,6 +10,7 @@
 #include "core/string_table.h"
 
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QFrame>
 #include <QPushButton>
 #include <QGroupBox>
@@ -20,6 +21,15 @@
 #include <QPixmap>
 #include <QPainter>
 #include <QFrame>
+#include <QStandardPaths>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QProcess>
+#include <QTextStream>
+#include <QTime>
+#include <signal.h>
+#include <sys/types.h>
 
 namespace {
 
@@ -63,6 +73,12 @@ QString qssBase()
         " font-size:11px;letter-spacing:2px;background:transparent;}"
         "QLabel#logoBadgeDot{color:#50c5b7;font-size:14px;background:transparent;"
         " padding-right:6px;}"
+        // L4: status badge — same teal as PREVIEW, but slightly dimmer
+        // so the eye reads "PREVIEW" as the chrome and the status as
+        // the live indicator.
+        "QLabel#statusBadge{color:#3a8782;font-family:'Chakra Petch';"
+        " font-weight:600;font-size:10px;letter-spacing:2px;"
+        " background:transparent;border:none;}"
         // R2: letter badges for group titles (P/M/D) — coloured stroke on
         // a near-black fill, matching the HTML v0.4 side-bar block.
         "QLabel#badgeP{color:#aa55ff;font-family:'Chakra Petch';font-weight:700;"
@@ -89,6 +105,14 @@ QString qssBase()
         " font-weight:700;font-size:11px;letter-spacing:2px;}"
         "QPushButton#enterEdit:hover{background:#ff9050;}"
         "QPushButton#enterEdit:pressed{background:#e66f30;}"
+        // L3: START shares the orange CTA look — same rules, just a
+        // different object name so we can wire different signals.
+        "QPushButton#startBtn{background:#ff8040;color:#1a0f08;"
+        " border:none;border-radius:3px;padding:8px 18px;font-family:'Chakra Petch';"
+        " font-weight:700;font-size:11px;letter-spacing:2px;}"
+        "QPushButton#startBtn:hover{background:#ff9050;}"
+        "QPushButton#startBtn:pressed{background:#e66f30;}"
+        "QPushButton#startBtn:disabled{background:#4a2010;color:#806050;}"
         "QLabel#editCap{color:#6f7375;font-family:'Noto Sans SC';font-size:10px;"
         " background:transparent;border:none;}"
         // R6: right-column title ("MOCK PREVIEW")
@@ -174,6 +198,16 @@ ControlPanel::ControlPanel(QWidget *parent)
     badge->addWidget(label);
     logo->addLayout(badge, 0);
 
+    // L4: status badge — added as a sibling of the PREVIEW badge, right
+    // aligned to the right edge of the row. We reuse the same logo
+    // layout (no nesting, no re-parenting) so the existing layout
+    // state stays simple and PREVIEW keeps its place.
+    auto *status = new QLabel(QStringLiteral("READY"));
+    status->setObjectName("statusBadge");
+    status->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    logo->addWidget(status, 0, Qt::AlignRight | Qt::AlignVCenter);
+    statusBadge_ = status;
+
     root->addLayout(logo);
 
     // ---- Two-column body: left = switches, right = previews ----
@@ -237,9 +271,27 @@ ControlPanel::ControlPanel(QWidget *parent)
     central->setLayout(root);
     setCentralWidget(central);
 
+    // L2: pull persisted mask state from disk BEFORE the first render so
+    // the section checkboxes and master toggles open in the user's last
+    // configuration. Missing file = all-on (default mask).
+    loadMaskFromDisk();
+
     // First render with everything on.
     for (int i = 0; i < 3; ++i)
         rebuildAndRender(i);
+}
+
+ControlPanel::~ControlPanel()
+{
+    // Persist current mask state on every destruction path (close, app
+    // exit, explicit delete). Safe to call even if load was never reached.
+    saveMaskToDisk();
+}
+
+void ControlPanel::closeEvent(QCloseEvent *e)
+{
+    saveMaskToDisk();
+    QMainWindow::closeEvent(e);
 }
 
 QWidget *ControlPanel::buildGroup(const QString &title, const QString &sub,
@@ -359,6 +411,11 @@ QWidget *ControlPanel::buildRule()
 
 // R5: EDIT MODE block — orange "ENTER EDIT" button on the right,
 // caption "进入后三个面板强制显示，方向键移动" on the left.
+//
+// L3: also add a "START" button to spawn mhw-overlay. Same orange
+// CTA visual, separate action. ENTER EDIT still exists as a synonym
+// for START with --edit — both hide the console, both re-show on
+// exit; the only difference is whether the overlay enters edit mode.
 QWidget *ControlPanel::buildEditModeBlock()
 {
     auto *box = new QWidget();
@@ -374,19 +431,223 @@ QWidget *ControlPanel::buildEditModeBlock()
     vl->addLayout(titleRow);
 
     auto *row = new QHBoxLayout();
-    row->setSpacing(12);
+    row->setSpacing(10);
     auto *cap = new QLabel(QStringLiteral(
         "进入后三个面板强制显示，方向键移动"));
     cap->setObjectName("editCap");
     cap->setWordWrap(true);
     row->addWidget(cap, 1);
-    auto *btn = new QPushButton(QStringLiteral("ENTER EDIT"));
-    btn->setObjectName("enterEdit");
-    btn->setCursor(Qt::PointingHandCursor);
-    row->addWidget(btn, 0);
+    auto *startBtn = new QPushButton(QStringLiteral("START"));
+    startBtn->setObjectName("startBtn");
+    startBtn->setCursor(Qt::PointingHandCursor);
+    auto *editBtn = new QPushButton(QStringLiteral("ENTER EDIT"));
+    editBtn->setObjectName("enterEdit");
+    editBtn->setCursor(Qt::PointingHandCursor);
+    row->addWidget(startBtn, 0);
+    row->addWidget(editBtn, 0);
     vl->addLayout(row);
     box->setLayout(vl);
+
+    // Stash handles on the window (not on ctl_ — they aren't per-panel).
+    startBtn_ = startBtn;
+    editBtn_  = editBtn;
+
+    connect(startBtn, &QPushButton::clicked, this, [this]{
+        launchOverlay(/*editMode=*/false);
+    });
+    connect(editBtn,  &QPushButton::clicked, this, [this]{
+        launchOverlay(/*editMode=*/true);
+    });
     return box;
+}
+
+// L3: spawn mhw-overlay as a detached subprocess, hide the console while
+// it runs, then show the console again when the overlay exits.
+//
+// Why detached: the overlay and the console are independent Qt apps
+// (each has its own QApplication). If we started the overlay in-process
+// or as a tracked child, the overlay's ESC quit would also quit our
+// console — that's not what the user asked for. Detached + PID polling
+// gives us clean ownership: the overlay owns its own lifetime, and we
+// just watch from outside.
+//
+// The mask state on disk is rewritten synchronously here so the overlay
+// sees the user's *current* toggles, not the snapshot from console boot.
+void ControlPanel::launchOverlay(bool editMode)
+{
+    if (overlayPid_ != 0) {
+        // Already running — refuse to launch a second copy. The user
+        // can press ESC in the overlay to bring the console back, then
+        // click again.
+        return;
+    }
+    saveMaskToDisk();
+
+    // Build argv from the same mask source the file uses.
+    auto maskFor = [](const PanelCtl &c) -> uint32_t {
+        if (!c.master->isChecked()) return 0u;
+        uint32_t m = 0;
+        for (int b = 0; b < c.subs.size(); ++b)
+            if (c.subs[b]->isChecked())
+                m |= (1u << b);
+        return m;
+    };
+    const uint32_t mp = maskFor(ctl_[0]);
+    const uint32_t mm = maskFor(ctl_[1]);
+    const uint32_t md = maskFor(ctl_[2]);
+
+    QStringList args;
+    args << QStringLiteral("--mask-player=%1").arg(mp, 0, 16)
+         << QStringLiteral("--mask-monster=%1").arg(mm, 0, 16)
+         << QStringLiteral("--mask-damage=%1").arg(md, 0, 16);
+    if (editMode) args << QStringLiteral("--edit");
+
+    // mhw-overlay lives next to mhw-control in the same build dir.
+    const QString overlay = QCoreApplication::applicationDirPath()
+                          + QStringLiteral("/mhw-overlay");
+
+    qint64 pid = 0;
+    if (!QProcess::startDetached(overlay, args,
+                                 QCoreApplication::applicationDirPath(),
+                                 &pid)) {
+        qWarning("mhw-control: failed to launch %s", qPrintable(overlay));
+        return;
+    }
+    overlayPid_ = pid;
+
+    // L4: flip the status badge so the user can tell at a glance which
+    // mode the console is in. We're hiding next, so this label only
+    // matters when the overlay exits and the console re-shows.
+    if (statusBadge_) {
+        const QString stamp = QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
+        statusBadge_->setText(
+            QStringLiteral("RUNNING pid %1 since %2")
+                .arg(overlayPid_).arg(stamp));
+    }
+
+    // Disable both launcher buttons while running so the user can't
+    // accidentally spawn a second overlay.
+    if (startBtn_) startBtn_->setEnabled(false);
+    if (editBtn_)  editBtn_->setEnabled(false);
+
+    // Poll the PID. 250ms feels live but stays well under one paint frame
+    // — the console re-shows within a quarter second of overlay death.
+    overlayWatch_ = new QTimer(this);
+    overlayWatch_->setInterval(250);
+    connect(overlayWatch_, &QTimer::timeout, this, [this]{
+        if (overlayPid_ == 0) return;
+        // kill(pid, 0) is POSIX's "does this PID exist?" — no signal sent.
+        // ESRCH means the process is gone.
+        if (kill(static_cast<pid_t>(overlayPid_), 0) != 0) {
+            onOverlayExited();
+        }
+    });
+    overlayWatch_->start();
+
+    hide();   // the overlay owns the screen now
+}
+
+void ControlPanel::onOverlayExited()
+{
+    overlayPid_ = 0;
+    if (overlayWatch_) {
+        overlayWatch_->stop();
+        overlayWatch_->deleteLater();
+        overlayWatch_ = nullptr;
+    }
+    if (startBtn_) startBtn_->setEnabled(true);
+    if (editBtn_)  editBtn_->setEnabled(true);
+    if (statusBadge_) statusBadge_->setText(QStringLiteral("READY"));
+    show();
+    raise();
+    activateWindow();
+}
+
+namespace {
+// L2: resolve the persistence path.
+//
+//   * AppConfigLocation = ~/.config/<OrgName>/<AppName> (Linux). Doesn't
+//     honour XDG_CONFIG_HOME, but it's the canonical user-config root.
+//   * We append "/mhw-overlay.conf" so the same directory can later
+//     carry other keys (locale, map path) without inventing new files.
+//
+// For tests we override via the env-var honoured by GenericConfigLocation
+// (XDG_CONFIG_HOME) — see tests/control_l2_smoke.cpp.
+QString maskConfigPath()
+{
+    const QString dir = QStandardPaths::writableLocation(
+        QStandardPaths::GenericConfigLocation)
+        + QStringLiteral("/mhw-overlay");
+    return dir + QStringLiteral("/mhw-overlay.conf");
+}
+} // namespace
+
+void ControlPanel::loadMaskFromDisk()
+{
+    const QString path = maskConfigPath();
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        // No file = first run, keep the all-on default the buildGroup()
+        // calls already established.
+        return;
+    }
+    // File format (3 lines, key=value hex32):
+    //   player=<hex32>
+    //   monster=<hex32>
+    //   damage=<hex32>
+    // Anything malformed is silently ignored — we never want a bad
+    // config to make the console unstartable.
+    QTextStream in(&f);
+    int playerMask = -1, monsterMask = -1, damageMask = -1;
+    while (!in.atEnd()) {
+        const QString line = in.readLine().trimmed();
+        if (line.startsWith(QLatin1String("player=")))
+            playerMask = line.mid(7).toInt(0, 16);
+        else if (line.startsWith(QLatin1String("monster=")))
+            monsterMask = line.mid(8).toInt(0, 16);
+        else if (line.startsWith(QLatin1String("damage=")))
+            damageMask = line.mid(7).toInt(0, 16);
+    }
+
+    auto applyTo = [](int m, PanelCtl &c) {
+        if (m < 0) return;
+        // master stays ON if any bit is set; otherwise treat as fully
+        // disabled (mirrors the "all off" intent in the file).
+        c.master->setChecked(m != 0);
+        for (int b = 0; b < c.subs.size(); ++b)
+            c.subs[b]->setChecked((m & (1u << b)) != 0);
+    };
+    applyTo(playerMask,  ctl_[0]);
+    applyTo(monsterMask, ctl_[1]);
+    applyTo(damageMask,  ctl_[2]);
+}
+
+void ControlPanel::saveMaskToDisk() const
+{
+    const QString path = maskConfigPath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+
+    auto maskFor = [](const PanelCtl &c) -> uint32_t {
+        if (!c.master->isChecked()) return 0u;
+        uint32_t m = 0;
+        for (int b = 0; b < c.subs.size(); ++b)
+            if (c.subs[b]->isChecked())
+                m |= (1u << b);
+        return m;
+    };
+    const uint32_t mp = maskFor(ctl_[0]);
+    const uint32_t mm = maskFor(ctl_[1]);
+    const uint32_t md = maskFor(ctl_[2]);
+
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        qWarning("mhw-control: cannot write %s", qPrintable(path));
+        return;
+    }
+    QTextStream out(&f);
+    out << "player="  << QString::number(mp, 16) << '\n'
+        << "monster=" << QString::number(mm, 16) << '\n'
+        << "damage="  << QString::number(md, 16) << '\n';
 }
 
 void ControlPanel::rebuildAndRender(int idx)
