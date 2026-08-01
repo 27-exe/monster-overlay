@@ -165,7 +165,8 @@ void Panel::loadConfig()
     // shown until after applyGeometry() configures the layer-shell
     // surface (anchors + margins); showing first triggers "already
     // has a shell integration" warnings. main.cpp shows the panels.
-    setWindowOpacity(opacity_);
+    if (!testAttribute(Qt::WA_DontShowOnScreen))
+        setWindowOpacity(opacity_);
 }
 
 void Panel::saveConfig()
@@ -555,7 +556,14 @@ void Panel::setOpacity(qreal a, bool persist)
     if (qFuzzyCompare(clamped, opacity_))
         return;
     opacity_ = clamped;
-    setWindowOpacity(opacity_);
+    // setWindowOpacity only works on a real composited window.
+    // Console preview panels are WA_DontShowOnScreen; calling it
+    // there spams "This plugin does not support setting window
+    // opacity" on every slider tick. The canvas preview reads
+    // opacity via PanelSource::opacity() + QPainter::setOpacity,
+    // so no window-level opacity is needed for the preview path.
+    if (!testAttribute(Qt::WA_DontShowOnScreen))
+        setWindowOpacity(opacity_);
     update();
     if (persist && editMode_)
         saveConfig();
@@ -569,7 +577,8 @@ void Panel::resetToDefaults()
     margins_      = defaultMarginsFor(corner_);
     if (logicalSize_.isValid())
         setContentSize(logicalSize_.width(), logicalSize_.height());
-    setWindowOpacity(opacity_);
+    if (!testAttribute(Qt::WA_DontShowOnScreen))
+        setWindowOpacity(opacity_);
     update();
     saveConfig();
 }
