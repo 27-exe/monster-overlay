@@ -19,6 +19,7 @@ class MonsterPanel;
 class DamagePanel;
 class ToggleChip;
 class SectionRow;
+class SectionCountBar;
 class HudCanvas;
 
 // Standalone control console for the MHW overlay. NOT a layer-shell
@@ -62,6 +63,7 @@ private:
         QWidget *navButton = nullptr;
         QLabel *navSummary = nullptr;
         QLabel *countLabel = nullptr;
+    SectionCountBar *countBar = nullptr;
     };
 
     QWidget *buildInspector(const QString &title, const QString &sub,

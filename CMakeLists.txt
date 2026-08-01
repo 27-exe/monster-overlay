@@ -164,6 +164,8 @@ add_executable(mhw-control
     src/ui/toggle_chip.h
     src/ui/section_row.cpp
     src/ui/section_row.h
+    src/ui/section_count_bar.cpp
+    src/ui/section_count_bar.h
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -235,6 +237,8 @@ add_executable(mhw-control-l2-smoke
     src/ui/toggle_chip.h
     src/ui/section_row.cpp
     src/ui/section_row.h
+    src/ui/section_count_bar.cpp
+    src/ui/section_count_bar.h
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -283,6 +287,8 @@ add_executable(mhw-control-p0-test
     src/ui/toggle_chip.h
     src/ui/section_row.cpp
     src/ui/section_row.h
+    src/ui/section_count_bar.cpp
+    src/ui/section_count_bar.h
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc

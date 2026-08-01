@@ -7,6 +7,7 @@
 #include "ui/panel_sections.h"
 #include "ui/toggle_chip.h"
 #include "ui/section_row.h"
+#include "ui/section_count_bar.h"
 #include "ui/hud_canvas.h"
 #include "ui/panel_source.h"
 #include "core/string_table.h"
@@ -159,11 +160,42 @@ QString qssBase()
         "QLabel#countLabelD{color:#50c5b7;}"
         "QPushButton#foldout{background:transparent;color:#8d9294;border:1px solid #292e30;border-radius:3px;"
         "text-align:left;padding:9px 12px;font-family:'Chakra Petch';font-size:10px;letter-spacing:1px;}"
+        "QPushButton#foldout:disabled:hover{background:#131617;}"
         "QPushButton#resetButton{background:transparent;color:#9da1a3;border:1px solid #313638;border-radius:3px;"
         "padding:7px 10px;font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;}"
+        "QPushButton#resetButton:disabled:hover{background:#131617;}"
         "QLabel#modified{font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;color:#777d7f;}"
         "QScrollBar:vertical{width:7px;background:#0d1011;}QScrollBar::handle:vertical{background:#303638;min-height:24px;}"
         );
+}
+
+// v0.5 P2: map (panel index, section bit index) → SectionRow::Icon.
+// The mapping follows panel_sections.h exactly: Player 0..5, Monster 0..4,
+// Damage 0..2.
+int iconKind(int panel, int section)
+{
+    static const int kPlayerIcons[] = {
+        SectionRow::IconConn, SectionRow::IconQuest, SectionRow::IconWeapon,
+        SectionRow::IconBars, SectionRow::IconMantles, SectionRow::IconDebuff,
+    };
+    static const int kMonsterIcons[] = {
+        SectionRow::IconInfo, SectionRow::IconHp, SectionRow::IconEnrage,
+        SectionRow::IconAil, SectionRow::IconParts,
+    };
+    static const int kDamageIcons[] = {
+        SectionRow::IconRows, SectionRow::IconShare, SectionRow::IconChart,
+    };
+    if (panel == 0 && section < 6) return kPlayerIcons[section];
+    if (panel == 1 && section < 5) return kMonsterIcons[section];
+    if (panel == 2 && section < 3) return kDamageIcons[section];
+    return SectionRow::IconNone;
+}
+
+QColor panelAccent(int panel)
+{
+    if (panel == 0) return QColor(167, 79, 255);   // Player purple
+    if (panel == 1) return QColor(255, 112, 67);   // Monster orange
+    return QColor(80, 197, 183);                   // Damage teal
 }
 
 } // namespace
@@ -259,7 +291,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     startBtn_->setObjectName("startBtn");
     startBtn_->setCursor(Qt::PointingHandCursor);
     railLayout->addWidget(startBtn_);
-    auto *hint = new QLabel(QStringLiteral("ESC RETURN · 1/2/3 SELECT · CONFIG AUTO-SAVED"));
+    auto *hint = new QLabel(QStringLiteral("ESC 返回 · 1/2/3 选择"));
     hint->setObjectName("railHint");
     hint->setAlignment(Qt::AlignCenter);
     railLayout->addWidget(hint);
@@ -411,6 +443,8 @@ void ControlPanel::updatePanelSummary(int idx)
     const int total = ctl_[idx].subs.size();
     if (ctl_[idx].countLabel)
         ctl_[idx].countLabel->setText(QStringLiteral("%1 OF %2 SECTIONS VISIBLE").arg(on).arg(total));
+    if (ctl_[idx].countBar)
+        ctl_[idx].countBar->setRatio(total > 0 ? qreal(on) / total : 1.0);
     if (ctl_[idx].navSummary)
         ctl_[idx].navSummary->setText(ctl_[idx].master->isChecked()
             ? QStringLiteral("%1 / %2 SECTIONS").arg(on).arg(total)
@@ -498,6 +532,12 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
                                   : "countLabelD");
     ctl_[idx].countLabel = count;
     vl->addWidget(count);
+
+    // v0.5 P2: thin accent progress bar under the count headline
+    auto *bar = new SectionCountBar();
+    bar->setAccent(panelAccent(idx));
+    ctl_[idx].countBar = bar;
+    vl->addWidget(bar);
     vl->addSpacing(10);
     auto *contentCap = new QLabel(QStringLiteral("CONTENT"));
     contentCap->setObjectName("sectionCap");
@@ -507,7 +547,8 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
                             : idx == 1 ? mhw::MonsterSection::names()
                                        : mhw::DamageSection::names();
     for (int b = 0; b < labels.size(); ++b) {
-        auto *row = new SectionRow(labels[b], b < keys.size() ? keys[b] : QString());
+        auto *row = new SectionRow(labels[b], b < keys.size() ? keys[b] : QString(), iconKind(idx, b));
+        row->setAccent(panelAccent(idx));
         ctl_[idx].subs.push_back(row);
         vl->addWidget(row);
     }
