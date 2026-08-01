@@ -1052,16 +1052,14 @@ QPixmap ControlPanel::renderPreview(Panel *p)
         p->resize(nat);
     p->repaint();
     const QSize sz = p->size();
-    // render() + enabled QGraphicsOpacityEffect produces a=0 (broken).
-    // Disable the effect, render at full alpha, and let HudCanvas apply
-    // the panel's opacity via PanelSource::opacity() * selDim.
-    p->setCompositingEnabled(false);
+    // paintEvent composites at the panel's opacity via p.setOpacity(),
+    // so the rendered pixmap already carries per-pixel alpha. No
+    // disable/enable dance needed.
     QPixmap pix(sz);
     pix.fill(Qt::transparent);
     QPainter painter(&pix);
     p->render(&painter, QPoint(), QRect(QPoint(0, 0), sz));
     painter.end();
-    p->setCompositingEnabled(true);
 
     // R6: paint a 4-px vertical accent stripe on the left edge of every
     // preview tile (purple for player, orange for monster, teal for

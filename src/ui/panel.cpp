@@ -13,7 +13,6 @@
 #include <QScreen>
 #include <QTimer>
 #include <QWheelEvent>
-#include <QGraphicsOpacityEffect>
 #include <QWindow>
 
 #include <algorithm>
@@ -90,15 +89,6 @@ Panel::Panel(const QString &settingsKey, Corner corner, QWidget *parent)
     loadConfig();
     applyGeometry();
 
-    // v0.5: compositor-proof opacity. QGraphicsOpacityEffect tells the
-    // compositor to blend this surface at the given alpha — verified on
-    // KWin Wayland (KDE Discuss #44611). setWindowOpacity is structurally
-    // unsupported by QWaylandWindow (no overload), and paintEvent-level
-    // QPainter::setOpacity doesn't reliably update the surface's alpha
-    // buffer / opaque region on layer-shell. The effect does.
-    opacEffect_ = new QGraphicsOpacityEffect(this);
-    opacEffect_->setOpacity(opacity_);
-    setGraphicsEffect(opacEffect_);
 }
 
 void Panel::applyGeometry()
@@ -171,6 +161,9 @@ void Panel::loadConfig()
 
     scale_ = std::clamp(scale_, kMinScale, kMaxScale);
     opacity_ = std::clamp(opacity_, 0.1, 1.0);
+    qInfo("mhw-panel [%s]: loadConfig opacity=%.2f scale=%.2f margins=L%d T%d R%d B%d",
+          qPrintable(key_), opacity_, scale_,
+          margins_.left(), margins_.top(), margins_.right(), margins_.bottom());
 
     // Note: visibility is NOT applied here. The window must not be
     // shown until after applyGeometry() configures the layer-shell
@@ -208,11 +201,15 @@ void Panel::saveAppearance()
     settings().setValue(QStringLiteral("mb"), margins_.bottom());
     settings().endGroup();
     settings().sync();
+    qInfo("mhw-panel [%s]: saveAppearance opacity=%.2f scale=%.2f margins=L%d T%d R%d B%d",
+          qPrintable(key_), opacity_, scale_,
+          margins_.left(), margins_.top(), margins_.right(), margins_.bottom());
 }
 
-void Panel::setCompositingEnabled(bool on)
+void Panel::setCompositingEnabled(bool)
 {
-    if (opacEffect_) opacEffect_->setEnabled(on);
+    // No-op since opacity is now pixel-level in paintEvent.
+    // Kept for API compatibility with renderPreview().
 }
 
 void Panel::setEditMode(bool on)
@@ -306,6 +303,13 @@ void Panel::paintEvent(QPaintEvent *)
     if (scale_ != 1.0)
         p.scale(scale_, scale_);
 
+    // Composite at the user's opacity. Probe-verified: QPainter::setOpacity
+    // writes per-pixel alpha into the ARGB backing store (a=127 at 0.5,
+    // a=76 at 0.3). With WA_TranslucentBackground the wayland surface has
+    // alphaBufferSize > 0 → QWaylandWindow::isOpaque() is false → KWin
+    // enables blending. This is the only path that puts alpha into the
+    // actual buffer the compositor sees.
+    p.setOpacity(opacity_);
 
     // Minimized: small colored block with panel initial.
     if (minimized_) {
@@ -604,12 +608,8 @@ void Panel::setOpacity(qreal a, bool persist)
     if (qFuzzyCompare(clamped, opacity_))
         return;
     opacity_ = clamped;
-    // QGraphicsOpacityEffect is the compositor-proof path (KWin Wayland
-    // verified). It tells the compositor to blend the surface at this
-    // alpha — no pixel-level hacks, no setWindowOpacity (structurally
-    // unsupported by QWaylandWindow). update() repaints so the console
-    // preview stays in sync.
-    if (opacEffect_) opacEffect_->setOpacity(opacity_);
+    qInfo("mhw-panel [%s]: setOpacity -> %.2f (persist=%d, editMode=%d)",
+          qPrintable(key_), opacity_, persist, editMode_);
     update();
     if (persist && editMode_)
         saveConfig();
@@ -623,7 +623,6 @@ void Panel::resetToDefaults()
     margins_      = defaultMarginsFor(corner_);
     if (logicalSize_.isValid())
         setContentSize(logicalSize_.width(), logicalSize_.height());
-    if (opacEffect_) opacEffect_->setOpacity(opacity_);
-    update();
+    update();   // paintEvent re-composites at the reset alpha (0.85)
     saveConfig();
 }

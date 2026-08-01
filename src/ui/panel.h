@@ -9,7 +9,6 @@
 #include <QWidget>
 #include <cstdint>
 
-class QGraphicsOpacityEffect;
 
 namespace mhw {
 struct GameSnapshot;
@@ -138,7 +137,6 @@ private:
     void paintMinimized(QPainter &p);
 
     bool demoPrimed_{false};
-    QGraphicsOpacityEffect *opacEffect_{nullptr};
 
     // See setSectionMask(). Each subclass interprets the bits via the
     // matching namespace in panel_sections.h (PlayerSection / ...).
