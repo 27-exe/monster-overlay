@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MHW Overlay Control · v0.5 A</title>
+<style>
+:root{
+  --bg:#090b0c;--rail:#0d1011;--surface:#111516;--surface2:#171b1d;--hover:#1b2022;
+  --line:#292e30;--line2:#3a4042;--text:#e7e8e9;--text2:#b6b9ba;--muted:#74797b;--faint:#4b5052;
+  --orange:#ff8040;--teal:#50c5b7;--purple:#a74fff;--red:#ff7043;--gold:#ffc857;
+  --display:"Chakra Petch","Noto Sans SC",system-ui,sans-serif;--body:"Noto Sans SC",system-ui,sans-serif;
+}
+*{box-sizing:border-box}html,body{height:100%;margin:0}button,input{font:inherit}
+body{overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--body);font-size:13px;-webkit-font-smoothing:antialiased}
+button{color:inherit}.app{height:100vh;min-width:1120px;display:grid;grid-template-columns:208px 342px minmax(560px,1fr);grid-template-rows:54px minmax(0,1fr);background:var(--bg)}
+/* titlebar */
+.top{grid-column:1/-1;display:flex;align-items:center;border-bottom:1px solid var(--line);background:#0b0e0f;padding:0 18px;z-index:3}
+.brand{font-family:var(--display);font-weight:600;letter-spacing:2.5px;font-size:14px}.brand b{color:var(--orange);font-weight:600}.version{margin-left:12px;color:var(--faint);font-family:var(--display);font-size:9px;letter-spacing:1.5px;border-left:1px solid var(--line);padding-left:12px}
+.window-drag{flex:1;height:100%}.top-status{display:flex;align-items:center;gap:8px;color:var(--muted);font-family:var(--display);font-size:10px;letter-spacing:1.2px}.live-dot{width:6px;height:6px;border-radius:50%;background:var(--teal);box-shadow:0 0 7px rgba(80,197,183,.65)}
+.top-icon{margin-left:18px;border:0;background:transparent;color:var(--muted);width:26px;height:26px;cursor:pointer}.top-icon:hover{color:var(--text)}
+/* rail */
+.rail{grid-column:1;grid-row:2;background:var(--rail);border-right:1px solid var(--line);padding:22px 12px 14px;display:flex;flex-direction:column;min-height:0}
+.eyebrow{font-family:var(--display);font-size:9px;letter-spacing:2px;color:var(--faint);padding:0 10px;margin:0 0 9px}.panel-list{display:flex;flex-direction:column;gap:4px}
+.nav-item{position:relative;width:100%;border:1px solid transparent;background:transparent;color:var(--muted);display:grid;grid-template-columns:32px 1fr auto;align-items:center;gap:8px;padding:10px 9px;text-align:left;cursor:pointer;transition:120ms}
+.nav-item:hover{background:var(--surface);color:var(--text2)}.nav-item.active{background:var(--surface2);border-color:var(--line);color:var(--text)}.nav-item.active:before{content:"";position:absolute;left:-1px;top:8px;bottom:8px;width:2px;background:var(--panel-accent)}
+.nav-glyph{width:27px;height:27px;border:1px solid var(--line2);display:grid;place-items:center;color:var(--panel-accent);font-family:var(--display);font-size:11px;font-weight:600}.nav-copy b{display:block;font-family:var(--display);font-size:11px;letter-spacing:1px;font-weight:500}.nav-copy small{display:block;font-size:9px;color:var(--faint);margin-top:2px}.nav-state{width:6px;height:6px;border-radius:50%;background:var(--teal)}.nav-item.is-off .nav-state{background:var(--faint)}
+.nav-rule{height:1px;background:var(--line);margin:18px 10px}.workspace-btn{border:0;background:transparent;color:var(--muted);padding:8px 10px;text-align:left;display:flex;gap:10px;align-items:center;cursor:pointer;font-size:11px}.workspace-btn:hover{color:var(--text);background:var(--surface)}.workspace-btn svg{width:15px;height:15px}
+.rail-bottom{margin-top:auto}.run-card{border-top:1px solid var(--line);padding:14px 6px 0}.run-meta{display:flex;justify-content:space-between;color:var(--faint);font-family:var(--display);font-size:9px;letter-spacing:1px;margin:0 4px 9px}.primary{width:100%;height:38px;border:1px solid var(--orange);background:var(--orange);color:#16100c;font-family:var(--display);font-size:10px;font-weight:600;letter-spacing:1.5px;cursor:pointer;transition:120ms}.primary:hover{background:#ff9566}.primary.running{border-color:var(--red);background:transparent;color:var(--red)}
+/* inspector */
+.inspector{grid-column:2;grid-row:2;border-right:1px solid var(--line);background:var(--surface);overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line2) transparent}.inspector-inner{padding:25px 22px 40px}
+.inspector-head{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:start;padding-bottom:19px;border-bottom:1px solid var(--line)}.panel-code{font-family:var(--display);font-size:9px;letter-spacing:2px;color:var(--panel-accent);margin-bottom:7px}.panel-title{font-family:var(--display);font-size:22px;letter-spacing:1.5px;font-weight:500;margin:0}.panel-desc{color:var(--muted);font-size:11px;margin-top:5px}.summary{display:flex;align-items:center;gap:8px;margin-top:14px;color:var(--muted);font-family:var(--display);font-size:9px;letter-spacing:.8px}.summary strong{color:var(--text2);font-weight:500}.summary-bar{height:2px;width:72px;background:var(--line);position:relative}.summary-bar i{display:block;height:100%;background:var(--panel-accent);width:83%}
+.toggle{width:38px;height:21px;position:relative;display:block;cursor:pointer}.toggle input{position:absolute;opacity:0}.track{position:absolute;inset:0;border-radius:20px;background:var(--line2);transition:140ms}.track:after{content:"";position:absolute;width:15px;height:15px;top:3px;left:3px;border-radius:50%;background:#c8cbcc;transition:140ms}.toggle input:checked+.track{background:var(--orange)}.toggle input:checked+.track:after{transform:translateX(17px);background:#fff}.toggle.small{width:32px;height:18px}.toggle.small .track:after{width:12px;height:12px}.toggle.small input:checked+.track:after{transform:translateX(14px)}
+.section-label{font-family:var(--display);font-size:9px;letter-spacing:2px;color:var(--faint);margin:23px 0 8px}.property-group{border-top:1px solid var(--line)}.prop{min-height:48px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:8px 1px}.prop-icon{width:23px;color:var(--muted);display:grid;place-items:center}.prop-icon svg{width:15px;height:15px}.prop-copy{flex:1;min-width:0}.prop-copy b{display:block;font-size:12px;font-weight:450;color:var(--text2)}.prop-copy small{font-family:var(--display);font-size:8px;letter-spacing:.6px;color:var(--faint)}
+.fold{border-bottom:1px solid var(--line)}.fold summary{list-style:none;display:flex;align-items:center;min-height:46px;cursor:pointer;color:var(--text2)}.fold summary::-webkit-details-marker{display:none}.fold summary:after{content:"›";margin-left:auto;color:var(--faint);font-size:17px;transition:140ms}.fold[open] summary:after{transform:rotate(90deg)}.fold svg{width:15px;height:15px;color:var(--muted);margin-right:12px}.fold-body{padding:0 0 13px 27px;color:var(--muted);font-size:11px;display:grid;gap:8px}.slider-line{display:grid;grid-template-columns:60px 1fr 36px;align-items:center;gap:8px}.slider-line input{accent-color:var(--orange);width:100%}.slider-line output{text-align:right;font-family:var(--display);font-size:9px;color:var(--text2)}
+.inspector-foot{display:flex;align-items:center;justify-content:space-between;margin-top:25px}.reset{border:0;background:transparent;color:var(--muted);font-size:10px;cursor:pointer;padding:7px 0}.reset:hover{color:var(--orange)}.modified{color:var(--faint);font-family:var(--display);font-size:9px;letter-spacing:1px}.modified i{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--orange);margin-right:6px}
+/* canvas */
+.stage{grid-column:3;grid-row:2;min-width:0;display:grid;grid-template-rows:48px minmax(0,1fr) 34px;background:#080a0b}.stagebar{display:flex;align-items:center;padding:0 18px;border-bottom:1px solid var(--line);color:var(--faint);font-family:var(--display);font-size:9px;letter-spacing:1.2px}.stagebar b{color:var(--text2);font-weight:500;margin-right:14px}.stagebar .sep{width:1px;height:14px;background:var(--line);margin:0 13px}.stagebar button{border:0;background:transparent;color:var(--muted);font-size:9px;letter-spacing:1px;padding:6px 8px;cursor:pointer}.stagebar button.on,.stagebar button:hover{color:var(--text);background:var(--surface2)}.stagebar .spacer{flex:1}
+.canvas-wrap{min-height:0;display:grid;place-items:center;padding:24px;background:radial-gradient(700px 460px at 48% 45%,#111718 0,#090c0d 62%,#07090a 100%)}
+.canvas{position:relative;width:min(100%,960px);aspect-ratio:16/9;max-height:100%;border:1px solid var(--line2);overflow:hidden;background:linear-gradient(rgba(6,9,10,.58),rgba(6,9,10,.78)),radial-gradient(circle at 48% 36%,#304034 0,#18251e 25%,#111919 53%,#080b0c 100%);box-shadow:0 25px 70px rgba(0,0,0,.48)}
+.canvas:after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(255,255,255,.012) 3px 4px)}.safe{position:absolute;inset:5.5%;border:1px dashed rgba(255,255,255,.09);display:none}.canvas.show-safe .safe{display:block}.cross-x,.cross-y{position:absolute;display:none;background:rgba(255,128,64,.18)}.canvas.show-grid .cross-x,.canvas.show-grid .cross-y{display:block}.cross-x{height:1px;left:0;right:0;top:50%}.cross-y{width:1px;top:0;bottom:0;left:50%}
+.hud{position:absolute;background:rgba(18,21,22,.92);border:1px solid #303537;padding:8px 10px;color:#f0f1f2;font-family:var(--display);box-shadow:0 8px 20px rgba(0,0,0,.38);transition:opacity 150ms,filter 150ms,border-color 150ms}.hud:before{content:"";position:absolute;left:-1px;top:7px;bottom:7px;width:2px;background:var(--ac)}.hud.selected{border-color:var(--ac);box-shadow:0 0 0 1px color-mix(in srgb,var(--ac) 28%,transparent),0 12px 28px rgba(0,0,0,.55)}.hud:not(.selected){opacity:.52;filter:saturate(.72)}.hud.off{opacity:.13}.hud-title{font-size:6px;letter-spacing:1.5px;color:#777d7f;display:flex;justify-content:space-between;margin-bottom:6px}.player-hud{--ac:var(--purple);left:3.5%;top:5%;width:31%}.monster-hud{--ac:var(--red);right:3.5%;top:5%;width:35%}.damage-hud{--ac:var(--teal);right:3.5%;bottom:5%;width:35%}
+.questline{display:flex;justify-content:space-between;font-size:7px;color:#bfc3c4;margin-bottom:4px}.questline b{color:#67d5ca}.weapon-row{display:flex;align-items:center;gap:6px;margin:6px 0}.weapon-box{width:22px;height:22px;border:1px solid #394043;background:#202527;display:grid;place-items:center;color:var(--purple);font-size:10px}.hunter{font-size:9px;color:var(--purple)}.rank{font-size:6px;color:#777d7f}.sharp{margin-left:auto;width:46px;height:6px;border:1px solid #414749;background:linear-gradient(90deg,#e53935 0 15%,#ff9800 15% 28%,#fdd835 28% 42%,#43a047 42% 60%,#42a5f5 60% 78%,#eee 78% 90%,#b84dff 90%)}
+.bar{height:9px;border:1px solid #343a3c;background:#1b1f20;margin:3px 0;position:relative;overflow:hidden}.bar i{display:block;height:100%;width:82%;background:#45a74a}.bar.blue i{width:66%;background:#378fd2}.bar span{position:absolute;inset:0;padding:0 4px;font-size:6px;line-height:8px;text-shadow:0 1px 1px #000}.chips{display:flex;gap:3px;margin-top:5px}.chip{flex:1;border:1px solid #303638;background:#1c2022;padding:3px;font-size:5px;color:#999}.chip b{display:block;color:#d4d6d7;font-weight:500;margin-bottom:2px}.monster-name{display:flex;align-items:center;gap:6px;margin-bottom:5px}.monster-icon{width:25px;height:25px;clip-path:polygon(50% 0,94% 25%,94% 75%,50% 100%,6% 75%,6% 25%);background:#32201d;display:grid;place-items:center;color:var(--red);font-size:10px}.monster-name b{font-size:9px}.enraged{margin-left:auto;color:var(--red);font-size:7px}.parts{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;margin-top:5px}.part{border:1px solid #303638;background:#1b2021;padding:3px;font-size:5px;color:#aaa}.mini{height:2px;background:#090b0c;margin-top:2px}.mini i{display:block;height:100%;width:72%;background:#78909c}.dmgrow{height:17px;margin-bottom:3px;background:#1b2021;border:1px solid #303638;display:flex;align-items:center;padding:0 5px;gap:5px;font-size:6px;position:relative}.dmgrow b{color:var(--c);font-size:7px;flex:1}.dmgrow span{color:#babdbe}.dmgrow em{font-style:normal;color:#6f7476}.chart{height:28px;border:1px solid #303638;margin-top:5px;background:linear-gradient(to bottom,transparent 49%,rgba(255,255,255,.05) 50%,transparent 51%);position:relative}.chart svg{width:100%;height:100%}.select-tag{position:absolute;left:0;top:-18px;color:var(--ac);font-size:6px;letter-spacing:1px;display:none}.hud.selected .select-tag{display:block}
+.stagefoot{border-top:1px solid var(--line);display:flex;align-items:center;padding:0 18px;color:var(--faint);font-family:var(--display);font-size:8px;letter-spacing:1px}.stagefoot b{color:var(--panel-accent);font-weight:500}.stagefoot span+span{margin-left:22px}.keys{margin-left:auto;color:#555b5d}.kbd{border:1px solid var(--line);padding:2px 5px;color:#777d7f;margin-left:5px}
+@media(max-width:1240px){.app{grid-template-columns:188px 320px minmax(520px,1fr)}.canvas-wrap{padding:16px}}
+</style>
+</head>
+<body>
+<div class="app" style="--panel-accent:var(--purple)">
+  <header class="top">
+    <div class="brand">MHW <b>·</b> OVERLAY CONTROL</div><div class="version">WORKSPACE / v0.5-A</div><div class="window-drag"></div>
+    <div class="top-status"><i class="live-dot"></i><span id="topState">READY · GAME DETECTED</span></div>
+    <button class="top-icon" title="Settings">⚙</button>
+  </header>
+
+  <aside class="rail">
+    <div class="eyebrow">HUD OBJECTS</div>
+    <div class="panel-list">
+      <button class="nav-item active" data-panel="player" style="--panel-accent:var(--purple)"><span class="nav-glyph">P</span><span class="nav-copy"><b>PLAYER</b><small>5 / 6 sections</small></span><i class="nav-state"></i></button>
+      <button class="nav-item" data-panel="monster" style="--panel-accent:var(--red)"><span class="nav-glyph">M</span><span class="nav-copy"><b>MONSTER</b><small>5 / 5 sections</small></span><i class="nav-state"></i></button>
+      <button class="nav-item" data-panel="damage" style="--panel-accent:var(--teal)"><span class="nav-glyph">D</span><span class="nav-copy"><b>DAMAGE</b><small>3 / 3 sections</small></span><i class="nav-state"></i></button>
+    </div>
+    <div class="nav-rule"></div><div class="eyebrow">WORKSPACE</div>
+    <button class="workspace-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>LAYOUT MODE</button>
+    <button class="workspace-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg>PRESETS</button>
+    <div class="rail-bottom"><div class="run-card"><div class="run-meta"><span>OVERLAY</span><span id="runState">READY</span></div><button class="primary" id="runBtn">▶ START OVERLAY</button></div></div>
+  </aside>
+
+  <section class="inspector"><div class="inspector-inner">
+    <div class="inspector-head"><div><div class="panel-code" id="panelCode">PANEL / 01</div><h1 class="panel-title" id="panelTitle">PLAYER</h1><div class="panel-desc" id="panelDesc">猎人状态与装备信息</div><div class="summary"><strong id="sectionCount">5 OF 6</strong><span>SECTIONS</span><span class="summary-bar"><i id="summaryFill"></i></span></div></div><label class="toggle"><input id="master" type="checkbox" checked><span class="track"></span></label></div>
+    <div class="section-label">CONTENT</div><div class="property-group" id="properties"></div>
+    <div class="section-label">BEHAVIOR</div>
+    <details class="fold"><summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12s3-5 9-5 9 5 9 5-3 5-9 5-9-5-9-5z"/><circle cx="12" cy="12" r="2"/></svg>Visibility rules</summary><div class="fold-body"><label><input type="checkbox"> 游戏菜单打开时隐藏</label><label><input type="checkbox"> 非任务状态时隐藏</label></div></details>
+    <div class="section-label">APPEARANCE</div>
+    <details class="fold" open><summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/></svg>Scale & opacity</summary><div class="fold-body"><label class="slider-line"><span>Scale</span><input id="scale" type="range" min="70" max="130" value="100"><output id="scaleOut">100%</output></label><label class="slider-line"><span>Opacity</span><input id="opacity" type="range" min="30" max="100" value="94"><output id="opacityOut">94%</output></label></div></details>
+    <div class="inspector-foot"><button class="reset" id="reset">↶ Reset current panel</button><div class="modified"><i></i>MODIFIED</div></div>
+  </section>
+
+  <main class="stage"><div class="stagebar"><b>LIVE HUD CANVAS</b><span>1920 × 1080</span><span class="sep"></span><span>100%</span><span class="spacer"></span><button id="safeBtn">SAFE AREA</button><button id="gridBtn">GRID</button></div>
+    <div class="canvas-wrap"><div class="canvas" id="canvas"><div class="safe"></div><i class="cross-x"></i><i class="cross-y"></i>
+      <div class="hud player-hud selected" data-hud="player"><span class="select-tag">SELECTED · TOP LEFT</span><div class="hud-title"><span>PLAYER</span><span>CONNECTED</span></div><div class="questline"><span>调查任务 · 古代树森林</span><b>38:42</b></div><div class="weapon-row"><div class="weapon-box">大</div><div><div class="hunter">A27EXE</div><div class="rank">MR 247 · HR 518</div></div><div class="sharp"></div></div><div class="bar"><i></i><span>HEALTH 164 / 200</span></div><div class="bar blue"><i></i><span>STAMINA 132 / 200</span></div><div class="chips"><div class="chip"><b>MANTLE</b>不动衣装 · 78s</div><div class="chip"><b>BUFF</b>攻击力提升 · 24s</div></div></div>
+      <div class="hud monster-hud" data-hud="monster"><span class="select-tag">SELECTED · TOP RIGHT</span><div class="hud-title"><span>MONSTER</span><span>POLL 250MS</span></div><div class="monster-name"><div class="monster-icon">火</div><div><b>历战王 火龙</b><div class="rank">RATHALOS · MR</div></div><span class="enraged">ENRAGED 32s</span></div><div class="bar"><i style="width:71%"></i><span>18,420 / 25,800 · 71%</span></div><div class="parts"><div class="part">HEAD<div class="mini"><i></i></div></div><div class="part">WINGS<div class="mini"><i style="width:42%"></i></div></div><div class="part">TAIL<div class="mini"><i style="width:88%"></i></div></div></div></div>
+      <div class="hud damage-hud" data-hud="damage"><span class="select-tag">SELECTED · BOTTOM RIGHT</span><div class="hud-title"><span>DAMAGE</span><span>TOTAL 62,840</span></div><div class="dmgrow" style="--c:#a74fff"><b>A27EXE</b><span>24,821</span><em>39.5%</em></div><div class="dmgrow" style="--c:#ff8040"><b>HUNTER 02</b><span>18,507</span><em>29.4%</em></div><div class="dmgrow" style="--c:#50c5b7"><b>HUNTER 03</b><span>12,946</span><em>20.6%</em></div><div class="chart"><svg viewBox="0 0 200 40" preserveAspectRatio="none"><polyline points="0,36 18,31 36,33 54,22 72,26 90,13 108,18 126,9 144,14 162,5 180,11 200,3" fill="none" stroke="#50c5b7" stroke-width="1.5"/></svg></div></div>
+    </div></div>
+    <footer class="stagefoot"><span>SELECTED: <b id="selectedFoot">PLAYER</b></span><span>ANCHOR: <span id="anchorFoot">TOP LEFT</span></span><span>PREVIEW DATA</span><span class="keys">SELECT <i class="kbd">1</i><i class="kbd">2</i><i class="kbd">3</i></span></footer>
+  </main>
+</div>
+<script>
+(()=>{
+ const data={
+  player:{title:'PLAYER',code:'PANEL / 01',desc:'猎人状态与装备信息',accent:'var(--purple)',anchor:'TOP LEFT',sections:[['Connection','游戏与内存连接状态'],['Quest','任务、区域与倒计时'],['Weapon','武器与斩味'],['Health & Stamina','生命值与耐力'],['Mantles','衣装与冷却'],['Debuffs','异常状态与持续时间']]},
+  monster:{title:'MONSTER',code:'PANEL / 02',desc:'大型怪物状态与部位信息',accent:'var(--red)',anchor:'TOP RIGHT',sections:[['Identity','怪物、危险等级与冠位'],['Health','生命值与阶段'],['Enrage','愤怒状态与倒计时'],['Ailments','异常积蓄与触发'],['Parts','部位、破坏与切断']]},
+  damage:{title:'DAMAGE',code:'PANEL / 03',desc:'队伍伤害统计与趋势',accent:'var(--teal)',anchor:'BOTTOM RIGHT',sections:[['Ranking rows','猎人伤害排行'],['Contribution','伤害占比'],['History chart','实时趋势曲线']]}
+ };
+ const icons=['M4 12h16M12 4v16','M5 5h14v14H5z','M4 18l5-6 4 3 7-9','M4 12h4l2-5 4 10 2-5h4','M7 4h10l2 5-7 11L5 9z','M12 3v18M3 12h18'];
+ let current='player'; const states={player:[1,1,1,1,1,0],monster:[1,1,1,1,1],damage:[1,1,1]};
+ const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+ function render(name){current=name;const d=data[name];document.querySelector('.app').style.setProperty('--panel-accent',d.accent);$('#panelCode').textContent=d.code;$('#panelTitle').textContent=d.title;$('#panelDesc').textContent=d.desc;$('#selectedFoot').textContent=d.title;$('#anchorFoot').textContent=d.anchor;
+  $$('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.panel===name));$$('.hud').forEach(x=>x.classList.toggle('selected',x.dataset.hud===name));
+  $('#properties').innerHTML=d.sections.map((s,i)=>`<div class="prop"><span class="prop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="${icons[i%icons.length]}"/></svg></span><span class="prop-copy"><b>${s[0]}</b><small>${s[1]}</small></span><label class="toggle small"><input data-index="${i}" type="checkbox" ${states[name][i]?'checked':''}><span class="track"></span></label></div>`).join('');
+  $('#properties').querySelectorAll('input').forEach(x=>x.onchange=()=>{states[name][+x.dataset.index]=x.checked?1:0;updateCount();});updateCount();
+ }
+ function updateCount(){let on=states[current].reduce((a,b)=>a+b,0),all=states[current].length;$('#sectionCount').textContent=`${on} OF ${all}`;$('#summaryFill').style.width=(on/all*100)+'%';let nav=$(`.nav-item[data-panel="${current}"]`);nav.querySelector('small').textContent=`${on} / ${all} sections`;}
+ $$('.nav-item').forEach(x=>x.onclick=()=>render(x.dataset.panel));
+ $('#master').onchange=e=>{$(`.hud[data-hud="${current}"]`).classList.toggle('off',!e.target.checked);$(`.nav-item[data-panel="${current}"]`).classList.toggle('is-off',!e.target.checked)};
+ $('#scale').oninput=e=>{$('#scaleOut').textContent=e.target.value+'%';$(`.hud[data-hud="${current}"]`).style.transform=`scale(${e.target.value/100})`};
+ $('#opacity').oninput=e=>{$('#opacityOut').textContent=e.target.value+'%';$(`.hud[data-hud="${current}"]`).style.opacity=e.target.value/100};
+ $('#safeBtn').onclick=e=>{e.target.classList.toggle('on');$('#canvas').classList.toggle('show-safe')};$('#gridBtn').onclick=e=>{e.target.classList.toggle('on');$('#canvas').classList.toggle('show-grid')};
+ $('#runBtn').onclick=e=>{let on=e.target.classList.toggle('running');e.target.textContent=on?'■ STOP OVERLAY':'▶ START OVERLAY';$('#runState').textContent=on?'RUNNING':'READY';$('#topState').textContent=on?'RUNNING · PID 18472':'READY · GAME DETECTED'};
+ $('#reset').onclick=()=>{states[current]=states[current].map(()=>1);$('#scale').value=100;$('#opacity').value=94;$('#scaleOut').textContent='100%';$('#opacityOut').textContent='94%';let h=$(`.hud[data-hud="${current}"]`);h.style.transform='';h.style.opacity='';render(current)};
+ document.addEventListener('keydown',e=>{if(['1','2','3'].includes(e.key))render(['player','monster','damage'][+e.key-1])});render('player');
+})();
+</script>
+</body></html>
