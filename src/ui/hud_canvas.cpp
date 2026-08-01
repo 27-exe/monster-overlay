@@ -324,11 +324,16 @@ void HudCanvas::paintEvent(QPaintEvent *)
         const QRectF target = logicalToCanvas(lrect);
 
         if (!s.pixmap.isNull() && s.enabled) {
-            const double srcOpac = s.src ? s.src->opacity() : 1.0;
+            // The pixmap already carries the panel's user opacity as
+            // pixel alpha (paintEvent composites it), so multiplying by
+            // src->opacity() here would double-apply it. Only the
+            // selection dimming (unselected panels fade to 55%) belongs to
+            // the canvas; save/restore keeps it from leaking to the frame.
             const double selDim  = (i == selected_) ? 1.0 : 0.55;
-            p.setOpacity(srcOpac * selDim);
+            p.save();
+            p.setOpacity(selDim);
             p.drawPixmap(target, s.pixmap, s.pixmap.rect());
-            p.setOpacity(1.0);
+            p.restore();
         } else {
             QColor accent = kAccents[i];
             accent.setAlpha(110);

@@ -165,8 +165,9 @@ void Panel::loadConfig()
     // shown until after applyGeometry() configures the layer-shell
     // surface (anchors + margins); showing first triggers "already
     // has a shell integration" warnings. main.cpp shows the panels.
-    if (!testAttribute(Qt::WA_DontShowOnScreen))
-        setWindowOpacity(opacity_);
+    // Opacity is NOT applied via setWindowOpacity here (see setOpacity
+    // for why). paintEvent composites it at the pixel level instead, so
+    // the persisted alpha takes effect on the very first paint.
 }
 
 void Panel::saveConfig()
@@ -288,6 +289,15 @@ void Panel::paintEvent(QPaintEvent *)
     // sync via setContentSize() so nothing is clipped.
     if (scale_ != 1.0)
         p.scale(scale_, scale_);
+
+    // v0.5: composite the panel at the user's opacity. This is the ONLY
+    // portable way to make the live overlay translucent — wayland
+    // layer-shell and the offscreen QPA both reject setWindowOpacity, so
+    // the alpha has to live in the pixels we draw. paintPanel() /
+    // paintMinimized() inherit it, and the console canvas preview picks it
+    // up too because renderPreview() grabs these same pixels into a pixmap
+    // that already carries the alpha.
+    p.setOpacity(opacity_);
 
     // Minimized: small colored block with panel initial.
     if (minimized_) {
@@ -560,7 +570,9 @@ void Panel::drawBarV03(QPainter &p, const QRectF &rect, float pct,
 
 // v0.5 P0: explicit setters for the control console's Appearance fold.
 // Both clamp into the same range the wheel editor and the constructor
-// enforce; both apply via setContentSize / setWindowOpacity; both
+// enforce. scale applies via setContentSize; opacity is composited at the
+// pixel level by paintEvent's QPainter::setOpacity (setWindowOpacity is
+// unsupported on layer-shell / offscreen, see setOpacity). Both
 // persist only when editMode_ is true (caller can flip persist=false
 // to skip disk for ephemeral drives like the canvas preview repaint).
 // Pattern: the same shape as the wheel zoom but exposed to caller code.
@@ -584,14 +596,14 @@ void Panel::setOpacity(qreal a, bool persist)
     if (qFuzzyCompare(clamped, opacity_))
         return;
     opacity_ = clamped;
-    // setWindowOpacity only works on a real composited window.
-    // Console preview panels are WA_DontShowOnScreen; calling it
-    // there spams "This plugin does not support setting window
-    // opacity" on every slider tick. The canvas preview reads
-    // opacity via PanelSource::opacity() + QPainter::setOpacity,
-    // so no window-level opacity is needed for the preview path.
-    if (!testAttribute(Qt::WA_DontShowOnScreen))
-        setWindowOpacity(opacity_);
+    // Opacity is composited at the PIXEL level in paintEvent via
+    // QPainter::setOpacity — the only portable path. wayland layer-shell
+    // (the live / edit overlay window) and the offscreen QPA both REJECT
+    // setWindowOpacity, so a window-level call is neither effective nor
+    // portable; on X11 it would also double-apply (window alpha * pixel
+    // alpha = opacity^2). A plain update() re-runs paintEvent at the new
+    // alpha, which is exactly what the live window and the console's
+    // renderPreview pixmap both need.
     update();
     if (persist && editMode_)
         saveConfig();
@@ -605,8 +617,6 @@ void Panel::resetToDefaults()
     margins_      = defaultMarginsFor(corner_);
     if (logicalSize_.isValid())
         setContentSize(logicalSize_.width(), logicalSize_.height());
-    if (!testAttribute(Qt::WA_DontShowOnScreen))
-        setWindowOpacity(opacity_);
-    update();
+    update();   // paintEvent re-composites at the reset alpha (0.85)
     saveConfig();
 }
