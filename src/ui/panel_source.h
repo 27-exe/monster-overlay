@@ -23,6 +23,7 @@ public:
     virtual QMargins margins() const = 0;
     virtual QSize contentSize() const = 0;
     virtual double scale() const = 0;
+    virtual double opacity() const { return 1.0; }
 };
 
 // Default adapter for a live mhw::Panel instance. Constructed with a
@@ -34,6 +35,7 @@ public:
     QMargins margins() const override;
     QSize contentSize() const override;
     double scale() const override;
+    double opacity() const override;
 private:
     const Panel *p_;
 };

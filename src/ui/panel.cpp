@@ -182,6 +182,14 @@ void Panel::saveConfig()
     settings().sync();
 }
 
+void Panel::saveAppearance()
+{
+    settings().beginGroup(key_);
+    settings().setValue(QStringLiteral("scale"), scale_);
+    settings().setValue(QStringLiteral("opacity"), opacity_);
+    settings().endGroup();
+}
+
 void Panel::setEditMode(bool on)
 {
     editMode_ = on;

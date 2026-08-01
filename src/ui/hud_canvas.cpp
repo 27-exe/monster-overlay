@@ -283,9 +283,16 @@ void HudCanvas::paintEvent(QPaintEvent *)
         const QRectF target = logicalToCanvas(lrect);
 
         if (!s.pixmap.isNull() && s.enabled) {
+            // v0.5 UI-link: honor the panel's live opacity so the
+            // canvas preview isn't always full-alpha.
+            const double opac = s.src ? s.src->opacity() : 1.0;
+            if (opac < 1.0)
+                p.setOpacity(opac);
             p.save();
             p.setOpacity(i == selected_ ? 1.0 : 0.55);
             p.drawPixmap(target, s.pixmap, s.pixmap.rect());
+            if (opac < 1.0)
+                p.setOpacity(1.0);
             p.restore();
         } else {
             // disabled placeholder: dashed outline at the same anchored rect

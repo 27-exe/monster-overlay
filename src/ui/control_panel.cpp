@@ -16,6 +16,7 @@
 #include <QCloseEvent>
 #include <QEvent>
 #include <QKeyEvent>
+#include <QSlider>
 #include <QMouseEvent>
 #include <QFrame>
 #include <QPushButton>
@@ -158,6 +159,8 @@ QString qssBase()
         "QLabel#countLabelP{color:#a74fff;}"
         "QLabel#countLabelM{color:#ff7043;}"
         "QLabel#countLabelD{color:#50c5b7;}"
+        "QLabel#sliderLabel{color:#8d9294;font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;min-width:52px;}"
+        "QLabel#sliderValue{color:#e0e0e0;font-family:'Chakra Petch';font-size:10px;min-width:36px;}"
         "QPushButton#foldout{background:transparent;color:#8d9294;border:1px solid #292e30;border-radius:3px;"
         "text-align:left;padding:9px 12px;font-family:'Chakra Petch';font-size:10px;letter-spacing:1px;}"
         "QPushButton#foldout:disabled:hover{background:#131617;}"
@@ -166,7 +169,17 @@ QString qssBase()
         "QPushButton#resetButton:disabled:hover{background:#131617;}"
         "QLabel#modified{font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;color:#777d7f;}"
         "QScrollBar:vertical{width:7px;background:#0d1011;}QScrollBar::handle:vertical{background:#303638;min-height:24px;}"
-        );
+
+        // v0.5 UI-link: APPEARANCE sliders
+        "QSlider{background:transparent;border:none;}"
+        "QSlider::groove:horizontal{height:4px;background:#2a2d2f;border-radius:2px;}"
+        "QSlider::handle:horizontal{width:14px;height:14px;margin:-5px 0;background:#e0e0e0;border-radius:7px;}"
+        "QSlider::sub-page:horizontal{background:#a74fff;border-radius:2px;}"
+        // v0.5 UI-link: stagebar toggle buttons
+        "QPushButton#stageToggle{background:transparent;color:#8d9294;border:1px solid #2a2d2f;border-radius:3px;padding:4px 12px;font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;}"
+        "QPushButton#stageToggle:hover{border-color:#4a4e50;color:#c0c4c6;}"
+        "QPushButton#stageToggle:checked{background:#1e2224;border-color:#a74fff;color:#a74fff;}"
+);
 }
 
 // v0.5 P2: map (panel index, section bit index) → SectionRow::Icon.
@@ -320,6 +333,26 @@ ControlPanel::ControlPanel(QWidget *parent)
     stage->setObjectName("stage");
     auto *stageLayout = new QVBoxLayout(stage);
     stageLayout->setContentsMargins(0, 0, 0, 0);
+
+    // v0.5 UI-link: stagebar with SAFE AREA / GRID toggles
+    auto *stagebar = new QHBoxLayout();
+    stagebar->setContentsMargins(22, 8, 22, 0);
+    stagebar->setSpacing(8);
+    stagebar->addStretch(1);
+    safeAreaBtn_ = new QPushButton(QStringLiteral("SAFE AREA"));
+    safeAreaBtn_->setObjectName("stageToggle");
+    safeAreaBtn_->setCheckable(true);
+    safeAreaBtn_->setChecked(true);
+    safeAreaBtn_->setCursor(Qt::PointingHandCursor);
+    stagebar->addWidget(safeAreaBtn_);
+    gridBtn_ = new QPushButton(QStringLiteral("GRID"));
+    gridBtn_->setObjectName("stageToggle");
+    gridBtn_->setCheckable(true);
+    gridBtn_->setChecked(true);
+    gridBtn_->setCursor(Qt::PointingHandCursor);
+    stagebar->addWidget(gridBtn_);
+    stageLayout->addLayout(stagebar);
+
     canvas_ = new HudCanvas();
     stageLayout->addWidget(canvas_);
     // v0.5 P1.4: clicking a HUD in the unified canvas selects it in the
@@ -328,6 +361,12 @@ ControlPanel::ControlPanel(QWidget *parent)
     // panel costs nothing.
     connect(canvas_, &HudCanvas::panelSelected, this, [this](int idx){
         selectPanel(idx);
+    });
+    connect(safeAreaBtn_, &QPushButton::toggled, this, [this](bool on){
+        if (canvas_) canvas_->setShowSafeArea(on);
+    });
+    connect(gridBtn_, &QPushButton::toggled, this, [this](bool on){
+        if (canvas_) canvas_->setShowGrid(on);
     });
     canvas_->bindPanel(0, new PanelSourceAdapter(static_cast<Panel*>(player_)));
     canvas_->bindPanel(1, new PanelSourceAdapter(static_cast<Panel*>(monster_)));
@@ -394,6 +433,16 @@ void ControlPanel::closeEvent(QCloseEvent *e)
     if (monster_) monster_->setVisible(false);
     if (damage_)  damage_->setVisible(false);
 
+    // v0.5 UI-link: persist scale/opacity that the APPEARANCE sliders
+    // changed (with persist=false). saveAppearance() writes ONLY scale
+    // and opacity — NOT margins or visible — so it can't clobber the
+    // live overlay's geometry or accidentally hide a panel (the console
+    // panels are WA_DontShowOnScreen + hidden; isVisible()==false would
+    // write visible=false and break the overlay's next launch).
+    if (player_)  player_->saveAppearance();
+    if (monster_) monster_->saveAppearance();
+    if (damage_)  damage_->saveAppearance();
+
     saveMaskToDisk();
     QMainWindow::closeEvent(e);
 }
@@ -425,6 +474,7 @@ void ControlPanel::selectPanel(int idx)
 {
     if (idx < 0 || idx >= 3) return;
     selectedPanel_ = idx;
+    syncAppearance(idx);
     if (inspectorStack_) inspectorStack_->setCurrentIndex(idx);
     if (canvas_) canvas_->setSelectedPanel(idx);
     for (int i = 0; i < 3; ++i) {
@@ -554,18 +604,81 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     }
 
     vl->addSpacing(12);
-    for (const auto &text : {QStringLiteral("BEHAVIOR  ›"),
-                             QStringLiteral("APPEARANCE  ›")}) {
-        auto *placeholder = new QPushButton(text);
-        placeholder->setObjectName("foldout");
-        placeholder->setEnabled(false); // presentation only in this phase
-        vl->addWidget(placeholder);
+
+    // v0.5 UI-link: APPEARANCE sliders (scale + opacity), live preview.
+    auto *appCap = new QLabel(QStringLiteral("APPEARANCE"));
+    appCap->setObjectName("sectionCap");
+    vl->addWidget(appCap);
+
+    auto *scaleRow = new QHBoxLayout();
+    scaleRow->setSpacing(8);
+    auto *scaleLab = new QLabel(QStringLiteral("SCALE"));
+    scaleLab->setObjectName("sliderLabel");
+    auto *scaleVal = new QLabel();
+    scaleVal->setObjectName("sliderValue");
+    auto *scaleSlider = new QSlider(Qt::Horizontal);
+    scaleSlider->setRange(50, 300);
+    {
+        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
+                  : idx == 1 ? static_cast<Panel*>(monster_)
+                             : static_cast<Panel*>(damage_));
+        scaleSlider->setValue(qRound(p->scale() * 100));
     }
+    scaleVal->setText(QStringLiteral("%1%").arg(scaleSlider->value()));
+    connect(scaleSlider, &QSlider::valueChanged, this, [this, idx, scaleVal](int v){
+        scaleVal->setText(QStringLiteral("%1%").arg(v));
+        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
+                  : idx == 1 ? static_cast<Panel*>(monster_)
+                             : static_cast<Panel*>(damage_));
+        p->setScale(v / 100.0, false);
+        rebuildAndRender(idx);
+    });
+    scaleRow->addWidget(scaleLab);
+    scaleRow->addWidget(scaleSlider, 1);
+    scaleRow->addWidget(scaleVal);
+    vl->addLayout(scaleRow);
+    ctl_[idx].scaleSlider = scaleSlider;
+
+    auto *opacRow = new QHBoxLayout();
+    opacRow->setSpacing(8);
+    auto *opacLab = new QLabel(QStringLiteral("OPACITY"));
+    opacLab->setObjectName("sliderLabel");
+    auto *opacVal = new QLabel();
+    opacVal->setObjectName("sliderValue");
+    auto *opacSlider = new QSlider(Qt::Horizontal);
+    opacSlider->setRange(10, 100);
+    {
+        Panel *p2 = (idx == 0 ? static_cast<Panel*>(player_)
+                   : idx == 1 ? static_cast<Panel*>(monster_)
+                              : static_cast<Panel*>(damage_));
+        opacSlider->setValue(qRound(p2->opacity() * 100));
+    }
+    opacVal->setText(QStringLiteral("%1%").arg(opacSlider->value()));
+    connect(opacSlider, &QSlider::valueChanged, this, [this, idx, opacVal](int v){
+        opacVal->setText(QStringLiteral("%1%").arg(v));
+        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
+                  : idx == 1 ? static_cast<Panel*>(monster_)
+                             : static_cast<Panel*>(damage_));
+        p->setOpacity(v / 100.0, false);
+        rebuildAndRender(idx);
+    });
+    opacRow->addWidget(opacLab);
+    opacRow->addWidget(opacSlider, 1);
+    opacRow->addWidget(opacVal);
+    vl->addLayout(opacRow);
+    ctl_[idx].opacitySlider = opacSlider;
+
+    // BEHAVIOR fold remains a placeholder (no backend fields yet).
+    auto *behavior = new QPushButton(QStringLiteral("BEHAVIOR  ›"));
+    behavior->setObjectName("foldout");
+    behavior->setEnabled(false);
+    vl->addWidget(behavior);
     vl->addStretch(1);
     auto *foot = new QHBoxLayout();
     auto *reset = new QPushButton(QStringLiteral("↶  RESET %1").arg(title));
     reset->setObjectName("resetButton");
-    reset->setEnabled(false); // reset API is deliberately deferred
+    reset->setCursor(Qt::PointingHandCursor);
+    connect(reset, &QPushButton::clicked, this, [this, idx]{ resetPanel(idx); });
     foot->addWidget(reset);
     foot->addStretch(1);
     auto *modified = new QLabel(QStringLiteral("AUTO-SAVED  ●"));
@@ -960,4 +1073,45 @@ void ControlPanel::setOverlayRunning(bool running)
         statusBadge_->style()->unpolish(statusBadge_);
         statusBadge_->style()->polish(statusBadge_);
     }
+}
+
+// v0.5 UI-link: sync the APPEARANCE sliders to match the panel's current
+// scale/opacity. Called after selectPanel() and resetPanel() so the
+// inspector always reflects reality. Blocks signals to avoid feedback
+// loops (slider → setScale → rebuildAndRender → syncAppearance → slider…).
+void ControlPanel::syncAppearance(int idx)
+{
+    Panel *panel = (idx == 0 ? static_cast<Panel*>(player_)
+                  : idx == 1 ? static_cast<Panel*>(monster_)
+                             : static_cast<Panel*>(damage_));
+    auto &c = ctl_[idx];
+    if (c.scaleSlider) {
+        c.scaleSlider->blockSignals(true);
+        c.scaleSlider->setValue(qRound(panel->scale() * 100));
+        c.scaleSlider->blockSignals(false);
+    }
+    if (c.opacitySlider) {
+        c.opacitySlider->blockSignals(true);
+        c.opacitySlider->setValue(qRound(panel->opacity() * 100));
+        c.opacitySlider->blockSignals(false);
+    }
+}
+
+// v0.5 UI-link: reset the selected panel to factory defaults (all
+// sections on, scale 1.0, opacity 0.85, default margins). Uses
+// persist=false — the change is previewed immediately and written
+// by closeEvent's saveAppearance() + saveMaskToDisk().
+void ControlPanel::resetPanel(int idx)
+{
+    Panel *panel = (idx == 0 ? static_cast<Panel*>(player_)
+                  : idx == 1 ? static_cast<Panel*>(monster_)
+                             : static_cast<Panel*>(damage_));
+    panel->resetToDefaults();
+    // Sync UI: master on, all subs on, sliders to defaults.
+    auto &c = ctl_[idx];
+    if (c.master) c.master->setChecked(true);
+    for (auto *row : c.subs)
+        row->setChecked(true);
+    syncAppearance(idx);
+    rebuildAndRender(idx);
 }

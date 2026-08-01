@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QSlider>
 #include <QStringList>
 #include <QTimer>
 #include <QVector>
@@ -64,6 +65,8 @@ private:
         QLabel *navSummary = nullptr;
         QLabel *countLabel = nullptr;
     SectionCountBar *countBar = nullptr;
+        QSlider *scaleSlider = nullptr;
+        QSlider *opacitySlider = nullptr;
     };
 
     QWidget *buildInspector(const QString &title, const QString &sub,
@@ -78,6 +81,8 @@ private:
     void stopOverlay();
     void onOverlayExited();
     void setOverlayRunning(bool running);
+    void syncAppearance(int idx);
+    void resetPanel(int idx);
     void rebuildAndRender(int idx);
     QPixmap renderPreview(Panel *p);
 
@@ -93,6 +98,8 @@ private:
     QPushButton *editBtn_  = nullptr;
     QStackedWidget *inspectorStack_ = nullptr;
     HudCanvas *canvas_ = nullptr;
+    QPushButton *safeAreaBtn_ = nullptr;
+    QPushButton *gridBtn_ = nullptr;
     int selectedPanel_ = 0;
 
     // L4: status badge in the top-right, shows "READY" by default and

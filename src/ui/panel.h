@@ -90,6 +90,7 @@ public:
     // Reset mask, scale, opacity, and margins to factory values
     // and re-sync the layer-shell surface. Always persists.
     void resetToDefaults();
+    void saveAppearance();
 
 protected:
     virtual void paintPanel(QPainter &p) = 0;
