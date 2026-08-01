@@ -285,15 +285,15 @@ void HudCanvas::paintEvent(QPaintEvent *)
         if (!s.pixmap.isNull() && s.enabled) {
             // v0.5 UI-link: honor the panel's live opacity so the
             // canvas preview isn't always full-alpha.
-            const double opac = s.src ? s.src->opacity() : 1.0;
-            if (opac < 1.0)
-                p.setOpacity(opac);
-            p.save();
-            p.setOpacity(i == selected_ ? 1.0 : 0.55);
+            // v0.5-fix: combine source panel opacity with selection
+            // dimming. The old code called setOpacity twice — the
+            // second call (selection) overwrote the first (source),
+            // so dragging the opacity slider had zero visible effect.
+            const double srcOpac = s.src ? s.src->opacity() : 1.0;
+            const double selDim  = (i == selected_) ? 1.0 : 0.55;
+            p.setOpacity(srcOpac * selDim);
             p.drawPixmap(target, s.pixmap, s.pixmap.rect());
-            if (opac < 1.0)
-                p.setOpacity(1.0);
-            p.restore();
+            p.setOpacity(1.0);
         } else {
             // disabled placeholder: dashed outline at the same anchored rect
             QColor accent = kAccents[i];
