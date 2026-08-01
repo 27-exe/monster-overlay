@@ -4,6 +4,7 @@
 #include <QFontMetrics>
 #include <QGuiApplication>
 #include <QLinearGradient>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPaintEvent>
@@ -134,6 +135,20 @@ void HudCanvas::setPanelPixmap(int index, const QPixmap &pixmap, bool enabled)
     update();
 }
 
+void HudCanvas::setShowSafeArea(bool on)
+{
+    if (showSafeArea_ == on) return;
+    showSafeArea_ = on;
+    update();
+}
+
+void HudCanvas::setShowGrid(bool on)
+{
+    if (showGrid_ == on) return;
+    showGrid_ = on;
+    update();
+}
+
 void HudCanvas::setSelectedPanel(int index)
 {
     if (index < 0 || index >= 3 || selected_ == index) return;
@@ -157,6 +172,9 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setRenderHint(QPainter::TextAntialiasing, true);
     p.fillRect(rect(), QColor(6, 8, 10));
+
+    // Zero hit-test rects so un-bound slots aren't clickable.
+    for (int i = 0; i < 3; ++i) slots_[i].lastTarget_ = QRectF();
 
     // --- header ---
     QFont headFont(QStringLiteral("Chakra Petch"), 11, QFont::Medium);
@@ -204,10 +222,21 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.setPen(QPen(QColor(56, 60, 62), 1));
     p.drawRect(frame);
 
-    // safe area (5% inset, dashed)
-    p.setPen(QPen(QColor(255, 255, 255, 28), 1, Qt::DashLine));
-    p.drawRect(frame.adjusted(frame.width() * .055, frame.height() * .055,
-                              -frame.width() * .055, -frame.height() * .055));
+    // safe area (5% inset, dashed) — toggleable via stagebar.
+    if (showSafeArea_) {
+        p.setPen(QPen(QColor(255, 255, 255, 28), 1, Qt::DashLine));
+        p.drawRect(frame.adjusted(frame.width() * .055, frame.height() * .055,
+                                  -frame.width() * .055, -frame.height() * .055));
+    }
+
+    // grid crosshair — toggleable via stagebar.
+    if (showGrid_) {
+        p.setPen(QPen(QColor(255, 255, 255, 33), 1, Qt::DashLine));
+        p.drawLine(QPointF(frame.left(),  frame.center().y()),
+                   QPointF(frame.right(), frame.center().y()));
+        p.drawLine(QPointF(frame.center().x(), frame.top()),
+                   QPointF(frame.center().x(), frame.bottom()));
+    }
 
     // scale ruler — physical pixels (what the user can read off
     // a display-settings dialog). The user can mentally divide by
@@ -290,6 +319,10 @@ void HudCanvas::paintEvent(QPaintEvent *)
             p.fillRect(tagBox, QColor(0, 0, 0, 180));
             p.drawText(tagBox, Qt::AlignCenter, tag);
         }
+
+        // Cache for hit-test. Mouse clicks outside the visible target
+        // shouldn't select a panel we drew underneath.
+        slots_[i].lastTarget_ = target;
     }
 
     // --- footer ---
@@ -314,4 +347,22 @@ void HudCanvas::paintEvent(QPaintEvent *)
                    .arg(QString::number(slots_[selected_].bound
                                             ? slots_[selected_].src->scale()
                                             : 1.0, 'f', 2)));
+}
+
+void HudCanvas::mousePressEvent(QMouseEvent *e)
+{
+    if (e->button() != Qt::LeftButton) return;
+    // Walk the cache populated by paintEvent. We pick the last
+    // (top-most) hit on purpose so callers don't need to manage
+    // z-order; targets are non-overlapping on the default layout.
+    for (int i = 2; i >= 0; --i) {
+        if (slots_[i].lastTarget_.contains(e->position())) {
+            if (i != selected_) {
+                selected_ = i;
+                update();
+                emit panelSelected(i);
+            }
+            return;
+        }
+    }
 }

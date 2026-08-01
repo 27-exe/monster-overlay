@@ -520,3 +520,48 @@ void Panel::drawBarV03(QPainter &p, const QRectF &rect, float pct,
     hi.setColorAt(1.0, QColor(255, 255, 255, 0));
     p.fillRect(QRectF(fill.x(), fill.y(), fill.width(), 1), hi);
 }
+
+// v0.5 P0: explicit setters for the control console's Appearance fold.
+// Both clamp into the same range the wheel editor and the constructor
+// enforce; both apply via setContentSize / setWindowOpacity; both
+// persist only when editMode_ is true (caller can flip persist=false
+// to skip disk for ephemeral drives like the canvas preview repaint).
+// Pattern: the same shape as the wheel zoom but exposed to caller code.
+
+void Panel::setScale(qreal s, bool persist)
+{
+    const qreal clamped = std::clamp(s, kMinScale, kMaxScale);
+    if (qFuzzyCompare(clamped + 1.0, scale_ + 1.0))
+        return;                                // no-op
+    scale_ = clamped;
+    if (logicalSize_.isValid())
+        setContentSize(logicalSize_.width(), logicalSize_.height());
+    update();
+    if (persist && editMode_)
+        saveConfig();
+}
+
+void Panel::setOpacity(qreal a, bool persist)
+{
+    const qreal clamped = std::clamp(a, 0.1, 1.0);
+    if (qFuzzyCompare(clamped, opacity_))
+        return;
+    opacity_ = clamped;
+    setWindowOpacity(opacity_);
+    update();
+    if (persist && editMode_)
+        saveConfig();
+}
+
+void Panel::resetToDefaults()
+{
+    sectionMask_  = 0xFFFFFFFFu;
+    scale_        = 1.0;
+    opacity_      = 0.85;
+    margins_      = defaultMarginsFor(corner_);
+    if (logicalSize_.isValid())
+        setContentSize(logicalSize_.width(), logicalSize_.height());
+    setWindowOpacity(opacity_);
+    update();
+    saveConfig();
+}

@@ -76,6 +76,20 @@ public:
     [[nodiscard]] Corner corner() const { return corner_; }
     [[nodiscard]] QMargins margins() const { return margins_; }
     [[nodiscard]] double scale() const { return scale_; }
+    [[nodiscard]] double opacity() const { return opacity_; }
+
+    // v0.5+: explicit setters for the control console's
+    // Appearance fold. Both clamp into the same range the wheel
+    // editor and the constructor enforce; both apply via
+    // setContentSize / setWindowOpacity; both persist only when
+    // editMode_ is true (caller can flip persist=false to skip
+    // disk for ephemeral drives like the canvas preview repaint).
+    void setScale(qreal s, bool persist = true);
+    void setOpacity(qreal a, bool persist = true);
+
+    // Reset mask, scale, opacity, and margins to factory values
+    // and re-sync the layer-shell surface. Always persists.
+    void resetToDefaults();
 
 protected:
     virtual void paintPanel(QPainter &p) = 0;
@@ -84,7 +98,6 @@ protected:
     virtual void onSnapshot(const mhw::GameSnapshot &) { update(); }
     QWidget *canvas() { return this; }
     void setContentSize(int w, int h);
-    double opacity() const { return opacity_; }
 
     void paintEvent(QPaintEvent *e) override;
     void mousePressEvent(QMouseEvent *e) override;

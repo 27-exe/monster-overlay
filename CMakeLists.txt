@@ -253,6 +253,54 @@ target_compile_definitions(mhw-control-l2-smoke PRIVATE
 )
 target_compile_options(mhw-control-l2-smoke PRIVATE -Wall -Wextra -Wpedantic)
 
+# v0.5 P0 invariant test: Panel setters + HudCanvas toggle + hit-test.
+# Builds without mhw-control so it doesn't pull in the full GUI shell.
+# Drop the QPA-private include because Panel is purely Qt-public here.
+add_executable(mhw-control-p0-test
+    tests/control_panel_p0_test.cpp
+    src/mhw_reader.cpp
+    src/mhw_reader.h
+    src/player/player_reader.cpp
+    src/quest/quest_reader.cpp
+    src/world/world_reader.cpp
+    src/monster/monster_reader.cpp
+    src/monster/part_schemas.cpp
+    src/monster/target_selector.cpp
+    src/core/string_table.cpp
+    src/ui/formatters.cpp
+    src/ui/icon.cpp
+    src/ui/panel.cpp
+    src/ui/panel_player.cpp
+    src/ui/panel_damage.cpp
+    src/ui/panel_monster.cpp
+    src/ui/hud_canvas.cpp
+    src/ui/hud_canvas.h
+    src/ui/panel_source.cpp
+    src/ui/panel_source.h
+    src/ui/screen_query.cpp
+    src/ui/screen_query.h
+    src/ui/toggle_chip.cpp
+    src/ui/toggle_chip.h
+    src/ui/section_row.cpp
+    src/ui/section_row.h
+    src/world/world_types.cpp
+    src/resources/resources.qrc
+    assets/icons.qrc
+)
+target_link_libraries(mhw-control-p0-test PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+    LayerShellQt::Interface
+    mhw-core
+)
+target_include_directories(mhw-control-p0-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(mhw-control-p0-test PRIVATE
+    ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
+)
+target_compile_definitions(mhw-control-p0-test PRIVATE
+    MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
+)
+target_compile_options(mhw-control-p0-test PRIVATE -Wall -Wextra -Wpedantic)
+
 target_link_libraries(mhw-overlay-web PRIVATE
     Qt6::Core
     Qt6::Gui
