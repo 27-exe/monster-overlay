@@ -6,6 +6,7 @@
 #include <QRectF>
 #include <QSettings>
 #include <QWidget>
+#include <cstdint>
 
 namespace mhw {
 struct GameSnapshot;
@@ -39,6 +40,12 @@ public:
     void setEditMode(bool on);
     bool editMode() const { return editMode_; }
 
+    // Section visibility: per-panel bitmask of independently toggleable
+    // blocks (see ui/panel_sections.h). Default = all sections on so
+    // live mode is unaffected. The control panel flips individual bits.
+    void setSectionMask(uint32_t mask) { sectionMask_ = mask; update(); }
+    [[nodiscard]] uint32_t sectionMask() const { return sectionMask_; }
+
     // Edit-mode demo data is built once on first paint after entering
     // edit mode, then reused — keeps paint() O(display).
     virtual void setupDemoData() {}
@@ -47,6 +54,7 @@ public:
     void resetDemoPrimed() { demoPrimed_ = false; }
 
     void setVisible(bool visible);
+    [[nodiscard]] QSize contentSize() const { return logicalSize_; }
 
 protected:
     virtual void paintPanel(QPainter &p) = 0;
@@ -83,6 +91,10 @@ private:
     void paintMinimized(QPainter &p);
 
     bool demoPrimed_{false};
+
+    // See setSectionMask(). Each subclass interprets the bits via the
+    // matching namespace in panel_sections.h (PlayerSection / ...).
+    uint32_t sectionMask_{0xFFFFFFFFu};
 
     QString key_;
     Corner corner_;

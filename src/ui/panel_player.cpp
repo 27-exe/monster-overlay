@@ -5,6 +5,7 @@
 #include "quest/quest_types.h"
 #include "ui/formatters.h"
 #include "ui/icon.h"
+#include "ui/panel_sections.h"
 #include "world/world_types.h"
 
 #include <QPainter>
@@ -535,22 +536,52 @@ void PlayerPanel::paintPanel(QPainter &p)
                           + (player_.mantleSlot1Id >= 0 ? 1 : 0);
     const int debuffCount = player_.debuffs.size();
 
-    // ---- Compute height up front ----
-    int totalH = kMargin
-                + kTitleH                              // title row
-                + kQrowH * 4                           // 4 quest rows
-                + kGapQrow * 3                         // gap between qrows
-                + kGapSection                          // gap before prow
-                + 26 + kGapBar                         // prow (wslot 26) + bar gap
-                + kBarH + kGapBar                      // HP bar
-                + kStBarH + kGapBar                    // ST bar
-                + kMargin;
-    if (mantleCount > 0) totalH += kGapSection + kMbH;
+    // ---- Section mask (ui/panel_sections.h) ----
+    const uint32_t smask     = sectionMask();
+    const bool onConn        = smask & mhw::PlayerSection::Conn;
+    const bool onQuest       = smask & mhw::PlayerSection::Quest;
+    const bool onWeapon      = smask & mhw::PlayerSection::Weapon;
+    const bool onBars        = smask & mhw::PlayerSection::Bars;
+    const bool onMantles     = smask & mhw::PlayerSection::Mantles;
+    const bool onDebuff      = smask & mhw::PlayerSection::Debuff;
+
+    // Block-table gap/content constants. Derived from the original serial
+    // y-advance so the fully-on layout is pixel-identical to before
+    // (the only delta is 7 px less bottom padding — a fix for the
+    // original height formula over-counting the mantle separator).
+    // A block contributes gapBefore + contentH to height and to the
+    // running y only when its mask bit AND data precondition hold; the
+    // gap is consumed by the *following* block, so disabling a block
+    // drops its trailing spacing cleanly with no neighbour drift.
+    // Conn + Quest share a single qrow stream (max 4 rows: 1 Conn +
+    // 3 Quest). Its height is N*rowH + (N-1)*gap so the last row's
+    // trailing gap is never counted — matching the draw-time trim.
+    constexpr int kWeaponGap = kGapSection;                             // 9
+    constexpr int kWeaponH   = 26;                                      // prow
+    constexpr int kBarsGap   = kGapBar;                                 // 7
+    constexpr int kBarsH     = kBarH + kGapBar + kStBarH + kGapBar;     // 41
+    constexpr int kMantleGap = kGapSection - kGapBar;                   // 2
+    constexpr int kMantleH   = kMbH;                                    // 60
+    constexpr int kDebuffGap = kGapSection;                             // 9
+
+    const int n_qrow = (onConn ? 1 : 0) + (onQuest ? 3 : 0);
+    const int qrowStreamH = n_qrow > 0
+        ? n_qrow * kQrowH + (n_qrow - 1) * kGapQrow : 0;
+
+    int debuffH = 0;
     if (debuffCount > 0) {
         constexpr int kPillsPerRow = 3;
         const int debuffRows = (debuffCount + kPillsPerRow - 1) / kPillsPerRow;
-        totalH += kGapSection + debuffRows * kPillH + (debuffRows - 1) * 4;
+        debuffH = debuffRows * kPillH + (debuffRows - 1) * 4;
     }
+
+    int totalH = kMargin + kTitleH;   // title always drawn
+    totalH += qrowStreamH;
+    if (onWeapon)                        totalH += kWeaponGap + kWeaponH;
+    if (onBars)                          totalH += kBarsGap  + kBarsH;
+    if (onMantles && mantleCount > 0)    totalH += kMantleGap + kMantleH;
+    if (onDebuff  && debuffCount > 0)    totalH += kDebuffGap + debuffH;
+    totalH += kMargin;
     setContentSize(kPanelW, totalH);
 
     int y = kMargin;
@@ -625,7 +656,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     };
 
     // Row 1: 已连接 · PID 12345 · BASE 0x7FFE0000  + 4H 队伍
-    {
+    if (onConn) {
         const QString mem = QStringLiteral("PID %1 · BASE 0x%2")
                                 .arg(pid_ > 0 ? QString::number(pid_)
                                               : QStringLiteral("--"))
@@ -645,7 +676,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     }
 
     // Row 2: 区域 · 任务  +  古代树森林#66801 ★6 · 进行中
-    {
+    if (onQuest) {
         QString zone = zoneLabel(zone_);
         if (zone.length() > 6) zone = zone.left(6) + QStringLiteral("…");
         const QString questTxt = quest_.active
@@ -664,7 +695,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     }
 
     // Row 3: 剩余  +  41:37
-    {
+    if (onQuest) {
         const QString timerTxt = quest_.active
             ? fmtMmSs(quest_.timeLeftSeconds)
             : QStringLiteral("--:--");
@@ -677,7 +708,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     }
 
     // Row 4: 猫车  +  0 / 3
-    {
+    if (onQuest) {
         const QString cart = quest_.active
             ? QStringLiteral("%1 / %2")
                   .arg(quest_.deaths).arg(quest_.maxDeaths)
@@ -690,11 +721,12 @@ void PlayerPanel::paintPanel(QPainter &p)
                            false, QColor()});
     }
 
-    y -= kGapQrow;          // last qrow has no trailing inter-row gap
-    y += kGapSection;       // separator before prow (HTML .mantlerow padding-top:9)
+    if (n_qrow > 0)
+        y -= kGapQrow;      // last qrow has no trailing inter-row gap
 
     // ---- prow: weapon slot + name + MR ----
-    {
+    if (onWeapon) {
+        y += kGapSection;   // gap before prow (moved out of serial layout)
         const int prowH = 26;             // .wslot height
         const QRectF slotRect(innerLeft, y, kWslot, prowH);
         const QString wp = weaponId_ >= 0
@@ -776,7 +808,9 @@ void PlayerPanel::paintPanel(QPainter &p)
         y += prowH;
     }
 
-    y += kGapBar;
+    // ---- HP / ST bars ----
+    if (onBars) {
+        y += kGapBar;       // gap before HP bar
 
     // ---- HP bar ----
     const bool hpKnown = (player_.valid && player_.maxHealth > 0.0F);
@@ -829,9 +863,10 @@ void PlayerPanel::paintPanel(QPainter &p)
                    Qt::AlignRight | Qt::AlignVCenter, rightText);
     }
     y += kStBarH + kGapBar;
+    }
 
     // ---- mantlerow: 2 mantle boxes (.mb grid) ----
-    if (mantleCount > 0) {
+    if (onMantles && mantleCount > 0) {
         y += kGapSection - kGapBar;     // align with HTML separator
         const int totalW = innerW;
         const int gap    = 8;            // HTML gap:8 inside .mantlerow
@@ -873,7 +908,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     }
 
     // ---- debuffs: .pill row, max 3 per row, wraps to a second line ----
-    if (debuffCount > 0) {
+    if (onDebuff && debuffCount > 0) {
         y += kGapSection;
         const int totalW = innerW;
         const int pillGap = 5;

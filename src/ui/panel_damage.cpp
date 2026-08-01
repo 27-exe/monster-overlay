@@ -6,6 +6,7 @@
 #include "world/world_types.h"
 #include "ui/formatters.h"
 #include "ui/icon.h"
+#include "ui/panel_sections.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -317,16 +318,22 @@ void DamagePanel::paintPanel(QPainter &p)
     drawV03Chrome(p, Panel::Accent::Damage);
 
     const int n = names_.size();
+    // ---- Section mask (ui/panel_sections.h) ----
+    const uint32_t smask   = sectionMask();
+    const bool onRows     = smask & mhw::DamageSection::Rows;
+    const bool onShare    = smask & mhw::DamageSection::Share;
+    const bool onChart    = smask & mhw::DamageSection::Chart;
+
     // HTML layout: title row + POLL chip row + N×29px drow + chart 140px
     // + the 9px margin-top before the chart.
-    const int rowsAreaH = n * kRowH + (n > 0 ? (n - 1) * kRowGap : 0);
+    const int rowsAreaH = onRows ? (n * kRowH + (n > 0 ? (n - 1) * kRowGap : 0)) : 0;
     const int totalH = kMargin + 14                  // title row
                       + 9                          // gap below title
                       + rowsAreaH
-                      + (n > 0 ? 9 : 0)            // gap above share bar
-                      + (n > 0 ? kShareBarH - 2 : 0)// share bar itself
-                      + (n > 0 ? 4 : 0)            // gap before chart
-                      + kChartH
+                      + (onShare && n > 0 ? 9 : 0)            // gap above share bar
+                      + (onShare && n > 0 ? kShareBarH - 2 : 0)// share bar itself
+                      + (onShare && n > 0 ? 4 : 0)            // gap before chart
+                      + (onChart ? kChartH : 0)
                       + kMargin;
     setContentSize(kPanelW, totalH);
 
@@ -365,6 +372,7 @@ void DamagePanel::paintPanel(QPainter &p)
         partyDamage = 1;
 
     for (int i = 0; i < n; ++i) {
+        if (!onRows) break;   // skip row drawing; y not advanced
         const int dmg = history_.isEmpty() ? 0 : history_.last().damage.value(i, 0);
         // Demo data sets kFinalDps[] to match the user's realistic
         // MHW DPS range (~300 down to ~100). Real updates use
@@ -489,7 +497,7 @@ void DamagePanel::paintPanel(QPainter &p)
     // --- Share bar (clean single-row, full-width, 4 colour segments) ---
     // Gap above shared bar: 9px (HTML .chart margin), share bar 8px,
     // gap before chart: 6px.
-    if (n > 0) {
+    if (onShare && n > 0) {
         y += 9;
         const QRectF shareRect(kMargin, y, kPanelW - 2 * kMargin, kShareBarH - 2);
         drawShareBar(p, shareRect);
@@ -497,7 +505,8 @@ void DamagePanel::paintPanel(QPainter &p)
     }
 
     // --- Line chart ---
-    drawChart(p, QRectF(kMargin, y, kPanelW - 2 * kMargin, kChartH));
+    if (onChart)
+        drawChart(p, QRectF(kMargin, y, kPanelW - 2 * kMargin, kChartH));
 }
 
 void DamagePanel::drawShareBar(QPainter &p, const QRectF &barRect)

@@ -4,6 +4,7 @@
 #include "monster/monster_types.h"
 #include "ui/formatters.h"
 #include "ui/icon.h"
+#include "ui/panel_sections.h"
 
 #include <QColor>
 #include <QElapsedTimer>
@@ -443,27 +444,47 @@ void MonsterPanel::paintPanel(QPainter &p)
     }
     const int scCount = scList.size();
 
-    // ---- Layout heights, exactly as the HTML lays them out ----
-    int totalH = kPanelPad
-               + kTitleH + kRowGap            // .ptitle
-               + kHexH   + kRowGap            // .hexwrap
-               + kBarH   + 2 * kBarVPad + kRowGap;   // .bar.hp
+    // ---- Section mask (ui/panel_sections.h) ----
+    const uint32_t smask = sectionMask();
+    const bool onInfo   = smask & mhw::MonsterSection::Info;
+    const bool onHp     = smask & mhw::MonsterSection::Hp;
+    const bool onEnrage = smask & mhw::MonsterSection::Enrage;
+    const bool onAil    = smask & mhw::MonsterSection::Ail;
+    const bool onParts  = smask & mhw::MonsterSection::Parts;
+
     const bool showRage = monster_.enrageMaxBuildup > 0.0F || monster_.enraged;
-    if (showRage)
-        totalH += kRageBarH + 2 * kBarVPad + kRowGap;   // .bar.er
+    const bool rageDrawn = onEnrage && showRage;
+
+    // Block-table height (see panel_sections.h MonsterSection). gapBefore
+    // model: the original mixed post-gaps (title/hex/hp/rage) and pre-gaps
+    // (ail/parts); we fold each post-gap into the next block's pre-gap so
+    // disabling a block drops its spacing cleanly. rage's conditional
+    // post-gap is folded into ail's conditional pre-gap (the +rageDrawn
+    // term) so the fully-on rage→ail 2-row gap is preserved bit-exact.
+    constexpr int kInfoH = kTitleH + kRowGap + kHexH;
+    const int hpH        = kBarH + 2 * kBarVPad;
+    const int rageH      = kRageBarH + 2 * kBarVPad;
+    int scAreaH = 0;
     if (scCount > 0) {
         const int scRows = (scCount + kScCols - 1) / kScCols;
         constexpr int kScCellH = kScPadY + kScTopFont + 4 + kScMiniH + kScPadY;
-        totalH += kRowGap + scRows * kScCellH + (scRows - 1) * kScGap;
+        scAreaH = scRows * kScCellH + (scRows - 1) * kScGap;
     }
-    // .pgrid heights — 6 parts in 3 columns = 2 rows.
+    int pcAreaH = 0;
     const int pcCount = monster_.parts.size();
     if (pcCount > 0) {
         const int pcRows = (pcCount + kPcCols - 1) / kPcCols;
         constexpr int kPcCellH = kPcPadY + kPcPnFont + 2 + kPcPnGap
                                 + kPcMiniH + kPcPadY;
-        totalH += kRowGap + pcRows * kPcCellH + (pcRows - 1) * kPcGap;
+        pcAreaH = pcRows * kPcCellH + (pcRows - 1) * kPcGap;
     }
+
+    int totalH = kPanelPad;
+    if (onInfo)                  totalH += kInfoH;
+    if (onHp)                    totalH += kRowGap + hpH;
+    if (rageDrawn)               totalH += kRowGap + rageH;
+    if (onAil && scCount > 0)    totalH += kRowGap + (rageDrawn ? kRowGap : 0) + scAreaH;
+    if (onParts && pcCount > 0)  totalH += kRowGap + pcAreaH;
     totalH += kPanelPad;
     setContentSize(kPanelWidth, totalH);
 
@@ -472,7 +493,8 @@ void MonsterPanel::paintPanel(QPainter &p)
     const int innerW     = innerRight - innerLeft;
     int y = kPanelPad;
 
-    // ---- 1. .ptitle ----
+    // ---- 1+2. Info block (ptitle + hexwrap) ----
+    if (onInfo) {
     {
         QFont tFont(QStringLiteral("Chakra Petch"), 9, QFont::Bold);
         tFont.setLetterSpacing(QFont::AbsoluteSpacing, 2.5);
@@ -605,9 +627,12 @@ void MonsterPanel::paintPanel(QPainter &p)
         const QRectF eRect(innerRight - 110, r2Y, 110, 14);
         p.drawText(eRect, Qt::AlignRight | Qt::AlignVCenter, enTxt);
     }
-    y += kHexH + kRowGap;
+    y += kHexH;
+    } // end Info
 
     // ---- 3. .bar.hp ----
+    if (onHp) {
+        y += kRowGap;   // gap before HP (was hexwrap's trailing gap)
     const float hpPct = (monster_.maxHealth > 0.0F)
         ? monster_.health / monster_.maxHealth : 0.0F;
     const QColor hpC = healthColor(hpPct, monster_.id);
@@ -631,12 +656,14 @@ void MonsterPanel::paintPanel(QPainter &p)
                             Qt::AlignRight | Qt::AlignVCenter,
                             mhw::percentage(monster_.health, monster_.maxHealth));
             }
-            y += kBarH + 2 * kBarVPad + kRowGap;
+            y += kBarH + 2 * kBarVPad;
+    } // end Hp
 
     // ---- 4. .bar.er (enrage meter) ----
     // Compact: no left label, just the value at the right. The HP bar
     // already names the fight so this strip stays out of the way.
-    if (showRage) {
+    if (rageDrawn) {
+        y += kRowGap;   // gap before enrage (was HP's trailing gap)
         const float ragePct = (monster_.enrageMaxBuildup > 0.0F)
             ? std::clamp(monster_.enrageBuildup / monster_.enrageMaxBuildup,
                          0.0F, 1.0F)
@@ -677,12 +704,12 @@ void MonsterPanel::paintPanel(QPainter &p)
                        Qt::AlignRight | Qt::AlignVCenter,
                        QStringLiteral("%1%").arg(static_cast<int>(ragePct * 100)));
         }
-        y += kRageBarH + 2 * kBarVPad + kRowGap;
+        y += kRageBarH + 2 * kBarVPad;
     }
 
     // ---- 5. .srow ----
-    if (scCount > 0) {
-        y += kRowGap;
+    if (onAil && scCount > 0) {
+        y += kRowGap + (rageDrawn ? kRowGap : 0);
         constexpr int kScCellH = kScPadY + kScTopFont + 4 + kScMiniH + kScPadY;
         const int cellW = (innerW - kScGap * (kScCols - 1)) / kScCols;
         const int scRows = (scCount + kScCols - 1) / kScCols;
@@ -742,7 +769,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         }
         pcList.append(e);
     }
-    if (!pcList.isEmpty()) {
+    if (onParts && !pcList.isEmpty()) {
         y += kRowGap;
         constexpr int kPcCellH = kPcPadY + kPcPnFont + 2 + kPcPnGap
                                 + kPcMiniH + kPcPadY;
