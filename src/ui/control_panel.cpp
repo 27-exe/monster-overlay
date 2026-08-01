@@ -812,6 +812,13 @@ void ControlPanel::launchOverlay(bool editMode)
         return;
     }
     saveMaskToDisk();
+    // v0.5: persist scale / opacity / margins so the overlay's
+    // loadConfig() reads the values the user set in the console.
+    // Without this, the overlay always starts with the last
+    // edit-mode save (or factory defaults).
+    if (player_)  player_->saveAppearance();
+    if (monster_) monster_->saveAppearance();
+    if (damage_)  damage_->saveAppearance();
 
     // Build argv from the same mask source the file uses.
     auto maskFor = [](const PanelCtl &c) -> uint32_t {

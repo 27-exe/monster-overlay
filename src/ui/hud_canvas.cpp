@@ -143,6 +143,18 @@ void HudCanvas::setZoom(qreal z)
     z = std::clamp(z, 0.5, 4.0);
     if (qFuzzyCompare(z, zoom_)) return;
     zoom_ = z;
+    if (zoom_ > 1.0) {
+        // Enlarged: fix the canvas to its sizeHint so QScrollArea
+        // shows scrollbars and the screen frame actually grows.
+        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        setFixedSize(sizeHint());
+    } else {
+        // Default fit: let the canvas expand to fill the viewport,
+        // exactly like the pre-zoom layout.
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        setMinimumSize(520, 360);
+        setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    }
     updateGeometry();
     update();
 }
@@ -236,12 +248,6 @@ void HudCanvas::paintEvent(QPaintEvent *)
         .arg(screen_query::sourceLabel(si.source));
     p.drawText(QRectF(22, 14, width() - 44, 22),
                Qt::AlignLeft | Qt::AlignVCenter, head);
-
-    // zoom indicator in header right
-    p.setPen(QColor(96, 100, 102));
-    p.drawText(QRectF(22, 14, width() - 44, 22),
-               Qt::AlignRight | Qt::AlignVCenter,
-               QStringLiteral("ZOOM ×%1").arg(QString::number(zoom_, 'f', 1)));
 
     p.setPen(QColor(60, 64, 66));
     p.drawLine(22, 38, width() - 22, 38);
@@ -363,10 +369,13 @@ void HudCanvas::paintEvent(QPaintEvent *)
     footFont.setLetterSpacing(QFont::AbsoluteSpacing, 1);
     p.setFont(footFont);
 
+    // Footer left: selected + anchor + move hint. Capped at 55% width
+    // so it never collides with the right-aligned screen/zoom text.
+    const int footLeftW = qMin(int((width() - 44) * 0.55), 480);
     p.setPen(QColor(170, 174, 176));
-    p.drawText(QRectF(22, height() - 24, width() - 44, 16),
+    p.drawText(QRectF(22, height() - 24, footLeftW, 16),
                Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("SELECTED: %1     ANCHORED: %2     ← → ↑ ↓ MOVE  ·  SHIFT = ×5")
+               QStringLiteral("SELECTED: %1  ·  ANCHORED: %2  ·  ←→↑↓ MOVE")
                    .arg(QLatin1String(kNames[selected_]))
                    .arg(cornerLabel(selected_)));
 

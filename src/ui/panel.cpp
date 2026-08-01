@@ -188,7 +188,14 @@ void Panel::saveAppearance()
     settings().beginGroup(key_);
     settings().setValue(QStringLiteral("scale"), scale_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
+    // v0.5: also persist margins so the overlay's loadConfig()
+    // picks up the position the user set in the console.
+    settings().setValue(QStringLiteral("ml"), margins_.left());
+    settings().setValue(QStringLiteral("mt"), margins_.top());
+    settings().setValue(QStringLiteral("mr"), margins_.right());
+    settings().setValue(QStringLiteral("mb"), margins_.bottom());
     settings().endGroup();
+    settings().sync();
 }
 
 void Panel::setEditMode(bool on)
