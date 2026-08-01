@@ -419,6 +419,27 @@ void Panel::nudgeMargins(int dx, int dy)
     saveConfig();
 }
 
+void Panel::setMargins(QMargins m, bool persist)
+{
+    m.setLeft(clampMargin(m.left()));
+    m.setTop(clampMargin(m.top()));
+    m.setRight(clampMargin(m.right()));
+    m.setBottom(clampMargin(m.bottom()));
+    if (m == margins_)
+        return;
+    margins_ = m;
+
+    QWindow *native = windowHandle();
+    if (native) {
+        LayerShellQt::Window *layer = LayerShellQt::Window::get(native);
+        if (layer)
+            layer->setMargins(margins_);
+    }
+    update();
+    if (persist)
+        saveConfig();
+}
+
 void Panel::paintMinimized(QPainter &p)
 {
     // Small 32×32 rounded square with the panel's first letter.

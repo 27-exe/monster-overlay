@@ -16,6 +16,7 @@
 #include <QCloseEvent>
 #include <QEvent>
 #include <QKeyEvent>
+#include <QScrollArea>
 #include <QSlider>
 #include <QMouseEvent>
 #include <QFrame>
@@ -23,6 +24,7 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 #include <QHBoxLayout>
 #include <QScrollArea>
 #include <QStackedWidget>
@@ -168,6 +170,9 @@ QString qssBase()
         "padding:7px 10px;font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;}"
         "QPushButton#resetButton:disabled:hover{background:#131617;}"
         "QLabel#modified{font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;color:#777d7f;}"
+        "QLabel#posLabel{font-family:'Chakra Petch';font-size:10px;letter-spacing:0.5px;"
+        "color:#8d9294;background:#131617;border:1px solid #232628;border-radius:3px;"
+        "padding:6px 10px;margin-top:4px;}"
         "QScrollBar:vertical{width:7px;background:#0d1011;}QScrollBar::handle:vertical{background:#303638;min-height:24px;}"
 
         // v0.5 UI-link: APPEARANCE sliders
@@ -354,13 +359,31 @@ ControlPanel::ControlPanel(QWidget *parent)
     stageLayout->addLayout(stagebar);
 
     canvas_ = new HudCanvas();
-    stageLayout->addWidget(canvas_);
+    canvas_->installEventFilter(this);
+    auto *canvasScroll = new QScrollArea();
+    canvasScroll->setObjectName("canvasScroll");
+    canvasScroll->setWidget(canvas_);
+    canvasScroll->setWidgetResizable(false);  // canvas reports sizeHint when zoomed
+    canvasScroll->setFrameShape(QFrame::NoFrame);
+    stageLayout->addWidget(canvasScroll);
     // v0.5 P1.4: clicking a HUD in the unified canvas selects it in the
     // rail/inspector, so the canvas is a real workspace, not a passive
     // preview. selectPanel() is idempotent, so re-clicking the active
     // panel costs nothing.
     connect(canvas_, &HudCanvas::panelSelected, this, [this](int idx){
         selectPanel(idx);
+    });
+    // v0.5: drag / arrow-key position editing. The canvas emits the
+    // target margins; we apply them to the live panel (no persist —
+    // the console writes on exit) and re-render the preview.
+    connect(canvas_, &HudCanvas::panelMoved, this, [this](int idx, QMargins m){
+        Panel *p = idx == 0 ? static_cast<Panel*>(player_)
+                 : idx == 1 ? static_cast<Panel*>(monster_)
+                            : static_cast<Panel*>(damage_);
+        if (!p) return;
+        p->setMargins(m, /*persist=*/false);
+        rebuildAndRender(idx);
+        updatePosLabel(idx);
     });
     connect(safeAreaBtn_, &QPushButton::toggled, this, [this](bool on){
         if (canvas_) canvas_->setShowSafeArea(on);
@@ -459,6 +482,15 @@ void ControlPanel::keyPressEvent(QKeyEvent *e)
 
 bool ControlPanel::eventFilter(QObject *watched, QEvent *event)
 {
+    // v0.5: Ctrl+wheel over the canvas zooms in/out.
+    if (watched == canvas_ && event->type() == QEvent::Wheel) {
+        auto *we = static_cast<QWheelEvent*>(event);
+        if (we->modifiers() & Qt::ControlModifier) {
+            const qreal delta = (we->angleDelta().y() > 0) ? 0.1 : -0.1;
+            canvas_->setZoom(canvas_->zoom() + delta);
+            return true;
+        }
+    }
     if (event->type() == QEvent::MouseButtonRelease) {
         for (int i = 0; i < 3; ++i) {
             if (watched == ctl_[i].navButton) {
@@ -475,6 +507,7 @@ void ControlPanel::selectPanel(int idx)
     if (idx < 0 || idx >= 3) return;
     selectedPanel_ = idx;
     syncAppearance(idx);
+    updatePosLabel(idx);
     if (inspectorStack_) inspectorStack_->setCurrentIndex(idx);
     if (canvas_) canvas_->setSelectedPanel(idx);
     for (int i = 0; i < 3; ++i) {
@@ -668,11 +701,13 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     vl->addLayout(opacRow);
     ctl_[idx].opacitySlider = opacSlider;
 
-    // BEHAVIOR fold remains a placeholder (no backend fields yet).
-    auto *behavior = new QPushButton(QStringLiteral("BEHAVIOR  ›"));
-    behavior->setObjectName("foldout");
-    behavior->setEnabled(false);
-    vl->addWidget(behavior);
+    // v0.5 BEHAVIOR → POSITION: shows the panel's anchor corner and
+    // current margins. The user moves the panel via canvas drag or
+    // arrow keys; this label is read-only feedback.
+    auto *posLabel = new QLabel();
+    posLabel->setObjectName("posLabel");
+    ctl_[idx].posLabel = posLabel;
+    vl->addWidget(posLabel);
     vl->addStretch(1);
     auto *foot = new QHBoxLayout();
     auto *reset = new QPushButton(QStringLiteral("↶  RESET %1").arg(title));
@@ -691,6 +726,7 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     connect(master, &ToggleChip::stateChanged, this, rewire);
     for (auto *row : ctl_[idx].subs)
         connect(row, &SectionRow::stateChanged, this, rewire);
+    updatePosLabel(idx);
     return host;
 }
 
@@ -1114,4 +1150,25 @@ void ControlPanel::resetPanel(int idx)
         row->setChecked(true);
     syncAppearance(idx);
     rebuildAndRender(idx);
+}
+
+void ControlPanel::updatePosLabel(int idx)
+{
+    if (!ctl_[idx].posLabel) return;
+    Panel *p = idx == 0 ? static_cast<Panel*>(player_)
+             : idx == 1 ? static_cast<Panel*>(monster_)
+                        : static_cast<Panel*>(damage_);
+    if (!p) return;
+    const QMargins m = p->margins();
+    QString corner;
+    switch (p->corner()) {
+    case Corner::TopLeft:     corner = "TOP LEFT"; break;
+    case Corner::TopRight:    corner = "TOP RIGHT"; break;
+    case Corner::BottomLeft:  corner = "BOTTOM LEFT"; break;
+    case Corner::BottomRight: corner = "BOTTOM RIGHT"; break;
+    }
+    ctl_[idx].posLabel->setText(
+        QStringLiteral("POSITION: %1  ·  L%2 T%3 R%4 B%5  ·  ← → ↑ ↓ / DRAG")
+            .arg(corner).arg(m.left()).arg(m.top())
+            .arg(m.right()).arg(m.bottom()));
 }

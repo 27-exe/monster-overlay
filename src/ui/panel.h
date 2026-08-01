@@ -87,6 +87,12 @@ public:
     void setScale(qreal s, bool persist = true);
     void setOpacity(qreal a, bool persist = true);
 
+    // v0.5 position editing: set margins directly (clamped to [0,8000]
+    // per side, matching clampMargin in panel.cpp). persist=true writes
+    // to QSettings immediately (used by the live overlay's edit mode);
+    // the console passes persist=false and writes on exit instead.
+    void setMargins(QMargins m, bool persist = true);
+
     // Reset mask, scale, opacity, and margins to factory values
     // and re-sync the layer-shell surface. Always persists.
     void resetToDefaults();

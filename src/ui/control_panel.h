@@ -67,6 +67,7 @@ private:
     SectionCountBar *countBar = nullptr;
         QSlider *scaleSlider = nullptr;
         QSlider *opacitySlider = nullptr;
+        QLabel *posLabel = nullptr;
     };
 
     QWidget *buildInspector(const QString &title, const QString &sub,
@@ -84,6 +85,7 @@ private:
     void syncAppearance(int idx);
     void resetPanel(int idx);
     void rebuildAndRender(int idx);
+    void updatePosLabel(int idx);
     QPixmap renderPreview(Panel *p);
 
     PlayerPanel *player_ = nullptr;

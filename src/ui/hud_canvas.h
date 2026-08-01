@@ -1,6 +1,8 @@
 #pragma once
 
+#include <QMargins>
 #include <QPixmap>
+#include <QPoint>
 #include <QRect>
 #include <QRectF>
 #include <QSize>
@@ -15,9 +17,8 @@ class PanelSource;
 // for its anchor corner, persisted margins, and zoom so the preview
 // reflects the same coordinates the compositor will use at runtime.
 //
-// When a panel is disabled (master toggle off) its slot in the layout
-// stays visible as a faint dashed placeholder so the user can still
-// judge the overall composition.
+// v0.5: supports drag-to-move and arrow-key nudging of the selected
+// panel, plus Ctrl+wheel zoom with QScrollArea scrollbars.
 class HudCanvas : public QWidget {
     Q_OBJECT
 public:
@@ -28,31 +29,35 @@ public:
     void setSelectedPanel(int index);
     void bindPanel(int index, const PanelSource *src);
 
-    // v0.5 P0: stagebar toggles. Defaults both true (matches the
-    // v0.4 behaviour). Setting false skips the dashed safe-area
-    // rect and the crosshair lines in paintEvent.
     void setShowSafeArea(bool on);
     void setShowGrid(bool on);
     bool showSafeArea() const { return showSafeArea_; }
     bool showGrid()      const { return showGrid_; }
 
-    QSize sizeHint() const override { return QSize(820, 520); }
-    bool hasHeightForWidth() const override { return true; }
+    // v0.5 zoom: 1.0 = fit-to-widget (default). >1 enlarges the
+    // screen frame beyond the viewport; the parent QScrollArea
+    // provides scrollbars. Ctrl+wheel adjusts in 0.1 steps.
+    void setZoom(qreal z);
+    qreal zoom() const { return zoom_; }
+
+    QSize sizeHint() const override;
+    bool hasHeightForWidth() const override { return zoom_ <= 1.0; }
     int heightForWidth(int width) const override;
 
 signals:
-    // Emitted when the user clicks one of the three panel rects in
-    // the canvas. The selected panel switches the inspector focus
-    // (control_panel::selectPanel). Not emitted for clicks that miss
-    // all slot rects (e.g. inside the screen frame but on empty
-    // space); the caller is responsible for de-duplicating with
-    // the rail nav click.
     void panelSelected(int index);
+    // Emitted during drag / keyboard nudge. `margins` is the
+    // target QMargins in logical pixels, already clamped. The
+    // console calls Panel::setMargins(margins, false) + rebuild.
+    void panelMoved(int index, QMargins margins);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private:
     struct Slot {
@@ -60,11 +65,11 @@ private:
         bool enabled{true};
         bool bound{false};
         const PanelSource *src{nullptr};
-        // Cached at the end of each paintEvent so mousePressEvent
-        // can hit-test. Zeroed at the start of every paint so
-        // un-bound slots aren't hit-testable.
         QRectF lastTarget_;
     };
+
+    // Compute the target QMargins for a drag/key delta (logical px).
+    QMargins movedMargins(int index, int dxLogical, int dyLogical) const;
 
     QSize screenSize() const;
     QString cornerLabel(int index) const;
@@ -74,4 +79,11 @@ private:
     int selected_{0};
     bool showSafeArea_{true};
     bool showGrid_{true};
+    qreal zoom_{1.0};
+
+    // Drag state
+    bool dragging_{false};
+    int dragIndex_{-1};
+    QPoint dragStartMouse_;
+    QMargins dragStartMargins_;
 };

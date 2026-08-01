@@ -3,6 +3,7 @@
 #include <QFont>
 #include <QFontMetrics>
 #include <QGuiApplication>
+#include <QKeyEvent>
 #include <QLinearGradient>
 #include <QMouseEvent>
 #include <QPainter>
@@ -11,19 +12,19 @@
 #include <QRect>
 #include <QRectF>
 #include <QScreen>
+#include <QScrollBar>
 #include <QSize>
+#include <QWheelEvent>
 #include <QtGlobal>
 #include <algorithm>
+#include <cmath>
 
 #include "panel.h"
 #include "panel_source.h"
 #include "screen_query.h"
+
 namespace {
 
-// Per-panel accent — kept here so the canvas owns the visual identity
-// rather than borrowing from the live panel paint code. The same
-// colour family is reused for the selected panel's outline, the
-// left-edge tag, and the safe-area marquee.
 const QColor kPlayerAccent(167, 79, 255);
 const QColor kMonsterAccent(255, 112, 67);
 const QColor kDamageAccent(64, 169, 255);
@@ -32,13 +33,9 @@ const char *kNames[] = {"PLAYER", "MONSTER", "DAMAGE"};
 
 constexpr int kHeader = 56;
 constexpr int kFooter = 38;
+constexpr int kArrowStep = 10;      // logical px per arrow press
+constexpr int kArrowBigStep = 50;   // with Shift
 
-// Cached screen detection. The answer doesn't change for the
-// lifetime of the application, so we run the multi-stage
-// (QPlatformScreen → QScreen → xrandr/kscreen/wlr-randr → fallback)
-// detection exactly once and reuse the result from every paint
-// event. screen_query::Result is value-typed; the cache lives
-// in a function-local static so we don't need a member.
 struct ScreenInfo {
     screen_query::Result result;
     bool valid{false};
@@ -52,9 +49,6 @@ const screen_query::Result &screenInfo()
     return info.result;
 }
 
-// Convert one Panel's anchor corner + margins to a rect inside the
-// screen rect. The panel is drawn at its zoomed size; margins are
-// the offset from the screen edges the live layer-shell surface uses.
 QRect anchoredRect(const QRect &screen, Corner corner, const QMargins &m,
                    const QSize &content, qreal scale)
 {
@@ -95,37 +89,17 @@ QString cornerName(Corner c)
 
 } // namespace
 
-// Concrete adapter for a real Panel instance is declared in hud_canvas.h.
+// ─── construction ───────────────────────────────────────────────────────
 
 HudCanvas::HudCanvas(QWidget *parent) : QWidget(parent)
 {
     setMinimumSize(520, 360);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAttribute(Qt::WA_OpaquePaintEvent);
+    setFocusPolicy(Qt::ClickFocus);   // receive arrow keys after click
 }
 
-int HudCanvas::heightForWidth(int width) const
-{
-    const QSize screen = screenInfo().physical;
-    const qreal ar = screen.height() / qreal(screen.width());
-    return std::max(360, qRound(width * ar) + kHeader + kFooter);
-}
-
-QSize HudCanvas::screenSize() const { return screenInfo().physical; }
-
-QString HudCanvas::screenLabel() const
-{
-    const auto &r = screenInfo();
-    return QStringLiteral("%1 × %2")
-        .arg(r.physical.width())
-        .arg(r.physical.height());
-}
-
-QString HudCanvas::cornerLabel(int index) const
-{
-    if (index < 0 || index >= 3 || !slots_[index].bound) return {};
-    return cornerName(slots_[index].src->corner());
-}
+// ─── public API ─────────────────────────────────────────────────────────
 
 void HudCanvas::setPanelPixmap(int index, const QPixmap &pixmap, bool enabled)
 {
@@ -164,7 +138,78 @@ void HudCanvas::bindPanel(int index, const PanelSource *src)
     update();
 }
 
-void HudCanvas::resizeEvent(QResizeEvent *) { update(); }
+void HudCanvas::setZoom(qreal z)
+{
+    z = std::clamp(z, 0.5, 4.0);
+    if (qFuzzyCompare(z, zoom_)) return;
+    zoom_ = z;
+    updateGeometry();
+    update();
+}
+
+QSize HudCanvas::sizeHint() const
+{
+    if (zoom_ <= 1.0)
+        return QSize(820, 520);
+    // When zoomed, report the enlarged size so QScrollArea shows bars.
+    const QSize phys = screenInfo().physical;
+    const qreal ar = phys.height() / qreal(phys.width());
+    const int w = qRound(820 * zoom_);
+    const int h = qRound(w * ar) + kHeader + kFooter;
+    return QSize(w, std::max(520, h));
+}
+
+int HudCanvas::heightForWidth(int width) const
+{
+    const QSize phys = screenInfo().physical;
+    const qreal ar = phys.height() / qreal(phys.width());
+    return std::max(360, qRound(width * ar) + kHeader + kFooter);
+}
+
+QSize HudCanvas::screenSize() const { return screenInfo().physical; }
+
+QString HudCanvas::screenLabel() const
+{
+    const auto &r = screenInfo();
+    return QStringLiteral("%1 × %2").arg(r.physical.width()).arg(r.physical.height());
+}
+
+QString HudCanvas::cornerLabel(int index) const
+{
+    if (index < 0 || index >= 3 || !slots_[index].bound) return {};
+    return cornerName(slots_[index].src->corner());
+}
+
+// ─── geometry helpers ───────────────────────────────────────────────────
+
+QMargins HudCanvas::movedMargins(int index, int dxLogical, int dyLogical) const
+{
+    if (index < 0 || index >= 3 || !slots_[index].bound) return {};
+    const Corner corner = slots_[index].src->corner();
+    QMargins m = dragStartMargins_;   // set at drag/key start
+    auto clamp0 = [](int v){ return std::max(0, v); };
+    switch (corner) {
+    case Corner::TopLeft:
+        m.setLeft(clamp0(m.left() + dxLogical));
+        m.setTop(clamp0(m.top() + dyLogical));
+        break;
+    case Corner::TopRight:
+        m.setRight(clamp0(m.right() - dxLogical));
+        m.setTop(clamp0(m.top() + dyLogical));
+        break;
+    case Corner::BottomLeft:
+        m.setLeft(clamp0(m.left() + dxLogical));
+        m.setBottom(clamp0(m.bottom() - dyLogical));
+        break;
+    case Corner::BottomRight:
+        m.setRight(clamp0(m.right() - dxLogical));
+        m.setBottom(clamp0(m.bottom() - dyLogical));
+        break;
+    }
+    return m;
+}
+
+// ─── paint ──────────────────────────────────────────────────────────────
 
 void HudCanvas::paintEvent(QPaintEvent *)
 {
@@ -173,7 +218,6 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::TextAntialiasing, true);
     p.fillRect(rect(), QColor(6, 8, 10));
 
-    // Zero hit-test rects so un-bound slots aren't clickable.
     for (int i = 0; i < 3; ++i) slots_[i].lastTarget_ = QRectF();
 
     // --- header ---
@@ -193,16 +237,16 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.drawText(QRectF(22, 14, width() - 44, 22),
                Qt::AlignLeft | Qt::AlignVCenter, head);
 
+    // zoom indicator in header right
+    p.setPen(QColor(96, 100, 102));
+    p.drawText(QRectF(22, 14, width() - 44, 22),
+               Qt::AlignRight | Qt::AlignVCenter,
+               QStringLiteral("ZOOM ×%1").arg(QString::number(zoom_, 'f', 1)));
+
     p.setPen(QColor(60, 64, 66));
     p.drawLine(22, 38, width() - 22, 38);
 
-    // --- screen frame inside the widget ---
-    // The frame represents the PHYSICAL screen (what the user sees in
-    // the panel settings). Panel margins, however, are stored by the
-    // overlay as LOGICAL pixels (LayerShellQt convention) — the same
-    // number a `--margin` value takes on the command line. So we draw
-    // the screen at physical scale but compute the panel rect in
-    // logical space and remap via the logical fit factor.
+    // --- screen frame ---
     const QRectF avail = QRectF(rect()).adjusted(22, 46, -22, -kFooter);
     const QSize phys = si.physical;
     const QSize logical = si.logical;
@@ -222,14 +266,12 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.setPen(QPen(QColor(56, 60, 62), 1));
     p.drawRect(frame);
 
-    // safe area (5% inset, dashed) — toggleable via stagebar.
     if (showSafeArea_) {
         p.setPen(QPen(QColor(255, 255, 255, 28), 1, Qt::DashLine));
         p.drawRect(frame.adjusted(frame.width() * .055, frame.height() * .055,
                                   -frame.width() * .055, -frame.height() * .055));
     }
 
-    // grid crosshair — toggleable via stagebar.
     if (showGrid_) {
         p.setPen(QPen(QColor(255, 255, 255, 33), 1, Qt::DashLine));
         p.drawLine(QPointF(frame.left(),  frame.center().y()),
@@ -238,9 +280,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
                    QPointF(frame.center().x(), frame.bottom()));
     }
 
-    // scale ruler — physical pixels (what the user can read off
-    // a display-settings dialog). The user can mentally divide by
-    // DPR × 1.30 to get the logical margin value.
+    // scale ruler
     p.setPen(QColor(60, 64, 66));
     const int tickCount = 5;
     for (int i = 0; i <= tickCount; ++i) {
@@ -258,10 +298,6 @@ void HudCanvas::paintEvent(QPaintEvent *)
     }
 
     // --- panels ---
-    // Fit the LOGICAL screen rect into the canvas frame; panel
-    // placement (corner + margin + content×scale) all lives in
-    // logical space, matching what Panel::loadConfig() and
-    // nudgeMargins() actually write to LayerShellQt.
     const qreal fit = std::min(frame.width()  / logical.width(),
                                frame.height() / logical.height());
     auto logicalToCanvas = [&](const QRect &lr) {
@@ -276,32 +312,23 @@ void HudCanvas::paintEvent(QPaintEvent *)
         const Slot &s = slots_[i];
         const qreal z = std::max(0.1, s.src->scale());
         const QSize cs = s.src->contentSize();
-        // Compute the panel rect in LOGICAL screen coords, then map.
         const QRect lrect = anchoredRect(QRect(QPoint(0, 0), logical),
                                          s.src->corner(),
                                          s.src->margins(), cs, z);
         const QRectF target = logicalToCanvas(lrect);
 
         if (!s.pixmap.isNull() && s.enabled) {
-            // v0.5 UI-link: honor the panel's live opacity so the
-            // canvas preview isn't always full-alpha.
-            // v0.5-fix: combine source panel opacity with selection
-            // dimming. The old code called setOpacity twice — the
-            // second call (selection) overwrote the first (source),
-            // so dragging the opacity slider had zero visible effect.
             const double srcOpac = s.src ? s.src->opacity() : 1.0;
             const double selDim  = (i == selected_) ? 1.0 : 0.55;
             p.setOpacity(srcOpac * selDim);
             p.drawPixmap(target, s.pixmap, s.pixmap.rect());
             p.setOpacity(1.0);
         } else {
-            // disabled placeholder: dashed outline at the same anchored rect
             QColor accent = kAccents[i];
             accent.setAlpha(110);
             p.setPen(QPen(accent, 1, Qt::DashLine));
             p.setBrush(QColor(0, 0, 0, 80));
             p.drawRect(target);
-
             p.setPen(QColor(170, 174, 176));
             p.setFont(QFont(QStringLiteral("Chakra Petch"), 8, QFont::Medium));
             p.drawText(target, Qt::AlignCenter,
@@ -310,8 +337,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
 
         if (i == selected_ && s.enabled) {
             QColor ring = kAccents[i];
-            QPen ringPen(ring, 1.4);
-            p.setPen(ringPen);
+            p.setPen(QPen(ring, 1.4));
             p.setBrush(Qt::NoBrush);
             p.drawRect(target.adjusted(-2, -2, 2, 2));
 
@@ -327,8 +353,6 @@ void HudCanvas::paintEvent(QPaintEvent *)
             p.drawText(tagBox, Qt::AlignCenter, tag);
         }
 
-        // Cache for hit-test. Mouse clicks outside the visible target
-        // shouldn't select a panel we drew underneath.
         slots_[i].lastTarget_ = target;
     }
 
@@ -342,7 +366,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.setPen(QColor(170, 174, 176));
     p.drawText(QRectF(22, height() - 24, width() - 44, 16),
                Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("SELECTED: %1     ANCHORED: %2")
+               QStringLiteral("SELECTED: %1     ANCHORED: %2     ← → ↑ ↓ MOVE  ·  SHIFT = ×5")
                    .arg(QLatin1String(kNames[selected_]))
                    .arg(cornerLabel(selected_)));
 
@@ -351,17 +375,14 @@ void HudCanvas::paintEvent(QPaintEvent *)
                Qt::AlignRight | Qt::AlignVCenter,
                QStringLiteral("SCREEN %1  ·  ZOOM ×%2  ·  DEMO DATA")
                    .arg(screenLabel())
-                   .arg(QString::number(slots_[selected_].bound
-                                            ? slots_[selected_].src->scale()
-                                            : 1.0, 'f', 2)));
+                   .arg(QString::number(zoom_, 'f', 1)));
 }
+
+// ─── interaction ────────────────────────────────────────────────────────
 
 void HudCanvas::mousePressEvent(QMouseEvent *e)
 {
     if (e->button() != Qt::LeftButton) return;
-    // Walk the cache populated by paintEvent. We pick the last
-    // (top-most) hit on purpose so callers don't need to manage
-    // z-order; targets are non-overlapping on the default layout.
     for (int i = 2; i >= 0; --i) {
         if (slots_[i].lastTarget_.contains(e->position())) {
             if (i != selected_) {
@@ -369,7 +390,63 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
                 update();
                 emit panelSelected(i);
             }
+            // Start drag
+            dragging_ = true;
+            dragIndex_ = i;
+            dragStartMouse_ = e->position().toPoint();
+            dragStartMargins_ = slots_[i].src->margins();
+            setCursor(Qt::ClosedHandCursor);
             return;
         }
     }
 }
+
+void HudCanvas::mouseMoveEvent(QMouseEvent *e)
+{
+    if (!dragging_ || dragIndex_ < 0) return;
+    const auto &si = screenInfo();
+    const QSize logical = si.logical;
+    const QRectF avail = QRectF(rect()).adjusted(22, 46, -22, -kFooter);
+    const QSize phys = si.physical;
+    const qreal physAR = phys.height() / qreal(phys.width());
+    QSizeF screen(avail.width(), avail.width() * physAR);
+    if (screen.height() > avail.height())
+        screen = QSizeF(avail.height() / physAR, avail.height());
+    const qreal fit = std::min(screen.width()  / logical.width(),
+                               screen.height() / logical.height());
+    if (fit <= 0.0) return;
+
+    const QPoint delta = e->position().toPoint() - dragStartMouse_;
+    const int dxLogical = qRound(delta.x() / fit);
+    const int dyLogical = qRound(delta.y() / fit);
+
+    emit panelMoved(dragIndex_, movedMargins(dragIndex_, dxLogical, dyLogical));
+}
+
+void HudCanvas::mouseReleaseEvent(QMouseEvent *e)
+{
+    if (e->button() == Qt::LeftButton && dragging_) {
+        dragging_ = false;
+        dragIndex_ = -1;
+        setCursor(Qt::ArrowCursor);
+    }
+}
+
+void HudCanvas::keyPressEvent(QKeyEvent *e)
+{
+    const int step = (e->modifiers() & Qt::ShiftModifier) ? kArrowBigStep : kArrowStep;
+    int dx = 0, dy = 0;
+    switch (e->key()) {
+    case Qt::Key_Left:  dx = -step; break;
+    case Qt::Key_Right: dx =  step; break;
+    case Qt::Key_Up:    dy = -step; break;
+    case Qt::Key_Down:  dy =  step; break;
+    default:
+        return QWidget::keyPressEvent(e);
+    }
+    if (!slots_[selected_].bound) return;
+    dragStartMargins_ = slots_[selected_].src->margins();
+    emit panelMoved(selected_, movedMargins(selected_, dx, dy));
+}
+
+void HudCanvas::resizeEvent(QResizeEvent *) { update(); }
