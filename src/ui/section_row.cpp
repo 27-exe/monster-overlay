@@ -29,10 +29,9 @@ SectionRow::SectionRow(const QString &zh, const QString &key, QWidget *parent)
     // upper() here keeps the data layer case-agnostic.
     key_ = new QLabel(keyText_.toUpper());
     key_->setStyleSheet(QStringLiteral(
-        "color:#6f7375;font-family:'Chakra Petch';font-weight:600;"
-        "font-size:10px;letter-spacing:1.5px;"
-        "background:transparent;border:none;"));
-    key_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            "color:#6f7375;font-family:'Chakra Petch';font-weight:600;"
+            "font-size:10px;letter-spacing:1.5px;"
+            "background:transparent;border:none;"));
     vl->addWidget(key_, 0);
     setLayout(vl);
 }
@@ -48,10 +47,9 @@ void SectionRow::setChecked(bool c) {
         "background:transparent;border:none;")
         .arg(zhColour));
     key_->setStyleSheet(QStringLiteral(
-        "color:#6f7375;font-family:'Chakra Petch';font-weight:600;"
-        "font-size:10px;letter-spacing:1.5px;"
-        "background:transparent;border:none;"
-        "opacity:%1;").arg(on_ ? 1.0 : 0.55));
+            "color:#6f7375;font-family:'Chakra Petch';font-weight:600;"
+            "font-size:10px;letter-spacing:1.5px;"
+            "background:transparent;border:none;"));
     update();
 }
 

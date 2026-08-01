@@ -19,6 +19,13 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("mhw-control"));
+    // Quit as soon as the last visible window is closed. Required because
+    // the three panel previews are QMainWindows in the live overlay —
+    // without this, closing the console's main window leaves them around
+    // as visible ghosts. With a parent in ControlPanel's ctor, the child
+    // panels are NOT in the top-level window list, so closing the
+    // console's main window means "no visible windows" → quit.
+    app.setQuitOnLastWindowClosed(true);
 
     if (!::mhw::StringTable::instance().load(QStringLiteral("zh-CN")))
         qWarning("failed to load zh-CN strings; falling back to keys");

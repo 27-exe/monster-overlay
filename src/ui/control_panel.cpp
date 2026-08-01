@@ -286,10 +286,33 @@ ControlPanel::~ControlPanel()
     // Persist current mask state on every destruction path (close, app
     // exit, explicit delete). Safe to call even if load was never reached.
     saveMaskToDisk();
+
+    // The three preview panels were created as TOP-level QMainWindows
+    // (no parent) so they get their own QWidgetWindow and don't pollute
+    // the console's backing store (see renderPreview). They need to be
+    // deleted explicitly here — otherwise QApplication sees them in the
+    // top-level window list, "no visible windows" never fires, and
+    // setQuitOnLastWindowClosed has nothing to quit on. Hiding them
+    // first also gives the wayland layer a clean unmap, so the
+    // "顶栏小块" residue doesn't linger.
+    if (player_)  { player_->setVisible(false);  delete player_;  player_  = nullptr; }
+    if (monster_) { monster_->setVisible(false); delete monster_; monster_ = nullptr; }
+    if (damage_)  { damage_->setVisible(false);  delete damage_;  damage_  = nullptr; }
 }
 
 void ControlPanel::closeEvent(QCloseEvent *e)
 {
+    // Hide the three preview panels BEFORE accepting close. They're
+    // top-level QMainWindows (no parent — keeping them parented would
+    // composite their paint into the console's backing store, which is
+    // what produced the "panel painted on top of switches" bug). They're
+    // also invisible (WA_DontShowOnScreen), but the explicit hide steers
+    // QApplication::quitOnLastWindowClosed toward the right answer — it
+    // sees 0 visible windows the moment the console goes away and exits.
+    if (player_)  player_->setVisible(false);
+    if (monster_) monster_->setVisible(false);
+    if (damage_)  damage_->setVisible(false);
+
     saveMaskToDisk();
     QMainWindow::closeEvent(e);
 }
@@ -354,9 +377,7 @@ QWidget *ControlPanel::buildGroup(const QString &title, const QString &sub,
     auto *masterCap = new QLabel(QStringLiteral("关闭后预渲染面板置灰"));
     masterCap->setStyleSheet(QStringLiteral(
         "color:#6f7375;font-family:'Noto Sans SC';font-size:10px;"
-        "background:transparent;border:none;padding-left:6px;}"
-        "QLabel#groupSub{color:#6f7375;font-family:'Noto Sans SC';font-weight:400;"
-        " font-size:11px;background:transparent;padding-left:10px;}"));
+        "background:transparent;border:none;padding-left:6px;"));
     masterRow->addWidget(masterCap);
     masterRow->addStretch(1);
     vl->addLayout(masterRow);
