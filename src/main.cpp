@@ -145,6 +145,20 @@ int main(int argc, char **argv)
         QStringLiteral("mask-damage"),
         QStringLiteral("Damage panel section mask (hex32)"),
         QStringLiteral("hex32"));
+    // Disable a whole panel. Independent of --mask-* — this hides the
+    // layer-shell surface entirely (no chrome, no title row), while
+    // the mask flags control which sub-blocks are rendered inside an
+    // enabled panel. Used by the control console's "面板启用"
+    // master toggle: when off, the panel simply never appears.
+    QCommandLineOption noPlayerOption(
+        QStringLiteral("no-player"),
+        QStringLiteral("Disable the player panel entirely"));
+    QCommandLineOption noMonsterOption(
+        QStringLiteral("no-monster"),
+        QStringLiteral("Disable the monster panel entirely"));
+    QCommandLineOption noDamageOption(
+        QStringLiteral("no-damage"),
+        QStringLiteral("Disable the damage panel entirely"));
 
     parser.addOption(mapOption);
     parser.addOption(localeOption);
@@ -153,6 +167,9 @@ int main(int argc, char **argv)
     parser.addOption(maskPlayerOption);
     parser.addOption(maskMonsterOption);
     parser.addOption(maskDamageOption);
+    parser.addOption(noPlayerOption);
+    parser.addOption(noMonsterOption);
+    parser.addOption(noDamageOption);
     parser.process(app);
 
     if (!mhw::StringTable::instance().load(
@@ -192,6 +209,14 @@ int main(int argc, char **argv)
     playerPanel.setSectionMask(maskPlayer);
     monsterPanel.setSectionMask(maskMonster);
     damagePanel.setSectionMask(maskDamage);
+    // Master gate: maps to the control console's "面板启用"
+    // toggle. When the flag is set, the panel does not show its
+    // layer-shell surface at all — independent of the section mask
+    // above. setVisible() in the live loop will be a no-op for the
+    // disabled panel.
+    playerPanel.setPanelEnabled(!parser.isSet(noPlayerOption));
+    monsterPanel.setPanelEnabled(!parser.isSet(noMonsterOption));
+    damagePanel.setPanelEnabled(!parser.isSet(noDamageOption));
 
     playerPanel.show();
     monsterPanel.show();

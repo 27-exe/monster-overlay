@@ -46,6 +46,17 @@ public:
     void setSectionMask(uint32_t mask) { sectionMask_ = mask; update(); }
     [[nodiscard]] uint32_t sectionMask() const { return sectionMask_; }
 
+    // Master visibility: a separate flag from the section mask. When
+    // false, the panel does not show its layer-shell surface at all
+    // (no chrome, no title row, no empty content — truly unmounted).
+    // This is independent of sectionMask_ on purpose: turning every
+    // section off keeps the panel alive so the user can see where it
+    // sits, but disabling the panel itself removes it entirely. The
+    // control console's master toggle maps to this flag, not the
+    // section mask.
+    void setPanelEnabled(bool on);
+    [[nodiscard]] bool panelEnabled() const { return panelEnabled_; }
+
     // Edit-mode demo data is built once on first paint after entering
     // edit mode, then reused — keeps paint() O(display).
     virtual void setupDemoData() {}
@@ -95,6 +106,7 @@ private:
     // See setSectionMask(). Each subclass interprets the bits via the
     // matching namespace in panel_sections.h (PlayerSection / ...).
     uint32_t sectionMask_{0xFFFFFFFFu};
+    bool panelEnabled_{true};
 
     QString key_;
     Corner corner_;

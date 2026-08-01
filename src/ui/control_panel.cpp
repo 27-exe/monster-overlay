@@ -521,6 +521,17 @@ void ControlPanel::launchOverlay(bool editMode)
     args << QStringLiteral("--mask-player=%1").arg(mp, 0, 16)
          << QStringLiteral("--mask-monster=%1").arg(mm, 0, 16)
          << QStringLiteral("--mask-damage=%1").arg(md, 0, 16);
+    // Master toggle maps to a separate --no-* flag per panel. The
+    // mask controls which sub-blocks render inside an enabled panel;
+    // --no-* unmounts the layer-shell surface entirely so the user
+    // doesn't get a 32-40px chrome stub of the panel they'd switched
+    // off.
+    if (!ctl_[0].master->isChecked())
+        args << QStringLiteral("--no-player");
+    if (!ctl_[1].master->isChecked())
+        args << QStringLiteral("--no-monster");
+    if (!ctl_[2].master->isChecked())
+        args << QStringLiteral("--no-damage");
     if (editMode) args << QStringLiteral("--edit");
 
     // mhw-overlay lives next to mhw-control in the same build dir.

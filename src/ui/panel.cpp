@@ -195,6 +195,16 @@ void Panel::setEditMode(bool on)
 
 void Panel::setVisible(bool visible)
 {
+    // Master visibility gate. When panelEnabled_ is false the panel is
+    // completely unmounted regardless of what the caller asks for. This
+    // is what the control console's master toggle drives: flipping the
+    // toggle off should not leave a 32-40px chrome sliver in the
+    // corner, it should remove the layer-shell surface entirely. The
+    // section mask is a separate axis (each sub independently visible /
+    // hidden) — the master gate is strictly above that.
+    if (!panelEnabled_ && visible)
+        return;
+
     // Hide on first hide is fine; show without activating is the
     // important path. Without WA_ShowWithoutActivating, KWin raises
     // the panel into focus as soon as it appears, which (a) makes
@@ -202,6 +212,17 @@ void Panel::setVisible(bool visible)
     // keyboard focus away from the game whenever we go visible.
     // Setting this once is enough; Qt honours it for every show.
     QMainWindow::setVisible(visible);
+}
+
+void Panel::setPanelEnabled(bool on)
+{
+    if (panelEnabled_ == on)
+        return;
+    panelEnabled_ = on;
+    if (!on)
+        setVisible(false);   // honor the new gate immediately
+    else
+        update();            // caller will follow up with setVisible(true)
 }
 
 void Panel::setContentSize(int w, int h)
@@ -237,6 +258,7 @@ void Panel::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
+
 
     // Edit-mode border so the user knows this panel is interactive.
     // Drawn in actual (device) coordinates, before any scaling.
