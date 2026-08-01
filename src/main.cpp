@@ -129,11 +129,30 @@ int main(int argc, char **argv)
         QStringLiteral("Polling interval in ms"),
         QStringLiteral("ms"),
         QStringLiteral("250"));
+    // L1: per-panel section masks (hex 32-bit). Default = all sections
+    // visible (0xFFFFFFFF). Lets the control console pass the user's
+    // current toggle state as CLI flags without any IPC. Bit layout
+    // matches mhw::{Player,Monster,Damage}Section in ui/panel_sections.h.
+    QCommandLineOption maskPlayerOption(
+        QStringLiteral("mask-player"),
+        QStringLiteral("Player panel section mask (hex32)"),
+        QStringLiteral("hex32"));
+    QCommandLineOption maskMonsterOption(
+        QStringLiteral("mask-monster"),
+        QStringLiteral("Monster panel section mask (hex32)"),
+        QStringLiteral("hex32"));
+    QCommandLineOption maskDamageOption(
+        QStringLiteral("mask-damage"),
+        QStringLiteral("Damage panel section mask (hex32)"),
+        QStringLiteral("hex32"));
 
     parser.addOption(mapOption);
     parser.addOption(localeOption);
     parser.addOption(editOption);
     parser.addOption(pollOption);
+    parser.addOption(maskPlayerOption);
+    parser.addOption(maskMonsterOption);
+    parser.addOption(maskDamageOption);
     parser.process(app);
 
     if (!mhw::StringTable::instance().load(
@@ -144,6 +163,21 @@ int main(int argc, char **argv)
 
     const bool editMode = parser.isSet(editOption);
     const int pollMs = qBound(30, parser.value(pollOption).toInt(), 5000);
+    // L1: parse hex section masks; unset = 0xFFFFFFFF (everything visible).
+    auto parseMask = [&](const QCommandLineOption &opt) -> uint32_t {
+        if (!parser.isSet(opt)) return 0xFFFFFFFFu;
+        bool ok = false;
+        const uint32_t v = parser.value(opt).toUInt(&ok, 16);
+        if (!ok) {
+            qWarning("Ignoring invalid --mask-* hex value '%s'",
+                     qPrintable(parser.value(opt)));
+            return 0xFFFFFFFFu;
+        }
+        return v;
+    };
+    const uint32_t maskPlayer  = parseMask(maskPlayerOption);
+    const uint32_t maskMonster = parseMask(maskMonsterOption);
+    const uint32_t maskDamage  = parseMask(maskDamageOption);
 
     PlayerPanel playerPanel;
     MonsterPanel monsterPanel;
@@ -152,6 +186,12 @@ int main(int argc, char **argv)
     playerPanel.setEditMode(editMode);
     monsterPanel.setEditMode(editMode);
     damagePanel.setEditMode(editMode);
+
+    // L1: apply section masks BEFORE show() so the first paint reflects
+    // them — no one-frame flash of "all visible" if a mask is restrictive.
+    playerPanel.setSectionMask(maskPlayer);
+    monsterPanel.setSectionMask(maskMonster);
+    damagePanel.setSectionMask(maskDamage);
 
     playerPanel.show();
     monsterPanel.show();
