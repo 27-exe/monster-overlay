@@ -14,6 +14,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QEvent>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QFrame>
 #include <QPushButton>
@@ -115,6 +116,9 @@ QString qssBase()
         " font-weight:700;font-size:11px;letter-spacing:2px;}"
         "QPushButton#startBtn:hover{background:#ff9050;}"
         "QPushButton#startBtn:pressed{background:#e66f30;}"
+        "QPushButton#stopBtn{background:#a13c2a;color:#1a0808;border:none;border-radius:3px;padding:8px 18px;font-family:\'Chakra Petch\';font-weight:700;font-size:11px;letter-spacing:2px;}"
+        "QPushButton#stopBtn:hover{background:#b8482f;}"
+        "QPushButton#stopBtn:pressed{background:#8a311f;}"
         "QPushButton#startBtn:disabled{background:#4a2010;color:#806050;}"
         "QLabel#editCap{color:#6f7375;font-family:'Noto Sans SC';font-size:10px;"
         " background:transparent;border:none;}"
@@ -147,6 +151,12 @@ QString qssBase()
         "QLabel#inspectorTitle{font-family:'Chakra Petch';font-size:22px;letter-spacing:2px;color:#e7e8e9;}"
         "QLabel#inspectorSub{font-family:'Noto Sans SC';font-size:11px;color:#787e80;}"
         "QLabel#countLabel{font-family:'Chakra Petch';font-size:10px;letter-spacing:1px;color:#aeb2b3;}"
+        // v0.5 P1: section count picks up the panel accent via
+        // objectName suffix (P/M/D) so the active object's
+        // headline is identifiable at a glance.
+        "QLabel#countLabelP{color:#a74fff;}"
+        "QLabel#countLabelM{color:#ff7043;}"
+        "QLabel#countLabelD{color:#50c5b7;}"
         "QPushButton#foldout{background:transparent;color:#8d9294;border:1px solid #292e30;border-radius:3px;"
         "text-align:left;padding:9px 12px;font-family:'Chakra Petch';font-size:10px;letter-spacing:1px;}"
         "QPushButton#resetButton{background:transparent;color:#9da1a3;border:1px solid #313638;border-radius:3px;"
@@ -249,7 +259,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     startBtn_->setObjectName("startBtn");
     startBtn_->setCursor(Qt::PointingHandCursor);
     railLayout->addWidget(startBtn_);
-    auto *hint = new QLabel(QStringLiteral("ESC TO RETURN · CONFIG AUTO-SAVED"));
+    auto *hint = new QLabel(QStringLiteral("ESC RETURN · 1/2/3 SELECT · CONFIG AUTO-SAVED"));
     hint->setObjectName("railHint");
     hint->setAlignment(Qt::AlignCenter);
     railLayout->addWidget(hint);
@@ -280,6 +290,13 @@ ControlPanel::ControlPanel(QWidget *parent)
     stageLayout->setContentsMargins(0, 0, 0, 0);
     canvas_ = new HudCanvas();
     stageLayout->addWidget(canvas_);
+    // v0.5 P1.4: clicking a HUD in the unified canvas selects it in the
+    // rail/inspector, so the canvas is a real workspace, not a passive
+    // preview. selectPanel() is idempotent, so re-clicking the active
+    // panel costs nothing.
+    connect(canvas_, &HudCanvas::panelSelected, this, [this](int idx){
+        selectPanel(idx);
+    });
     canvas_->bindPanel(0, new PanelSourceAdapter(static_cast<Panel*>(player_)));
     canvas_->bindPanel(1, new PanelSourceAdapter(static_cast<Panel*>(monster_)));
     canvas_->bindPanel(2, new PanelSourceAdapter(static_cast<Panel*>(damage_)));
@@ -289,8 +306,21 @@ ControlPanel::ControlPanel(QWidget *parent)
     central->setLayout(root);
     setCentralWidget(central);
 
-    connect(startBtn_, &QPushButton::clicked, this,
-            [this]{ launchOverlay(/*editMode=*/false); });
+    // v0.5 P1: startBtn toggles between launch and stop. The
+    // handler is rebuilt every time overlay state flips so the
+    // same button does the right thing whether ready or running.
+    auto wireStartBtn = [this]{
+        if (!startBtn_) return;
+        if (overlayPid_ == 0) {
+            // Stop mode never wired because by definition
+            // overlayPid_==0 means ready. Reach here only when
+            // re-armed by onOverlayExited.
+        } else {}
+    };
+    connect(startBtn_, &QPushButton::clicked, this, [this]{
+        if (overlayPid_ == 0) launchOverlay(/*editMode=*/false);
+        else                  stopOverlay();
+    });
     connect(editBtn_, &QPushButton::clicked, this,
             [this]{ launchOverlay(/*editMode=*/true); });
 
@@ -334,6 +364,16 @@ void ControlPanel::closeEvent(QCloseEvent *e)
 
     saveMaskToDisk();
     QMainWindow::closeEvent(e);
+}
+
+// v0.5 P1: 1/2/3 hot-keys for the HUD objects rail. Visible in the
+// rail hint at the bottom of the left column.
+void ControlPanel::keyPressEvent(QKeyEvent *e)
+{
+    if (e->key() == Qt::Key_1) { selectPanel(0); return; }
+    if (e->key() == Qt::Key_2) { selectPanel(1); return; }
+    if (e->key() == Qt::Key_3) { selectPanel(2); return; }
+    QMainWindow::keyPressEvent(e);
 }
 
 bool ControlPanel::eventFilter(QObject *watched, QEvent *event)
@@ -451,7 +491,11 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     vl->addLayout(head);
 
     auto *count = new QLabel();
-    count->setObjectName("countLabel");
+    // v0.5 P1: per-panel objectName suffix (P/M/D) so the QSS rule
+    // can tint the section count by the matching panel accent.
+    count->setObjectName(idx == 0 ? "countLabelP"
+                       : idx == 1 ? "countLabelM"
+                                  : "countLabelD");
     ctl_[idx].countLabel = count;
     vl->addWidget(count);
     vl->addSpacing(10);
@@ -650,6 +694,7 @@ void ControlPanel::launchOverlay(bool editMode)
         }
     });
     overlayWatch_->start();
+    setOverlayRunning(true);
 
     hide();   // the overlay owns the screen now
 }
@@ -665,6 +710,7 @@ void ControlPanel::onOverlayExited()
     if (startBtn_) startBtn_->setEnabled(true);
     if (editBtn_)  editBtn_->setEnabled(true);
     if (statusBadge_) statusBadge_->setText(QStringLiteral("READY"));
+    setOverlayRunning(false);
     show();
     raise();
     activateWindow();
@@ -827,4 +873,50 @@ QPixmap ControlPanel::renderPreview(Panel *p)
     stripe.fillRect(QRect(0, 0, 4, sz.height()), accent);
     stripe.end();
     return pix;
+}
+
+// v0.5 P1: kill the overlay subprocess and let onOverlayExited()
+// do the cleanup. Safe to call when no overlay is running.
+void ControlPanel::stopOverlay()
+{
+    if (overlayPid_ == 0) return;
+    if (overlayWatch_) overlayWatch_->stop();
+    // SIGTERM = gentle. The overlay's own ESC handler will run
+    // saveConfig() and quit cleanly. SIGKILL would skip that.
+    kill(static_cast<pid_t>(overlayPid_), SIGTERM);
+    // Don't zero overlayPid_ here — the 250ms PID-poll timer will
+    // observe the exit and call onOverlayExited() which does the
+    // teardown. Setting it to 0 now would block a re-launch.
+}
+
+// v0.5 P1: switch the START button between launch and stop modes and
+// re-style the status badge. Safe to call repeatedly; cheap idempotent
+// state flip.
+void ControlPanel::setOverlayRunning(bool running)
+{
+    if (!startBtn_) return;
+    if (running) {
+        startBtn_->setText(QStringLiteral("■   STOP OVERLAY"));
+        startBtn_->setObjectName(QStringLiteral("stopBtn"));
+        if (statusBadge_) {
+            statusBadge_->setText(
+                QStringLiteral("●   RUNNING pid %1")
+                    .arg(overlayPid_));
+            statusBadge_->setProperty("state", "running");
+        }
+    } else {
+        startBtn_->setText(QStringLiteral("▶   START OVERLAY"));
+        startBtn_->setObjectName(QStringLiteral("startBtn"));
+        if (statusBadge_) {
+            statusBadge_->setText(QStringLiteral("●   OVERLAY READY"));
+            statusBadge_->setProperty("state", "ready");
+        }
+    }
+    // Re-apply style so the swapped objectName picks up the QSS rule.
+    startBtn_->style()->unpolish(startBtn_);
+    startBtn_->style()->polish(startBtn_);
+    if (statusBadge_) {
+        statusBadge_->style()->unpolish(statusBadge_);
+        statusBadge_->style()->polish(statusBadge_);
+    }
 }

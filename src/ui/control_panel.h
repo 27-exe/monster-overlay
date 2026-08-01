@@ -41,6 +41,7 @@ public:
 protected:
     void closeEvent(QCloseEvent *e) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void keyPressEvent(QKeyEvent *e) override;
 
 private:
     // L2: persistent mask state lives at ~/.config/MHW Overlay/mhw-overlay.conf
@@ -72,7 +73,9 @@ private:
     void selectPanel(int idx);
     void updatePanelSummary(int idx);
     void launchOverlay(bool editMode);
+    void stopOverlay();
     void onOverlayExited();
+    void setOverlayRunning(bool running);
     void rebuildAndRender(int idx);
     QPixmap renderPreview(Panel *p);
 
