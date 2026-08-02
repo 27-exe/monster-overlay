@@ -311,6 +311,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     railLayout->setContentsMargins(20, 22, 20, 18);
     railLayout->setSpacing(8);
 
+    // v0.5.6: brand + READY pinned at top (always visible, identity).
     auto *brand = new QLabel(QStringLiteral("MHW  OVERLAY"));
     brand->setObjectName("railBrand");
     auto *brandSub = new QLabel(QStringLiteral("CONTROL CONSOLE  ·  0.5"));
@@ -323,32 +324,51 @@ ControlPanel::ControlPanel(QWidget *parent)
     ready->setObjectName("statusBadge");
     statusBadge_ = ready;
     railLayout->addWidget(ready);
-    railLayout->addSpacing(24);
+    railLayout->addSpacing(18);
+
+    // v0.5.6: HUD OBJECTS + WORKSPACE go in their own scroll area so the
+    // future addition of new objects / workspaces doesn't push the START
+    // button off the rail. Pin brand/ready above and START/hint below;
+    // only the middle list scrolls.
+    auto *railScroll = new QScrollArea();
+    railScroll->setObjectName("railScroll");
+    railScroll->setWidgetResizable(true);
+    railScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    railScroll->setFrameShape(QFrame::NoFrame);
+    auto *scrollContent = new QWidget();
+    auto *scrollLayout  = new QVBoxLayout(scrollContent);
+    scrollLayout->setContentsMargins(0, 0, 0, 0);
+    scrollLayout->setSpacing(8);
 
     auto *objectsTitle = new QLabel(QStringLiteral("HUD OBJECTS"));
     objectsTitle->setObjectName("sectionCap");
-    railLayout->addWidget(objectsTitle);
-    railLayout->addWidget(buildObjectButton(QStringLiteral("P"), QStringLiteral("PLAYER"),
+    scrollLayout->addWidget(objectsTitle);
+    scrollLayout->addWidget(buildObjectButton(QStringLiteral("P"), QStringLiteral("PLAYER"),
                                              QStringLiteral("玩家状态"), 0));
-    railLayout->addWidget(buildObjectButton(QStringLiteral("M"), QStringLiteral("MONSTER"),
+    scrollLayout->addWidget(buildObjectButton(QStringLiteral("M"), QStringLiteral("MONSTER"),
                                              QStringLiteral("怪物 HP"), 1));
-    railLayout->addWidget(buildObjectButton(QStringLiteral("D"), QStringLiteral("DAMAGE"),
+    scrollLayout->addWidget(buildObjectButton(QStringLiteral("D"), QStringLiteral("DAMAGE"),
                                              QStringLiteral("DPS / 占比"), 2));
-    railLayout->addSpacing(20);
+    scrollLayout->addSpacing(20);
 
     auto *workspaceTitle = new QLabel(QStringLiteral("WORKSPACE"));
     workspaceTitle->setObjectName("sectionCap");
-    railLayout->addWidget(workspaceTitle);
+    scrollLayout->addWidget(workspaceTitle);
     editBtn_ = new QPushButton(QStringLiteral("◇   LAYOUT MODE"));
     editBtn_->setObjectName("railAction");
     editBtn_->setCursor(Qt::PointingHandCursor);
-    railLayout->addWidget(editBtn_);
+    scrollLayout->addWidget(editBtn_);
     auto *presets = new QPushButton(QStringLiteral("▱   PRESETS"));
     presets->setObjectName("railAction");
     presets->setEnabled(false); // visual placeholder; no preset API yet
-    railLayout->addWidget(presets);
-    railLayout->addStretch(1);
+    scrollLayout->addWidget(presets);
+    scrollLayout->addStretch(1);
+    railScroll->setWidget(scrollContent);
+    railLayout->addWidget(railScroll, 1);
 
+    railLayout->addSpacing(18);
+
+    // v0.5.6: START + ESC hint pinned at bottom (always visible, CTA).
     startBtn_ = new QPushButton(QStringLiteral("▶   START OVERLAY"));
     startBtn_->setObjectName("startBtn");
     startBtn_->setCursor(Qt::PointingHandCursor);
@@ -476,11 +496,11 @@ ControlPanel::ControlPanel(QWidget *parent)
     topContainer->setLayout(topRow);
     splitter->addWidget(topContainer);
     splitter->addWidget(stage);
-    // v0.5.6 polish: ~48/52 split — top row is tall enough to show the
-    // SCALE + OPACITY sliders and part of BG ALPHA without scrolling,
-    // stage gets the rest. The user can drag the (invisible) handle
-    // to fine-tune; the size state persists via QSettings below.
-    splitter->setSizes({500, 540});
+    // v0.5.6 polish: ~45/55 split — the canvas (the actual workbench)
+    // gets the majority of vertical room, but the top strip keeps the
+    // full HUD OBJECTS list + WORKSPACE rows + SCALE/OPACITY sliders
+    // visible without scrolling on a 1280×1040 default window.
+    splitter->setSizes({470, 570});
     // Hard minimum on the top pane so the inspector doesn't get crushed.
     topContainer->setMinimumHeight(360);
     {
