@@ -209,5 +209,6 @@ build system, packaging) is also Apache-2.0. See `LICENSES/`.
 - `docs/PROBE-TOOLS.md` — what each `mhw-probe-*` binary does and when
   to use which.
 - `docs/ASSETS.md` — where icons/charts live and how to add new ones.
-- `mhw-overlay-concept .html` — the open HTML design mock
-  for the visual style. CSS redraw work happens against this file.
+- `control-panel-v0.5-A.html` — the canonical HTML design mock
+  for the v0.5 control console (sidebar + inspector + unified canvas).
+  Visual fidelity work for the console happens against this file.

@@ -199,23 +199,28 @@ QMargins HudCanvas::movedMargins(int index, int dxLogical, int dyLogical) const
     if (index < 0 || index >= 3 || !slots_[index].bound) return {};
     const Corner corner = slots_[index].src->corner();
     QMargins m = dragStartMargins_;   // set at drag/key start
-    auto clamp0 = [](int v){ return std::max(0, v); };
+    const QSize logical = screenInfo().logical;
+    const QSize panel = slots_[index].src->contentSize() * slots_[index].src->scale();
+    const int maxX = std::max(0, logical.width() - panel.width());
+    const int maxY = std::max(0, logical.height() - panel.height());
+    auto clampX = [maxX](int v){ return std::clamp(v, 0, maxX); };
+    auto clampY = [maxY](int v){ return std::clamp(v, 0, maxY); };
     switch (corner) {
     case Corner::TopLeft:
-        m.setLeft(clamp0(m.left() + dxLogical));
-        m.setTop(clamp0(m.top() + dyLogical));
+        m.setLeft(clampX(m.left() + dxLogical));
+        m.setTop(clampY(m.top() + dyLogical));
         break;
     case Corner::TopRight:
-        m.setRight(clamp0(m.right() - dxLogical));
-        m.setTop(clamp0(m.top() + dyLogical));
+        m.setRight(clampX(m.right() - dxLogical));
+        m.setTop(clampY(m.top() + dyLogical));
         break;
     case Corner::BottomLeft:
-        m.setLeft(clamp0(m.left() + dxLogical));
-        m.setBottom(clamp0(m.bottom() - dyLogical));
+        m.setLeft(clampX(m.left() + dxLogical));
+        m.setBottom(clampY(m.bottom() - dyLogical));
         break;
     case Corner::BottomRight:
-        m.setRight(clamp0(m.right() - dxLogical));
-        m.setBottom(clamp0(m.bottom() - dyLogical));
+        m.setRight(clampX(m.right() - dxLogical));
+        m.setBottom(clampY(m.bottom() - dyLogical));
         break;
     }
     return m;

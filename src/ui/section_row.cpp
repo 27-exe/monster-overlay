@@ -1,4 +1,5 @@
 #include "section_row.h"
+#include "ui_theme.h"
 
 #include <cmath>
 #include <QColor>
@@ -36,20 +37,14 @@ SectionRow::SectionRow(const QString &zh, const QString &key,
     // The icon is painted in paintEvent (geometric glyph). Reserve the
     // leading zone for it.
     zh_ = new QLabel(zhText_);
-    zh_->setStyleSheet(QStringLiteral(
-        "color:#e7e8e9;font-family:'Noto Sans SC';font-size:12px;"
-        "background:transparent;border:none;"));
     vl->addSpacing(16);   // icon zone
     vl->addWidget(zh_, 1);
 
     // R4b: HTML mockup uses UPPERCASE keys (QUEST / WSLOT / GAUGE …).
     key_ = new QLabel(keyText_.toUpper());
-    key_->setStyleSheet(QStringLiteral(
-            "color:#6f7375;font-family:'Chakra Petch';font-weight:600;"
-            "font-size:10px;letter-spacing:1.5px;"
-            "background:transparent;border:none;"));
     vl->addWidget(key_, 0);
     setLayout(vl);
+    refreshTheme();
 }
 
 void SectionRow::setAccent(const QColor &c)
@@ -58,19 +53,29 @@ void SectionRow::setAccent(const QColor &c)
     update();
 }
 
+void SectionRow::refreshTheme()
+{
+    if (!zh_ || !key_)
+        return;
+    const QString zhColour = on_ ? uiTheme().fg.name()
+                                 : uiTheme().fgMuted.name();
+    zh_->setStyleSheet(QStringLiteral(
+        "color:%1;font-family:'Noto Sans SC';font-size:12px;"
+        "background:transparent;border:none;").arg(zhColour));
+    key_->setStyleSheet(QStringLiteral(
+        "color:%1;font-family:'Chakra Petch';font-weight:600;"
+        "font-size:10px;letter-spacing:1.5px;"
+        "background:transparent;border:none;").arg(uiTheme().fgMuted.name()));
+    update();
+}
+
 void SectionRow::setChecked(bool c) {
     if (on_ == c) return;
     on_ = c;
-    // Logical text dimming stays immediate (matches prior behaviour).
-    const QString zhColour = on_ ? QStringLiteral("#e7e8e9")
-                                 : QStringLiteral("#929495");
-    zh_->setStyleSheet(QStringLiteral(
-        "color:%1;font-family:'Noto Sans SC';font-size:12px;"
-        "background:transparent;border:none;")
-        .arg(zhColour));
+    // Inline child styles must be regenerated with the current theme.
+    refreshTheme();
 
-    // v0.5 P2: ease the icon on/off over 200ms. The logical state above
-    // already flipped; only the glyph's fill/colour animates.
+    // v0.5 P2: ease the icon's fill/colour over 200ms.
     if (!anim_) {
         anim_ = new QVariantAnimation(this);
         anim_->setDuration(200);
@@ -92,8 +97,8 @@ void SectionRow::paintEvent(QPaintEvent *) {
     const QRectF tile(rect().adjusted(1, 1, -1, -1));
     QPainterPath path;
     path.addRoundedRect(tile, 4.0, 4.0);
-    p.fillPath(path, QColor(22, 24, 26));   // #16181a
-    p.setPen(QColor(38, 41, 43));          // #26292b hairline
+    p.fillPath(path, uiTheme().tileDark);
+    p.setPen(uiTheme().tileHairline);
     p.drawPath(path);
 
     // Icon at left, vertically centred.
@@ -105,7 +110,7 @@ void SectionRow::drawIcon(QPainter &p, const QRectF &box) const
 {
     // on/off easing: colour lerps grey→accent, fill alpha lerps 0→~140,
     // so off = hollow grey glyph, on = filled accent glyph.
-    const QColor grey(96, 100, 102);
+    const QColor grey = uiTheme().fgMuted;
     const QColor col = lerpColor(grey, accent_, onT_);
     p.setPen(QPen(col, 1.4));
     const int fillAlpha = int(onT_ * 140);

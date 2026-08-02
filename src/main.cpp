@@ -36,6 +36,13 @@ int main(int argc, char **argv)
 {
     qInstallMessageHandler(messageHandler);
     QApplication app(argc, argv);
+    // Force the Fusion style: the Kvantum style plugin (kvantum 1.1.8 +
+    // Layan) auto-requests KWin blur-behind for every translucent top-level
+    // via BlurHelper::update() (blurhelper.cpp:361 enableBlurBehind(win,true)).
+    // With Fusion the plugin never loads -> no ext_background_effect_v1
+    // set_blur_region request -> crisp see-through panels on Plasma 6.7.
+    // Overlay is pure QPainter-drawn, so no visual change from losing Kvantum.
+    app.setStyle(QStringLiteral("Fusion"));
     QApplication::setApplicationName(QStringLiteral("mhw-linux-overlay"));
     QApplication::setApplicationDisplayName(QStringLiteral("MHW Linux Overlay"));
     QApplication::setApplicationVersion(QStringLiteral("0.2.0"));

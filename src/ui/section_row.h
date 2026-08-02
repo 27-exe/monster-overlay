@@ -38,6 +38,10 @@ public:
 
     // Panel accent used for the icon's on-state colour (purple/orange/teal).
     void setAccent(const QColor &c);
+    // Reapply the inline label colours from uiTheme(). SectionRow owns
+    // child-label stylesheets, so a parent QSS theme swap cannot update
+    // them automatically.
+    void refreshTheme();
 
     QSize sizeHint() const override { return QSize(160, 24); }
     QSize minimumSizeHint() const override { return QSize(120, 24); }

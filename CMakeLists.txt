@@ -166,6 +166,8 @@ add_executable(mhw-control
     src/ui/section_row.h
     src/ui/section_count_bar.cpp
     src/ui/section_count_bar.h
+    src/ui/ui_theme.cpp
+    src/ui/ui_theme.h
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -239,6 +241,8 @@ add_executable(mhw-control-l2-smoke
     src/ui/section_row.h
     src/ui/section_count_bar.cpp
     src/ui/section_count_bar.h
+    src/ui/ui_theme.cpp
+    src/ui/ui_theme.h
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -289,6 +293,8 @@ add_executable(mhw-control-p0-test
     src/ui/section_row.h
     src/ui/section_count_bar.cpp
     src/ui/section_count_bar.h
+    src/ui/ui_theme.cpp
+    src/ui/ui_theme.h
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc

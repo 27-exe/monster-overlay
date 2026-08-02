@@ -10,6 +10,7 @@
 
 #include "ui/control_panel.h"
 #include "ui/screen_query.h"
+#include "ui/ui_theme.h"
 #include "core/string_table.h"
 
 #include <QApplication>
@@ -20,6 +21,11 @@
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    // Same Kvantum blur opt-out as mhw-overlay (see src/main.cpp): the
+    // Kvantum style plugin auto-requests KWin blur-behind for translucent
+    // top-levels via BlurHelper::update(). Fusion skips the plugin so the
+    // console's translucent chrome stays crisp on Plasma 6.7.
+    app.setStyle(QStringLiteral("Fusion"));
     app.setApplicationName(QStringLiteral("mhw-control"));
     // Quit as soon as the last visible window is closed. Required because
     // the three panel previews are QMainWindows in the live overlay —
@@ -50,6 +56,15 @@ int main(int argc, char *argv[])
                    qPrintable(screen_query::sourceLabel(r.source)));
             fflush(stdout);
             return 0;
+        }
+    }
+
+    // Optional: start in light theme (default is dark "light-grey deep").
+    // Useful for testing and for users who prefer the 浅灰 palette.
+    for (int i = 1; i < argc; ++i) {
+        if (QString::fromLocal8Bit(argv[i]) == QStringLiteral("--light")) {
+            setUiTheme(false);
+            break;
         }
     }
 

@@ -103,6 +103,7 @@ private:
     HudCanvas *canvas_ = nullptr;
     QPushButton *safeAreaBtn_ = nullptr;
     QPushButton *gridBtn_ = nullptr;
+    QPushButton *themeBtn_ = nullptr;
     int selectedPanel_ = 0;
 
     // L4: status badge in the top-right, shows "READY" by default and

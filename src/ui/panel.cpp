@@ -162,9 +162,8 @@ void Panel::loadConfig()
 
     scale_ = std::clamp(scale_, kMinScale, kMaxScale);
     opacity_ = std::clamp(opacity_, 0.1, 1.0);
-    qInfo("mhw-panel [%s]: loadConfig opacity=%.2f bgAlpha=%d scale=%.2f margins=L%d T%d R%d B%d",
-          qPrintable(key_), opacity_, bgAlpha_, scale_,
-          margins_.left(), margins_.top(), margins_.right(), margins_.bottom());
+    // Runtime config is observable through the console; do not log each
+    // console construction because it floods the TUI output.
 
     // Note: visibility is NOT applied here. The window must not be
     // shown until after applyGeometry() configures the layer-shell
@@ -204,9 +203,6 @@ void Panel::saveAppearance()
     settings().setValue(QStringLiteral("mb"), margins_.bottom());
     settings().endGroup();
     settings().sync();
-    qInfo("mhw-panel [%s]: saveAppearance opacity=%.2f bgAlpha=%d scale=%.2f margins=L%d T%d R%d B%d",
-          qPrintable(key_), opacity_, bgAlpha_, scale_,
-          margins_.left(), margins_.top(), margins_.right(), margins_.bottom());
 }
 
 void Panel::showEvent(QShowEvent *e)
@@ -619,8 +615,6 @@ void Panel::setOpacity(qreal a, bool persist)
     if (qFuzzyCompare(clamped, opacity_))
         return;
     opacity_ = clamped;
-    qInfo("mhw-panel [%s]: setOpacity -> %.2f (persist=%d, editMode=%d)",
-          qPrintable(key_), opacity_, persist, editMode_);
     update();
     if (persist && editMode_)
         saveConfig();
@@ -632,7 +626,6 @@ void Panel::setBgAlpha(int a, bool persist)
     if (clamped == bgAlpha_)
         return;
     bgAlpha_ = clamped;
-    qInfo("mhw-panel [%s]: setBgAlpha -> %d (persist=%d)", qPrintable(key_), bgAlpha_, persist);
     update();
     if (persist && editMode_)
         saveConfig();

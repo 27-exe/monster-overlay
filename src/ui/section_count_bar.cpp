@@ -1,4 +1,5 @@
 #include "section_count_bar.h"
+#include "ui_theme.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -36,7 +37,7 @@ void SectionCountBar::paintEvent(QPaintEvent *)
     QPainterPath path;
     path.addRoundedRect(track, 2.0, 2.0);
     p.setPen(Qt::NoPen);
-    p.fillPath(path, QColor(29, 32, 34));   // #1d2022 track
+    p.fillPath(path, uiTheme().bgTrack);
 
     // Fill: accent-coloured, width scaled by the ratio. A 4px track
     // leaves at least a rounded nub at 0% and full width at 100%.

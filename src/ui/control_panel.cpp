@@ -10,6 +10,7 @@
 #include "ui/section_count_bar.h"
 #include "ui/hud_canvas.h"
 #include "ui/panel_source.h"
+#include "ui/ui_theme.h"
 #include "core/string_table.h"
 
 #include <QCheckBox>
@@ -20,6 +21,8 @@
 #include <QSlider>
 #include <QMouseEvent>
 #include <QFrame>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QPushButton>
 #include <QGroupBox>
 #include <QLabel>
@@ -47,144 +50,157 @@ namespace {
 
 QString qssBase()
 {
-    // Token palette mirrors the HTML control mock (v0.4) so this QSS can
-    // be re-tuned in one place. Roles:
-    //   - bg          : window background (#0a0c0d, near-black)
-    //   - fg          : primary text (#e7e8e9)
-    //   - mute        : secondary text / disabled labels (#6f7375)
-    //   - accent      : brand orange (left-edge bar, master toggled dot)
-    //   - teal        : "connected / on" indicator (logo dot, toggled rail)
-    //   - rule        : hairline separator between groups
-    //   - panel chrome: live preview tile border / background
-    return QStringLiteral(
-        "QWidget{background:#0a0c0d;color:#e7e8e9;}"
-        "QMainWindow{background:#0a0c0d;}"
-        "QGroupBox{color:#fff;border:none;border-radius:0;"
+    // Theme-driven QSS: colours come from uiTheme() (ui_theme.h) so the
+    // console can switch dark (light-grey deep charcoal) ↔ light (浅灰)
+    // at runtime. Structural rules (selectors / padding / font sizes)
+    // stay here in one place. Custom-painted widgets (SectionRow,
+    // ToggleChip, SectionCountBar) read the same palette themselves.
+    const UiTheme &t = uiTheme();
+    const QString bg      = t.bg.name();
+    const QString bgPanel = t.bgPanel.name();
+    const QString bgCtl   = t.bgControl.name();
+    const QString bgTrack = t.bgTrack.name();
+    const QString fg      = t.fg.name();
+    const QString fgMut   = t.fgMuted.name();
+    const QString fgDim   = t.fgDim.name();
+    const QString border  = t.border.name();
+    const QString soft    = t.borderSoft.name();
+    const QString orange  = t.accentOrange.name();
+    const QString teal    = t.accentTeal.name();
+    const QString purple  = t.accentPurple.name();
+
+    QString qss = QStringLiteral(
+        "QWidget{background:%1;color:%2;}"
+        // Explicit button foreground is required: relying on QWidget's
+        // inherited `color` leaves Fusion/QSS cache with stale text after
+        // a runtime theme swap on Qt 6.11.
+        "QPushButton{color:%2;}"
+        "QMainWindow{background:%1;}"
+        "QGroupBox{color:%2;border:none;border-radius:0;"
         " margin-top:0;padding:14px 0 12px 0;font-family:'Chakra Petch';"
         " font-weight:600;letter-spacing:1px;}"
-        "QGroupBox::title{subcontrol-origin:margin;left:0;padding:0;color:#e7e8e9;}"
-        "QCheckBox{color:#d3d4d5;spacing:8px;font-family:'Noto Sans SC';font-size:12px;}"
-        "QCheckBox::indicator{width:14px;height:14px;border:1px solid #3a3e40;"
-        " border-radius:3px;background:#1d2022;}"
-        "QCheckBox::indicator:checked{background:#50c5b7;border-color:#50c5b7;}"
-        "QLabel#sub{color:#929495;font-size:11px;}"
-        "QLabel#master{color:#fff;font-weight:600;}"
-        "QLabel#previewFrame{background:#16181a;border:1px solid #2a2d2f;border-radius:4px;}"
+        "QGroupBox::title{subcontrol-origin:margin;left:0;padding:0;color:%2;}"
+        "QCheckBox{color:%5;spacing:8px;font-family:'Noto Sans SC';font-size:15px;}"
+        "QCheckBox::indicator{width:14px;height:14px;border:1px solid %8;"
+        " border-radius:3px;background:%3;}"
+        "QCheckBox::indicator:checked{background:%10;border-color:%10;}"
+        "QLabel#sub{color:%6;font-size:14px;}"
+        "QLabel#master{color:%2;font-weight:600;}"
+        "QLabel#previewFrame{background:%3;border:1px solid %8;border-radius:4px;}"
         "QScrollArea{border:none;background:transparent;}"
-        "QLabel#logoTitle{color:#e7e8e9;font-family:'Chakra Petch';font-weight:600;"
-        " font-size:18px;letter-spacing:4px;background:transparent;}"
-        "QLabel#logoAccent{color:#ff8040;font-family:'Chakra Petch';font-weight:600;"
-        " font-size:18px;letter-spacing:4px;background:transparent;}"
-        "QLabel#logoSub{color:#6f7375;font-family:'Chakra Petch';font-weight:500;"
-        " font-size:11px;letter-spacing:3px;background:transparent;}"
-        "QLabel#logoBadge{color:#50c5b7;font-family:'Chakra Petch';font-weight:600;"
-        " font-size:11px;letter-spacing:2px;background:transparent;}"
-        "QLabel#logoBadgeDot{color:#50c5b7;font-size:14px;background:transparent;"
+        "QLabel#logoTitle{color:%2;font-family:'Chakra Petch';font-weight:600;"
+        " font-size:20px;letter-spacing:4px;background:transparent;}"
+        "QLabel#logoAccent{color:%9;font-family:'Chakra Petch';font-weight:600;"
+        " font-size:20px;letter-spacing:4px;background:transparent;}"
+        "QLabel#logoSub{color:%6;font-family:'Chakra Petch';font-weight:500;"
+        " font-size:14px;letter-spacing:3px;background:transparent;}"
+        "QLabel#logoBadge{color:%10;font-family:'Chakra Petch';font-weight:600;"
+        " font-size:14px;letter-spacing:2px;background:transparent;}"
+        "QLabel#logoBadgeDot{color:%10;font-size:17px;background:transparent;"
         " padding-right:6px;}"
-        // L4: status badge — same teal as PREVIEW, but slightly dimmer
-        // so the eye reads "PREVIEW" as the chrome and the status as
-        // the live indicator.
-        "QLabel#statusBadge{color:#3a8782;font-family:'Chakra Petch';"
-        " font-weight:600;font-size:10px;letter-spacing:2px;"
+        "QLabel#statusBadge{color:%10;font-family:'Chakra Petch';"
+        " font-weight:600;font-size:13px;letter-spacing:2px;"
         " background:transparent;border:none;}"
-        // R2: letter badges for group titles (P/M/D) — coloured stroke on
-        // a near-black fill, matching the HTML v0.4 side-bar block.
-        "QLabel#badgeP{color:#aa55ff;font-family:'Chakra Petch';font-weight:700;"
-        " font-size:14px;background:transparent;border:1.5px solid #aa55ff;"
+        "QLabel#badgeP{color:%11;font-family:'Chakra Petch';font-weight:700;"
+        " font-size:17px;background:transparent;border:1.5px solid %11;"
         " border-radius:3px;qproperty-alignment:AlignCenter;}"
-        "QLabel#badgeM{color:#ff8040;font-family:'Chakra Petch';font-weight:700;"
-        " font-size:14px;background:transparent;border:1.5px solid #ff8040;"
+        "QLabel#badgeM{color:%9;font-family:'Chakra Petch';font-weight:700;"
+        " font-size:17px;background:transparent;border:1.5px solid %9;"
         " border-radius:3px;qproperty-alignment:AlignCenter;}"
-        "QLabel#badgeD{color:#50c5b7;font-family:'Chakra Petch';font-weight:700;"
-        " font-size:14px;background:transparent;border:1.5px solid #50c5b7;"
+        "QLabel#badgeD{color:%10;font-family:'Chakra Petch';font-weight:700;"
+        " font-size:17px;background:transparent;border:1.5px solid %10;"
         " border-radius:3px;qproperty-alignment:AlignCenter;}"
-        "QLabel#groupTitle{color:#e7e8e9;font-family:'Chakra Petch';font-weight:600;"
-        " font-size:14px;letter-spacing:2px;background:transparent;"
+        "QLabel#groupTitle{color:%2;font-family:'Chakra Petch';font-weight:600;"
+        " font-size:17px;letter-spacing:2px;background:transparent;"
         " padding-left:10px;}"
-        "QLabel#groupSub{color:#6f7375;font-family:'Noto Sans SC';font-weight:400;"
-        " font-size:11px;background:transparent;padding-left:10px;}"
-        // R5: hairline separator between groups
-        "QFrame#rule{color:#1f2224;background:#1f2224;border:none;"
+        "QLabel#groupSub{color:%6;font-family:'Noto Sans SC';font-weight:400;"
+        " font-size:14px;background:transparent;padding-left:10px;}"
+        "QFrame#rule{color:%8;background:%8;border:none;"
         " max-height:1px;min-height:1px;}"
-        // R5: EDIT MODE block — orange filled "ENTER EDIT" button on
-        // the right, caption on the left.
-        "QPushButton#enterEdit{background:#ff8040;color:#1a0f08;"
-        " border:none;border-radius:3px;padding:8px 18px;font-family:'Chakra Petch';"
-        " font-weight:700;font-size:11px;letter-spacing:2px;}"
-        "QPushButton#enterEdit:hover{background:#ff9050;}"
-        "QPushButton#enterEdit:pressed{background:#e66f30;}"
-        // L3: START shares the orange CTA look — same rules, just a
-        // different object name so we can wire different signals.
-        "QPushButton#startBtn{background:#ff8040;color:#1a0f08;"
-        " border:none;border-radius:3px;padding:8px 18px;font-family:'Chakra Petch';"
-        " font-weight:700;font-size:11px;letter-spacing:2px;}"
-        "QPushButton#startBtn:hover{background:#ff9050;}"
-        "QPushButton#startBtn:pressed{background:#e66f30;}"
-        "QPushButton#stopBtn{background:#a13c2a;color:#1a0808;border:none;border-radius:3px;padding:8px 18px;font-family:\'Chakra Petch\';font-weight:700;font-size:11px;letter-spacing:2px;}"
+        "QPushButton#enterEdit{background:%9;color:%2;"
+        " border:none;border-radius:3px;padding:12px 28px;font-family:'Chakra Petch';"
+        " font-weight:700;font-size:14px;letter-spacing:2px;}"
+        "QPushButton#enterEdit:hover{background:%9;}"
+        "QPushButton#enterEdit:pressed{background:%9;}"
+        "QPushButton#startBtn{background:%9;color:%2;"
+        " border:none;border-radius:3px;padding:12px 28px;font-family:'Chakra Petch';"
+        " font-weight:700;font-size:14px;letter-spacing:2px;}"
+        "QPushButton#startBtn:hover{background:%9;}"
+        "QPushButton#startBtn:pressed{background:%9;}"
+        "QPushButton#stopBtn{background:#a13c2a;color:#1a0808;border:none;border-radius:3px;padding:12px 28px;font-family:'Chakra Petch';font-weight:700;font-size:14px;letter-spacing:2px;}"
         "QPushButton#stopBtn:hover{background:#b8482f;}"
         "QPushButton#stopBtn:pressed{background:#8a311f;}"
-        "QPushButton#startBtn:disabled{background:#4a2010;color:#806050;}"
-        "QLabel#editCap{color:#6f7375;font-family:'Noto Sans SC';font-size:10px;"
+        "QPushButton#startBtn:disabled{background:%4;color:%6;}"
+        "QLabel#editCap{color:%6;font-family:'Noto Sans SC';font-size:13px;"
         " background:transparent;border:none;}"
-        // R6: right-column title ("MOCK PREVIEW")
-        "QLabel#previewTitle{color:#6f7375;font-family:'Chakra Petch';"
-        " font-weight:600;font-size:11px;letter-spacing:4px;"
+        "QLabel#previewTitle{color:%6;font-family:'Chakra Petch';"
+        " font-weight:600;font-size:14px;letter-spacing:4px;"
         " background:transparent;border:none;}"
-        // v0.5 A shell: object rail, focused inspector, unified canvas.
-        "QFrame#objectRail{background:#0b0e0f;border-right:1px solid #24282a;}"
-        "QFrame#inspectorHost{background:#0d1011;border-right:1px solid #24282a;}"
-        "QFrame#stage{background:#07090a;}"
-        "QLabel#railBrand{font-family:'Chakra Petch';font-size:15px;letter-spacing:2px;color:#e7e8e9;}"
-        "QLabel#railBrandSub,QLabel#railHint{font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;color:#676d6f;}"
-        "QLabel#sectionCap{font-family:'Chakra Petch';font-size:9px;letter-spacing:2px;color:#555b5d;}"
-        "QFrame#navPlayer,QFrame#navMonster,QFrame#navDamage{background:transparent;border:1px solid transparent;border-radius:3px;border-left-width:2px;}"
-        "QFrame#navPlayer:hover,QFrame#navMonster:hover,QFrame#navDamage:hover{background:#121617;}"
-        "QFrame#navPlayer[selected=\"true\"]   {background:#15191a;border-color:#303638;border-left-color:#a74fff;}"
-        "QFrame#navMonster[selected=\"true\"]  {background:#15191a;border-color:#303638;border-left-color:#ff7043;}"
-        "QFrame#navDamage[selected=\"true\"]   {background:#15191a;border-color:#303638;border-left-color:#50c5b7;}"
-        "QFrame#navPlayer   > QLabel#navEnabled {color:#a74fff;}"
-        "QFrame#navMonster  > QLabel#navEnabled {color:#ff7043;}"
-        "QFrame#navDamage   > QLabel#navEnabled {color:#50c5b7;}"
-        "QLabel#navTitle{font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;color:#dfe1e2;}"
-        "QLabel#navSummary{font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;color:#777d7f;}"
-        "QLabel#navEnabled{font-size:8px;color:#50c5b7;}"
-        "QPushButton#railAction{background:transparent;color:#a2a6a8;border:1px solid #303638;border-radius:3px;"
-        "text-align:left;padding:7px 10px;font-family:'Chakra Petch';font-size:10px;letter-spacing:1px;}"
-        "QPushButton#railAction:hover{background:#15191a;color:#e7e8e9;}"
-        "QPushButton#railAction:disabled{color:#616769;}"
-        "QLabel#inspectorTitle{font-family:'Chakra Petch';font-size:22px;letter-spacing:2px;color:#e7e8e9;}"
-        "QLabel#inspectorSub{font-family:'Noto Sans SC';font-size:11px;color:#787e80;}"
-        "QLabel#countLabel{font-family:'Chakra Petch';font-size:10px;letter-spacing:1px;color:#aeb2b3;}"
-        // v0.5 P1: section count picks up the panel accent via
-        // objectName suffix (P/M/D) so the active object's
-        // headline is identifiable at a glance.
-        "QLabel#countLabelP{color:#a74fff;}"
-        "QLabel#countLabelM{color:#ff7043;}"
-        "QLabel#countLabelD{color:#50c5b7;}"
-        "QLabel#sliderLabel{color:#8d9294;font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;min-width:52px;}"
-        "QLabel#sliderValue{color:#e0e0e0;font-family:'Chakra Petch';font-size:10px;min-width:36px;}"
-        "QPushButton#foldout{background:transparent;color:#8d9294;border:1px solid #292e30;border-radius:3px;"
-        "text-align:left;padding:9px 12px;font-family:'Chakra Petch';font-size:10px;letter-spacing:1px;}"
-        "QPushButton#foldout:disabled:hover{background:#131617;}"
-        "QPushButton#resetButton{background:transparent;color:#9da1a3;border:1px solid #313638;border-radius:3px;"
-        "padding:7px 10px;font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;}"
-        "QPushButton#resetButton:disabled:hover{background:#131617;}"
-        "QLabel#modified{font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;color:#777d7f;}"
-        "QLabel#posLabel{font-family:'Chakra Petch';font-size:10px;letter-spacing:0.5px;"
-        "color:#8d9294;background:#131617;border:1px solid #232628;border-radius:3px;"
-        "padding:6px 10px;margin-top:4px;}"
-        "QScrollBar:vertical{width:7px;background:#0d1011;}QScrollBar::handle:vertical{background:#303638;min-height:24px;}"
-
-        // v0.5 UI-link: APPEARANCE sliders
+        // v0.5 A shell: rail shares the window base colour (no colour band
+        // between the rail text and the window behind it).
+        "QFrame#objectRail{background:%1;border-right:1px solid %8;}"
+        "QFrame#inspectorHost{background:%2;border-right:1px solid %8;}"
+        "QFrame#stage{background:%1;}"
+        "QLabel#railBrand{font-family:'Chakra Petch';font-size:17px;letter-spacing:2px;color:%2;}"
+        "QLabel#railBrandSub,QLabel#railHint{font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;color:%6;}"
+        "QLabel#sectionCap{font-family:'Chakra Petch';font-size:12px;letter-spacing:2px;color:%6;}"
+        "QFrame#navPlayer,QFrame#navMonster,QFrame#navDamage{background:transparent;border:1px solid transparent;border-radius:3px;}"
+        "QFrame#navPlayer:hover,QFrame#navMonster:hover,QFrame#navDamage:hover{background:%3;}"
+        "QFrame#navPlayer[selected=\"true\"],QFrame#navMonster[selected=\"true\"],QFrame#navDamage[selected=\"true\"]{background:%1;border-color:%8;}"
+        "QFrame#navPlayer   > QLabel#navEnabled {color:%11;}"
+        "QFrame#navMonster  > QLabel#navEnabled {color:%9;}"
+        "QFrame#navDamage   > QLabel#navEnabled {color:%10;}"
+        "QLabel#navTitle{font-family:'Chakra Petch';font-size:15px;letter-spacing:1px;color:%2;}"
+        "QLabel#navSummary{font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;color:%5;}"
+        "QLabel#navEnabled{font-size:11px;color:%10;}"
+        "QPushButton#railAction{background:transparent;color:%6;border:1px solid %8;border-radius:3px;"
+        "text-align:left;padding:11px 18px;font-family:'Chakra Petch';font-size:13px;letter-spacing:1px;}"
+        "QPushButton#railAction:hover{background:%3;color:%2;}"
+        "QPushButton#railAction:disabled{color:%6;}"
+        "QLabel#inspectorTitle{font-family:'Chakra Petch';font-size:24px;letter-spacing:2px;color:%2;}"
+        "QLabel#inspectorSub{font-family:'Noto Sans SC';font-size:14px;color:%6;}"
+        "QLabel#countLabel{font-family:'Chakra Petch';font-size:14px;font-weight:600;letter-spacing:1px;color:%2;}"
+        "QLabel#countLabelP{color:%11;}"
+        "QLabel#countLabelM{color:%9;}"
+        "QLabel#countLabelD{color:%10;}"
+        "QLabel#sliderLabel{color:%6;font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;min-width:52px;}"
+        "QLabel#sliderValue{color:%2;font-family:'Chakra Petch';font-size:13px;min-width:36px;}"
+        "QPushButton#foldout{background:transparent;color:%6;border:1px solid %8;border-radius:3px;"
+        "text-align:left;padding:13px 20px;font-family:'Chakra Petch';font-size:13px;letter-spacing:1px;}"
+        "QPushButton#foldout:disabled:hover{background:%3;}"
+        "QPushButton#resetButton{background:transparent;color:%6;border:1px solid %8;border-radius:3px;"
+        "padding:11px 18px;font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;}"
+        "QPushButton#resetButton:disabled:hover{background:%3;}"
+        "QLabel#modified{font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;color:%6;}"
+        "QLabel#posLabel{font-family:'Chakra Petch';font-size:13px;font-weight:600;letter-spacing:0.5px;"
+        "color:%2;background:%3;border:1px solid %8;border-radius:3px;"
+        "padding:8px 13px;margin-top:4px;min-width:330px;}"
+        "QScrollBar:vertical{width:7px;background:%2;}QScrollBar::handle:vertical{background:%8;min-height:24px;}"
         "QSlider{background:transparent;border:none;}"
-        "QSlider::groove:horizontal{height:4px;background:#2a2d2f;border-radius:2px;}"
-        "QSlider::handle:horizontal{width:14px;height:14px;margin:-5px 0;background:#e0e0e0;border-radius:7px;}"
-        "QSlider::sub-page:horizontal{background:#a74fff;border-radius:2px;}"
-        // v0.5 UI-link: stagebar toggle buttons
-        "QPushButton#stageToggle{background:transparent;color:#8d9294;border:1px solid #2a2d2f;border-radius:3px;padding:4px 12px;font-family:'Chakra Petch';font-size:9px;letter-spacing:1px;}"
-        "QPushButton#stageToggle:hover{border-color:#4a4e50;color:#c0c4c6;}"
-        "QPushButton#stageToggle:checked{background:#1e2224;border-color:#a74fff;color:#a74fff;}"
-);
+        "QSlider::groove:horizontal{height:4px;background:%4;border-radius:2px;}"
+        "QSlider::handle:horizontal{width:14px;height:14px;margin:-5px 0;background:%2;border-radius:7px;}"
+        "QSlider::sub-page:horizontal{background:%11;border-radius:2px;}"
+        "QPushButton#stageToggle{background:transparent;color:%6;border:1px solid %8;border-radius:3px;padding:7px 18px;font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;}"
+        "QPushButton#stageToggle:hover{border-color:%8;color:%2;}"
+        "QPushButton#stageToggle:checked{background:%3;border-color:%11;color:%11;}"
+        "QPushButton#themeToggle{background:transparent;color:%6;border:1px solid %8;border-radius:3px;padding:7px 16px;font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;}"
+        "QPushButton#themeToggle:hover{border-color:%8;color:%2;}"
+    );
+    // Replace longest placeholders first. QString::arg historically treats
+    // %1 as a prefix of %10/%11 in chained substitutions, which produced
+    // startup warnings and corrupted the P/M/D accent colours.
+    qss.replace(QStringLiteral("%11"), purple);
+    qss.replace(QStringLiteral("%10"), teal);
+    qss.replace(QStringLiteral("%9"), orange);
+    qss.replace(QStringLiteral("%8"), soft);
+    qss.replace(QStringLiteral("%7"), border);
+    qss.replace(QStringLiteral("%6"), fgDim);
+    qss.replace(QStringLiteral("%5"), fgMut);
+    qss.replace(QStringLiteral("%4"), bgTrack);
+    qss.replace(QStringLiteral("%3"), bgPanel);
+    qss.replace(QStringLiteral("%2"), fg);
+    qss.replace(QStringLiteral("%1"), bg);
+    return qss;
 }
 
 // v0.5 P2: map (panel index, section bit index) → SectionRow::Icon.
@@ -211,9 +227,10 @@ int iconKind(int panel, int section)
 
 QColor panelAccent(int panel)
 {
-    if (panel == 0) return QColor(167, 79, 255);   // Player purple
-    if (panel == 1) return QColor(255, 112, 67);   // Monster orange
-    return QColor(80, 197, 183);                   // Damage teal
+    const UiTheme &t = uiTheme();
+    if (panel == 0) return t.accentPurple;
+    if (panel == 1) return t.accentOrange;
+    return t.accentTeal;
 }
 
 } // namespace
@@ -224,8 +241,8 @@ ControlPanel::ControlPanel(QWidget *parent)
     setObjectName("mhw-control-panel");
     setStyleSheet(qssBase());
     setWindowTitle(QStringLiteral("MHW Overlay Control"));
-    resize(1440, 900);
-    setMinimumSize(1160, 720);
+    resize(1280, 860);
+    setMinimumSize(1120, 720);
 
     // Real panel instances, rendered off-screen only. WA_DontShowOnScreen
     // lets show()/repaint() run the full paint path (demo data + the
@@ -317,7 +334,7 @@ ControlPanel::ControlPanel(QWidget *parent)
 
     auto *inspectorHost = new QFrame();
     inspectorHost->setObjectName("inspectorHost");
-    inspectorHost->setFixedWidth(358);
+    inspectorHost->setFixedWidth(420);
     auto *inspectorLayout = new QVBoxLayout(inspectorHost);
     inspectorLayout->setContentsMargins(0, 0, 0, 0);
     inspectorStack_ = new QStackedWidget();
@@ -356,6 +373,27 @@ ControlPanel::ControlPanel(QWidget *parent)
     gridBtn_->setChecked(true);
     gridBtn_->setCursor(Qt::PointingHandCursor);
     stagebar->addWidget(gridBtn_);
+    themeBtn_ = new QPushButton(isDarkTheme() ? QStringLiteral("☀  LIGHT") : QStringLiteral("☾  DARK"));
+    themeBtn_->setObjectName("themeToggle");
+    themeBtn_->setCursor(Qt::PointingHandCursor);
+    connect(themeBtn_, &QPushButton::clicked, this, [this]() {
+        setUiTheme(!isDarkTheme());
+        themeBtn_->setText(isDarkTheme() ? QStringLiteral("☀  LIGHT") : QStringLiteral("☾  DARK"));
+        // Clear the old application stylesheet first. Qt 6.11 keeps
+        // cached selector colours on existing QPushButtons if a new QSS
+        // is assigned directly; clearing makes the following assignment
+        // a real style reset instead of an incremental merge.
+        setStyleSheet({});
+        setStyleSheet(qssBase());
+        // SectionRow owns inline QLabels, therefore parent QSS cannot
+        // update CONNECTION / QUEST / etc. Rebuild those child styles
+        // explicitly while the new theme is active.
+        for (auto &c : ctl_)
+            for (SectionRow *row : c.subs)
+                row->refreshTheme();
+        repolishAllWidgets();
+    });
+    stagebar->addWidget(themeBtn_);
     stageLayout->addLayout(stagebar);
 
     canvas_ = new HudCanvas();
@@ -550,8 +588,22 @@ QWidget *ControlPanel::buildObjectButton(const QString &letter,
     row->setContentsMargins(10, 9, 8, 9);
     row->setSpacing(10);
 
+    // A real child frame, rather than a parent-QSS border selector: this
+    // keeps the identity stripe visible through runtime theme swaps.
+    auto *accentBar = new QFrame();
+    accentBar->setFixedWidth(3);
+    accentBar->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    const QColor accent = panelAccent(idx);
+    accentBar->setStyleSheet(QStringLiteral("background:%1;border:none;border-radius:1px;")
+                                 .arg(accent.name()));
+    row->addWidget(accentBar);
+
     auto *badge = new QLabel(letter);
-    badge->setObjectName(idx == 0 ? "badgeP" : idx == 1 ? "badgeM" : "badgeD");
+    badge->setObjectName("navBadge");
+    badge->setStyleSheet(QStringLiteral(
+        "color:%1;background:transparent;border:1.5px solid %1;"
+        "border-radius:3px;font-family:'Chakra Petch';font-weight:700;"
+        "font-size:17px;").arg(accent.name()));
     badge->setFixedSize(26, 26);
     badge->setAlignment(Qt::AlignCenter);
     row->addWidget(badge);
@@ -580,6 +632,7 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     auto *host = new QWidget();
     auto *scroll = new QScrollArea(host);
     scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     auto *outer = new QVBoxLayout(host);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->addWidget(scroll);
@@ -738,6 +791,11 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     // arrow keys; this label is read-only feedback.
     auto *posLabel = new QLabel();
     posLabel->setObjectName("posLabel");
+    // Fixed width: margin digits change as the user drags the panel;
+    // without a fixed width the label reflows and the whole inspector
+    // column width jitters every frame.
+    posLabel->setFixedWidth(350);
+    posLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     ctl_[idx].posLabel = posLabel;
     vl->addWidget(posLabel);
     vl->addStretch(1);
@@ -1072,16 +1130,10 @@ void ControlPanel::rebuildAndRender(int idx)
 
 QPixmap ControlPanel::renderPreview(Panel *p)
 {
-    // First paint seeds demo data and writes the panel's natural geometry
-    // into logicalSize_ via setContentSize(); but the matching
-    // setFixedSize() is deferred, so size() is still stale here. Read
-    // contentSize() (the synchronous logical size) and resize the backing
-    // store to match before the second paint — otherwise render() would
-    // only grab the top slice of the panel (the truncation bug).
-    p->repaint();
-    const QSize nat = p->contentSize();
-    if (nat.isValid() && !nat.isEmpty())
-        p->resize(nat);
+    // First paint seeds demo data and applies setContentSize() at the
+    // panel's current scale. Do NOT resize to contentSize() here: that
+    // logical (unscaled) size would overwrite Panel::setScale() and make
+    // the SCALE slider display 50% while rendering at 100%.
     p->repaint();
     const QSize sz = p->size();
     // paintEvent composites at the panel's opacity via p.setOpacity(),
@@ -1203,15 +1255,28 @@ void ControlPanel::updatePosLabel(int idx)
                         : static_cast<Panel*>(damage_);
     if (!p) return;
     const QMargins m = p->margins();
-    QString corner;
+    // Display the panel's *current screen quadrant*, not its immutable
+    // layer-shell anchor. Anchor stays fixed (so drag remains stable),
+    // while this label follows the actual position when margins cross a
+    // half-screen line.
+    const QScreen *screen = QGuiApplication::primaryScreen();
+    const QRect g = screen ? screen->geometry() : QRect(0, 0, 1, 1);
+    const QSize content = p->contentSize() * p->scale();
+    int x = g.left();
+    int y = g.top();
     switch (p->corner()) {
-    case Corner::TopLeft:     corner = "TOP LEFT"; break;
-    case Corner::TopRight:    corner = "TOP RIGHT"; break;
-    case Corner::BottomLeft:  corner = "BOTTOM LEFT"; break;
-    case Corner::BottomRight: corner = "BOTTOM RIGHT"; break;
+    case Corner::TopLeft:     x += m.left(); y += m.top(); break;
+    case Corner::TopRight:    x = g.right() - content.width() - m.right(); y += m.top(); break;
+    case Corner::BottomLeft:  x += m.left(); y = g.bottom() - content.height() - m.bottom(); break;
+    case Corner::BottomRight: x = g.right() - content.width() - m.right(); y = g.bottom() - content.height() - m.bottom(); break;
     }
+    const QPoint center(x + content.width() / 2, y + content.height() / 2);
+    const bool left = center.x() < g.center().x();
+    const bool top = center.y() < g.center().y();
+    const QString corner = top ? (left ? QStringLiteral("TOP LEFT") : QStringLiteral("TOP RIGHT"))
+                               : (left ? QStringLiteral("BOTTOM LEFT") : QStringLiteral("BOTTOM RIGHT"));
     ctl_[idx].posLabel->setText(
-        QStringLiteral("POSITION: %1  ·  L%2 T%3 R%4 B%5  ·  ← → ↑ ↓ / DRAG")
+        QStringLiteral("POSITION: %1  ·  L%2 T%3 R%4 B%5")
             .arg(corner).arg(m.left()).arg(m.top())
             .arg(m.right()).arg(m.bottom()));
 }

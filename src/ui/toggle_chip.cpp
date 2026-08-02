@@ -1,4 +1,5 @@
 #include "toggle_chip.h"
+#include "ui_theme.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -34,10 +35,10 @@ void ToggleChip::paintEvent(QPaintEvent *) {
 
     // ---- Track ----
     QColor track = on_ ? QColor(80, 197, 183)
-                       : QColor(29, 32, 34);
+                       : uiTheme().tileDark;
     if (hover_) {
         track = on_ ? QColor(110, 215, 200)
-                    : QColor(45, 48, 50);
+                    : uiTheme().tileHover;
     }
     p.setPen(Qt::NoPen);
     p.setBrush(track);
@@ -54,7 +55,7 @@ void ToggleChip::paintEvent(QPaintEvent *) {
     p.setBrush(QColor(0, 0, 0, 60));
     p.drawEllipse(QPointF(xc + hd/2, h/2), hd/2 + 1, hd/2 + 1);
 
-    p.setBrush(QColor(231, 232, 233));
+    p.setBrush(uiTheme().fg);
     p.drawEllipse(QPointF(xc + hd/2, h/2), hd/2, hd/2);
 }
 
