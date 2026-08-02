@@ -11,4 +11,3 @@ double PanelSourceAdapter::scale() const      { return p_->scale(); }
 double PanelSourceAdapter::opacity() const    { return p_->opacity(); }
 
 int PanelSourceAdapter::bgAlpha() const { return p_->bgAlpha(); }
-bool PanelSourceAdapter::blurEnabled() const { return p_->blurEnabled(); }

@@ -25,7 +25,6 @@ public:
     virtual double scale() const = 0;
     virtual double opacity() const { return 1.0; }
     virtual int bgAlpha() const { return 170; }
-    virtual bool blurEnabled() const { return true; }
 };
 
 // Default adapter for a live mhw::Panel instance. Constructed with a
@@ -39,7 +38,6 @@ public:
     double scale() const override;
     double opacity() const override;
     int bgAlpha() const override;
-    bool blurEnabled() const override;
 private:
     const Panel *p_;
 };

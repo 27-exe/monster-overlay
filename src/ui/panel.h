@@ -79,7 +79,6 @@ public:
     [[nodiscard]] double scale() const { return scale_; }
     [[nodiscard]] double opacity() const { return opacity_; }
     [[nodiscard]] int bgAlpha() const { return bgAlpha_; }
-    [[nodiscard]] bool blurEnabled() const { return blurEnabled_; }
 
     // v0.5+: explicit setters for the control console's
     // Appearance fold. Both clamp into the same range the wheel
@@ -90,7 +89,6 @@ public:
     void setScale(qreal s, bool persist = true);
     void setOpacity(qreal a, bool persist = true);
     void setBgAlpha(int a, bool persist = true);
-    void setBlurEnabled(bool on, bool persist = true);
 
     // v0.5 position editing: set margins directly (clamped to [0,8000]
     // per side, matching clampMargin in panel.cpp). persist=true writes
@@ -137,7 +135,6 @@ protected:
 
 private:
     void applyGeometry();
-    void applyBlur();
     void setLayerKeyboardInteractivity(bool interactive);
     void nudgeMargins(int dx, int dy);
     void paintMinimized(QPainter &p);
@@ -156,7 +153,6 @@ private:
     double scale_{1.0};
     double opacity_{0.85};
     int bgAlpha_{170};   // panel background alpha (0-255), default ~67%
-    bool blurEnabled_{true};  // KWin blur-behind toggle
     bool editMode_{false};
     bool minimized_{false};
     QSize normalSize_;   // remembered full-layout size

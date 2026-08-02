@@ -733,48 +733,6 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     bgRow->addWidget(bgVal);
     vl->addLayout(bgRow);
     ctl_[idx].bgAlphaSlider = bgSlider;
-
-    // KWin blur-behind toggle. The org_kde_kwin_blur protocol has no
-    // strength/radius parameter — blur intensity is a global KWin
-    // setting. Per-window we can only enable/disable the gaussian pass.
-    auto *blurRow = new QHBoxLayout();
-    blurRow->setSpacing(8);
-    auto *blurLab = new QLabel(QStringLiteral("BLUR"));
-    blurLab->setObjectName("sliderLabel");
-    auto *blurToggle = new QPushButton();
-    blurToggle->setObjectName("stageButton");
-    blurToggle->setCursor(Qt::PointingHandCursor);
-    blurToggle->setFixedHeight(26);
-    {
-        Panel *pb = (idx == 0 ? static_cast<Panel*>(player_)
-                   : idx == 1 ? static_cast<Panel*>(monster_)
-                              : static_cast<Panel*>(damage_));
-        blurToggle->setText(pb->blurEnabled()
-            ? QStringLiteral("● BLUR ON")
-            : QStringLiteral("○ BLUR OFF"));
-        blurToggle->setProperty("active", pb->blurEnabled());
-        blurToggle->style()->unpolish(blurToggle);
-        blurToggle->style()->polish(blurToggle);
-    }
-    connect(blurToggle, &QPushButton::clicked, this, [this, idx, blurToggle](){
-        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
-                  : idx == 1 ? static_cast<Panel*>(monster_)
-                             : static_cast<Panel*>(damage_));
-        const bool now = !p->blurEnabled();
-        p->setBlurEnabled(now, false);
-        blurToggle->setText(now
-            ? QStringLiteral("● BLUR ON")
-            : QStringLiteral("○ BLUR OFF"));
-        blurToggle->setProperty("active", now);
-        blurToggle->style()->unpolish(blurToggle);
-        blurToggle->style()->polish(blurToggle);
-        rebuildAndRender(idx);
-    });
-    blurRow->addWidget(blurLab);
-    blurRow->addWidget(blurToggle, 1);
-    vl->addLayout(blurRow);
-    ctl_[idx].blurToggle = blurToggle;
-
     // v0.5 BEHAVIOR → POSITION: shows the panel's anchor corner and
     // current margins. The user moves the panel via canvas drag or
     // arrow keys; this label is read-only feedback.
@@ -1214,14 +1172,6 @@ void ControlPanel::syncAppearance(int idx)
         c.opacitySlider->blockSignals(true);
         c.opacitySlider->setValue(qRound(panel->opacity() * 100));
         if (c.bgAlphaSlider) c.bgAlphaSlider->setValue(panel->bgAlpha());
-        if (c.blurToggle) {
-            c.blurToggle->setText(panel->blurEnabled()
-                ? QStringLiteral("● BLUR ON")
-                : QStringLiteral("○ BLUR OFF"));
-            c.blurToggle->setProperty("active", panel->blurEnabled());
-            c.blurToggle->style()->unpolish(c.blurToggle);
-            c.blurToggle->style()->polish(c.blurToggle);
-        }
         c.opacitySlider->blockSignals(false);
     }
 }

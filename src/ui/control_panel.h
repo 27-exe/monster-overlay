@@ -68,8 +68,7 @@ private:
         QSlider *scaleSlider = nullptr;
         QSlider *opacitySlider = nullptr;
         QSlider *bgAlphaSlider = nullptr;
-        QPushButton *blurToggle = nullptr;
-        QLabel *posLabel = nullptr;
+            QLabel *posLabel = nullptr;
     };
 
     QWidget *buildInspector(const QString &title, const QString &sub,

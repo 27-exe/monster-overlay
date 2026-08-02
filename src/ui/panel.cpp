@@ -1,7 +1,6 @@
 #include "panel.h"
 
 #include <LayerShellQt/Window>
-#include <KWindowEffects>
 
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -159,7 +158,6 @@ void Panel::loadConfig()
     scale_ = settings().value(QStringLiteral("scale"), 2.0).toDouble();   // v0.3: 2x scale to make icons undeniably visible
     opacity_ = settings().value(QStringLiteral("opacity"), 1.0).toDouble();
     bgAlpha_ = std::clamp(settings().value(QStringLiteral("bgAlpha"), 170).toInt(), 0, 255);
-    blurEnabled_ = settings().value(QStringLiteral("blur"), true).toBool();
     settings().endGroup();
 
     scale_ = std::clamp(scale_, kMinScale, kMaxScale);
@@ -187,7 +185,6 @@ void Panel::saveConfig()
     settings().setValue(QStringLiteral("scale"), scale_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
     settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
-    settings().setValue(QStringLiteral("blur"), blurEnabled_);
     settings().setValue(QStringLiteral("visible"), isVisible());
     settings().endGroup();
     settings().sync();
@@ -199,7 +196,6 @@ void Panel::saveAppearance()
     settings().setValue(QStringLiteral("scale"), scale_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
     settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
-    settings().setValue(QStringLiteral("blur"), blurEnabled_);
     // v0.5: also persist margins so the overlay's loadConfig()
     // picks up the position the user set in the console.
     settings().setValue(QStringLiteral("ml"), margins_.left());
@@ -213,29 +209,12 @@ void Panel::saveAppearance()
           margins_.left(), margins_.top(), margins_.right(), margins_.bottom());
 }
 
-void Panel::setBlurEnabled(bool on, bool persist)
-{
-    if (on == blurEnabled_)
-        return;
-    blurEnabled_ = on;
-    applyBlur();
-    if (persist && editMode_)
-        saveConfig();
-}
-
-void Panel::applyBlur()
-{
-    QWindow *w = windowHandle();
-    if (!w)
-        return;
-    KWindowEffects::enableBlurBehind(w, blurEnabled_);
-    qInfo("mhw-panel [%s]: applyBlur enabled=%d", qPrintable(key_), int(blurEnabled_));
-}
-
 void Panel::showEvent(QShowEvent *e)
 {
     QMainWindow::showEvent(e);
-    applyBlur();
+    // KWin 6.7 auto-blurs all semi-transparent windows; there is no
+    // client-side opt-out (org_kde_kwin_blur protocol was removed,
+    // replaced by ext_background_effect_v1 which Qt/KDE dont bind yet).
 }
 
 void Panel::setCompositingEnabled(bool)
@@ -665,7 +644,6 @@ void Panel::resetToDefaults()
     scale_        = 1.0;
     opacity_      = 0.85;
     bgAlpha_      = 170;
-    blurEnabled_    = true;
     margins_      = defaultMarginsFor(corner_);
     if (logicalSize_.isValid())
         setContentSize(logicalSize_.width(), logicalSize_.height());
