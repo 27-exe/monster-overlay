@@ -21,6 +21,7 @@
 #include <QSlider>
 #include <QMouseEvent>
 #include <QFrame>
+#include <QSettings>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QPushButton>
@@ -30,6 +31,7 @@
 #include <QWheelEvent>
 #include <QHBoxLayout>
 #include <QScrollArea>
+#include <QSplitter>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QGridLayout>
@@ -138,9 +140,13 @@ QString qssBase()
         " background:transparent;border:none;}"
         // v0.5 A shell: rail shares the window base colour (no colour band
         // between the rail text and the window behind it).
+        // v0.5.6 layout: top row is rail (border-right) | inspector;
+        // stage now sits beneath the top row, so it needs a border-top
+        // (instead of inspectorHost's old border-right) to separate it
+        // from the inspector strip above.
         "QFrame#objectRail{background:%1;border-right:1px solid %8;}"
-        "QFrame#inspectorHost{background:%2;border-right:1px solid %8;}"
-        "QFrame#stage{background:%1;}"
+        "QFrame#inspectorHost{background:%2;}"
+        "QFrame#stage{background:%1;border-top:1px solid %8;}"
         "QLabel#railBrand{font-family:'Chakra Petch';font-size:17px;letter-spacing:2px;color:%2;}"
         "QLabel#railBrandSub,QLabel#railHint{font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;color:%6;}"
         "QLabel#sectionCap{font-family:'Chakra Petch';font-size:12px;letter-spacing:2px;color:%6;}"
@@ -241,8 +247,11 @@ ControlPanel::ControlPanel(QWidget *parent)
     setObjectName("mhw-control-panel");
     setStyleSheet(qssBase());
     setWindowTitle(QStringLiteral("MHW Overlay Control"));
-    resize(1280, 860);
-    setMinimumSize(1120, 720);
+    // v0.5.6: top row consumes rail+inspector height (~600-700px);
+    // stage must keep at least canvas's 360px minimum + stagebar padding.
+    // Bump default height so the canvas is usable on first open.
+    resize(1280, 1040);
+    setMinimumSize(1120, 820);
 
     // Real panel instances, rendered off-screen only. WA_DontShowOnScreen
     // lets show()/repaint() run the full paint path (demo data + the
@@ -272,9 +281,27 @@ ControlPanel::ControlPanel(QWidget *parent)
     // This is done after the canvas is constructed (below) — see the
     // canvas creation block.
 
-    auto *root = new QHBoxLayout();
-    root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(0);
+    // v0.5.6 layout: top row = object rail (left, fixed 214px) + focused
+    // inspector (right, fixed 420px). Bottom row = unified canvas stage
+    // spanning the full window width, so the live HUD canvas has the
+    // horizontal room the previous "rail + inspector + stage" three-
+    // column layout denied it. The canvas is the workbench — it owns
+    // the wide axis for drag and the 16:9 aspect; the rail/inspector
+    // only consume the top strip.
+    //
+    // v0.5.6 polish: split the top row from the stage with a vertical
+    // QSplitter so the user can resize the proportions live (the canvas
+    // is the most-used surface; default ~38/62 in favour of the stage).
+    // The splitter handle is hidden via QSS to keep the "single window"
+    // feel; the stage's border-top doubles as the visual divider.
+    auto *splitter = new QSplitter(Qt::Vertical);
+    splitter->setChildrenCollapsible(false);    // can't fully hide either pane
+    splitter->setHandleWidth(0);               // no visible splitter bar
+    splitter->setObjectName("consoleSplitter");
+
+    auto *topRow = new QHBoxLayout();
+    topRow->setContentsMargins(0, 0, 0, 0);
+    topRow->setSpacing(0);
 
     // v0.5 A: object rail → focused inspector → unified canvas.
     auto *rail = new QFrame();
@@ -330,7 +357,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     hint->setObjectName("railHint");
     hint->setAlignment(Qt::AlignCenter);
     railLayout->addWidget(hint);
-    root->addWidget(rail);
+    topRow->addWidget(rail);
 
     auto *inspectorHost = new QFrame();
     inspectorHost->setObjectName("inspectorHost");
@@ -349,7 +376,7 @@ ControlPanel::ControlPanel(QWidget *parent)
                                                QStringLiteral("队伍伤害面板"),
                                                mhw::DamageSection::displayNames(), 2));
     inspectorLayout->addWidget(inspectorStack_);
-    root->addWidget(inspectorHost);
+    topRow->addWidget(inspectorHost);
 
     auto *stage = new QFrame();
     stage->setObjectName("stage");
@@ -401,7 +428,13 @@ ControlPanel::ControlPanel(QWidget *parent)
     auto *canvasScroll = new QScrollArea();
     canvasScroll->setObjectName("canvasScroll");
     canvasScroll->setWidget(canvas_);
-    canvasScroll->setWidgetResizable(false);  // canvas reports sizeHint when zoomed
+    // v0.5.6: stage now owns the full window width, so let the canvas
+    // stretch horizontally to fill the viewport. The paint path already
+    // recomputes layout from width()/height(), so widening the widget
+    // widens the 16:9 frame and the three panel slots inside it.
+    // Vertical overflow still scrolls (canvas heightForWidth enforces
+    // the 16:9 + header/footer ratio).
+    canvasScroll->setWidgetResizable(true);
     canvasScroll->setFrameShape(QFrame::NoFrame);
     stageLayout->addWidget(canvasScroll);
     // v0.5 P1.4: clicking a HUD in the unified canvas selects it in the
@@ -432,11 +465,43 @@ ControlPanel::ControlPanel(QWidget *parent)
     canvas_->bindPanel(0, new PanelSourceAdapter(static_cast<Panel*>(player_)));
     canvas_->bindPanel(1, new PanelSourceAdapter(static_cast<Panel*>(monster_)));
     canvas_->bindPanel(2, new PanelSourceAdapter(static_cast<Panel*>(damage_)));
-    root->addWidget(stage, 1);
+    // v0.5.6: top row (rail + inspector) sits in a container that owns
+    // the QHBoxLayout; the stage is the second pane of the splitter.
+    // Wrap the topRow in a QWidget so QSplitter can manage its size
+    // independently of the central widget layout. Default ratio ~38/62
+    // (topContainer:stage) gives the canvas the wide axis it deserves
+    // while still leaving room for the inspector's 6 rows.
+    auto *topContainer = new QWidget();
+    topContainer->setObjectName("topContainer");
+    topContainer->setLayout(topRow);
+    splitter->addWidget(topContainer);
+    splitter->addWidget(stage);
+    // v0.5.6 polish: ~48/52 split — top row is tall enough to show the
+    // SCALE + OPACITY sliders and part of BG ALPHA without scrolling,
+    // stage gets the rest. The user can drag the (invisible) handle
+    // to fine-tune; the size state persists via QSettings below.
+    splitter->setSizes({500, 540});
+    // Hard minimum on the top pane so the inspector doesn't get crushed.
+    topContainer->setMinimumHeight(360);
+    {
+        QSettings s;
+        const QByteArray saved = s.value(QStringLiteral("ui/splitter")).toByteArray();
+        if (!saved.isEmpty()) splitter->restoreState(saved);
+    }
 
     auto *central = new QWidget();
-    central->setLayout(root);
+    auto *centralLayout = new QVBoxLayout(central);
+    centralLayout->setContentsMargins(0, 0, 0, 0);
+    centralLayout->setSpacing(0);
+    centralLayout->addWidget(splitter);
     setCentralWidget(central);
+
+    // v0.5.6 polish: persist the splitter ratio whenever the user drags
+    // it, so the next launch opens with the proportions they preferred.
+    connect(splitter, &QSplitter::splitterMoved, this, [splitter]{
+        QSettings s;
+        s.setValue(QStringLiteral("ui/splitter"), splitter->saveState());
+    });
 
     // v0.5 P1: startBtn toggles between launch and stop. The
     // handler is rebuilt every time overlay state flips so the
