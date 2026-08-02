@@ -1147,6 +1147,31 @@ QWidget *ControlPanel::buildEditModeBlock()
     return box;
 }
 
+// v0.6 Phase 4: select the target game. Highlights the matching rail
+// button and persists the choice (read back at construction); the next
+// launchOverlay() passes it to the overlay via --game. A running overlay
+// is left untouched — the switch takes effect on the next launch.
+void ControlPanel::switchGame(mhw::GameId game)
+{
+    currentGame_ = game;
+    const bool isRise = (game == mhw::GameId::Rise);
+
+    if (gameWorldBtn_) {
+        gameWorldBtn_->setProperty("selected", !isRise);
+        gameWorldBtn_->style()->unpolish(gameWorldBtn_);
+        gameWorldBtn_->style()->polish(gameWorldBtn_);
+    }
+    if (gameRiseBtn_) {
+        gameRiseBtn_->setProperty("selected", isRise);
+        gameRiseBtn_->style()->unpolish(gameRiseBtn_);
+        gameRiseBtn_->style()->polish(gameRiseBtn_);
+    }
+
+    QSettings s;
+    s.setValue(QStringLiteral("game"),
+               isRise ? QStringLiteral("rise") : QStringLiteral("world"));
+}
+
 // L3: spawn mhw-overlay as a detached subprocess, hide the console while
 // it runs, then show the console again when the overlay exits.
 //
@@ -1205,6 +1230,13 @@ void ControlPanel::launchOverlay(bool editMode)
     if (!ctl_[2].master->isChecked())
         args << QStringLiteral("--no-damage");
     if (editMode) args << QStringLiteral("--edit");
+
+    // Target game selected in the rail (switchGame persists it). The
+    // overlay would otherwise auto-detect, which can pick the wrong
+    // process when both World and Rise are installed/running.
+    args << QStringLiteral("--game=%1")
+                .arg(currentGame_ == mhw::GameId::Rise
+                         ? QStringLiteral("rise") : QStringLiteral("world"));
 
     // mhw-overlay lives next to mhw-control in the same build dir.
     const QString overlay = QCoreApplication::applicationDirPath()

@@ -263,9 +263,6 @@ int main(int argc, char **argv)
     playerPanel.setPanelEnabled(!parser.isSet(noPlayerOption));
     monsterPanel.setPanelEnabled(!parser.isSet(noMonsterOption));
     damagePanel.setPanelEnabled(!parser.isSet(noDamageOption));
-    // Rise has no realtime party damage feed; the damage panel renders a
-    // static placeholder instead of the chart.
-    damagePanel.setRiseMode(isRise);
 
     playerPanel.show();
     monsterPanel.show();
@@ -282,6 +279,10 @@ int main(int argc, char **argv)
     if (riseMapPath.isEmpty())
         riseMapPath = QString::fromUtf8(MHR_DEFAULT_MAP);
     mhw::MhrReader riseReader(riseMapPath);
+    // Rise party damage comes from the REFramework Lua script writing
+    // /tmp/mhr_damage.json (RiseDamageReader's default path). Only the
+    // Rise branch below ever polls it; World ignores it entirely.
+    mhw::RiseDamageReader riseDamageReader;
     std::function<mhw::GameSnapshot()> pollGame =
         isRise ? std::function<mhw::GameSnapshot()>([&riseReader] { return riseReader.poll(); })
                : std::function<mhw::GameSnapshot()>([&worldReader] { return worldReader.poll(); });
@@ -335,8 +336,12 @@ int main(int argc, char **argv)
         }
 
         if (isRise) {
-            // Rise exposes no party damage counters; keep the static
-            // placeholder on screen instead of the (always empty) chart.
+            // Rise party damage arrives out-of-band via /tmp/mhr_damage.json.
+            // Feeding it only on a successful parse keeps the placeholder
+            // (riseMode_) on screen until real data shows up. The panel
+            // always has content in Rise mode — placeholder or chart.
+            if (riseDamageReader.update())
+                damagePanel.updateRiseDamage(riseDamageReader.snapshot());
             damagePanel.setVisible(true);
             damagePanel.triggerUpdate();
         } else if (skipUpdate(damagePanel)) {

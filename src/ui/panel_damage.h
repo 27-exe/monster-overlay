@@ -2,6 +2,7 @@
 
 #include "panel.h"
 #include "core/game_snapshot.h"
+#include "rise/rise_damage_reader.h"
 #include <QPainter>
 #include <QRectF>
 #include <QVector>
@@ -16,9 +17,11 @@ public:
 
     void update(const mhw::GameSnapshot &snap);
 
-    // Rise has no realtime party damage feed. When enabled, paintPanel
-    // renders a static "not supported" placeholder instead of the chart.
-    void setRiseMode(bool on);
+    // Rise damage feed (via /tmp/mhr_damage.json). Converts the
+    // REFramework snapshot into the internal chart history. While no
+    // valid data has arrived the panel keeps the riseMode_ placeholder;
+    // the first valid snapshot switches it over to the normal chart.
+    void updateRiseDamage(const mhw::RiseDamageSnapshot &dmg);
 
 protected:
     void paintPanel(QPainter &p) override;
@@ -42,7 +45,7 @@ private:
     QVector<int>  slots_;            // party slot (0-3) for color assignment
     QVector<bool> locals_;           // self flag (HunterPie name match)
     bool hasData_{false};
-    bool riseMode_{false};           // static placeholder, no realtime data
+    bool riseMode_{true};            // Rise placeholder until real data arrives
     bool questEnded_{false};         // freeze after quest completes (Success/Completed/Failed)
     // HunterPie: real quest elapsed time = max(0, maxTimer - timeLeft).
     // We cache the last non-zero value so the title-row timer keeps

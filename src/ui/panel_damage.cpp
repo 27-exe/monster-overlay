@@ -153,12 +153,71 @@ DamagePanel::DamagePanel(QWidget *parent)
     setWindowTitle(mh::tr("ui.damage_title"));
 }
 
-void DamagePanel::setRiseMode(bool on)
+void DamagePanel::updateRiseDamage(const mhw::RiseDamageSnapshot &dmg)
 {
-    if (riseMode_ == on)
+    if (!dmg.valid || dmg.players.isEmpty()) {
+        canvas()->update();
         return;
-    riseMode_ = on;
-    triggerUpdate();
+    }
+
+    if (!dmg.questActive) {
+        if (hasData_)
+            questEnded_ = true;
+        canvas()->update();
+        return;
+    }
+
+    if (questEnded_) {
+        questEnded_ = false;
+        history_.clear();
+        tick_ = 0;
+        firstHitTick_.clear();
+        baselineDamage_.clear();
+        rawDamage_.clear();
+        lastElapsedSeconds_ = 0.0F;
+    }
+
+    hasData_ = true;
+    riseMode_ = false;
+
+    const int n = std::min(static_cast<int>(dmg.players.size()), kMaxPlayers);
+
+    names_.resize(n);
+    weaponIds_.resize(n);
+    masterRanks_.resize(n);
+    slots_.resize(n);
+    locals_.resize(n);
+    firstHitTick_.resize(n);
+    baselineDamage_.resize(n);
+    rawDamage_.resize(n);
+
+    for (int i = 0; i < n; ++i) {
+        const auto &e = dmg.players[i];
+        names_[i]       = e.name;
+        weaponIds_[i]   = -1;
+        masterRanks_[i] = 0;
+        slots_[i]       = e.slot;
+        locals_[i]      = e.isLocal;
+
+        const int total = static_cast<int>(e.total);
+        if (firstHitTick_[i] == 0 && total > 0) {
+            firstHitTick_[i]   = tick_;
+            baselineDamage_[i] = total;
+        }
+    }
+
+    Sample s;
+    s.tick = tick_++;
+    s.damage.resize(n);
+    for (int i = 0; i < n; ++i) {
+        s.damage[i]   = static_cast<int>(dmg.players[i].total);
+        rawDamage_[i] = s.damage[i];
+    }
+    history_.append(s);
+    if (history_.size() > kMaxSamples)
+        history_.removeFirst();
+
+    canvas()->update();
 }
 
 void DamagePanel::update(const mhw::GameSnapshot &snap)
@@ -320,7 +379,7 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
 
 void DamagePanel::paintPanel(QPainter &p)
 {
-    if (riseMode_) {
+    if (riseMode_ && !hasData_) {
         drawV03Chrome(p, Panel::Accent::Damage);
         constexpr int kPlaceholderH = 36;
         const int totalH = kMargin + 14 + 9 + kPlaceholderH + kMargin;
