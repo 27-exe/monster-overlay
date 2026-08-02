@@ -22,6 +22,12 @@ public:
 
     static std::optional<qint64> findRisePid();
 
+    // Scan dataDir for MonsterHunterRise.X.Y.Z.W.map files, newest first,
+    // and return the first one that resolves a live monster (HP > 0) from
+    // MONSTERS_ADDRESS. Falls back to the newest map when the game isn't
+    // running or no candidate validates. Empty if dataDir has no maps.
+    [[nodiscard]] static QString findBestMap(const QString &dataDir);
+
 private:
     struct StageInfo {
         MHRStageStructure stage{};
@@ -35,6 +41,7 @@ private:
     QVector<MonsterSnapshot> readMonsters(QString *error);
     void readMonsterParts(std::uintptr_t monster, MonsterSnapshot &snapshot);
     void readMonsterAilments(std::uintptr_t monster, MonsterSnapshot &snapshot);
+    void readMonsterQurio(std::uintptr_t monster, MonsterSnapshot &snapshot);
     [[nodiscard]] std::uintptr_t readLockOnTarget() const;
     PlayerSnapshot readPlayer(QString *error);
     QuestSnapshot readQuest(QString *error);

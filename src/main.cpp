@@ -4,6 +4,7 @@
 #include "monster/monster_types.h"
 #include "mhw_reader.h"
 #include "rise/mhr_reader.h"
+#include "rise/rise_damage_reader.h"
 #include "ui/panel_damage.h"
 #include "ui/panel_monster.h"
 #include "ui/panel_player.h"
@@ -13,6 +14,7 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QFile>
+#include <QFileInfo>
 #include <QFontDatabase>
 #include <QResource>
 #include <QTimer>
@@ -271,9 +273,15 @@ int main(int argc, char **argv)
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
     // loop below stays game-agnostic. World keeps the existing map path
-    // (HunterPie legacy map); Rise uses its own 16.0.2.0 map.
+    // (HunterPie legacy map); Rise auto-selects the map matching the
+    // running game version from the data directory, falling back to the
+    // compile-time default when nothing validates.
     mhw::MhwReader worldReader(parser.value(mapOption));
-    mhw::MhrReader riseReader(QString::fromUtf8(MHR_DEFAULT_MAP));
+    QString riseMapPath = mhw::MhrReader::findBestMap(
+        QFileInfo(QString::fromUtf8(MHR_DEFAULT_MAP)).absolutePath());
+    if (riseMapPath.isEmpty())
+        riseMapPath = QString::fromUtf8(MHR_DEFAULT_MAP);
+    mhw::MhrReader riseReader(riseMapPath);
     std::function<mhw::GameSnapshot()> pollGame =
         isRise ? std::function<mhw::GameSnapshot()>([&riseReader] { return riseReader.poll(); })
                : std::function<mhw::GameSnapshot()>([&worldReader] { return worldReader.poll(); });

@@ -22,6 +22,7 @@ add_library(mhw-core STATIC
     src/rise/mhr_types.h
     src/rise/mhr_reader.h
     src/rise/mhr_reader.cpp
+    src/rise/rise_damage_reader.cpp
     src/world/world_types.h
     src/world/world_types.cpp
 )

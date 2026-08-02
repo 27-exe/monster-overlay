@@ -57,6 +57,13 @@ struct MonsterSnapshot {
                                 // maxHealth.
     QVector<PartSnapshot> parts;
     QVector<MonsterAilmentSnapshot> ailments;
+
+    // Qurio (Rise only)
+    bool qurioActive{false};
+    float qurioThreshold{0.0F};
+    float qurioMaxThreshold{0.0F};
+    struct QurioPart { bool active; float health; float maxHealth; };
+    QVector<QurioPart> qurioParts;
 };
 
 // One schema entry per Part in HunterPie's MonsterData.xml.

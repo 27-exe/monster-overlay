@@ -3,6 +3,11 @@
 
 #include "rise/mhr_reader.h"
 
+#include <QDir>
+#include <QRegularExpression>
+
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -26,6 +31,79 @@ const QString &MhrReader::mapPath() const
 std::optional<qint64> MhrReader::findRisePid()
 {
     return MhwReader::findGamePid(QStringLiteral("monsterhunterrise.exe"));
+}
+
+QString MhrReader::findBestMap(const QString &dataDir)
+{
+    const QRegularExpression re(
+        QStringLiteral("^MonsterHunterRise\\.(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)\\.map$"));
+
+    struct Candidate {
+        QString path;
+        std::array<int, 4> version{};
+    };
+    QVector<Candidate> candidates;
+    const QDir dir(dataDir);
+    const QStringList entries =
+        dir.entryList({QStringLiteral("MonsterHunterRise.*.map")}, QDir::Files);
+    for (const QString &name : entries) {
+        const QRegularExpressionMatch match = re.match(name);
+        if (!match.hasMatch())
+            continue;
+        candidates.push_back({dir.absoluteFilePath(name),
+                              {match.captured(1).toInt(), match.captured(2).toInt(),
+                               match.captured(3).toInt(), match.captured(4).toInt()}});
+    }
+    if (candidates.isEmpty())
+        return {};
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate &a, const Candidate &b) { return a.version > b.version; });
+
+    const auto pid = findRisePid();
+    if (!pid)
+        return candidates.first().path;
+
+    ProcessMemory memory;
+    if (!memory.attach(*pid))
+        return candidates.first().path;
+    const std::uintptr_t imageBase =
+        memory.imageBase(nullptr, QStringLiteral("monsterhunterrise.exe"));
+    if (imageBase == 0)
+        return candidates.first().path;
+
+    for (const Candidate &candidate : candidates) {
+        AddressMap map;
+        if (!map.load(candidate.path) || !map.hasAddress(QStringLiteral("MONSTERS_ADDRESS")))
+            continue;
+        const std::uintptr_t base = MhwReader::followPointerChain(
+            memory, imageBase + map.address(QStringLiteral("MONSTERS_ADDRESS")),
+            map.offsets(QStringLiteral("MONSTER_LIST_OFFSETS")), nullptr);
+        if (!base)
+            continue;
+
+        constexpr int kMaxMonsters = 5;
+        for (int i = 0; i < kMaxMonsters; ++i) {
+            const auto monsterOpt = memory.read<std::uintptr_t>(
+                base + static_cast<std::uintptr_t>(i) * kPointerSize);
+            if (!monsterOpt || !isSanePointer(*monsterOpt))
+                continue;
+            const std::uintptr_t component = MhwReader::followPointerChain(
+                memory, *monsterOpt,
+                map.offsets(QStringLiteral("MONSTER_HEALTH_COMPONENT_OFFSETS")), nullptr);
+            if (!component)
+                continue;
+            const std::uintptr_t encoded = MhwReader::followPointerChain(
+                memory, component,
+                map.offsets(QStringLiteral("MONSTER_HEALTH_COMPONENT_ENCODED_OFFSETS")), nullptr);
+            if (!encoded)
+                continue;
+            const auto hp = memory.read<float>(encoded + 0x18ULL);
+            if (hp && *hp > 0.0F)
+                return candidate.path;
+        }
+    }
+    return candidates.first().path;
 }
 
 std::uintptr_t MhrReader::absolute(const QString &key) const
@@ -254,6 +332,60 @@ void MhrReader::readMonsterAilments(std::uintptr_t monster, MonsterSnapshot &sna
     }
 }
 
+void MhrReader::readMonsterQurio(std::uintptr_t monster, MonsterSnapshot &snapshot)
+{
+    const auto qurioDataOpt = memory_.read<std::uintptr_t>(monster + 0x438ULL);
+    if (!qurioDataOpt || !isSanePointer(*qurioDataOpt))
+        return;
+    const std::uintptr_t qurioData = *qurioDataOpt;
+
+    if (const auto state = memory_.read<std::uint16_t>(qurioData + 0x12ULL))
+        snapshot.qurioActive = (*state == 2);
+
+    if (const auto threshold = memory_.read<MHRQurioThresholdStructure>(qurioData + 0x14ULL)) {
+        snapshot.qurioMaxThreshold = threshold->maxThreshold;
+        snapshot.qurioThreshold = threshold->threshold;
+    }
+
+    const std::uintptr_t partArrayBase = MhwReader::followPointerChain(
+        memory_, monster, {0x438ULL, 0x38ULL}, nullptr);
+    if (!partArrayBase)
+        return;
+
+    const auto countOpt = memory_.read<std::int32_t>(partArrayBase + 0x1CULL);
+    if (!countOpt)
+        return;
+    const int count = *countOpt;
+    if (count <= 0 || count > 64)
+        return;
+
+    for (int i = 0; i < count; ++i) {
+        const auto partOpt = memory_.read<std::uintptr_t>(
+            partArrayBase + 0x20ULL + static_cast<std::uintptr_t>(i) * kPointerSize);
+        if (!partOpt || !isSanePointer(*partOpt))
+            continue;
+        const std::uintptr_t part = *partOpt;
+
+        MonsterSnapshot::QurioPart qpart;
+        if (const auto active = memory_.read<std::uint8_t>(part + 0x10ULL))
+            qpart.active = *active != 0;
+        if (const auto maxHealth = memory_.read<float>(part + 0x38ULL))
+            qpart.maxHealth = *maxHealth;
+        if (const auto healthPtr = memory_.read<std::uintptr_t>(part + 0x18ULL)) {
+            if (isSanePointer(*healthPtr)) {
+                const std::uintptr_t encoded = MhwReader::followPointerChain(
+                    memory_, *healthPtr,
+                    map_.offsets(QStringLiteral("MONSTER_HEALTH_COMPONENT_ENCODED_OFFSETS")), nullptr);
+                if (encoded) {
+                    if (const auto cur = memory_.read<float>(encoded + 0x18ULL))
+                        qpart.health = *cur;
+                }
+            }
+        }
+        snapshot.qurioParts.push_back(qpart);
+    }
+}
+
 QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
 {
     QVector<MonsterSnapshot> result;
@@ -324,6 +456,7 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
 
         readMonsterParts(monster, snapshot);
         readMonsterAilments(monster, snapshot);
+        readMonsterQurio(monster, snapshot);
 
         result.push_back(snapshot);
     }

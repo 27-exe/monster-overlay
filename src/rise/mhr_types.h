@@ -50,6 +50,12 @@ struct MHRPlayerLevelStructure {
 };
 static_assert(sizeof(MHRPlayerLevelStructure) == 8);
 
+struct MHRQurioThresholdStructure {
+    float maxThreshold;
+    float threshold;
+};
+static_assert(sizeof(MHRQurioThresholdStructure) == 8);
+
 #pragma pack(pop)
 
 // Ailment fields are sparse, so they are read with explicit offsets rather
