@@ -206,8 +206,18 @@ QString Icon::mantlePath(int toolType)
     return QStringLiteral(":/icons/%1/item_id_%2.svg").arg(QLatin1String(dir)).arg(itemId);
 }
 
-QString Icon::monsterPath(int monsterId)
+QString Icon::monsterPath(int monsterId, GameId game)
 {
+    if (game == GameId::Rise) {
+        static const QSet<int> kRiseKnown = {
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+            79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98,
+            107, 108, 109, 110, 111, 112, 113, 114, 115
+        };
+        if (kRiseKnown.contains(monsterId))
+            return QStringLiteral(":/icons/Monsters/Rise_%1.png").arg(monsterId, 2, 10, QLatin1Char('0'));
+        return QStringLiteral(":/icons/Monsters/Unknown.png");
+    }
     // ID 91 (金狮子) shares icon with ID 92
     if (monsterId == 91) monsterId = 92;
     static const QSet<int> kKnown = {

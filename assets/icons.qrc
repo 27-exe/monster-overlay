@@ -428,6 +428,55 @@
         <file>icons/Monsters/World_99.png</file>
         <file>icons/Monsters/World_100.png</file>
         <file>icons/Monsters/World_101.png</file>
+        <file>icons/Monsters/Rise_00.png</file>
+        <file>icons/Monsters/Rise_01.png</file>
+        <file>icons/Monsters/Rise_02.png</file>
+        <file>icons/Monsters/Rise_03.png</file>
+        <file>icons/Monsters/Rise_04.png</file>
+        <file>icons/Monsters/Rise_05.png</file>
+        <file>icons/Monsters/Rise_06.png</file>
+        <file>icons/Monsters/Rise_07.png</file>
+        <file>icons/Monsters/Rise_08.png</file>
+        <file>icons/Monsters/Rise_09.png</file>
+        <file>icons/Monsters/Rise_10.png</file>
+        <file>icons/Monsters/Rise_11.png</file>
+        <file>icons/Monsters/Rise_12.png</file>
+        <file>icons/Monsters/Rise_13.png</file>
+        <file>icons/Monsters/Rise_14.png</file>
+        <file>icons/Monsters/Rise_15.png</file>
+        <file>icons/Monsters/Rise_16.png</file>
+        <file>icons/Monsters/Rise_17.png</file>
+        <file>icons/Monsters/Rise_18.png</file>
+        <file>icons/Monsters/Rise_19.png</file>
+        <file>icons/Monsters/Rise_79.png</file>
+        <file>icons/Monsters/Rise_80.png</file>
+        <file>icons/Monsters/Rise_81.png</file>
+        <file>icons/Monsters/Rise_82.png</file>
+        <file>icons/Monsters/Rise_83.png</file>
+        <file>icons/Monsters/Rise_84.png</file>
+        <file>icons/Monsters/Rise_85.png</file>
+        <file>icons/Monsters/Rise_86.png</file>
+        <file>icons/Monsters/Rise_87.png</file>
+        <file>icons/Monsters/Rise_88.png</file>
+        <file>icons/Monsters/Rise_89.png</file>
+        <file>icons/Monsters/Rise_90.png</file>
+        <file>icons/Monsters/Rise_91.png</file>
+        <file>icons/Monsters/Rise_92.png</file>
+        <file>icons/Monsters/Rise_93.png</file>
+        <file>icons/Monsters/Rise_94.png</file>
+        <file>icons/Monsters/Rise_95.png</file>
+        <file>icons/Monsters/Rise_96.png</file>
+        <file>icons/Monsters/Rise_97.png</file>
+        <file>icons/Monsters/Rise_98.png</file>
+        <file>icons/Monsters/Rise_107.png</file>
+        <file>icons/Monsters/Rise_108.png</file>
+        <file>icons/Monsters/Rise_109.png</file>
+        <file>icons/Monsters/Rise_110.png</file>
+        <file>icons/Monsters/Rise_111.png</file>
+        <file>icons/Monsters/Rise_112.png</file>
+        <file>icons/Monsters/Rise_113.png</file>
+        <file>icons/Monsters/Rise_114.png</file>
+        <file>icons/Monsters/Rise_115.png</file>
     </qresource>
 
     <qresource prefix="/fonts">

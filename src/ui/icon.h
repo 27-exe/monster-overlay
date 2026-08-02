@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/game_snapshot.h"
 #include <QPixmap>
 #include <QSize>
 #include <QString>
@@ -31,7 +32,7 @@ public:
 
     // Monster head icon path from the in-game monster ID (e.g. 1 = Rathian).
     // Falls back to Unknown.png when the ID has no matching icon file.
-    static QString monsterPath(int monsterId);
+    static QString monsterPath(int monsterId, GameId game = GameId::World);
 };
 
 } // namespace mhw
