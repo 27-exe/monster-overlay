@@ -68,6 +68,7 @@ private:
         QSlider *scaleSlider = nullptr;
         QSlider *opacitySlider = nullptr;
         QSlider *bgAlphaSlider = nullptr;
+        QPushButton *blurToggle = nullptr;
         QLabel *posLabel = nullptr;
     };
 

@@ -10,6 +10,7 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Svg)
 find_package(Qt6 6.8 REQUIRED COMPONENTS WebEngineWidgets)
 find_package(LayerShellQt REQUIRED)
+find_package(KF6WindowSystem REQUIRED)
 
 # Core library: foundational types, memory reader, string table.
 # Other modules (address_map, monster, player, quest, world, ui)
@@ -51,6 +52,7 @@ target_link_libraries(mhw-overlay PRIVATE
     Qt6::Widgets
     Qt6::Svg
     LayerShellQt::Interface
+    KF6::WindowSystem
     mhw-core
 )
 
@@ -93,6 +95,7 @@ add_executable(snap-player-demo
     assets/icons.qrc
 )
 target_link_libraries(snap-player-demo PRIVATE
+    KF6::WindowSystem
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     mhw-core
@@ -124,6 +127,7 @@ add_executable(snap-all-demo
     assets/icons.qrc
 )
 target_link_libraries(snap-all-demo PRIVATE
+    KF6::WindowSystem
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     mhw-core
@@ -172,6 +176,7 @@ add_executable(mhw-control
 )
 target_link_libraries(mhw-control PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+    KF6::WindowSystem
     LayerShellQt::Interface
     mhw-core
 )
@@ -244,6 +249,7 @@ add_executable(mhw-control-l2-smoke
     assets/icons.qrc
 )
 target_link_libraries(mhw-control-l2-smoke PRIVATE
+    KF6::WindowSystem
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     mhw-core
@@ -294,6 +300,7 @@ add_executable(mhw-control-p0-test
     assets/icons.qrc
 )
 target_link_libraries(mhw-control-p0-test PRIVATE
+    KF6::WindowSystem
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     mhw-core
