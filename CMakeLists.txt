@@ -61,6 +61,7 @@ target_link_libraries(mhw-overlay PRIVATE
 
 target_compile_definitions(mhw-overlay PRIVATE
     MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
+    MHR_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterRise.16.0.2.0.map"
 )
 
 target_compile_options(mhw-overlay PRIVATE -Wall -Wextra -Wpedantic)

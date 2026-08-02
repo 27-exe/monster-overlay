@@ -1,7 +1,9 @@
+#include "core/game_detector.h"
 #include "core/game_snapshot.h"
 #include "core/string_table.h"
 #include "monster/monster_types.h"
 #include "mhw_reader.h"
+#include "rise/mhr_reader.h"
 #include "ui/panel_damage.h"
 #include "ui/panel_monster.h"
 #include "ui/panel_player.h"
@@ -15,6 +17,7 @@
 #include <QResource>
 #include <QTimer>
 #include <algorithm>
+#include <functional>
 
 #include <cstdio>
 
@@ -166,6 +169,15 @@ int main(int argc, char **argv)
     QCommandLineOption noDamageOption(
         QStringLiteral("no-damage"),
         QStringLiteral("Disable the damage panel entirely"));
+    // Target game selector. auto = scan /proc for a running Monster Hunter
+    // process (see core/game_detector.h), world/rise = force a specific
+    // reader. Lets the control console relaunch the overlay against the
+    // game the user picked without any IPC.
+    QCommandLineOption gameOption(
+        QStringLiteral("game"),
+        QStringLiteral("Target game: auto, world or rise (default auto)"),
+        QStringLiteral("game"),
+        QStringLiteral("auto"));
 
     parser.addOption(mapOption);
     parser.addOption(localeOption);
@@ -177,6 +189,7 @@ int main(int argc, char **argv)
     parser.addOption(noPlayerOption);
     parser.addOption(noMonsterOption);
     parser.addOption(noDamageOption);
+    parser.addOption(gameOption);
     parser.process(app);
 
     if (!mhw::StringTable::instance().load(
@@ -203,6 +216,30 @@ int main(int argc, char **argv)
     const uint32_t maskMonster = parseMask(maskMonsterOption);
     const uint32_t maskDamage  = parseMask(maskDamageOption);
 
+    // Resolve the target game. auto scans for a running process; an
+    // explicit world/rise forces the matching reader. Default to World
+    // when nothing is running so the overlay still starts and waits.
+    mhw::GameId gameId = mhw::GameId::World;
+    {
+        const QString gameArg = parser.value(gameOption).toLower();
+        if (gameArg == QStringLiteral("world")) {
+            gameId = mhw::GameId::World;
+        } else if (gameArg == QStringLiteral("rise")) {
+            gameId = mhw::GameId::Rise;
+        } else {
+            if (gameArg != QStringLiteral("auto"))
+                qWarning("Ignoring invalid --game value '%s'; using auto",
+                         qPrintable(parser.value(gameOption)));
+            const auto detected = mhw::detectGame();
+            gameId = detected ? detected->game : mhw::GameId::World;
+        }
+    }
+    const bool isRise = (gameId == mhw::GameId::Rise);
+    // Window/app title reflects the active game: "MHW Overlay" vs
+    // "MHR Overlay".
+    QApplication::setApplicationDisplayName(
+        isRise ? QStringLiteral("MHR Overlay") : QStringLiteral("MHW Overlay"));
+
     PlayerPanel playerPanel;
     MonsterPanel monsterPanel;
     DamagePanel damagePanel;
@@ -224,17 +261,27 @@ int main(int argc, char **argv)
     playerPanel.setPanelEnabled(!parser.isSet(noPlayerOption));
     monsterPanel.setPanelEnabled(!parser.isSet(noMonsterOption));
     damagePanel.setPanelEnabled(!parser.isSet(noDamageOption));
+    // Rise has no realtime party damage feed; the damage panel renders a
+    // static placeholder instead of the chart.
+    damagePanel.setRiseMode(isRise);
 
     playerPanel.show();
     monsterPanel.show();
     damagePanel.show();
 
-    mhw::MhwReader reader(parser.value(mapOption));
+    // Reader factory: both readers emit the same GameSnapshot, so the UI
+    // loop below stays game-agnostic. World keeps the existing map path
+    // (HunterPie legacy map); Rise uses its own 16.0.2.0 map.
+    mhw::MhwReader worldReader(parser.value(mapOption));
+    mhw::MhrReader riseReader(QString::fromUtf8(MHR_DEFAULT_MAP));
+    std::function<mhw::GameSnapshot()> pollGame =
+        isRise ? std::function<mhw::GameSnapshot()>([&riseReader] { return riseReader.poll(); })
+               : std::function<mhw::GameSnapshot()>([&worldReader] { return worldReader.poll(); });
     std::uintptr_t displayedMonsterAddress = 0;
     QTimer timer;
 
     QObject::connect(&timer, &QTimer::timeout, [&] {
-        const mhw::GameSnapshot snap = reader.poll();
+        const mhw::GameSnapshot snap = pollGame();
         const bool showAll = editMode;
 
         // Once edit-mode demo data is seeded, each panel keeps its
@@ -279,15 +326,21 @@ int main(int argc, char **argv)
             monsterPanel.setVisible(false);
         }
 
-        if (skipUpdate(damagePanel)) {
+        if (isRise) {
+            // Rise exposes no party damage counters; keep the static
+            // placeholder on screen instead of the (always empty) chart.
+            damagePanel.setVisible(true);
             damagePanel.triggerUpdate();
+        } else if (skipUpdate(damagePanel)) {
+            damagePanel.triggerUpdate();
+            damagePanel.setVisible(!snap.party.isEmpty() || showAll);
         } else {
             // Always deliver empty/non-hunting snapshots too. DamagePanel owns
             // the hunt lifecycle; skipping these updates leaves the previous
             // chart and DPS tick counter alive into the next quest.
             damagePanel.update(snap);
+            damagePanel.setVisible(!snap.party.isEmpty() || showAll);
         }
-        damagePanel.setVisible(!snap.party.isEmpty() || showAll);
     });
     timer.start(pollMs);  // consistent poll rate regardless of mode
 

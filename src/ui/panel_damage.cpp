@@ -153,6 +153,14 @@ DamagePanel::DamagePanel(QWidget *parent)
     setWindowTitle(mh::tr("ui.damage_title"));
 }
 
+void DamagePanel::setRiseMode(bool on)
+{
+    if (riseMode_ == on)
+        return;
+    riseMode_ = on;
+    triggerUpdate();
+}
+
 void DamagePanel::update(const mhw::GameSnapshot &snap)
 {
     // HunterPie: capture the real quest elapsed time before any
@@ -312,6 +320,31 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
 
 void DamagePanel::paintPanel(QPainter &p)
 {
+    if (riseMode_) {
+        drawV03Chrome(p, Panel::Accent::Damage);
+        constexpr int kPlaceholderH = 36;
+        const int totalH = kMargin + 14 + 9 + kPlaceholderH + kMargin;
+        setContentSize(kPanelW, totalH);
+
+        p.setPen(QColor(255, 255, 255));
+        QFont hdrFont(QStringLiteral("Chakra Petch"), 9, QFont::Bold);
+        hdrFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
+        p.setFont(hdrFont);
+        const QRectF titleRect(kMargin, kMargin, kPanelW - 2 * kMargin, 14);
+        p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
+                   QStringLiteral("伤害统计 DAMAGE"));
+
+        p.setPen(QColor(150, 150, 150));
+        QFont msgFont(QStringLiteral("Chakra Petch"), 9);
+        msgFont.setStyleStrategy(QFont::PreferAntialias);
+        p.setFont(msgFont);
+        const QRectF msgRect(kMargin, kMargin + 14 + 9,
+                             kPanelW - 2 * kMargin, kPlaceholderH);
+        p.drawText(msgRect, Qt::AlignCenter,
+                   QStringLiteral("Rise 不支持实时伤害追踪"));
+        return;
+    }
+
     if (!hasData_)
         return;
 

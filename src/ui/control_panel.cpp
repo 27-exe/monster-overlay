@@ -11,6 +11,7 @@
 #include "ui/hud_canvas.h"
 #include "ui/panel_source.h"
 #include "ui/ui_theme.h"
+#include "core/game_detector.h"
 #include "core/string_table.h"
 
 #include <QCheckBox>
@@ -195,6 +196,12 @@ QString qssBase()
         "QPushButton#stageToggle:checked{background:%3;border-color:%11;color:%11;}"
         "QPushButton#themeToggle{background:transparent;color:%6;border:1px solid %8;border-radius:3px;padding:7px 16px;font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;}"
         "QPushButton#themeToggle:hover{border-color:%8;color:%2;}"
+        // v0.6 Phase 4: World/Rise game selector. selected="true" highlights
+        // the active game in the teal accent so the choice reads at a glance.
+        "QPushButton#gameBtn{background:transparent;color:%6;border:1px solid %8;border-radius:3px;"
+        "padding:8px 0;font-family:'Chakra Petch';font-weight:600;font-size:13px;letter-spacing:1px;}"
+        "QPushButton#gameBtn:hover{background:%3;color:%2;}"
+        "QPushButton#gameBtn[selected=\"true\"]{background:%3;color:%10;border-color:%10;}"
     );
     // Replace longest placeholders first. QString::arg historically treats
     // %1 as a prefix of %10/%11 in chained substitutions, which produced
@@ -355,6 +362,27 @@ ControlPanel::ControlPanel(QWidget *parent)
     auto *scrollLayout  = new QVBoxLayout(scrollContent);
     scrollLayout->setContentsMargins(0, 0, 0, 0);
     scrollLayout->setSpacing(8);
+
+    // v0.6 Phase 4: GAME selector — choose World or Rise. Sits above the
+    // HUD OBJECTS list; the active game is highlighted (selected="true")
+    // and drives the --game flag handed to the overlay subprocess.
+    auto *gameTitle = new QLabel(QStringLiteral("GAME"));
+    gameTitle->setObjectName("sectionCap");
+    scrollLayout->addWidget(gameTitle);
+    auto *gameRow = new QHBoxLayout();
+    gameRow->setSpacing(6);
+    gameWorldBtn_ = new QPushButton(QStringLiteral("WORLD"));
+    gameWorldBtn_->setObjectName("gameBtn");
+    gameWorldBtn_->setCursor(Qt::PointingHandCursor);
+    gameRiseBtn_ = new QPushButton(QStringLiteral("RISE"));
+    gameRiseBtn_->setObjectName("gameBtn");
+    gameRiseBtn_->setCursor(Qt::PointingHandCursor);
+    gameRow->addWidget(gameWorldBtn_);
+    gameRow->addWidget(gameRiseBtn_);
+    scrollLayout->addLayout(gameRow);
+    scrollLayout->addSpacing(20);
+    connect(gameWorldBtn_, &QPushButton::clicked, this, [this]{ switchGame(mhw::GameId::World); });
+    connect(gameRiseBtn_,  &QPushButton::clicked, this, [this]{ switchGame(mhw::GameId::Rise); });
 
     auto *objectsTitle = new QLabel(QStringLiteral("HUD OBJECTS"));
     objectsTitle->setObjectName("sectionCap");
@@ -639,6 +667,22 @@ ControlPanel::ControlPanel(QWidget *parent)
     for (int i = 0; i < 3; ++i)
         rebuildAndRender(i);
     selectPanel(0);
+
+    // v0.6 Phase 4: initial game selection. Honour the persisted choice
+    // (written by switchGame); on first run — no saved value — fall back
+    // to auto-detecting a running World/Rise process.
+    {
+        QSettings s;
+        const QString savedGame = s.value(QStringLiteral("game")).toString();
+        if (savedGame == QStringLiteral("rise")) {
+            switchGame(mhw::GameId::Rise);
+        } else if (savedGame == QStringLiteral("world")) {
+            switchGame(mhw::GameId::World);
+        } else {
+            const auto detected = mhw::detectGame();
+            switchGame(detected ? detected->game : mhw::GameId::World);
+        }
+    }
 }
 
 ControlPanel::~ControlPanel()

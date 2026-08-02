@@ -16,10 +16,14 @@ public:
 
     void update(const mhw::GameSnapshot &snap);
 
+    // Rise has no realtime party damage feed. When enabled, paintPanel
+    // renders a static "not supported" placeholder instead of the chart.
+    void setRiseMode(bool on);
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
-    bool hasContent() const override { return hasData_; }
+    bool hasContent() const override { return hasData_ || riseMode_; }
 
 private:
     struct Sample {
@@ -38,6 +42,7 @@ private:
     QVector<int>  slots_;            // party slot (0-3) for color assignment
     QVector<bool> locals_;           // self flag (HunterPie name match)
     bool hasData_{false};
+    bool riseMode_{false};           // static placeholder, no realtime data
     bool questEnded_{false};         // freeze after quest completes (Success/Completed/Failed)
     // HunterPie: real quest elapsed time = max(0, maxTimer - timeLeft).
     // We cache the last non-zero value so the title-row timer keeps

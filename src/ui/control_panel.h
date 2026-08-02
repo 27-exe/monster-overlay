@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/game_snapshot.h"
+
 #include <QMainWindow>
 #include <QSlider>
 #include <QStringList>
@@ -92,6 +94,7 @@ private:
     void updatePanelSummary(int idx);
     void launchOverlay(bool editMode);
     void stopOverlay();
+    void switchGame(mhw::GameId game);
     void onOverlayExited();
     void setOverlayRunning(bool running);
     void syncAppearance(int idx);
@@ -115,6 +118,9 @@ private:
     // they're not per-panel, just per-window.
     QPushButton *startBtn_ = nullptr;
     QPushButton *editBtn_  = nullptr;
+    // v0.6 Phase 4: World/Rise game selector at the top of the rail.
+    QPushButton *gameWorldBtn_ = nullptr;
+    QPushButton *gameRiseBtn_  = nullptr;
     QStackedWidget *inspectorStack_ = nullptr;
     HudCanvas *canvas_ = nullptr;
     QPushButton *safeAreaBtn_ = nullptr;
@@ -133,6 +139,13 @@ private:
     // a process is alive, polling kill(pid,0) for liveness.
     qint64       overlayPid_ = 0;
     QTimer      *overlayWatch_ = nullptr;
+
+    // v0.6 Phase 4: currently selected game (drives the --game flag passed
+    // to the overlay subprocess). Pending restart: when the user switches
+    // game while the overlay is running we SIGTERM it and relaunch with the
+    // new --game once onOverlayExited() observes the exit.
+    mhw::GameId  currentGame_ = mhw::GameId::World;
+    bool         pendingRestart_ = false;
 
     // v0.5.6 polish: animated stage toggle. savedStageSize_ captures the
     // user-chosen (or default 45/55) stage height when the user hides
