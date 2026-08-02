@@ -347,6 +347,20 @@ void PlayerPanel::update(const mhw::GameSnapshot &snap)
             ++it;
     }
 
+    QSet<int> activeBuffOffsets;
+    for (const auto &b : player_.buffs) {
+        activeBuffOffsets.insert(b.offset);
+        const auto it = buffMaxTimers_.find(b.offset);
+        if (it == buffMaxTimers_.end() || b.timer > *it)
+            buffMaxTimers_[b.offset] = b.timer;
+    }
+    for (auto it = buffMaxTimers_.begin(); it != buffMaxTimers_.end(); ) {
+        if (!activeBuffOffsets.contains(it.key()))
+            it = buffMaxTimers_.erase(it);
+        else
+            ++it;
+    }
+
     canvas()->update();
 }
 
@@ -535,6 +549,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     const int mantleCount = (player_.mantleSlot0Id >= 0 ? 1 : 0)
                           + (player_.mantleSlot1Id >= 0 ? 1 : 0);
     const int debuffCount = player_.debuffs.size();
+    const int buffCount   = player_.buffs.size();
 
     // ---- Section mask (ui/panel_sections.h) ----
     const uint32_t smask     = sectionMask();
@@ -544,6 +559,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     const bool onBars        = smask & mhw::PlayerSection::Bars;
     const bool onMantles     = smask & mhw::PlayerSection::Mantles;
     const bool onDebuff      = smask & mhw::PlayerSection::Debuff;
+    const bool onBuff        = smask & mhw::PlayerSection::Buff;
 
     // Block-table gap/content constants. Derived from the original serial
     // y-advance so the fully-on layout is pixel-identical to before
@@ -574,6 +590,13 @@ void PlayerPanel::paintPanel(QPainter &p)
         const int debuffRows = (debuffCount + kPillsPerRow - 1) / kPillsPerRow;
         debuffH = debuffRows * kPillH + (debuffRows - 1) * 4;
     }
+    constexpr int kBuffGap = kGapSection;  // 9
+    int buffH = 0;
+    if (buffCount > 0) {
+        constexpr int kPillsPerRow = 3;
+        const int buffRows = (buffCount + kPillsPerRow - 1) / kPillsPerRow;
+        buffH = buffRows * kPillH + (buffRows - 1) * 4;
+    }
 
     int totalH = kMargin + kTitleH;   // title always drawn
     totalH += qrowStreamH;
@@ -581,6 +604,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     if (onBars)                          totalH += kBarsGap  + kBarsH;
     if (onMantles && mantleCount > 0)    totalH += kMantleGap + kMantleH;
     if (onDebuff  && debuffCount > 0)    totalH += kDebuffGap + debuffH;
+    if (onBuff    && buffCount > 0)      totalH += kBuffGap   + buffH;
     totalH += kMargin;
     setContentSize(kPanelW, totalH);
 
@@ -935,6 +959,39 @@ void PlayerPanel::paintPanel(QPainter &p)
         }
         y += rows * kPillH + (rows - 1) * 4;
     }
+
+    // ---- buffs: .pill row, same layout as debuffs but green accent ----
+    if (onBuff && buffCount > 0) {
+        y += kBuffGap;
+        const int totalW = innerW;
+        const int pillGap = 5;
+        constexpr int kPillsPerRow = 3;
+        const int rows = (buffCount + kPillsPerRow - 1) / kPillsPerRow;
+        for (int i = 0; i < buffCount; ++i) {
+            const int rowIdx    = i / kPillsPerRow;
+            const int colIdx    = i % kPillsPerRow;
+            const int itemsInRow = std::min(kPillsPerRow, buffCount - rowIdx * kPillsPerRow);
+            const int slotW = (totalW - pillGap * (itemsInRow - 1)) / itemsInRow;
+            const int cx    = innerLeft + colIdx * (slotW + pillGap);
+            const QRectF pillRect(cx, y + rowIdx * (kPillH + 4), slotW, kPillH);
+            const auto &b = player_.buffs[i];
+            const QString n = b.name.isEmpty() ? QStringLiteral("增益") : b.name;
+            const QString t = QStringLiteral("%1s").arg(static_cast<int>(b.timer));
+            // Green-family accents; vary hue by category for readability.
+            QColor pc(76, 175, 80);      // default green (songs)
+            if (n.contains(QStringLiteral("鬼人")) || n.contains(QStringLiteral("攻击"))
+                || n.contains(QStringLiteral("怪力")))
+                pc = QColor(244, 67, 54);   // red — attack buffs
+            else if (n.contains(QStringLiteral("硬化")) || n.contains(QStringLiteral("防御"))
+                     || n.contains(QStringLiteral("忍耐")))
+                pc = QColor(33, 150, 243);  // blue — defense buffs
+            else if (n.contains(QStringLiteral("冷饮")) || n.contains(QStringLiteral("热饮"))
+                     || n.contains(QStringLiteral("耐")))
+                pc = QColor(0, 188, 212);   // cyan — elemental res
+            drawPill(p, pillRect, pc, n, t);
+        }
+        y += rows * kPillH + (rows - 1) * 4;
+    }
 }
 
 void PlayerPanel::setupDemoData()
@@ -1007,6 +1064,31 @@ void PlayerPanel::setupDemoData()
         d5.offset = 4; d5.name = QStringLiteral("防御DOWN");
         d5.timer = 60.0F; d5.maxTimer = 90.0F;
         player_.debuffs.append(d5);
+    }
+    // Demo buffs
+    {
+        PlayerAbnormality b1;
+        b1.offset = 0x3C; b1.name = QStringLiteral("攻击强化");
+        b1.timer = 90.0F; b1.maxTimer = 180.0F;
+        player_.buffs.append(b1);
+    }
+    {
+        PlayerAbnormality b2;
+        b2.offset = 0x6CC; b2.name = QStringLiteral("鬼人药");
+        b2.timer = 300.0F; b2.maxTimer = 300.0F;
+        player_.buffs.append(b2);
+    }
+    {
+        PlayerAbnormality b3;
+        b3.offset = 0x6D0; b3.name = QStringLiteral("硬化药");
+        b3.timer = 300.0F; b3.maxTimer = 300.0F;
+        player_.buffs.append(b3);
+    }
+    {
+        PlayerAbnormality b4;
+        b4.offset = 0x690; b4.name = QStringLiteral("急奔饮料");
+        b4.timer = 45.0F; b4.maxTimer = 180.0F;
+        player_.buffs.append(b4);
     }
 
     hasData_ = true;

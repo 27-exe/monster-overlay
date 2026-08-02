@@ -65,6 +65,8 @@ struct PlayerSnapshot {
     float mantleSlot1CooldownMax{270.0F};
     // Debuffs (poison, paralysis, blast, etc.)
     QVector<PlayerAbnormality> debuffs;
+    // Buffs (songs, consumables, skills — positive effects)
+    QVector<PlayerAbnormality> buffs;
     // Sharpness — valid only when the equipped weapon is melee.
     // Ranged weapons leave valid=false; the panel hides the bar in
     // that case.

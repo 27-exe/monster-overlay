@@ -20,20 +20,30 @@ void MhwReader::readMonsterAilments(MonsterSnapshot &monster)
         if (!current || *current <= 1) break;
         const std::uintptr_t structAddr = *current + 0x148ULL;
 
-        // Read MHWMonsterAilmentStructure (0x98 bytes total, we only need key fields)
-        // +0x00: Owner (long), +0x08: IsActive (int), +0x0C: Unk1, +0x10: Id (int)
-        // +0x14: MaxDuration (float), +0x34: Buildup (float), +0x50: MaxBuildup (float)
-        // +0x5C: Duration (float), +0x74: Counter (int)
+        // Read MHWMonsterAilmentStructure — offsets verified against
+        // HunterPie MHWMonsterAilmentStructure.cs (sequential layout):
+        //   +0x00 Owner(i64) +0x08 IsActive(i32) +0x0C Unk1 +0x10 Id(i32)
+        //   +0x14 MaxDuration(f32)
+        //   +0x30 Buildup(f32)
+        //   +0x40 MaxBuildup(f32)
+        //   +0x70 Duration(f32)
+        //   +0x78 Counter(i32)
         struct { std::int64_t owner; std::int32_t active; std::int32_t unk1; std::int32_t id; } header{};
         if (!memory_.readBytes(structAddr, &header, sizeof(header), nullptr)) break;
 
-        if (header.owner != static_cast<std::int64_t>(monster.address)) break;
+        // HunterPie does NOT gate on Owner during discovery — it looks up
+        // Id in the repository and skips unknowns. A mismatched Owner
+        // (stale slot) should skip this entry, not kill the whole loop.
+        if (header.owner != static_cast<std::int64_t>(monster.address)) {
+            cursor += sizeof(std::uintptr_t);
+            continue;
+        }
 
         const auto maxDur = memory_.read<float>(structAddr + 0x14ULL);
-        const auto duration = memory_.read<float>(structAddr + 0x5CULL);
-        const auto buildup = memory_.read<float>(structAddr + 0x34ULL);
-        const auto maxBuildup = memory_.read<float>(structAddr + 0x50ULL);
-        const auto counter = memory_.read<std::int32_t>(structAddr + 0x74ULL);
+        const auto buildup = memory_.read<float>(structAddr + 0x30ULL);
+        const auto maxBuildup = memory_.read<float>(structAddr + 0x40ULL);
+        const auto duration = memory_.read<float>(structAddr + 0x70ULL);
+        const auto counter = memory_.read<std::int32_t>(structAddr + 0x78ULL);
 
         MonsterAilmentSnapshot ail;
         ail.id = header.id;
@@ -189,14 +199,14 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         float enrageBuildup = 0.0F, enrageMaxBuildup = 0.0F;
         bool isEnraged = false;
         // Enrage: MHWMonsterStatusStructure INLINE at monster+0x1BE30
-        // +0x14 IsActive, +0x18 Buildup, +0x34 DamageDone,
-        // +0x24 Duration, +0x28 MaxDuration, +0x50 MaxBuildup
+        // +0x14 IsActive, +0x18 Buildup, +0x1C DamageDone,
+        // +0x24 Duration, +0x28 MaxDuration, +0x3C MaxBuildup
         if (const auto dur = memory_.read<float>(monster + 0x1BE30ULL + 0x24ULL)) {
             enrageDuration = *dur;
             if (const auto maxDur = memory_.read<float>(monster + 0x1BE30ULL + 0x28ULL))
                 enrageMaxDuration = *maxDur;
             if (const auto active = memory_.read<int>(monster + 0x1BE30ULL + 0x14ULL))
-            isEnraged = (enrageDuration > 0.0F);
+                isEnraged = (*active != 0) && (enrageDuration > 0.0F);
         }
         // Buildup: independent of enrage state. When not enraged, shows
         // anger accumulation. When enraged, buildup resets to 0.

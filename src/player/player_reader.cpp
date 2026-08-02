@@ -94,11 +94,15 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
         absolute(QStringLiteral("EQUIPMENT_ADDRESS")),
         map_.offsets(QStringLiteral("ABNORMALITY_OFFSETS")),
         nullptr);
+    // 75-float timer array shared by mantles + songs buffs (read once).
+    constexpr std::size_t kSlotCount = 75;
+    std::vector<float> timers;
+    bool timersValid = false;
     if (abnormalityBase) {
-        constexpr std::size_t kSlotCount = 75;
-        const auto timers = memory_.readArray<float>(
+        timers = memory_.readArray<float>(
             abnormalityBase + 0x38ULL, kSlotCount, nullptr);
-        if (timers.size() == kSlotCount) {
+        timersValid = (timers.size() == kSlotCount);
+        if (timersValid) {
             auto slot = [&](int abnormalityId) -> float {
                 const int idx = (abnormalityId - 0x38) / 4;
                 return (idx >= 0 && idx < static_cast<int>(kSlotCount))
@@ -196,6 +200,100 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
             ab.name    = QString::fromUtf8(d.name);
             ab.timer   = *timer;
             result.debuffs.push_back(ab);
+        }
+
+        // ---- buffs: Songs (hunting horn, from float array) ----
+        // HunterPie GetHuntingHornAbnormalities: index = (Id - 0x38) / 4
+        struct SongDef { int id; const char *name; };
+        static const SongDef kSongs[] = {
+            {0x38, "自我强化"}, {0x3C, "攻击强化"}, {0x40, "攻击强化大"},
+            {0x44, "体力强化"}, {0x48, "体力强化大"},
+            {0x4C, "耐力消耗↓"}, {0x50, "耐力消耗↓大"},
+            {0x54, "风压无效"}, {0x58, "风压完全无效"},
+            {0x5C, "防御强化"}, {0x60, "防御强化大"},
+            {0x64, "道具消耗↓"}, {0x68, "道具消耗↓大"},
+            {0x80, "体力回复"}, {0x84, "体力回复大"},
+            {0x88, "耳栓"}, {0x8C, "耳栓+"},
+            {0x90, "精灵加护"}, {0x94, "导虫强化"},
+            {0x98, "环境无害"}, {0x9C, "气绝无效"},
+            {0xA0, "麻痹无效"}, {0xA4, "震动无效"},
+            {0xA8, "深渊抵抗"},
+            {0xAC, "火耐性"}, {0xB0, "火耐性大"},
+            {0xB4, "水耐性"}, {0xB8, "水耐性大"},
+            {0xBC, "雷耐性"}, {0xC0, "雷耐性大"},
+            {0xC4, "冰耐性"}, {0xC8, "冰耐性大"},
+            {0xCC, "龙耐性"}, {0xD0, "龙耐性大"},
+            {0xD4, "属性攻击↑"}, {0xD8, "全异常无效"},
+            {0xE4, "击退无效"}, {0xEC, "全耐性↑"},
+            {0xF0, "会心强化"}, {0xF4, "全状态异常无效"},
+            {0xFC, "异常攻击↑"},
+            {0x10C, "最大耐力回复"}, {0x110, "体力回复量↑"},
+            {0x114, "速度·回避↑"}, {0x118, "全属性强化"},
+        };
+        // Reuse the 75-float array already read above for mantles.
+        if (timersValid) {
+            for (const auto &s : kSongs) {
+                const int idx = (s.id - 0x38) / 4;
+                if (idx < 0 || idx >= static_cast<int>(kSlotCount)) continue;
+                const float t = timers[idx];
+                if (!std::isfinite(t) || t <= 0.0F) continue;
+                PlayerAbnormality ab;
+                ab.offset  = s.id;
+                ab.name    = QString::fromUtf8(s.name);
+                ab.timer   = t;
+                result.buffs.push_back(ab);
+            }
+        }
+
+        // ---- buffs: Consumables + Skills (direct offset read) ----
+        struct BuffDef { int offset; const char *name; int dependsOn; int withValue; };
+        static const BuffDef kBuffs[] = {
+            // Consumables
+            {0x690, "急奔饮料",   0, 0},
+            {0x694, "活力剂",     0, 0},
+            {0x698, "星辰肉干",   0, 0},
+            {0x6A0, "怪力种子",   0x6A4, 10},
+            {0x6A0, "怪力药丸",   0x6A4, 25},
+            {0x6B0, "忍耐种子",   0x6B4, 20},
+            {0x6B0, "忍耐药丸",   0x6BC, 1},
+            {0x6C4, "鬼人粉尘",   0, 0},
+            {0x6C8, "硬化粉尘",   0, 0},
+            {0x6CC, "鬼人药",     0x6D4, 1},
+            {0x6CC, "大鬼人药",   0x6D4, 2},
+            {0x6D0, "硬化药",     0x6D8, 1},
+            {0x6D0, "大硬化药",   0x6D8, 2},
+            {0x6EC, "冷饮",       0, 0},
+            {0x6F0, "热饮",       0, 0},
+            {0x6F8, "体力回复",   0, 0},
+            {0x6FC, "耐寒强化",   0, 0},
+            {0x718, "力量松果",   0, 0},
+            {0x71C, "耐热强化",   0, 0},
+            // Skills
+            {0x764, "不屈",       0, 0},
+            {0x76C, "刚刃研磨",   0, 0},
+            {0x770, "滑走强化",   0, 0},
+            {0x730, "属性加速",   0, 0},
+            {0x738, "力量解放",   0, 0},
+            {0x754, "肾上腺素",   0, 0},
+            {0x788, "冰气炼成",   0, 0},
+            {0x79C, "攻击守势",   0, 0},
+            {0x7A0, "转福",       0, 0},
+        };
+        for (const auto &b : kBuffs) {
+            if (b.dependsOn != 0) {
+                const auto pre = memory_.read<std::int32_t>(
+                    abnormalityBase + static_cast<std::uintptr_t>(b.dependsOn));
+                if (!pre || *pre != b.withValue) continue;
+            }
+            const auto timer = memory_.read<float>(
+                abnormalityBase + static_cast<std::uintptr_t>(b.offset));
+            if (!timer || !std::isfinite(*timer) || *timer <= 0.0F)
+                continue;
+            PlayerAbnormality ab;
+            ab.offset  = b.offset;
+            ab.name    = QString::fromUtf8(b.name);
+            ab.timer   = *timer;
+            result.buffs.push_back(ab);
         }
     }
 

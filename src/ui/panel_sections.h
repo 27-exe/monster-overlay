@@ -32,9 +32,10 @@ enum : uint32_t {
     Bars    = 1u << 3,   // HP + ST 两条
     Mantles = 1u << 4,   // 衣装两格
     Debuff  = 1u << 5,   // 异常状态胶囊
+    Buff    = 1u << 6,   // 正面状态胶囊 (笛/道具/技能)
 };
 constexpr uint32_t kAll =
-    Conn | Quest | Weapon | Bars | Mantles | Debuff;
+    Conn | Quest | Weapon | Bars | Mantles | Debuff | Buff;
 
 inline const QStringList &names()
 {
@@ -45,6 +46,7 @@ inline const QStringList &names()
         QStringLiteral("bars"),
         QStringLiteral("mantles"),
         QStringLiteral("debuff"),
+        QStringLiteral("buff"),
     };
     return n;
 }
@@ -58,6 +60,7 @@ inline const QStringList &displayNames()
         QStringLiteral("HP / ST"),
         QStringLiteral("衣装"),
         QStringLiteral("异常状态"),
+        QStringLiteral("正面状态"),
     };
     return n;
 }
