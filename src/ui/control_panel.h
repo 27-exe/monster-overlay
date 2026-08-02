@@ -8,6 +8,9 @@
 #include <array>
 #include <QtGlobal>
 
+class QSplitter;
+class QPropertyAnimation;
+
 class QCheckBox;
 class QFrame;
 class QLabel;
@@ -37,6 +40,14 @@ class HudCanvas;
 class ControlPanel : public QMainWindow {
     Q_OBJECT
 public:
+    // v0.5.6 polish: a custom int property animated by stageAnim_. The
+    // animation drives the stage pane height through QVariantAnimation;
+    // each frame we read this value and call consoleSplitter_->setSizes.
+    // Kept public because Q_PROPERTY accessors must be.
+    Q_PROPERTY(int stagePaneHeight READ stagePaneHeight WRITE setStagePaneHeight)
+    int stagePaneHeight() const;
+    void setStagePaneHeight(int h);
+
     explicit ControlPanel(QWidget *parent = nullptr);
     ~ControlPanel() override;
 
@@ -88,6 +99,11 @@ private:
     void rebuildAndRender(int idx);
     void updatePosLabel(int idx);
     QPixmap renderPreview(Panel *p);
+    // v0.5.6 polish: animated show/hide of the bottom canvas stage.
+    // animStageTo(true) restores the splitter sizes stored in
+    // savedStageSize_, animStageTo(false) collapses the stage to 0 and
+    // lets the top row (rail + inspector) fill the whole window.
+    void animStageTo(bool visible);
 
     PlayerPanel *player_ = nullptr;
     MonsterPanel *monster_ = nullptr;
@@ -104,6 +120,7 @@ private:
     QPushButton *safeAreaBtn_ = nullptr;
     QPushButton *gridBtn_ = nullptr;
     QPushButton *themeBtn_ = nullptr;
+    QPushButton *stageToggleBtn_ = nullptr;
     int selectedPanel_ = 0;
 
     // L4: status badge in the top-right, shows "READY" by default and
@@ -116,4 +133,15 @@ private:
     // a process is alive, polling kill(pid,0) for liveness.
     qint64       overlayPid_ = 0;
     QTimer      *overlayWatch_ = nullptr;
+
+    // v0.5.6 polish: animated stage toggle. savedStageSize_ captures the
+    // user-chosen (or default 45/55) stage height when the user hides
+    // the canvas; stageAnim_ is the QPropertyAnimation that drives the
+    // smooth open/close. stageVisible_ is the logical state.
+    int                 savedStageSize_ = 0;
+    bool                stageVisible_   = true;
+    QSplitter          *consoleSplitter_ = nullptr;
+    QPropertyAnimation *stageAnim_      = nullptr;
+    // backing storage for the Q_PROPERTY — the actual animated value.
+    int                 stagePaneHeight_ = 0;
 };

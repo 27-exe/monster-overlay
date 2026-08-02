@@ -34,6 +34,9 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStyle>
+#include <QPropertyAnimation>
+#include <QEasingCurve>
+#include <QAbstractAnimation>
 #include <QGridLayout>
 #include <QPixmap>
 #include <QPainter>
@@ -141,9 +144,10 @@ QString qssBase()
         // v0.5 A shell: rail shares the window base colour (no colour band
         // between the rail text and the window behind it).
         // v0.5.6 layout: top row is rail (border-right) | inspector;
-        // stage now sits beneath the top row, so it needs a border-top
-        // (instead of inspectorHost's old border-right) to separate it
-        // from the inspector strip above.
+        // stage now sits beneath the top row. The divider line is
+        // stage's own border-top, which paints correctly only when the
+        // stage has any height — collapsing to 0 hides the border
+        // automatically (no leftover sliver).
         "QFrame#objectRail{background:%1;border-right:1px solid %8;}"
         "QFrame#inspectorHost{background:%2;}"
         "QFrame#stage{background:%1;border-top:1px solid %8;}"
@@ -295,7 +299,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     // The splitter handle is hidden via QSS to keep the "single window"
     // feel; the stage's border-top doubles as the visual divider.
     auto *splitter = new QSplitter(Qt::Vertical);
-    splitter->setChildrenCollapsible(false);    // can't fully hide either pane
+    splitter->setChildrenCollapsible(true);     // stage can fully collapse to 0
     splitter->setHandleWidth(0);               // no visible splitter bar
     splitter->setObjectName("consoleSplitter");
 
@@ -324,7 +328,19 @@ ControlPanel::ControlPanel(QWidget *parent)
     ready->setObjectName("statusBadge");
     statusBadge_ = ready;
     railLayout->addWidget(ready);
-    railLayout->addSpacing(18);
+    railLayout->addSpacing(14);
+
+    // v0.5.6 polish: collapsible stage — single button in the rail that
+    // toggles the bottom canvas area. Pinned in the top block (always
+    // visible) so the user never has to find the canvas to dismiss it.
+    // The ⌄/⌃ icon hints at the direction the stage moves on click.
+    stageToggleBtn_ = new QPushButton(QStringLiteral("⌄   HIDE STAGE"));
+    stageToggleBtn_->setObjectName("railAction");
+    stageToggleBtn_->setCheckable(true);
+    stageToggleBtn_->setChecked(true);
+    stageToggleBtn_->setCursor(Qt::PointingHandCursor);
+    railLayout->addWidget(stageToggleBtn_);
+    railLayout->addSpacing(10);
 
     // v0.5.6: HUD OBJECTS + WORKSPACE go in their own scroll area so the
     // future addition of new objects / workspaces doesn't push the START
@@ -400,6 +416,12 @@ ControlPanel::ControlPanel(QWidget *parent)
 
     auto *stage = new QFrame();
     stage->setObjectName("stage");
+    // v0.5.6 polish: stage must be allowed to collapse fully. The splitter
+    // below uses setChildrenCollapsible(true); a non-zero minimum here
+    // would silently clamp the hide animation and leave a 1-2px sliver.
+    // The visible "divider" line is the QSS border-top, which the
+    // animation handler toggles to 'none' as soon as stage < 4px.
+    stage->setMinimumHeight(0);
     auto *stageLayout = new QVBoxLayout(stage);
     stageLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -501,13 +523,24 @@ ControlPanel::ControlPanel(QWidget *parent)
     // full HUD OBJECTS list + WORKSPACE rows + SCALE/OPACITY sliders
     // visible without scrolling on a 1280×1040 default window.
     splitter->setSizes({470, 570});
+    // Remember the user's chosen (or default) stage size so animStageTo
+    // can restore it on show. DO NOT read it from splitter->sizes() here:
+    // at construction time the splitter isn't in a layout yet, so
+    // setSizes clamps to the widget minimums ([332,148] for a 1040px
+    // window) — the correct 570 default would be lost. Use the constant
+    // default, then let QSettings + splitterMoved override it later.
+    savedStageSize_ = 570;
     // Hard minimum on the top pane so the inspector doesn't get crushed.
     topContainer->setMinimumHeight(360);
     {
         QSettings s;
         const QByteArray saved = s.value(QStringLiteral("ui/splitter")).toByteArray();
         if (!saved.isEmpty()) splitter->restoreState(saved);
+        // After restore, keep the user's last-chosen stage height as a
+        // plain int (easier than decoding the splitter bytearray).
+        savedStageSize_ = s.value(QStringLiteral("ui/stageHeight"), 570).toInt();
     }
+    consoleSplitter_ = splitter;
 
     auto *central = new QWidget();
     auto *centralLayout = new QVBoxLayout(central);
@@ -518,9 +551,70 @@ ControlPanel::ControlPanel(QWidget *parent)
 
     // v0.5.6 polish: persist the splitter ratio whenever the user drags
     // it, so the next launch opens with the proportions they preferred.
-    connect(splitter, &QSplitter::splitterMoved, this, [splitter]{
+    connect(splitter, &QSplitter::splitterMoved, this, [this, splitter]{
+        // Animation frames call setSizes → splitterMoved thousands of
+        // times; we must NOT persist or update savedStageSize_ from an
+        // animated frame or we'd store the animation's intermediate
+        // value (e.g. 120px) as the user's chosen ratio. Only a real
+        // user drag (animation not running) may write QSettings.
+        if (stageAnim_ && stageAnim_->state() == QAbstractAnimation::Running)
+            return;
+        const int newStage = splitter->sizes().value(1, 570);
         QSettings s;
         s.setValue(QStringLiteral("ui/splitter"), splitter->saveState());
+        s.setValue(QStringLiteral("ui/stageHeight"), newStage);
+        if (stageVisible_) {
+            savedStageSize_ = newStage;
+        }
+    });
+
+    // v0.5.6 polish: wire the HIDE/SHOW STAGE toggle. QPropertyAnimation
+    // drives a custom int property (the stage pane height); each frame
+    // re-applies setSizes({top, anim}) so the splitter smoothly resizes.
+    stageAnim_ = new QPropertyAnimation(this, "stagePaneHeight");
+    stageAnim_->setDuration(200);
+    stageAnim_->setEasingCurve(QEasingCurve::InOutQuad);
+    connect(stageAnim_, &QPropertyAnimation::valueChanged,
+            this, [this](const QVariant &v){
+        if (!consoleSplitter_) return;
+        const int stageH = v.toInt();
+        const int topH = consoleSplitter_->sizes().value(0);
+        consoleSplitter_->setSizes({topH, stageH});
+    });
+    // v0.5.6 polish: when the hide animation finishes, force stage to
+    // exactly 0 — the splitter occasionally clamps the last frame to its
+    // own minimum (≈1-2px) when its pane is collapsible but other widgets
+    // still expect a non-zero gutter. setSizes({x, 0}) with a final
+    // stage setMaximumHeight(0) lets the stage fully vanish, and the
+    // SHOW path restores both back. This is also what kills the
+    // "stays stuck — only jiggles" bug when the user re-opens stage.
+    connect(stageAnim_, &QPropertyAnimation::finished,
+            this, [this]{
+        if (!consoleSplitter_) return;
+        if (stageVisible_) {
+            // show complete: clear any temporary max cap.
+            if (auto *stg = consoleSplitter_->widget(1)) stg->setMaximumHeight(QWIDGETSIZE_MAX);
+            const int topH = consoleSplitter_->sizes().value(0);
+            const int stageH = savedStageSize_ > 0 ? savedStageSize_ : 570;
+            consoleSplitter_->setSizes({topH, stageH});
+        } else {
+            // hide complete: force stage to zero. The QSplitter insists
+            // on a minimum pane size (~120 in our case) even when the
+            // child has minimumSize 0 and is collapsible; we work around
+            // it by setting stage's MAX height to 0 so it really
+            // collapses, then setSizes({top, 0}). setVisible(false) was
+            // tried but the splitter kept its 120px reservation.
+            if (auto *stg = consoleSplitter_->widget(1)) {
+                stg->setMaximumHeight(0);
+            }
+            const int topH = consoleSplitter_->sizes().value(0);
+            consoleSplitter_->setSizes({topH, 0});
+        }
+    });
+    connect(stageToggleBtn_, &QPushButton::toggled, this, [this](bool checked){
+        stageToggleBtn_->setText(checked ? QStringLiteral("⌄   HIDE STAGE")
+                                         : QStringLiteral("⌃   SHOW STAGE"));
+        animStageTo(checked);
     });
 
     // v0.5 P1: startBtn toggles between launch and stop. The
@@ -601,6 +695,49 @@ void ControlPanel::keyPressEvent(QKeyEvent *e)
     if (e->key() == Qt::Key_2) { selectPanel(1); return; }
     if (e->key() == Qt::Key_3) { selectPanel(2); return; }
     QMainWindow::keyPressEvent(e);
+}
+
+// ─── stage toggle property + animation ─────────────────────────────────────
+
+int ControlPanel::stagePaneHeight() const
+{
+    return stagePaneHeight_;
+}
+
+void ControlPanel::setStagePaneHeight(int h)
+{
+    // QPropertyAnimation writes the value here every animation tick.
+    stagePaneHeight_ = h;
+}
+
+void ControlPanel::animStageTo(bool visible)
+{
+    if (!consoleSplitter_ || !stageAnim_) return;
+    stageVisible_ = visible;
+    // v0.5.6 polish: when showing, the previous hide pinned stage's
+    // maximumHeight to 0. Restore the cap first so the splitter can
+    // grow stage back to its saved size; otherwise the cap clamps at
+    // 0 and the animation looks stuck.
+    if (visible) {
+        if (auto *stg = consoleSplitter_->widget(1)) {
+            stg->setMaximumHeight(QWIDGETSIZE_MAX);
+        }
+    }
+    // Snapshot the current stage size as the "from" so an in-flight
+    // animation can be reversed mid-flight without snapping.
+    const int current = consoleSplitter_->sizes().value(1);
+    // When hiding, capture the user's preferred stage height so SHOW
+    // restores it (not whatever the splitter has after animation).
+    if (visible && savedStageSize_ <= 0) {
+        savedStageSize_ = current > 0 ? current : 570;
+    }
+    const int target = visible ? (savedStageSize_ > 0 ? savedStageSize_ : 570) : 0;
+    // Avoid pointless animation if we're already there.
+    if (current == target) return;
+    stageAnim_->stop();
+    stageAnim_->setStartValue(current);
+    stageAnim_->setEndValue(target);
+    stageAnim_->start();
 }
 
 bool ControlPanel::eventFilter(QObject *watched, QEvent *event)
