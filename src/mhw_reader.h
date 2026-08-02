@@ -52,7 +52,8 @@ public:
     void detach();
     [[nodiscard]] bool attached() const;
     [[nodiscard]] qint64 pid() const;
-    [[nodiscard]] std::uintptr_t imageBase(QString *error = nullptr) const;
+    [[nodiscard]] std::uintptr_t imageBase(QString *error = nullptr,
+                                           const QString &exeName = QStringLiteral("monsterhunterworld.exe")) const;
     bool readBytes(std::uintptr_t address, void *destination, std::size_t size, QString *error = nullptr) const;
 
     template <typename T>
@@ -84,12 +85,14 @@ struct HpCluster { std::uintptr_t hpAddr = 0; float maxHealth = 0.0F; };
 
 class MhwReader {
 public:
-    explicit MhwReader(QString mapPath);
+    explicit MhwReader(QString mapPath,
+                       QString exeName = QStringLiteral("monsterhunterworld.exe"));
 
     [[nodiscard]] GameSnapshot poll();
     [[nodiscard]] const QString &mapPath() const;
 
-    static std::optional<qint64> findGamePid();
+    static std::optional<qint64> findGamePid(
+        const QString &exeName = QStringLiteral("monsterhunterworld.exe"));
     static std::uintptr_t followPointerChain(const ProcessMemory &memory,
                                              std::uintptr_t address,
                                              const std::vector<std::uintptr_t> &offsets,
@@ -117,6 +120,7 @@ private:
     AddressMap map_;
     ProcessMemory memory_;
     QString mapPath_;
+    QString exeName_;
     QString mapError_;
     std::uintptr_t imageBase_ = 0;
     std::uintptr_t monsterTableBase_ = 0;

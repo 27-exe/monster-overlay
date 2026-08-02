@@ -12,7 +12,10 @@
 
 namespace mhw {
 
+enum class GameId { World, Rise };
+
 struct GameSnapshot {
+    GameId game{GameId::World};
     bool attached{};
     qint64 pid{-1};
     std::uintptr_t imageBase{};

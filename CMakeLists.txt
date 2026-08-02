@@ -17,6 +17,11 @@ find_package(LayerShellQt REQUIRED)
 add_library(mhw-core STATIC
     src/core/string_table.h
     src/core/string_table.cpp
+    src/core/game_detector.h
+    src/core/game_detector.cpp
+    src/rise/mhr_types.h
+    src/rise/mhr_reader.h
+    src/rise/mhr_reader.cpp
     src/world/world_types.h
     src/world/world_types.cpp
 )

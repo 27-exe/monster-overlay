@@ -175,7 +175,7 @@ qint64 ProcessMemory::pid() const
     return pid_;
 }
 
-std::uintptr_t ProcessMemory::imageBase(QString *error) const
+std::uintptr_t ProcessMemory::imageBase(QString *error, const QString &exeName) const
 {
     if (pid_ <= 0)
         return 0;
@@ -191,11 +191,12 @@ std::uintptr_t ProcessMemory::imageBase(QString *error) const
         return 0;
     }
 
+    const QByteArray exeNameBytes = exeName.toLower().toUtf8();
     const QByteArray raw = maps.readAll();
     std::uintptr_t fallback = 0;
     const QList<QByteArray> lines = raw.split('\n');
     for (const QByteArray &lineBytes : lines) {
-        if (!lineBytes.toLower().contains("monsterhunterworld.exe"))
+        if (!lineBytes.toLower().contains(exeNameBytes))
             continue;
         const QList<QByteArray> fields = lineBytes.split(' ');
         if (fields.size() < 3)
@@ -216,7 +217,7 @@ std::uintptr_t ProcessMemory::imageBase(QString *error) const
     }
 
     if (fallback == 0 && error)
-        *error = QStringLiteral("maps 中没有 MonsterHunterWorld.exe 映射");
+        *error = QStringLiteral("maps 中没有 %1 映射").arg(exeName);
     return fallback;
 }
 
@@ -243,8 +244,8 @@ bool ProcessMemory::readBytes(std::uintptr_t address, void *destination, std::si
     return false;
 }
 
-MhwReader::MhwReader(QString mapPath)
-    : mapPath_(std::move(mapPath))
+MhwReader::MhwReader(QString mapPath, QString exeName)
+    : mapPath_(std::move(mapPath)), exeName_(std::move(exeName))
 {
     map_.load(mapPath_, &mapError_);
 }
@@ -254,11 +255,22 @@ const QString &MhwReader::mapPath() const
     return mapPath_;
 }
 
-std::optional<qint64> MhwReader::findGamePid()
+std::optional<qint64> MhwReader::findGamePid(const QString &exeName)
 {
     static qint64 cachedPid = -1;
     static qint64 lastScanMs = 0;
+    static QString cachedExeName;
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+
+    // The cache is keyed by exeName: switching between World and Rise must
+    // invalidate a previously cached PID for the other game.
+    if (cachedExeName != exeName) {
+        cachedPid = -1;
+        lastScanMs = 0;
+        cachedExeName = exeName;
+    }
+
+    const QByteArray exeNameBytes = exeName.toLower().toUtf8();
 
     // Cache hit (found): skip rescan for 5 s.
     if (cachedPid > 0 && (nowMs - lastScanMs) < 5000) {
@@ -282,13 +294,13 @@ std::optional<qint64> MhwReader::findGamePid()
         if (!numeric || pid <= 0)
             continue;
 
-        // The actual Wine PE process has MonsterHunterWorld.exe in its map set,
+        // The actual Wine PE process has the game .exe in its map set,
         // but the comm name is set to wine-preloader / wineserver so we cannot
         // rely on /proc/<pid>/comm. Match on /proc/<pid>/maps (any case) and
         // also on cmdline as a fallback.
         QFile maps(entry.filePath() + QStringLiteral("/maps"));
         if (maps.open(QIODevice::ReadOnly | QIODevice::Text)
-            && maps.readAll().toLower().contains("monsterhunterworld.exe")) {
+            && maps.readAll().toLower().contains(exeNameBytes)) {
             cachedPid = pid;
             return cachedPid;
         }
@@ -318,11 +330,11 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
         return false;
     }
 
-    const auto pid = findGamePid();
+    const auto pid = findGamePid(exeName_);
     if (!pid) {
         memory_.detach();
         imageBase_ = 0;
-        snapshot.status = QStringLiteral("等待 MonsterHunterWorld.exe");
+        snapshot.status = QStringLiteral("等待 %1").arg(exeName_);
         return false;
     }
 
@@ -335,7 +347,7 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
                                   .arg(error);
             return false;
         }
-        imageBase_ = memory_.imageBase(&error);
+        imageBase_ = memory_.imageBase(&error, exeName_);
         if (imageBase_ == 0) {
             memory_.detach();
             snapshot.status = error;
