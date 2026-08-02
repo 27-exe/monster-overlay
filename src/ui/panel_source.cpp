@@ -9,3 +9,5 @@ QMargins PanelSourceAdapter::margins() const  { return p_->margins(); }
 QSize PanelSourceAdapter::contentSize() const { return p_->contentSize(); }
 double PanelSourceAdapter::scale() const      { return p_->scale(); }
 double PanelSourceAdapter::opacity() const    { return p_->opacity(); }
+
+int PanelSourceAdapter::bgAlpha() const { return p_->bgAlpha(); }

@@ -67,6 +67,7 @@ private:
     SectionCountBar *countBar = nullptr;
         QSlider *scaleSlider = nullptr;
         QSlider *opacitySlider = nullptr;
+        QSlider *bgAlphaSlider = nullptr;
         QLabel *posLabel = nullptr;
     };
 

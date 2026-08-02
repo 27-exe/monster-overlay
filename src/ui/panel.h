@@ -78,6 +78,7 @@ public:
     [[nodiscard]] QMargins margins() const { return margins_; }
     [[nodiscard]] double scale() const { return scale_; }
     [[nodiscard]] double opacity() const { return opacity_; }
+    [[nodiscard]] int bgAlpha() const { return bgAlpha_; }
 
     // v0.5+: explicit setters for the control console's
     // Appearance fold. Both clamp into the same range the wheel
@@ -87,6 +88,7 @@ public:
     // disk for ephemeral drives like the canvas preview repaint).
     void setScale(qreal s, bool persist = true);
     void setOpacity(qreal a, bool persist = true);
+    void setBgAlpha(int a, bool persist = true);
 
     // v0.5 position editing: set margins directly (clamped to [0,8000]
     // per side, matching clampMargin in panel.cpp). persist=true writes
@@ -149,6 +151,7 @@ private:
     QMargins margins_;
     double scale_{1.0};
     double opacity_{0.85};
+    int bgAlpha_{170};   // panel background alpha (0-255), default ~67%
     bool editMode_{false};
     bool minimized_{false};
     QSize normalSize_;   // remembered full-layout size

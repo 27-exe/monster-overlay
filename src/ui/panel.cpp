@@ -157,12 +157,13 @@ void Panel::loadConfig()
     margins_.setBottom(clampMargin(settings().value(QStringLiteral("mb"), def.bottom()).toInt()));
     scale_ = settings().value(QStringLiteral("scale"), 2.0).toDouble();   // v0.3: 2x scale to make icons undeniably visible
     opacity_ = settings().value(QStringLiteral("opacity"), 1.0).toDouble();
+    bgAlpha_ = std::clamp(settings().value(QStringLiteral("bgAlpha"), 170).toInt(), 0, 255);
     settings().endGroup();
 
     scale_ = std::clamp(scale_, kMinScale, kMaxScale);
     opacity_ = std::clamp(opacity_, 0.1, 1.0);
-    qInfo("mhw-panel [%s]: loadConfig opacity=%.2f scale=%.2f margins=L%d T%d R%d B%d",
-          qPrintable(key_), opacity_, scale_,
+    qInfo("mhw-panel [%s]: loadConfig opacity=%.2f bgAlpha=%d scale=%.2f margins=L%d T%d R%d B%d",
+          qPrintable(key_), opacity_, bgAlpha_, scale_,
           margins_.left(), margins_.top(), margins_.right(), margins_.bottom());
 
     // Note: visibility is NOT applied here. The window must not be
@@ -183,6 +184,7 @@ void Panel::saveConfig()
     settings().setValue(QStringLiteral("mb"), margins_.bottom());
     settings().setValue(QStringLiteral("scale"), scale_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
+    settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
     settings().setValue(QStringLiteral("visible"), isVisible());
     settings().endGroup();
     settings().sync();
@@ -193,6 +195,7 @@ void Panel::saveAppearance()
     settings().beginGroup(key_);
     settings().setValue(QStringLiteral("scale"), scale_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
+    settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
     // v0.5: also persist margins so the overlay's loadConfig()
     // picks up the position the user set in the console.
     settings().setValue(QStringLiteral("ml"), margins_.left());
@@ -201,8 +204,8 @@ void Panel::saveAppearance()
     settings().setValue(QStringLiteral("mb"), margins_.bottom());
     settings().endGroup();
     settings().sync();
-    qInfo("mhw-panel [%s]: saveAppearance opacity=%.2f scale=%.2f margins=L%d T%d R%d B%d",
-          qPrintable(key_), opacity_, scale_,
+    qInfo("mhw-panel [%s]: saveAppearance opacity=%.2f bgAlpha=%d scale=%.2f margins=L%d T%d R%d B%d",
+          qPrintable(key_), opacity_, bgAlpha_, scale_,
           margins_.left(), margins_.top(), margins_.right(), margins_.bottom());
 }
 
@@ -529,7 +532,7 @@ void Panel::drawV03Chrome(QPainter &p, Accent accent) const
     // Deep semi-transparent background. No blur simulation: the panel is a
     // stable dark tint over the game scene, while its data rows carry the
     // coloured progress information.
-    p.setBrush(QColor(12, 14, 16, 170));           // #0c0e10 @ ~67%
+    p.setBrush(QColor(12, 14, 16, bgAlpha_));        // #0c0e10, user-adjustable
     p.drawRoundedRect(r, kRadius, kRadius);
 
     // Top gloss line — REMOVED 2026-07-27 (added subtle smudge on top edge
@@ -615,11 +618,24 @@ void Panel::setOpacity(qreal a, bool persist)
         saveConfig();
 }
 
+void Panel::setBgAlpha(int a, bool persist)
+{
+    const int clamped = std::clamp(a, 0, 255);
+    if (clamped == bgAlpha_)
+        return;
+    bgAlpha_ = clamped;
+    qInfo("mhw-panel [%s]: setBgAlpha -> %d (persist=%d)", qPrintable(key_), bgAlpha_, persist);
+    update();
+    if (persist && editMode_)
+        saveConfig();
+}
+
 void Panel::resetToDefaults()
 {
     sectionMask_  = 0xFFFFFFFFu;
     scale_        = 1.0;
     opacity_      = 0.85;
+    bgAlpha_      = 170;
     margins_      = defaultMarginsFor(corner_);
     if (logicalSize_.isValid())
         setContentSize(logicalSize_.width(), logicalSize_.height());

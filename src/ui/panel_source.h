@@ -24,6 +24,7 @@ public:
     virtual QSize contentSize() const = 0;
     virtual double scale() const = 0;
     virtual double opacity() const { return 1.0; }
+    virtual int bgAlpha() const { return 170; }
 };
 
 // Default adapter for a live mhw::Panel instance. Constructed with a
@@ -36,6 +37,7 @@ public:
     QSize contentSize() const override;
     double scale() const override;
     double opacity() const override;
+    int bgAlpha() const override;
 private:
     const Panel *p_;
 };

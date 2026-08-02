@@ -701,6 +701,39 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     vl->addLayout(opacRow);
     ctl_[idx].opacitySlider = opacSlider;
 
+    // v0.5 BG OPACITY: controls the panel background alpha independently
+    // of the overall window opacity. KWin's blur-behind is a compositor
+    // effect on translucent surfaces; this slider adjusts how much of
+    // the game scene shows through the panel body.
+    auto *bgRow = new QHBoxLayout();
+    bgRow->setSpacing(8);
+    auto *bgLab = new QLabel(QStringLiteral("BG ALPHA"));
+    bgLab->setObjectName("sliderLabel");
+    auto *bgVal = new QLabel();
+    bgVal->setObjectName("sliderValue");
+    auto *bgSlider = new QSlider(Qt::Horizontal);
+    bgSlider->setRange(0, 255);
+    {
+        Panel *p3 = (idx == 0 ? static_cast<Panel*>(player_)
+                   : idx == 1 ? static_cast<Panel*>(monster_)
+                              : static_cast<Panel*>(damage_));
+        bgSlider->setValue(p3->bgAlpha());
+    }
+    bgVal->setText(QStringLiteral("%1").arg(bgSlider->value()));
+    connect(bgSlider, &QSlider::valueChanged, this, [this, idx, bgVal](int v){
+        bgVal->setText(QStringLiteral("%1").arg(v));
+        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
+                  : idx == 1 ? static_cast<Panel*>(monster_)
+                             : static_cast<Panel*>(damage_));
+        p->setBgAlpha(v, false);
+        rebuildAndRender(idx);
+    });
+    bgRow->addWidget(bgLab);
+    bgRow->addWidget(bgSlider, 1);
+    bgRow->addWidget(bgVal);
+    vl->addLayout(bgRow);
+    ctl_[idx].bgAlphaSlider = bgSlider;
+
     // v0.5 BEHAVIOR → POSITION: shows the panel's anchor corner and
     // current margins. The user moves the panel via canvas drag or
     // arrow keys; this label is read-only feedback.
@@ -1139,6 +1172,7 @@ void ControlPanel::syncAppearance(int idx)
     if (c.opacitySlider) {
         c.opacitySlider->blockSignals(true);
         c.opacitySlider->setValue(qRound(panel->opacity() * 100));
+        if (c.bgAlphaSlider) c.bgAlphaSlider->setValue(panel->bgAlpha());
         c.opacitySlider->blockSignals(false);
     }
 }
