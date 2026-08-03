@@ -339,7 +339,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     // existing layout's "comfortable" width on first launch.
     auto *rail = new QFrame();
     rail->setObjectName("objectRail");
-    rail->setMinimumWidth(214);
+    rail->setMinimumWidth(170);
     auto *railLayout = new QVBoxLayout(rail);
     railLayout->setContentsMargins(20, 22, 20, 18);
     railLayout->setSpacing(8);
@@ -445,7 +445,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     leftSplitter->setChildrenCollapsible(false);
     leftSplitter->addWidget(buildGameColumn());
     leftSplitter->addWidget(rail);
-    leftSplitter->setSizes({80, 320});
+    leftSplitter->setSizes({130, 280});
     leftSplitter_ = leftSplitter;
     {
         QSettings s;
@@ -1192,8 +1192,8 @@ QWidget *ControlPanel::buildGameColumn()
 {
     auto *col = new QFrame();
     col->setObjectName("gameColumn");
-    col->setMinimumWidth(70);
-    col->setMaximumWidth(140);
+    col->setMinimumWidth(100);
+    col->setMaximumWidth(170);
     auto *vl = new QVBoxLayout(col);
     vl->setContentsMargins(10, 22, 10, 18);
     vl->setSpacing(10);
