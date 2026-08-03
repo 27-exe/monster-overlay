@@ -635,7 +635,16 @@ void PlayerPanel::paintPanel(QPainter &p)
                           + (player_.mantleSlot1Id >= 0 ? 1 : 0);
     const int debuffCount = player_.debuffs.size();
     const int buffCount   = player_.buffs.size();
-    const int wirebugCount = player_.wirebugs.size();
+    // v0.7.2: only wirebugs currently in cooldown earn a capsule slot on
+    // the row. Ready wirebugs (cooldown == 0) are hidden entirely so the
+    // block never carries an orphan "READY" cell — it just collapses when
+    // every wirebug is ready. This matches HunterPie's behaviour and the
+    // user-facing rule "冷却完了直接消失".
+    const int wirebugTotal = player_.wirebugs.size();
+    int wirebugActiveCount = 0;
+    for (const auto &w : player_.wirebugs) {
+        if (w.cooldown > 0.001F) ++wirebugActiveCount;
+    }
 
     // ---- Section mask (ui/panel_sections.h) ----
     const uint32_t smask     = sectionMask();
@@ -701,7 +710,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     if (onWeapon)                        totalH += kWeaponGap + kWeaponH;
     if (onBars)                          totalH += kBarsGap  + kBarsH;
     if (onMantles && mantleCount > 0)    totalH += kMantleGap + kMantleH;
-    if (onWirebug && wirebugCount > 0)   totalH += kWirebugGap + kWirebugH;
+    if (onWirebug && wirebugActiveCount > 0)   totalH += kWirebugGap + kWirebugH;
     if (onDebuff  && debuffCount > 0)    totalH += kDebuffGap + debuffH;
     if (onBuff    && buffCount > 0)      totalH += kBuffGap   + buffH;
     totalH += kMargin;
@@ -1030,26 +1039,31 @@ void PlayerPanel::paintPanel(QPainter &p)
         y += kMbH;
     }
 
-    // ---- wirebugs: 3 capsules, default + env + skill (Rise only) ----
-    if (onWirebug && wirebugCount > 0) {
+    // ---- wirebugs: 1-3 capsules, default + env + skill (Rise only) ----
+    // v0.7.2: only wirebugs with cooldown > 0 are rendered. Column index
+    // is the index of the active wirebug, not its slot in the source
+    // vector, so a cooldown=0 wirebug doesn't leave a visible gap.
+    if (onWirebug && wirebugActiveCount > 0) {
         y += kWirebugGap;
         const int totalW = innerW;
         const int pillGap = 5;
-        constexpr int kWbPerRow = 3;
-        // Always one row for wirebugs (max 3 by game design). Use a
-        // per-row slot width that evenly distributes whatever the count
-        // is so a 1-wirebug hunter still gets a wider capsule.
-        const int slotW = (totalW - pillGap * (wirebugCount - 1))
-                        / std::max(1, wirebugCount);
-        for (int i = 0; i < wirebugCount; ++i) {
-            const int cx = innerLeft + i * (slotW + pillGap);
-            const QRectF pillRect(cx, y, slotW, kWirebugH);
+        // Always one row for wirebugs (max 3 by game design). Slot width
+        // distributes evenly across the visible count so a 1-wirebug
+        // hunter still gets a wider capsule.
+        const int slotW = (totalW - pillGap * (wirebugActiveCount - 1))
+                        / std::max(1, wirebugActiveCount);
+        int col = 0;
+        for (int i = 0; i < wirebugTotal; ++i) {
             const auto &w = player_.wirebugs[i];
+            if (w.cooldown <= 0.001F) continue;
+            const int cx = innerLeft + col * (slotW + pillGap);
+            const QRectF pillRect(cx, y, slotW, kWirebugH);
             const QString n = (i == 0) ? QStringLiteral("翔虫")
                             : w.isTemporary ? QStringLiteral("翔虫·%1").arg(i + 1)
                                             : QStringLiteral("翔虫·%1").arg(i + 1);
             drawWirebug(p, pillRect, n, w.cooldown, w.maxCooldown,
                         w.isTemporary);
+            ++col;
         }
         y += kWirebugH;
     }
@@ -1152,22 +1166,26 @@ void PlayerPanel::setupDemoData()
     player_.mantleSlot0Id = -1;
     player_.mantleSlot1Id = -1;
     if (game_ == mhw::GameId::Rise) {
-        // Rise demo: 1 default + 2 temporary wirebugs.
+        // v0.7.2: demo seeds 3 wirebugs all currently in cooldown so the
+        // preview renders the full 3-capsule row. With paintPanel's
+        // wirebugActiveCount filtering, a wirebug with cooldown==0 would
+        // simply be hidden — leaving 2 capsules — so we keep all 3
+        // recovering for the demo to show the steady-state layout.
         {
             WirebugSnapshot w0; w0.slot = 0; w0.isAvailable = true;
-            w0.cooldown = 0.0F;  w0.maxCooldown = 30.0F;
+            w0.cooldown = 12.0F; w0.maxCooldown = 30.0F;
             player_.wirebugs.append(w0);
         }
         {
             WirebugSnapshot w1; w1.slot = 1; w1.isAvailable = true;
             w1.isTemporary = true;
-            w1.cooldown = 18.0F; w1.maxCooldown = 30.0F;
+            w1.cooldown = 8.0F;  w1.maxCooldown = 30.0F;
             player_.wirebugs.append(w1);
         }
         {
             WirebugSnapshot w2; w2.slot = 2; w2.isAvailable = true;
             w2.isTemporary = true;
-            w2.cooldown = 7.0F;  w2.maxCooldown = 30.0F;
+            w2.cooldown = 20.0F; w2.maxCooldown = 30.0F;
             player_.wirebugs.append(w2);
         }
     } else {
