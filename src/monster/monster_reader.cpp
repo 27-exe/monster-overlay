@@ -8,6 +8,9 @@ namespace mhw {
 
 void MhwReader::readMonsterAilments(MonsterSnapshot &monster)
 {
+    // v0.7.3: clear so per-tick refresh from the cache-hit path works
+    monster.ailments.clear();
+
     // HunterPie GetMonsterAilments(): monster+0x1BC40 → pointer array,
     // each element +0x148 → MHWMonsterAilmentStructure.
     const std::uintptr_t ailBase = monster.address + 0x1BC40ULL;
@@ -58,6 +61,46 @@ void MhwReader::readMonsterAilments(MonsterSnapshot &monster)
         monster.ailments.push_back(ail);
 
         cursor += sizeof(std::uintptr_t);
+    }
+}
+
+
+void MhwReader::readMonsterTenderizes(MonsterSnapshot &monster)
+{
+    // v0.7.3: clear so per-tick refresh from the cache-hit path works
+    monster.tenderizes.clear();
+
+    // HunterPie MHWMonster.GetMonsterTenderize():
+    //   monster + 0x1C458 → 10 × MHWTenderizeInfoStructure
+    // The struct's "Address" field at +0x00 is a scanner-injected pointer
+    // we ignore; real data starts at +0x08 (Duration), +0x0C (MaxDuration),
+    // +0x30 (PartId, 0xFFFFFFFF = empty slot).
+    constexpr std::uintptr_t TENDERIZE_OFFSET = 0x1C458ULL;
+    constexpr int SLOT_COUNT  = 10;
+    constexpr int SLOT_SIZE   = 64;          // sizeof(MHWTenderizeInfoStructure)
+
+    std::vector<std::uint8_t> buf(SLOT_COUNT * SLOT_SIZE);
+    if (!memory_.readBytes(monster.address + TENDERIZE_OFFSET,
+                           buf.data(), buf.size(), nullptr))
+        return;
+
+    for (int i = 0; i < SLOT_COUNT; ++i) {
+        const std::uint8_t *p = buf.data() + i * SLOT_SIZE;
+        float duration = 0.0F, maxDuration = 0.0F;
+        std::uint32_t partId = 0xFFFFFFFFu;
+        std::memcpy(&duration,    p + 0x08, 4);
+        std::memcpy(&maxDuration, p + 0x0C, 4);
+        std::memcpy(&partId,      p + 0x30, 4);
+
+        // Filter empty / expired slots.
+        if (partId == 0xFFFFFFFFu) continue;
+        if (duration <= 0.0F)      continue;
+
+        TenderizeSlot t;
+        t.partId      = partId;
+        t.duration    = duration;
+        t.maxDuration = maxDuration;
+        monster.tenderizes.push_back(t);
     }
 }
 
@@ -479,6 +522,12 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             m.isManualTargeted  = (comp == manualTargetAddress_);
             m.isQuestTargeted   = (comp == questTargetAddress_);
             m.isManuallyTargeted = m.isManualTargeted || m.isQuestTargeted;
+            // v0.7.3: ailments + tenderizes were only refreshed in the
+            // cache-miss path, so the cached snapshot kept stale
+            // status. HunterPie runs GetMonsterAilments + GetTenderize
+            // every tick — we now mirror that semantic here too.
+            readMonsterAilments(m);
+            readMonsterTenderizes(m);
             result.push_back(m);
             monsterCache_[comp] = {m, maxHP};
             continue;
@@ -630,6 +679,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             m.isManuallyTargeted = m.isManualTargeted || m.isQuestTargeted;
         m.parts = parts;
         readMonsterAilments(m);
+        readMonsterTenderizes(m);
         monsterCache_[comp] = {m, maxHP};
         result.push_back(m);
     }

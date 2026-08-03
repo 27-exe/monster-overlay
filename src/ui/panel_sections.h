@@ -72,13 +72,14 @@ inline const QStringList &displayNames()
 // ----- Monster panel sections ---------------------------------------------
 namespace MonsterSection {
 enum : uint32_t {
-    Info   = 1u << 0,    // 六角肖像 + 金冠 + 名字 + 大小 + 激怒标签
-    Hp     = 1u << 1,    // 总 HP 条
-    Enrage = 1u << 2,    // 怒气计量条
-    Ail    = 1u << 3,    // 异常状态卡 (.srow)
-    Parts  = 1u << 4,    // 部位网格 (.pgrid)
+    Info     = 1u << 0,    // 六角肖像 + 金冠 + 名字 + 大小 + 激怒标签
+    Hp       = 1u << 1,    // 总 HP 条
+    Enrage   = 1u << 2,    // 怒气计量条
+    Ail      = 1u << 3,    // 异常状态卡 (.srow)
+    Parts    = 1u << 4,    // 部位网格 (.pgrid)
+    Tenderize = 1u << 5,   // v0.7.3: 勾爪软化倒计时胶囊
 };
-constexpr uint32_t kAll = Info | Hp | Enrage | Ail | Parts;
+constexpr uint32_t kAll = Info | Hp | Enrage | Ail | Parts | Tenderize;
 
 inline const QStringList &names()
 {
@@ -88,6 +89,7 @@ inline const QStringList &names()
         QStringLiteral("enrage"),
         QStringLiteral("ail"),
         QStringLiteral("parts"),
+        QStringLiteral("tenderize"),
     };
     return n;
 }
@@ -100,6 +102,7 @@ inline const QStringList &displayNames()
         QStringLiteral("怒气"),
         QStringLiteral("异常"),
         QStringLiteral("部位"),
+        QStringLiteral("软化"),
     };
     return n;
 }

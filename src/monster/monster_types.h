@@ -34,6 +34,16 @@ struct MonsterAilmentSnapshot {
     int counter{};
 };
 
+// v0.7.3: Clutch Claw Tenderize slot (HunterPie MHWTenderizeInfoStructure).
+// Layout: +0x08 Duration(f32) / +0x0C MaxDuration(f32) / +0x30 PartId(u32).
+// Address field at +0x00 is scanner-injected — not a real data field.
+struct TenderizeSlot {
+    std::uint32_t partId{0xFFFFFFFFu};
+    float    duration{0.0F};
+    float    maxDuration{0.0F};
+    bool isValid() const { return partId != 0xFFFFFFFFu && duration > 0.0F; }
+};
+
 struct MonsterSnapshot {
     std::uintptr_t address{};
     int id{-1};
@@ -57,6 +67,7 @@ struct MonsterSnapshot {
                                 // maxHealth.
     QVector<PartSnapshot> parts;
     QVector<MonsterAilmentSnapshot> ailments;
+    QVector<TenderizeSlot> tenderizes;     // v0.7.3: Clutch Claw 软化
 
     // Qurio (Rise only)
     bool qurioActive{false};

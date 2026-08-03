@@ -108,6 +108,7 @@ private:
     Zone readZone(QString *error);
     QVector<MonsterSnapshot> readMonsters(QString *error);
     void readMonsterAilments(MonsterSnapshot &monster);
+    void readMonsterTenderizes(MonsterSnapshot &monster);
     PlayerSnapshot readPlayer(QString *error);
     QVector<PartyMemberSnapshot> readParty(QString *error);
     QuestSnapshot readQuest(QString *error);

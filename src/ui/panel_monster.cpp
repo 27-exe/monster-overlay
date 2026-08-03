@@ -80,6 +80,14 @@ constexpr int kScTmFont   = 9;     // .sc .tm
 constexpr int kScMiniH    = 5;     // .sc .mini
 constexpr int kScIconSize = 11;    // .sc .top svg
 
+// ---- v0.7.3 Tenderize (.tsc) — Clutch Claw soft-timer pills --------------
+constexpr int kTzCols     = 5;     // more compact than .sc; max 10 slots
+constexpr int kTzGap      = 4;
+constexpr int kTzPadX     = 5;
+constexpr int kTzPadY     = 3;
+constexpr int kTzTopFont  = 8;
+constexpr int kTzMiniH    = 4;
+
 // ---- Palette — straight from --c / --sc / --enrage / --tN ----------------
 constexpr int kEnrageR = 255, kEnrageG = 112, kEnrageB = 67;   // #ff7043
 constexpr int kGoldR   = 255, kGoldG   = 193, kGoldB   = 7;    // #ffc107
@@ -347,6 +355,60 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
     }
 }
 
+// ---- v0.7.3 .tsc — Tenderize slot pill --------------------------------
+// One compact card per active slot. "部位 #N" until we wire up the
+// TenderizeIds → part-name map; countdown on the right; mini bar at the
+// bottom showing fraction of max duration remaining.
+struct TzEntry {
+    std::uint32_t partId{0xFFFFFFFFu};
+    float duration{0.0F};
+    float maxDuration{0.0F};
+};
+
+void drawTenderize(QPainter &p, const QRectF &cell, const TzEntry &e)
+{
+    p.setRenderHint(QPainter::Antialiasing);
+    const QColor borderCol(246, 165, 34);   // amber — same family as sev tag
+    p.setPen(QPen(borderCol, 1));
+    p.setBrush(QColor(29, 32, 34));        // --cell
+    p.drawRoundedRect(cell, 2, 2);
+
+    const int topY     = static_cast<int>(cell.top()) + kTzPadY;
+    const int topRectH = kTzTopFont + 2;
+    QFont nmFont(QStringLiteral("Chakra Petch"), kTzTopFont, QFont::Bold);
+    nmFont.setStyleStrategy(QFont::PreferAntialias);
+    p.setFont(nmFont);
+    p.setPen(QColor(245, 246, 247));
+    const QString nm = QStringLiteral("部位 #%1").arg(e.partId);
+    p.drawText(QRectF(cell.x() + kTzPadX, topY,
+                      cell.width() / 2 - kTzPadX, topRectH),
+               Qt::AlignLeft | Qt::AlignVCenter, nm);
+
+    QFont tmFont(QStringLiteral("Chakra Petch"), kTzTopFont, QFont::Bold);
+    tmFont.setStyleStrategy(QFont::PreferAntialias);
+    p.setFont(tmFont);
+    p.setPen(borderCol);
+    p.drawText(QRectF(static_cast<int>(cell.right()) - kTzPadX - 28,
+                      topY, 28, topRectH),
+               Qt::AlignRight | Qt::AlignVCenter,
+               QStringLiteral("%1s").arg(static_cast<int>(e.duration)));
+
+    const int miniY = static_cast<int>(cell.bottom()) - kTzPadY - kTzMiniH;
+    const QRectF miniRect(cell.x() + kTzPadX, miniY,
+                          cell.width() - 2 * kTzPadX, kTzMiniH);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(10, 11, 12));
+    p.drawRect(miniRect);
+    const float pct = (e.maxDuration > 0.0F)
+        ? std::clamp(e.duration / e.maxDuration, 0.0F, 1.0F)
+        : 0.0F;
+    if (pct > 0.001F) {
+        p.setBrush(borderCol);
+        p.drawRect(miniRect.x(), miniRect.y(),
+                   miniRect.width() * pct, miniRect.height());
+    }
+}
+
 } // namespace
 
 namespace mh {
@@ -446,11 +508,12 @@ void MonsterPanel::paintPanel(QPainter &p)
 
     // ---- Section mask (ui/panel_sections.h) ----
     const uint32_t smask = sectionMask();
-    const bool onInfo   = smask & mhw::MonsterSection::Info;
-    const bool onHp     = smask & mhw::MonsterSection::Hp;
-    const bool onEnrage = smask & mhw::MonsterSection::Enrage;
-    const bool onAil    = smask & mhw::MonsterSection::Ail;
-    const bool onParts  = smask & mhw::MonsterSection::Parts;
+    const bool onInfo     = smask & mhw::MonsterSection::Info;
+    const bool onHp       = smask & mhw::MonsterSection::Hp;
+    const bool onEnrage   = smask & mhw::MonsterSection::Enrage;
+    const bool onAil      = smask & mhw::MonsterSection::Ail;
+    const bool onParts    = smask & mhw::MonsterSection::Parts;
+    const bool onTenderize = smask & mhw::MonsterSection::Tenderize;
 
     const bool showRage = monster_.enrageMaxBuildup > 0.0F || monster_.enraged;
     const bool rageDrawn = onEnrage && showRage;
@@ -478,12 +541,21 @@ void MonsterPanel::paintPanel(QPainter &p)
                                 + kPcMiniH + kPcPadY;
         pcAreaH = pcRows * kPcCellH + (pcRows - 1) * kPcGap;
     }
+    int tzAreaH = 0;
+    const int tzCount = monster_.tenderizes.size();
+    if (tzCount > 0) {
+        const int tzRows = (tzCount + kTzCols - 1) / kTzCols;
+        constexpr int kTzCellH = kTzPadY + kTzTopFont + 4 + kTzMiniH + kTzPadY;
+        tzAreaH = tzRows * kTzCellH + (tzRows - 1) * kTzGap;
+    }
 
     int totalH = kPanelPad;
     if (onInfo)                  totalH += kInfoH;
     if (onHp)                    totalH += kRowGap + hpH;
     if (rageDrawn)               totalH += kRowGap + rageH;
     if (onAil && scCount > 0)    totalH += kRowGap + (rageDrawn ? kRowGap : 0) + scAreaH;
+    if (onTenderize && tzCount > 0)
+                                   totalH += kRowGap + tzAreaH;
     if (onParts && pcCount > 0)  totalH += kRowGap + pcAreaH;
     totalH += kPanelPad;
     setContentSize(kPanelWidth, totalH);
@@ -723,6 +795,32 @@ void MonsterPanel::paintPanel(QPainter &p)
         y += scRows * kScCellH + (scRows - 1) * kScGap;
     }
 
+    // ---- 5b. v0.7.3 .tsc — Tenderize (Clutch Claw soft-timer) pills ------
+    // Each pill shows partId (no TenderizeIds → part name map yet), the
+    // remaining integer seconds, and a fill bar driven by duration /
+    // maxDuration. Only renders when at least one slot is active; the
+    // section toggle (MonsterSection::Tenderize) lets the user hide it
+    // entirely.
+    if (onTenderize && tzCount > 0) {
+        y += kRowGap;
+        constexpr int kTzCellH = kTzPadY + kTzTopFont + 4 + kTzMiniH + kTzPadY;
+        const int tzCellW = (innerW - kTzGap * (kTzCols - 1)) / kTzCols;
+        const int tzRows = (tzCount + kTzCols - 1) / kTzCols;
+        for (int i = 0; i < tzCount; ++i) {
+            const int row = i / kTzCols;
+            const int col = i % kTzCols;
+            const int cy = y + row * (kTzCellH + kTzGap);
+            const int cx = innerLeft + col * (tzCellW + kTzGap);
+            const auto &s = monster_.tenderizes[i];
+            TzEntry e;
+            e.partId = s.partId;
+            e.duration = s.duration;
+            e.maxDuration = s.maxDuration > 0.0F ? s.maxDuration : s.duration;
+            drawTenderize(p, QRectF(cx, cy, tzCellW, kTzCellH), e);
+        }
+        y += tzRows * kTzCellH + (tzRows - 1) * kTzGap;
+    }
+
     // ---- 6. .pgrid (HTML .pc cards: 头/翼/尾/脚) ----
     // Solo: per-part HP + counter.
     // Multiplayer: part HP cannot be read, so the mini bar carries the
@@ -855,6 +953,20 @@ void MonsterPanel::setupDemoData()
         ps.isBreakable = dp.breakable;
         ps.isSeverable = dp.severable;
         m.parts.append(ps);
+    }
+
+    // v0.7.3 demo: two active tenderize slots.
+    struct DTz { std::uint32_t partId; float dur; float maxD; };
+    const DTz dtz[] = {
+        { 0, 45.0F, 90.0F },      // 头
+        { 3, 12.0F, 90.0F },      // 尾巴
+    };
+    for (const auto &t : dtz) {
+        TenderizeSlot tz;
+        tz.partId = t.partId;
+        tz.duration = t.dur;
+        tz.maxDuration = t.maxD;
+        m.tenderizes.append(tz);
     }
 
     monster_ = m;
