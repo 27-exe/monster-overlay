@@ -80,14 +80,6 @@ constexpr int kScTmFont   = 9;     // .sc .tm
 constexpr int kScMiniH    = 5;     // .sc .mini
 constexpr int kScIconSize = 11;    // .sc .top svg
 
-// ---- v0.7.3 Tenderize (.tsc) — Clutch Claw soft-timer pills --------------
-constexpr int kTzCols     = 5;     // more compact than .sc; max 10 slots
-constexpr int kTzGap      = 4;
-constexpr int kTzPadX     = 5;
-constexpr int kTzPadY     = 3;
-constexpr int kTzTopFont  = 8;
-constexpr int kTzMiniH    = 4;
-
 // ---- Palette — straight from --c / --sc / --enrage / --tN ----------------
 constexpr int kEnrageR = 255, kEnrageG = 112, kEnrageB = 67;   // #ff7043
 constexpr int kGoldR   = 255, kGoldG   = 193, kGoldB   = 7;    // #ffc107
@@ -262,6 +254,12 @@ void drawSc(QPainter &p, const QRectF &cell, const ScEntry &e)
 }
 
 // ---- .pgrid — part grid (3 columns). HTML .pc/.pn/.tag/.mini layout ----
+// v0.7.4 PR C: cell height is now conditional — a tenderize mini bar is
+// inserted between .pn and .mini whenever the part has an active
+// Clutch Claw tenderize (PartSnapshot.tenderizeDuration > 0). The cell
+// height calculation lives inside paintPanel() because it depends on
+// runtime data; the constant below is the *base* cell height without
+// a tenderize strip.
 constexpr int kPcCols     = 3;     // .pgrid grid-template-columns
 constexpr int kPcGap      = 5;     // .pgrid gap
 constexpr int kPcPadX     = 6;     // .pc padding 4 6
@@ -271,6 +269,8 @@ constexpr int kPcTagFont  = 8;     // .pc .tag font-size
 constexpr int kPcTagPadX  = 4;     // .pc .tag padding 0 4
 constexpr int kPcMiniH    = 4;     // .pc .mini height:4
 constexpr int kPcPnGap    = 3;     // .pc .pn margin-bottom
+constexpr int kPcTnH      = 3;     // tenderize mini bar (only when active)
+constexpr int kPcTnGap    = 2;     // gap between .pn and the tenderize strip
 
 struct PcEntry {
     QString name;          // 头 / 左翼 / 右翼 / 尾巴 / 左脚 / 右脚
@@ -279,6 +279,11 @@ struct PcEntry {
     int     counter{0};    // HunterPie raw counter
     bool    broken{false}; // true if part has been broken/severed at least once
     float   pct{0.0F};     // 0..1 (solo: per-part HP, multiplayer: monster total HP)
+    // v0.7.4 PR C: per-part tenderize. When tenderizeDuration > 0 the
+    // card renders a small amber strip showing the remaining seconds
+    // and a fill bar driven by duration / tenderizeMaxDuration.
+    float   tenderizeDuration{0.0F};
+    float   tenderizeMaxDuration{0.0F};
 };
 
 void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
@@ -353,61 +358,53 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
         p.drawRect(miniRect.x(), miniY,
                    miniRect.width() * clamped, miniRect.height());
     }
-}
 
-// ---- v0.7.3 .tsc — Tenderize slot pill --------------------------------
-// One compact card per active slot. "部位 #N" until we wire up the
-// TenderizeIds → part-name map; countdown on the right; mini bar at the
-// bottom showing fraction of max duration remaining.
-struct TzEntry {
-    std::uint32_t partId{0xFFFFFFFFu};
-    float duration{0.0F};
-    float maxDuration{0.0F};
-};
-
-void drawTenderize(QPainter &p, const QRectF &cell, const TzEntry &e)
-{
-    p.setRenderHint(QPainter::Antialiasing);
-    const QColor borderCol(246, 165, 34);   // amber — same family as sev tag
-    p.setPen(QPen(borderCol, 1));
-    p.setBrush(QColor(29, 32, 34));        // --cell
-    p.drawRoundedRect(cell, 2, 2);
-
-    const int topY     = static_cast<int>(cell.top()) + kTzPadY;
-    const int topRectH = kTzTopFont + 2;
-    QFont nmFont(QStringLiteral("Chakra Petch"), kTzTopFont, QFont::Bold);
-    nmFont.setStyleStrategy(QFont::PreferAntialias);
-    p.setFont(nmFont);
-    p.setPen(QColor(245, 246, 247));
-    const QString nm = QStringLiteral("部位 #%1").arg(e.partId);
-    p.drawText(QRectF(cell.x() + kTzPadX, topY,
-                      cell.width() / 2 - kTzPadX, topRectH),
-               Qt::AlignLeft | Qt::AlignVCenter, nm);
-
-    QFont tmFont(QStringLiteral("Chakra Petch"), kTzTopFont, QFont::Bold);
-    tmFont.setStyleStrategy(QFont::PreferAntialias);
-    p.setFont(tmFont);
-    p.setPen(borderCol);
-    p.drawText(QRectF(static_cast<int>(cell.right()) - kTzPadX - 28,
-                      topY, 28, topRectH),
-               Qt::AlignRight | Qt::AlignVCenter,
-               QStringLiteral("%1s").arg(static_cast<int>(e.duration)));
-
-    const int miniY = static_cast<int>(cell.bottom()) - kTzPadY - kTzMiniH;
-    const QRectF miniRect(cell.x() + kTzPadX, miniY,
-                          cell.width() - 2 * kTzPadX, kTzMiniH);
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(10, 11, 12));
-    p.drawRect(miniRect);
-    const float pct = (e.maxDuration > 0.0F)
-        ? std::clamp(e.duration / e.maxDuration, 0.0F, 1.0F)
-        : 0.0F;
-    if (pct > 0.001F) {
-        p.setBrush(borderCol);
-        p.drawRect(miniRect.x(), miniRect.y(),
-                   miniRect.width() * pct, miniRect.height());
+    // v0.7.4 PR C: per-part tenderize strip. Drawn ABOVE .mini and below
+    // .pn (the caller reserves the extra kPcTnH + kPcTnGap when this card
+    // has an active tenderize). Amber palette matches the .sev tag and
+    // the deleted standalone .tsc section. Text "Ns" sits to the right
+    // so the player can read the remaining seconds at a glance; the
+    // fill bar underneath shows the fraction of maxDuration.
+    if (e.tenderizeDuration > 0.0F) {
+        const QColor amber(246, 165, 34);    // #f6a522
+        // The strip sits immediately above .mini with kPcPadY inset from
+        // the cell's left/right edges (mirrors .mini layout).
+        const int tnY = static_cast<int>(miniRect.top())
+                        - kPcTnGap - kPcTnH;
+        const QRectF tnRect(cell.x() + kPcPadX, tnY,
+                            cell.width() - 2 * kPcPadX, kPcTnH);
+        // Label "Ns" right-aligned above the bar.
+        QFont tnFont(QStringLiteral("Chakra Petch"), kPcTagFont, QFont::Bold);
+        tnFont.setStyleStrategy(QFont::PreferAntialias);
+        p.setFont(tnFont);
+        p.setPen(amber);
+        const QFontMetrics tnFm(tnFont);
+        const int labelW = tnFm.horizontalAdvance(QStringLiteral("00s")) + 4;
+        p.drawText(QRectF(tnRect.right() - labelW,
+                          static_cast<int>(cell.top()) + kPcPadY,
+                          labelW, kPcPnFont + 2),
+                   Qt::AlignRight | Qt::AlignVCenter,
+                   QStringLiteral("%1s").arg(static_cast<int>(e.tenderizeDuration)));
+        // Track.
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(10, 11, 12));
+        p.drawRect(tnRect);
+        // Fill.
+        const float tnPct = (e.tenderizeMaxDuration > 0.0F)
+            ? std::clamp(e.tenderizeDuration / e.tenderizeMaxDuration,
+                         0.0F, 1.0F)
+            : 0.0F;
+        if (tnPct > 0.001F) {
+            p.setBrush(amber);
+            p.drawRect(tnRect.x(), tnRect.y(),
+                       tnRect.width() * tnPct, tnRect.height());
+        }
     }
 }
+
+// v0.7.4 PR C: deleted the standalone .tsc section (drawTenderize +
+// TzEntry + kTz* constants). Tenderize is now drawn inside each .pc card
+// as a small amber strip; see drawPc() above.
 
 } // namespace
 
@@ -513,7 +510,13 @@ void MonsterPanel::paintPanel(QPainter &p)
     const bool onEnrage   = smask & mhw::MonsterSection::Enrage;
     const bool onAil      = smask & mhw::MonsterSection::Ail;
     const bool onParts    = smask & mhw::MonsterSection::Parts;
+    // v0.7.4 PR C: per-part tenderize strip is always drawn when active,
+    // regardless of the section toggle. Kept for backwards compat with
+    // MonsterSection::Tenderize (still respected via MonsterPanel config
+    // — see panel_sections.h); the on/off behaviour now lives on the
+    // data side, not the layout side.
     const bool onTenderize = smask & mhw::MonsterSection::Tenderize;
+    (void)onTenderize;
 
     const bool showRage = monster_.enrageMaxBuildup > 0.0F || monster_.enraged;
     const bool rageDrawn = onEnrage && showRage;
@@ -536,19 +539,41 @@ void MonsterPanel::paintPanel(QPainter &p)
     int pcAreaH = 0;
     const int pcCount = monster_.parts.size();
     if (pcCount > 0) {
+        // v0.7.4 PR C: cell height is dynamic — any part with an active
+        // Clutch Claw tenderize (PartSnapshot.tenderizeDuration > 0)
+        // inserts a kPcTnH+kPcTnGap strip between .pn and .mini. We
+        // compute per-cell heights up front so the .pgrid rows stay
+        // aligned with the tallest cell in each row.
         const int pcRows = (pcCount + kPcCols - 1) / kPcCols;
-        constexpr int kPcCellH = kPcPadY + kPcPnFont + 2 + kPcPnGap
-                                + kPcMiniH + kPcPadY;
-        pcAreaH = pcRows * kPcCellH + (pcRows - 1) * kPcGap;
+        constexpr int kPcBaseCellH = kPcPadY + kPcPnFont + 2 + kPcPnGap
+                                    + kPcMiniH + kPcPadY;
+        const int kPcTnExtra = kPcTnH + kPcTnGap;
+        QVector<int> cellHeights(pcCount, kPcBaseCellH);
+        for (int i = 0; i < pcCount; ++i) {
+            if (monster_.parts[i].tenderizeDuration > 0.0F)
+                cellHeights[i] += kPcTnExtra;
+        }
+        // Per-row max height → row height. Sum of (rowHeights + gaps).
+        int sum = 0;
+        for (int r = 0; r < pcRows; ++r) {
+            int rowMax = 0;
+            const int start = r * kPcCols;
+            const int end   = std::min(start + kPcCols, pcCount);
+            for (int c = start; c < end; ++c)
+                rowMax = std::max(rowMax, cellHeights[c]);
+            sum += rowMax;
+        }
+        pcAreaH = sum + (pcRows - 1) * kPcGap;
     }
-    int tzAreaH = 0;
 
     int totalH = kPanelPad;
     if (onInfo)                  totalH += kInfoH;
     if (onHp)                    totalH += kRowGap + hpH;
     if (rageDrawn)               totalH += kRowGap + rageH;
     if (onAil && scCount > 0)    totalH += kRowGap + (rageDrawn ? kRowGap : 0) + scAreaH;
-    if (onTenderize)               totalH += 0; // v0.7.4 PR C will reintroduce
+    // v0.7.4 PR C: per-part tenderize strip is rendered inside each
+    // .pc card; the cell height for it is reserved in pcAreaH above.
+    // No separate totalH delta is needed here.
     if (onParts && pcCount > 0)  totalH += kRowGap + pcAreaH;
     totalH += kPanelPad;
     setContentSize(kPanelWidth, totalH);
@@ -814,40 +839,89 @@ void MonsterPanel::paintPanel(QPainter &p)
             { e.tag = QStringLiteral("破"); e.tagKind = QStringLiteral("brk"); }
         else if (p.isSeverable)
             { e.tag = QStringLiteral("斩"); e.tagKind = QStringLiteral("sev"); }
+        // v0.7.4 PR C: per-part tenderize values feed the new strip
+        // drawn inside each .pc card. The struct fields are 0 by default
+        // (no active tenderize), so we only need to copy when nonzero.
+        e.tenderizeDuration    = p.tenderizeDuration;
+        e.tenderizeMaxDuration = p.tenderizeMaxDuration;
+        // v0.7.4 PR C: pick the right HP pair per PartType.
+        //   - Severable: only Health/MaxHealth is meaningful (HunterPie
+        //     UpdateSeverableData leaves Flinch untouched).
+        //   - Breakable: Health/MaxHealth is the cumulative threshold
+        //     progress (UpdateBreakableData); Flinch/MaxFlinch is the
+        //     current layer's raw value (less useful on the main bar).
+        //   - Flinch:    only Flinch/MaxFlinch is meaningful (no
+        //     thresholds, not severable). This is the path that fixes
+        //     the "脏数据" complaint — body/leg parts now show real
+        //     flinch bar values instead of the broken double-filled
+        //     health/flinch pair.
+        const float mHP = (p.partType == mhw::PartType::Flinch)
+                          ? p.maxFlinch : p.maxHealth;
+        const float cHP = (p.partType == mhw::PartType::Flinch)
+                          ? p.flinch   : p.health;
         if (multiplayer_) {
             const bool staleFullHp =
-                p.maxHealth > 0.0F && p.health >= p.maxHealth
+                mHP > 0.0F && cHP >= mHP
                 && p.counter == 0 && !p.isBroken;
             if (staleFullHp) {
                 e.pct = 0.0F;
                 e.tag.clear();
                 e.tagKind.clear();
             } else {
-                e.pct = (p.maxHealth > 0.0F)
-                    ? std::clamp(p.health / p.maxHealth, 0.0F, 1.0F)
+                e.pct = (mHP > 0.0F)
+                    ? std::clamp(cHP / mHP, 0.0F, 1.0F)
                     : 0.0F;
             }
         } else {
-            e.pct = (p.maxHealth > 0.0F)
-                ? std::clamp(p.health / p.maxHealth, 0.0F, 1.0F)
+            e.pct = (mHP > 0.0F)
+                ? std::clamp(cHP / mHP, 0.0F, 1.0F)
                 : 0.0F;
         }
         pcList.append(e);
     }
     if (onParts && !pcList.isEmpty()) {
         y += kRowGap;
-        constexpr int kPcCellH = kPcPadY + kPcPnFont + 2 + kPcPnGap
-                                + kPcMiniH + kPcPadY;
+        constexpr int kPcBaseCellH = kPcPadY + kPcPnFont + 2 + kPcPnGap
+                                    + kPcMiniH + kPcPadY;
+        const int kPcTnExtra = kPcTnH + kPcTnGap;
+        // Reuse the per-cell heights from above (where pcAreaH was
+        // computed) so the .pgrid render stays aligned with the panel
+        // height reservation. We recompute here because pcList is built
+        // from monster_.parts and the heights are 1:1.
+        QVector<int> cellHeights(pcList.size(), kPcBaseCellH);
+        for (int i = 0; i < pcList.size(); ++i) {
+            if (pcList[i].tenderizeDuration > 0.0F)
+                cellHeights[i] += kPcTnExtra;
+        }
         const int cellW = (innerW - kPcGap * (kPcCols - 1)) / kPcCols;
         const int pcRows = (pcList.size() + kPcCols - 1) / kPcCols;
+        // Per-row max height keeps cells aligned; per-cell height gives
+        // each card the room it actually needs.
+        QVector<int> rowHeights(pcRows, 0);
+        for (int r = 0; r < pcRows; ++r) {
+            const int start = r * kPcCols;
+            const int end   = std::min(start + kPcCols,
+                                       static_cast<int>(pcList.size()));
+            int rowMax = 0;
+            for (int c = start; c < end; ++c)
+                rowMax = std::max(rowMax, cellHeights[c]);
+            rowHeights[r] = rowMax;
+        }
         for (int i = 0; i < pcList.size(); ++i) {
             const int row = i / kPcCols;
             const int col = i % kPcCols;
-            const int cy = y + row * (kPcCellH + kPcGap);
+            // y0 is the top of this row; cy is the top of this cell
+            // (cells in the same row are anchored to the row's top).
+            int rowY = y;
+            for (int r = 0; r < row; ++r)
+                rowY += rowHeights[r] + kPcGap;
             const int cx = innerLeft + col * (cellW + kPcGap);
-            drawPc(p, QRectF(cx, cy, cellW, kPcCellH), pcList[i]);
+            drawPc(p, QRectF(cx, rowY, cellW, cellHeights[i]),
+                   pcList[i]);
         }
-        y += pcRows * kPcCellH + (pcRows - 1) * kPcGap;
+        int rowSum = 0;
+        for (int r = 0; r < pcRows; ++r) rowSum += rowHeights[r];
+        y += rowSum + (pcRows - 1) * kPcGap;
     }
 }
 
