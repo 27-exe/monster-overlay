@@ -715,14 +715,23 @@ ControlPanel::ControlPanel(QWidget *parent)
     // doesn't filter), so we apply the visibility rule for the
     // default game (= World) before any user interaction. Subsequent
     // changes go through switchGame().
+    //
+    // PlayerSection::* are BIT values (Mantles = 1<<4, Wirebug = 1<<7),
+    // not indices — comparing `b == int(Wirebug)` was always false and
+    // the rows leaked into both game views. Use a proper bit mask:
+    // each row's section bit is `(1u << b)` because the bits are
+    // assigned in display order.
     if (!ctl_[0].subs.isEmpty()) {
+        const uint32_t wirebugBit = uint32_t(mhw::PlayerSection::Wirebug);
+        const uint32_t mantlesBit = uint32_t(mhw::PlayerSection::Mantles);
         for (int b = 0; b < ctl_[0].subs.size(); ++b) {
             auto *row = ctl_[0].subs[b];
             if (!row) continue;
-            const bool hideForWorld = (currentGame_ == mhw::GameId::World
-                                       && b == int(mhw::PlayerSection::Wirebug));
-            const bool hideForRise  = (currentGame_ == mhw::GameId::Rise
-                                       && b == int(mhw::PlayerSection::Mantles));
+            const uint32_t rowBit = (1u << b);
+            const bool hideForWorld = (currentGame_ == mhw::GameId::World)
+                                      && (rowBit == wirebugBit);
+            const bool hideForRise  = (currentGame_ == mhw::GameId::Rise)
+                                      && (rowBit == mantlesBit);
             const bool hide = hideForWorld || hideForRise;
             row->setVisible(!hide);
             row->setEnabled(!hide);
@@ -1371,13 +1380,16 @@ void ControlPanel::switchGame(mhw::GameId game)
     // while looking at the Monster inspector": the gate skipped the
     // hide, then switching back to Player still showed both rows.
     for (int p = 0; p < 3; ++p) {
+        const uint32_t wirebugBit = uint32_t(mhw::PlayerSection::Wirebug);
+        const uint32_t mantlesBit = uint32_t(mhw::PlayerSection::Mantles);
         for (int b = 0; b < ctl_[p].subs.size(); ++b) {
             auto *row = ctl_[p].subs[b];
             if (!row) continue;
-            const bool hideForWorld = (game == mhw::GameId::World
-                                       && b == int(mhw::PlayerSection::Wirebug));
-            const bool hideForRise  = (game == mhw::GameId::Rise
-                                       && b == int(mhw::PlayerSection::Mantles));
+            const uint32_t rowBit = (1u << b);
+            const bool hideForWorld = (game == mhw::GameId::World)
+                                      && (rowBit == wirebugBit);
+            const bool hideForRise  = (game == mhw::GameId::Rise)
+                                      && (rowBit == mantlesBit);
             const bool hide = hideForWorld || hideForRise;
             row->setVisible(!hide);
             row->setEnabled(!hide);
