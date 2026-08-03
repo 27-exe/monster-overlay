@@ -251,7 +251,6 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
         lastElapsedSeconds_ = 0.0F;
     }
 
-    const bool wasEmpty = !hasData_;
     // During quest-end freeze, keep the frozen data visible. The party
     // pointer is still valid in the settlement screen because the
     // engine keeps the party array alive while we're at the results
@@ -466,8 +465,8 @@ void DamagePanel::paintPanel(QPainter &p)
     for (int i = 0; i < n; ++i) {
         if (!onRows) break;   // skip row drawing; y not advanced
         const int dmg = history_.isEmpty() ? 0 : history_.last().damage.value(i, 0);
-        // Demo data sets kFinalDps[] to match the user's realistic
-        // MHW DPS range (~300 down to ~100). Real updates use
+        // The demo early-path sets kDemoDps[] below to match the user's
+        // realistic MHW DPS range (~300 down to ~100). Real updates use
         // computeDps() from history_.
         int dps = computeDps(i);
         if (history_.size() <= 8 && i < 4) {
@@ -585,6 +584,11 @@ void DamagePanel::paintPanel(QPainter &p)
 
         y += kRowH + kRowGap;
     }
+    // Trim the trailing inter-row gap after the last row so the running
+    // y matches the height reservation above (rowsAreaH counts n-1 gaps,
+    // not n). Same class of bug PR C fixed in panel_monster.
+    if (onRows && n > 0)
+        y -= kRowGap;
 
     // --- Share bar (clean single-row, full-width, 4 colour segments) ---
     // Gap above shared bar: 9px (HTML .chart margin), share bar 8px,
@@ -786,7 +790,6 @@ void DamagePanel::setupDemoData()
     };
     // MHW realistic: 总伤害 ≤999,999 (6 位+逗号), DPS ≤999.
     const int kFinalDmg[kDemoPlayers] = {184220, 96240, 71030, 40510};
-    const int kFinalDps[kDemoPlayers] = {311, 240, 177, 101};
 
     names_.clear();       weaponIds_.clear();
     masterRanks_.clear(); slots_.clear();
