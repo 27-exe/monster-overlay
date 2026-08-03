@@ -1329,6 +1329,14 @@ void ControlPanel::switchGame(mhw::GameId game)
         gameRiseBtn_->style()->polish(gameRiseBtn_);
     }
 
+    // v0.7.1: rebuild the inspector preview so the player panel shows
+    // the right side row for the new game. Without this the inspector
+    // was stuck on whatever setupDemoData() first seeded (Rise-only
+    // wirebug row, no mantles) regardless of which game the rail
+    // picked.
+    if (player_) player_->setGameForDemo(game);
+    for (int i = 0; i < 3; ++i) rebuildAndRender(i);
+
     if (changed) {
         QSettings s;
         s.setValue(QStringLiteral("game"),

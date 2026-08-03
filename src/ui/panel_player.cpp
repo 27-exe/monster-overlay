@@ -358,6 +358,17 @@ PlayerPanel::PlayerPanel(QWidget *parent)
     setWindowTitle(mh::tr("ui.player_title"));
 }
 
+void PlayerPanel::setGameForDemo(mhw::GameId game)
+{
+    if (game_ == game) return;
+    game_ = game;
+    // Reset the one-shot demo seed so setupDemoData() rebuilds state with
+    // the new game's flavour. setEditMode(true) (which the console already
+    // set during construction) causes the next paint to call it.
+    resetDemoPrimed();
+    triggerUpdate();
+}
+
 void PlayerPanel::update(const mhw::PlayerSnapshot &p)
 {
     player_ = p;
@@ -1116,9 +1127,11 @@ void PlayerPanel::setupDemoData()
     zone_      = mhw::Zone::AncientForest;
     quest_     = {66801, 6, 2, 0, 0, 3, 2497.0F, true};
     status_    = QStringLiteral("示例 Demo");
-    // v0.7.1: demo runs in Rise mode so the wirebug row is visible in
-    // the control panel preview (Mantles are hidden automatically).
-    game_      = mhw::GameId::Rise;
+    // v0.7.1: game_ now reflects the rail selection (set by switchGame
+    // → setGameForDemo). Below we seed Rise-flavoured (wirebug) demo
+    // state only when game_ == Rise; World stays with the original
+    // mantle demo. The single hard-coded 'Rise' was removed because it
+    // leaked into the World preview and confused the user.
 
     player_ = mhw::PlayerSnapshot{};
     player_.valid = true;
@@ -1126,34 +1139,43 @@ void PlayerPanel::setupDemoData()
     player_.maxHealth = 150.0F;
     player_.stamina = 93.0F;
     player_.maxStamina = 150.0F;
-    player_.mantleSlot0Id = 0;     // Ghillie
-    player_.mantleSlot0Timer = 42.0F;
-    player_.mantleSlot1Id = 3;     // Rocksteady (cooling)
-    player_.mantleSlot1Cooldown = 96.0F;
     weaponId_ = 0;                // Great Sword
     playerMR_ = 247;
     playerName_ = QStringLiteral("苍蓝星");   // demo local player name
     partyCount_ = 4;                         // demo party size
 
-    // v0.7.1: demo wirebug state for Rise preview — one default (ready)
-    // and two temporary (recovering). Mantles are hidden in Rise mode
-    // so the control panel preview only shows the wirebug row.
-    {
-        WirebugSnapshot w0; w0.slot = 0; w0.isAvailable = true;
-        w0.cooldown = 0.0F;  w0.maxCooldown = 30.0F;
-        player_.wirebugs.append(w0);
-    }
-    {
-        WirebugSnapshot w1; w1.slot = 1; w1.isAvailable = true;
-        w1.isTemporary = true;
-        w1.cooldown = 18.0F; w1.maxCooldown = 30.0F;
-        player_.wirebugs.append(w1);
-    }
-    {
-        WirebugSnapshot w2; w2.slot = 2; w2.isAvailable = true;
-        w2.isTemporary = true;
-        w2.cooldown = 7.0F;  w2.maxCooldown = 30.0F;
-        player_.wirebugs.append(w2);
+    // v0.7.1: demo state branched by game. World seeds mantles
+    // (existing behaviour), Rise seeds 3 wirebug capsules and leaves
+    // mantles empty. Inspector live preview follows the rail selection
+    // (switchGame → setGameForDemo → resetDemoPrimed → setupDemoData).
+    player_.wirebugs.clear();
+    player_.mantleSlot0Id = -1;
+    player_.mantleSlot1Id = -1;
+    if (game_ == mhw::GameId::Rise) {
+        // Rise demo: 1 default + 2 temporary wirebugs.
+        {
+            WirebugSnapshot w0; w0.slot = 0; w0.isAvailable = true;
+            w0.cooldown = 0.0F;  w0.maxCooldown = 30.0F;
+            player_.wirebugs.append(w0);
+        }
+        {
+            WirebugSnapshot w1; w1.slot = 1; w1.isAvailable = true;
+            w1.isTemporary = true;
+            w1.cooldown = 18.0F; w1.maxCooldown = 30.0F;
+            player_.wirebugs.append(w1);
+        }
+        {
+            WirebugSnapshot w2; w2.slot = 2; w2.isAvailable = true;
+            w2.isTemporary = true;
+            w2.cooldown = 7.0F;  w2.maxCooldown = 30.0F;
+            player_.wirebugs.append(w2);
+        }
+    } else {
+        // World demo: Ghillie mantle running + Rocksteady cooling.
+        player_.mantleSlot0Id = 0;
+        player_.mantleSlot0Timer = 42.0F;
+        player_.mantleSlot1Id = 3;
+        player_.mantleSlot1Cooldown = 96.0F;
     }
 
     // Sharpness demo (matches HTML v8 concept — Purple 47/120).

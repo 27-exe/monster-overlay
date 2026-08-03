@@ -23,6 +23,12 @@ public:
 
     void setWeaponId(int id) { weaponId_ = id; }
 
+    // v0.7.1: edit-mode preview needs to reflect the current game selection
+    // so the console inspector shows mantles under World and wirebugs under
+    // Rise. Sets game_ then resets demoPrimed_ so setupDemoData() rebuilds
+    // demo state with the new game's flavour (mantle vs wirebug row).
+    void setGameForDemo(mhw::GameId game);
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
