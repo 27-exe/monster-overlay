@@ -136,6 +136,12 @@ private:
     QPushButton *gridBtn_ = nullptr;
     QPushButton *themeBtn_ = nullptr;
     QPushButton *stageToggleBtn_ = nullptr;
+    // v0.7.5: visible zoom controls on the stage bar (the canvas always
+    // supported Ctrl+wheel; the buttons make it discoverable in the
+    // preview console).
+    QPushButton *zoomOutBtn_  = nullptr;
+    QPushButton *zoomInBtn_   = nullptr;
+    QLabel      *zoomLabel_   = nullptr;
     int selectedPanel_ = 0;
 
     // L4: status badge in the top-right, shows "READY" by default and

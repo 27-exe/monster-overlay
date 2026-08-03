@@ -157,6 +157,7 @@ void HudCanvas::setZoom(qreal z)
     }
     updateGeometry();
     update();
+    emit zoomChanged(zoom_);
 }
 
 QSize HudCanvas::sizeHint() const

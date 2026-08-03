@@ -194,6 +194,7 @@ QString qssBase()
         "QPushButton#stageToggle{background:transparent;color:%6;border:1px solid %8;border-radius:3px;padding:7px 18px;font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;}"
         "QPushButton#stageToggle:hover{border-color:%8;color:%2;}"
         "QPushButton#stageToggle:checked{background:%3;border-color:%11;color:%11;}"
+        "QLabel#stageToggleLabel{color:%6;font-family:'Chakra Petch';font-size:11px;letter-spacing:1px;}"
         "QPushButton#themeToggle{background:transparent;color:%6;border:1px solid %8;border-radius:3px;padding:7px 16px;font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;}"
         "QPushButton#themeToggle:hover{border-color:%8;color:%2;}"
         // v0.6 Phase 4: World/Rise game selector. selected="true" highlights
@@ -278,8 +279,12 @@ ControlPanel::ControlPanel(QWidget *parent)
     // v0.5.6: top row consumes rail+inspector height (~600-700px);
     // stage must keep at least canvas's 360px minimum + stagebar padding.
     // Bump default height so the canvas is usable on first open.
-    resize(800, 1040);
-    setMinimumSize(730, 820);
+    // v0.7.5: default width 800 was too narrow — the brand rail and the
+    // START OVERLAY button elided ("TART OVE") and the inspector rows
+    // scrolled out of view. 1200 gives the three-column top row room
+    // while the 16:9 stage below keeps its wide axis.
+    resize(1200, 1040);
+    setMinimumSize(960, 820);
     {
         QSettings s;
         const QByteArray geom = s.value(QStringLiteral("ui/geometry")).toByteArray();
@@ -505,6 +510,23 @@ ControlPanel::ControlPanel(QWidget *parent)
     safeAreaBtn_->setCheckable(true);
     safeAreaBtn_->setChecked(true);
     safeAreaBtn_->setCursor(Qt::PointingHandCursor);
+    // v0.7.5: visible zoom controls on the stage bar. Ctrl+wheel worked
+    // since v0.5 but was undiscoverable in the preview console, where
+    // the 1:1 panels on a 2560×1600 logical screen were unreadable at
+    // fit-to-widget. Buttons + live label make the feature obvious.
+    zoomOutBtn_ = new QPushButton(QStringLiteral("−"));
+    zoomOutBtn_->setObjectName("stageToggle");
+    zoomOutBtn_->setFixedSize(26, 26);
+    zoomOutBtn_->setCursor(Qt::PointingHandCursor);
+    zoomInBtn_ = new QPushButton(QStringLiteral("+"));
+    zoomInBtn_->setObjectName("stageToggle");
+    zoomInBtn_->setFixedSize(26, 26);
+    zoomInBtn_->setCursor(Qt::PointingHandCursor);
+    zoomLabel_ = new QLabel(QStringLiteral("ZOOM ×1.0"));
+    zoomLabel_->setObjectName("stageToggleLabel");
+    stagebar->addWidget(zoomOutBtn_);
+    stagebar->addWidget(zoomLabel_);
+    stagebar->addWidget(zoomInBtn_);
     stagebar->addWidget(safeAreaBtn_);
     gridBtn_ = new QPushButton(QStringLiteral("GRID"));
     gridBtn_->setObjectName("stageToggle");
@@ -574,6 +596,26 @@ ControlPanel::ControlPanel(QWidget *parent)
     connect(gridBtn_, &QPushButton::toggled, this, [this](bool on){
         if (canvas_) canvas_->setShowGrid(on);
     });
+    // v0.7.5: zoom buttons. The label tracks both button clicks and
+    // Ctrl+wheel via the canvas's zoomChanged signal (single source of
+    // truth). Zoom is persisted next to the window geometry so the
+    // preview opens at the size the user last chose.
+    connect(zoomInBtn_, &QPushButton::clicked, this, [this]{
+        if (canvas_) canvas_->setZoom(canvas_->zoom() + 0.5);
+    });
+    connect(zoomOutBtn_, &QPushButton::clicked, this, [this]{
+        if (canvas_) canvas_->setZoom(canvas_->zoom() - 0.5);
+    });
+    connect(canvas_, &HudCanvas::zoomChanged, this, [this](qreal z){
+        if (zoomLabel_)
+            zoomLabel_->setText(QStringLiteral("ZOOM ×%1").arg(z, 0, 'f', 1));
+    });
+    {
+        QSettings s;
+        const qreal savedZoom = s.value(QStringLiteral("ui/zoom"), 2.0).toDouble();
+        canvas_->setZoom(savedZoom);
+        zoomLabel_->setText(QStringLiteral("ZOOM ×%1").arg(savedZoom, 0, 'f', 1));
+    }
     canvas_->bindPanel(0, new PanelSourceAdapter(static_cast<Panel*>(player_)));
     canvas_->bindPanel(1, new PanelSourceAdapter(static_cast<Panel*>(monster_)));
     canvas_->bindPanel(2, new PanelSourceAdapter(static_cast<Panel*>(damage_)));
@@ -588,11 +630,11 @@ ControlPanel::ControlPanel(QWidget *parent)
     topContainer->setLayout(topRow);
     splitter->addWidget(topContainer);
     splitter->addWidget(stage);
-    // v0.5.6 polish: ~45/55 split — the canvas (the actual workbench)
-    // gets the majority of vertical room, but the top strip keeps the
-    // full HUD OBJECTS list + WORKSPACE rows + SCALE/OPACITY sliders
-    // visible without scrolling on a 1280×1040 default window.
-    splitter->setSizes({470, 570});
+    // v0.7.5: with the default width now 1200 the top row (rail +
+    // inspector) gets enough horizontal room; give it a bit more of the
+    // vertical axis too so the inspector's CONTENT rows and APPEARANCE
+    // sliders are visible without scrolling on first open.
+    splitter->setSizes({520, 520});
     // Remember the user's chosen (or default) stage size so animStageTo
     // can restore it on show. DO NOT read it from splitter->sizes() here:
     // at construction time the splitter isn't in a layout yet, so
@@ -838,6 +880,7 @@ void ControlPanel::closeEvent(QCloseEvent *e)
     {
         QSettings s;
         s.setValue(QStringLiteral("ui/geometry"), saveGeometry());
+        s.setValue(QStringLiteral("ui/zoom"), canvas_ ? canvas_->zoom() : 1.0);
         s.setValue(QStringLiteral("ui/windowState"), saveState());
     }
     QMainWindow::closeEvent(e);

@@ -50,6 +50,8 @@ signals:
     // target QMargins in logical pixels, already clamped. The
     // console calls Panel::setMargins(margins, false) + rebuild.
     void panelMoved(int index, QMargins margins);
+    // v0.7.5: lets the console's ZOOM label/buttons track Ctrl+wheel.
+    void zoomChanged(qreal zoom);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
