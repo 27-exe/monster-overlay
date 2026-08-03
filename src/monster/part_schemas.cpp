@@ -824,6 +824,29 @@ extern const QHash<int, QString> kAilmentNames = {
     {23, QStringLiteral("口水硬直")},
 };
 
+// v0.7.5: Rise ailment SLOT ids (positional, 0-16) from HunterPie
+// Game/Rise/Data/MonsterData.xml <Ailments>. NOTE the ordering differs
+// from World's kAilmentNames (World 1=poison; Rise 4=poison).
+extern const QHash<int, QString> kRiseAilmentNames = {
+    { 0, QStringLiteral("麻痹")},
+    { 1, QStringLiteral("睡眠")},
+    { 2, QStringLiteral("眩晕")},
+    { 3, QStringLiteral("闪光")},
+    { 4, QStringLiteral("毒")},
+    { 5, QStringLiteral("爆破")},
+    { 6, QStringLiteral("疲劳")},
+    { 7, QStringLiteral("乘骑")},
+    { 8, QStringLiteral("水异常")},
+    { 9, QStringLiteral("火异常")},
+    {10, QStringLiteral("冰异常")},
+    {11, QStringLiteral("雷异常")},
+    {12, QStringLiteral("落穴陷阱")},
+    {13, QStringLiteral("麻痹陷阱")},
+    {14, QStringLiteral("捕获")},
+    {15, QStringLiteral("异臭")},
+    {16, QStringLiteral("钢龙毒")},
+};
+
 // Generated from HunterPie Game/World/Data/MonsterData.xml <Crowns> thresholds.
 // Per-monster crown size thresholds: {Mini, Silver, Gold}.
 extern const QHash<int, std::array<float, 3>> kCrownThresholds = {

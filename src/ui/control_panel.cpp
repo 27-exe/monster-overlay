@@ -729,17 +729,8 @@ ControlPanel::ControlPanel(QWidget *parent)
         animStageTo(checked);
     });
 
-    // v0.5 P1: startBtn toggles between launch and stop. The
-    // handler is rebuilt every time overlay state flips so the
-    // same button does the right thing whether ready or running.
-    auto wireStartBtn = [this]{
-        if (!startBtn_) return;
-        if (overlayPid_ == 0) {
-            // Stop mode never wired because by definition
-            // overlayPid_==0 means ready. Reach here only when
-            // re-armed by onOverlayExited.
-        } else {}
-    };
+    // v0.5 P1: startBtn toggles between launch and stop. The same
+    // handler does the right thing whether ready or running.
     connect(startBtn_, &QPushButton::clicked, this, [this]{
         if (overlayPid_ == 0) launchOverlay(/*editMode=*/false);
         else                  stopOverlay();

@@ -7,6 +7,13 @@
 
 namespace mhw {
 
+// v0.7.5: moved here from core/game_snapshot.h so MonsterSnapshot can
+// carry which game produced it. The monster panel colours/icons ailment
+// cards by id, and World/Rise use DIFFERENT id tables — without this
+// flag a Rise monster's sleep slot would be tinted with World's
+// paralysis amber.
+enum class GameId { World, Rise };
+
 // v0.7.4 (PR B — monster-state-and-tenderize-20260803):
 // Mirrors HunterPie-v2 MHWMonsterPart.Type dispatch (PartType.cs).
 // UpdateSeverableData / UpdateFlinchData / UpdateBreakableData each populate
@@ -59,6 +66,7 @@ struct MonsterAilmentSnapshot {
 struct MonsterSnapshot {
     std::uintptr_t address{};
     int id{-1};
+    GameId game{GameId::World};   // v0.7.5: ids (esp. ailments) are game-specific
     QString internalName;
     float health{};
     float maxHealth{};
@@ -121,6 +129,10 @@ extern const QHash<int, QString> kAilmentNames;
 // Generated from HunterPie Game/World/Data/MonsterData.xml <Crowns>.
 // Per-monster crown size thresholds: {Mini, Silver, Gold}.
 extern const QHash<int, std::array<float, 3>> kCrownThresholds;
+
+// v0.7.5: Rise ailment slot names (HunterPie Game/Rise/Data/MonsterData.xml
+// <Ailments>). World uses kAilmentNames; the two id tables are UNRELATED.
+extern const QHash<int, QString> kRiseAilmentNames;
 
 // Generated from HunterPie Game/World/Data/MonsterData.xml <Monster Capture=N>.
 // Each entry is the in-game HP percentage at which that monster becomes

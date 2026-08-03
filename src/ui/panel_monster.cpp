@@ -472,9 +472,25 @@ void MonsterPanel::paintPanel(QPainter &p)
             continue;
         ScEntry e;
         e.name = a.name;
-        // --sc + icon path are looked up by ailment id; trap items 14–16 keep
-        // their distinctive yellow/green from HunterPie.
-        switch (a.id) {
+        // --sc + icon path are looked up by ailment id; trap items keep
+        // their distinctive yellow/green from HunterPie. World and Rise
+        // use UNRELATED id tables, so branch on the snapshot's game.
+        if (monster_.game == mhw::GameId::Rise) {
+            switch (a.id) {
+            case  0: e.sc = QColor(246, 165,  34); break; // 麻痹
+            case  1: e.sc = QColor(140, 195,  74); break; // 睡眠
+            case  2: e.sc = QColor(255, 193,   7); break; // 眩晕
+            case  3: e.sc = QColor(255, 255, 255); break; // 闪光
+            case  4: e.sc = QColor(167,  79, 255); break; // 毒
+            case  5: e.sc = QColor(255,  87,  34); break; // 爆破
+            case  7: e.sc = QColor( 76, 175,  80); break; // 乘骑
+            case 12: e.sc = QColor(139, 195,  74);
+                     e.iconPath = QStringLiteral(":/icons/Traps/item_id_80.svg"); break; // 落穴
+            case 13: e.sc = QColor(255, 235,  59);
+                     e.iconPath = QStringLiteral(":/icons/Traps/item_id_81.svg"); break; // 麻痹陷阱
+            default: e.sc = QColor(158, 158, 158); break;
+            }
+        } else switch (a.id) {
         case  1: e.sc = QColor(167,  79, 255); e.iconPath = QString(); break; // 毒
         case  2: e.sc = QColor(246, 165,  34); e.iconPath = QString(); break; // 麻痹
         case  3: e.sc = QColor(140, 195,  74); e.iconPath = QString(); break; // 睡眠

@@ -12,8 +12,6 @@
 
 namespace mhw {
 
-enum class GameId { World, Rise };
-
 struct GameSnapshot {
     GameId game{GameId::World};
     bool attached{};

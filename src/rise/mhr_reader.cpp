@@ -327,7 +327,7 @@ void MhrReader::readMonsterAilments(std::uintptr_t monster, MonsterSnapshot &sna
             continue;
 
         ail.active = ail.timer > 0.0F;
-        ail.name = QStringLiteral("Ailment #%1").arg(i);
+        ail.name = kRiseAilmentNames.value(i, QStringLiteral("异常%1").arg(i));
         snapshot.ailments.push_back(ail);
     }
 }
@@ -412,6 +412,7 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
         MonsterSnapshot snapshot;
         snapshot.address = monster;
         snapshot.id = *idOpt;
+        snapshot.game = GameId::Rise;
         snapshot.internalName = QStringLiteral("Monster #%1").arg(*idOpt);
 
         const std::uintptr_t healthComponent = MhwReader::followPointerChain(
