@@ -339,7 +339,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     // existing layout's "comfortable" width on first launch.
     auto *rail = new QFrame();
     rail->setObjectName("objectRail");
-    rail->setMinimumWidth(150);
+    rail->setMinimumWidth(130);
     auto *railLayout = new QVBoxLayout(rail);
     railLayout->setContentsMargins(20, 22, 20, 18);
     railLayout->setSpacing(8);
@@ -445,7 +445,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     leftSplitter->setChildrenCollapsible(false);
     leftSplitter->addWidget(buildGameColumn());
     leftSplitter->addWidget(rail);
-    leftSplitter->setSizes({150, 220});
+    leftSplitter->setSizes({150, 180});
     leftSplitter_ = leftSplitter;
     {
         QSettings s;
@@ -460,7 +460,7 @@ ControlPanel::ControlPanel(QWidget *parent)
 
     auto *inspectorHost = new QFrame();
     inspectorHost->setObjectName("inspectorHost");
-    inspectorHost->setFixedWidth(420);
+    inspectorHost->setFixedWidth(480);
     auto *inspectorLayout = new QVBoxLayout(inspectorHost);
     inspectorLayout->setContentsMargins(0, 0, 0, 0);
     inspectorStack_ = new QStackedWidget();
