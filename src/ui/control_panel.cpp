@@ -278,8 +278,8 @@ ControlPanel::ControlPanel(QWidget *parent)
     // v0.5.6: top row consumes rail+inspector height (~600-700px);
     // stage must keep at least canvas's 360px minimum + stagebar padding.
     // Bump default height so the canvas is usable on first open.
-    resize(1280, 1040);
-    setMinimumSize(1120, 820);
+    resize(800, 1040);
+    setMinimumSize(730, 820);
 
     // Real panel instances, rendered off-screen only. WA_DontShowOnScreen
     // lets show()/repaint() run the full paint path (demo data + the
