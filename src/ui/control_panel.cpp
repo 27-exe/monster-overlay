@@ -280,6 +280,13 @@ ControlPanel::ControlPanel(QWidget *parent)
     // Bump default height so the canvas is usable on first open.
     resize(800, 1040);
     setMinimumSize(730, 820);
+    {
+        QSettings s;
+        const QByteArray geom = s.value(QStringLiteral("ui/geometry")).toByteArray();
+        if (!geom.isEmpty()) restoreGeometry(geom);
+        const QByteArray state = s.value(QStringLiteral("ui/windowState")).toByteArray();
+        if (!state.isEmpty()) restoreState(state);
+    }
 
     // Real panel instances, rendered off-screen only. WA_DontShowOnScreen
     // lets show()/repaint() run the full paint path (demo data + the
@@ -800,6 +807,11 @@ void ControlPanel::closeEvent(QCloseEvent *e)
     if (damage_)  damage_->saveAppearance();
 
     saveMaskToDisk();
+    {
+        QSettings s;
+        s.setValue(QStringLiteral("ui/geometry"), saveGeometry());
+        s.setValue(QStringLiteral("ui/windowState"), saveState());
+    }
     QMainWindow::closeEvent(e);
 }
 
