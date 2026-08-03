@@ -210,6 +210,14 @@ QString qssBase()
         "QLabel#autoDetect[state=\"gray\"]{color:%6;}"
         "QLabel#autoDetect[state=\"cyan\"]{color:%10;}"
         "QLabel#autoDetect[state=\"amber\"]{color:%9;}"
+        // v0.7.1: GAME column on the left edge of the window. Slightly
+        // darker than the rail so the two columns read as distinct at a
+        // glance; the rail's border-right is repurposed as the divider
+        // between them.
+        "QFrame#gameColumn{background:%4;border-right:1px solid %8;}"
+        "QFrame#gameColumnRule{background:%8;border:none;max-height:1px;min-height:1px;}"
+        "QLabel#gameColumnDetected{font-family:'Chakra Petch';font-size:11px;"
+        " letter-spacing:1px;color:%5;background:transparent;border:none;}"
     );
     // Replace longest placeholders first. QString::arg historically treats
     // %1 as a prefix of %10/%11 in chained substitutions, which produced
@@ -236,6 +244,7 @@ int iconKind(int panel, int section)
     static const int kPlayerIcons[] = {
         SectionRow::IconConn, SectionRow::IconQuest, SectionRow::IconWeapon,
         SectionRow::IconBars, SectionRow::IconMantles, SectionRow::IconDebuff,
+        SectionRow::IconBuff, SectionRow::IconWirebug,
     };
     static const int kMonsterIcons[] = {
         SectionRow::IconInfo, SectionRow::IconHp, SectionRow::IconEnrage,
@@ -244,7 +253,7 @@ int iconKind(int panel, int section)
     static const int kDamageIcons[] = {
         SectionRow::IconRows, SectionRow::IconShare, SectionRow::IconChart,
     };
-    if (panel == 0 && section < 6) return kPlayerIcons[section];
+    if (panel == 0 && section < 8) return kPlayerIcons[section];
     if (panel == 1 && section < 5) return kMonsterIcons[section];
     if (panel == 2 && section < 3) return kDamageIcons[section];
     return SectionRow::IconNone;
@@ -323,9 +332,14 @@ ControlPanel::ControlPanel(QWidget *parent)
     topRow->setSpacing(0);
 
     // v0.5 A: object rail → focused inspector → unified canvas.
+    // v0.7.1: the rail no longer owns its own width — the horizontal
+    // QSplitter below owns the split between the narrow game column
+    // (left) and the rail (right). The rail keeps its 214px minimum via
+    // its own minimumWidth so the resize handle still respects the
+    // existing layout's "comfortable" width on first launch.
     auto *rail = new QFrame();
     rail->setObjectName("objectRail");
-    rail->setFixedWidth(214);
+    rail->setMinimumWidth(214);
     auto *railLayout = new QVBoxLayout(rail);
     railLayout->setContentsMargins(20, 22, 20, 18);
     railLayout->setSpacing(8);
@@ -371,32 +385,17 @@ ControlPanel::ControlPanel(QWidget *parent)
     scrollLayout->setContentsMargins(0, 0, 0, 0);
     scrollLayout->setSpacing(8);
 
-    // v0.6 Phase 4: GAME selector — choose World or Rise. Sits above the
-    // HUD OBJECTS list; the active game is highlighted (selected="true")
-    // and drives the --game flag handed to the overlay subprocess.
-    auto *gameTitle = new QLabel(QStringLiteral("GAME"));
-    gameTitle->setObjectName("sectionCap");
-    scrollLayout->addWidget(gameTitle);
-    auto *gameRow = new QHBoxLayout();
-    gameRow->setSpacing(6);
-    gameWorldBtn_ = new QPushButton(QStringLiteral("WORLD"));
-    gameWorldBtn_->setObjectName("gameBtn");
-    gameWorldBtn_->setCursor(Qt::PointingHandCursor);
-    gameRiseBtn_ = new QPushButton(QStringLiteral("RISE"));
-    gameRiseBtn_->setObjectName("gameBtn");
-    gameRiseBtn_->setCursor(Qt::PointingHandCursor);
+    // v0.7.1: the GAME selector itself moved to buildGameColumn() (its
+    // own narrow column on the left edge of the window). The auto-
+    // detect badge stays in the rail as a status line — clicking it
+    // still hot-swaps to the detected game, the same way it did in v0.6.
     autoDetectBadge_ = new QLabel(QStringLiteral("● NO GAME RUNNING"));
     autoDetectBadge_->setObjectName("autoDetect");
     autoDetectBadge_->setProperty("state", "gray");
     autoDetectBadge_->setWordWrap(true);
     autoDetectBadge_->installEventFilter(this);
-    gameRow->addWidget(gameWorldBtn_);
-    gameRow->addWidget(gameRiseBtn_);
-    gameRow->addWidget(autoDetectBadge_);
-    scrollLayout->addLayout(gameRow);
+    scrollLayout->addWidget(autoDetectBadge_);
     scrollLayout->addSpacing(20);
-    connect(gameWorldBtn_, &QPushButton::clicked, this, [this]{ switchGame(mhw::GameId::World); });
-    connect(gameRiseBtn_,  &QPushButton::clicked, this, [this]{ switchGame(mhw::GameId::Rise); });
 
     auto *objectsTitle = new QLabel(QStringLiteral("HUD OBJECTS"));
     objectsTitle->setObjectName("sectionCap");
@@ -435,7 +434,29 @@ ControlPanel::ControlPanel(QWidget *parent)
     hint->setObjectName("railHint");
     hint->setAlignment(Qt::AlignCenter);
     railLayout->addWidget(hint);
-    topRow->addWidget(rail);
+    // v0.7.1: wrap the rail in a horizontal QSplitter alongside the
+    // dedicated game column. The splitter handle width is 0 (QSS keeps
+    // it hidden); the visible divider is the rail's border-right, which
+    // now lives between the game column and the rail instead of at the
+    // window's left edge.
+    auto *leftSplitter = new QSplitter(Qt::Horizontal);
+    leftSplitter->setObjectName("leftSplitter");
+    leftSplitter->setHandleWidth(0);
+    leftSplitter->setChildrenCollapsible(false);
+    leftSplitter->addWidget(buildGameColumn());
+    leftSplitter->addWidget(rail);
+    leftSplitter->setSizes({80, 320});
+    leftSplitter_ = leftSplitter;
+    {
+        QSettings s;
+        const QByteArray saved = s.value(QStringLiteral("ui/leftSplitter")).toByteArray();
+        if (!saved.isEmpty()) leftSplitter->restoreState(saved);
+    }
+    connect(leftSplitter, &QSplitter::splitterMoved, this, [this, leftSplitter]{
+        QSettings s;
+        s.setValue(QStringLiteral("ui/leftSplitter"), leftSplitter->saveState());
+    });
+    topRow->addWidget(leftSplitter);
 
     auto *inspectorHost = new QFrame();
     inspectorHost->setObjectName("inspectorHost");
@@ -1156,6 +1177,68 @@ QWidget *ControlPanel::buildRule()
     return line;
 }
 
+// v0.7.1: narrow column on the left edge of the window — hosts the
+// GAME title and the WORLD / RISE selector buttons. Lives inside the
+// horizontal leftSplitter (sibling of the original rail), so the user
+// can drag the divider to resize both columns and the choice persists
+// via QSettings under ui/leftSplitter.
+//
+// The column also carries a tiny auto-detect caption so the user still
+// sees "which game is running" feedback after the badge left the rail.
+// The badge's live state still lives in the rail (it's the click target);
+// this caption is read-only — it's pulled from lastDetectedGame_ in
+// refreshAutoDetect().
+QWidget *ControlPanel::buildGameColumn()
+{
+    auto *col = new QFrame();
+    col->setObjectName("gameColumn");
+    col->setMinimumWidth(70);
+    col->setMaximumWidth(140);
+    auto *vl = new QVBoxLayout(col);
+    vl->setContentsMargins(10, 22, 10, 18);
+    vl->setSpacing(10);
+
+    auto *title = new QLabel(QStringLiteral("GAME"));
+    title->setObjectName("sectionCap");
+    vl->addWidget(title);
+
+    gameWorldBtn_ = new QPushButton(QStringLiteral("WORLD"));
+    gameWorldBtn_->setObjectName("gameBtn");
+    gameWorldBtn_->setCursor(Qt::PointingHandCursor);
+    gameRiseBtn_ = new QPushButton(QStringLiteral("RISE"));
+    gameRiseBtn_->setObjectName("gameBtn");
+    gameRiseBtn_->setCursor(Qt::PointingHandCursor);
+    connect(gameWorldBtn_, &QPushButton::clicked, this, [this]{ switchGame(mhw::GameId::World); });
+    connect(gameRiseBtn_,  &QPushButton::clicked, this, [this]{ switchGame(mhw::GameId::Rise); });
+    vl->addWidget(gameWorldBtn_);
+    vl->addWidget(gameRiseBtn_);
+
+    auto *sep = new QFrame();
+    sep->setFrameShape(QFrame::HLine);
+    sep->setObjectName("gameColumnRule");
+    vl->addWidget(sep);
+
+    auto *detectedCap = new QLabel(QStringLiteral("DETECTED"));
+    detectedCap->setObjectName("sectionCap");
+    vl->addWidget(detectedCap);
+    // v0.7.1: read-only caption showing which game the auto-detector
+    // last saw. Updated alongside the rail badge so the user has the
+    // information in both columns.
+    auto *detectedValue = new QLabel(QStringLiteral("--"));
+    detectedValue->setObjectName("gameColumnDetected");
+    detectedValue->setWordWrap(true);
+    detectedValue->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    vl->addWidget(detectedValue);
+    // Stash the caption so refreshAutoDetect() can update it without a
+    // second lookup table. Stored as a property so we don't need a new
+    // member variable in the header — refreshAutoDetect() walks the
+    // column's children the same way it walks the rail badge.
+    col->setProperty("detectedValue", QVariant::fromValue(static_cast<void*>(detectedValue)));
+
+    vl->addStretch(1);
+    return col;
+}
+
 // R5: EDIT MODE block — orange "ENTER EDIT" button on the right,
 // caption "进入后三个面板强制显示，方向键移动" on the left.
 //
@@ -1410,6 +1493,7 @@ void ControlPanel::refreshAutoDetect()
 {
     if (!autoDetectBadge_) return;
     const auto detected = mhw::detectGame();
+    QString detectedShort;
     if (detected) {
         lastDetectedGame_ = detected->game;
         QSettings s;
@@ -1419,6 +1503,8 @@ void ControlPanel::refreshAutoDetect()
         const QString name = detected->game == mhw::GameId::Rise
                                  ? QStringLiteral("RISE") : QStringLiteral("WORLD");
         const bool match = (detected->game == currentGame_);
+        detectedShort = QStringLiteral("%1 (pid %2)")
+                            .arg(name).arg(detected->pid);
         autoDetectBadge_->setText(
             QStringLiteral("● DETECTED %1 · pid %2 · switch →")
                 .arg(name).arg(detected->pid));
@@ -1426,12 +1512,22 @@ void ControlPanel::refreshAutoDetect()
         autoDetectBadge_->setCursor(match ? Qt::ArrowCursor
                                           : Qt::PointingHandCursor);
     } else {
+        detectedShort = QStringLiteral("--");
         autoDetectBadge_->setText(QStringLiteral("● NO GAME RUNNING"));
         autoDetectBadge_->setProperty("state", "gray");
         autoDetectBadge_->setCursor(Qt::ArrowCursor);
     }
     autoDetectBadge_->style()->unpolish(autoDetectBadge_);
     autoDetectBadge_->style()->polish(autoDetectBadge_);
+    // v0.7.1: mirror the detected game into the GAME column's read-only
+    // caption so the user sees it without scrolling to the rail badge.
+    if (leftSplitter_) {
+        auto *col = leftSplitter_->widget(0);
+        if (col) {
+            QLabel *cap = static_cast<QLabel*>(col->property("detectedValue").value<void*>());
+            if (cap) cap->setText(detectedShort);
+        }
+    }
 }
 
 namespace {

@@ -56,6 +56,39 @@ struct MHRQurioThresholdStructure {
 };
 static_assert(sizeof(MHRQurioThresholdStructure) == 8);
 
+// v0.7.1: wirebug (翔虫) state — HunterPie 16.0.2.0 map. Each wirebug
+// entry tracks its own cooldown (recovery timer after use), max cooldown
+// (skill-scaled ceiling), and extra cooldown (wirebug-specific bonus).
+// The game keeps three wirebug objects (default + environment + skill);
+// the count comes from ABNORMALITIES_ADDRESS + WIREBUG_COUNT_OFFSETS and
+// the actual pointers come from WIREBUG_DATA_OFFSETS.
+struct MHRWirebugStructure {
+    std::int64_t ref;
+    std::int32_t unk0;
+    std::int32_t unk1;
+    float        cooldown;
+    float        maxCooldown;
+    float        extraCooldown;
+};
+static_assert(sizeof(MHRWirebugStructure) == 28);
+
+struct MHRWirebugCountStructure {
+    std::int32_t default_;
+    std::int32_t environment;
+    std::int32_t skill;
+};
+static_assert(sizeof(MHRWirebugCountStructure) == 12);
+
+// Extra fields for environment / skill wirebugs. Only the recovery timer
+// is consumed by the panel right now; the rest are reserved.
+struct MHRWirebugExtrasStructure {
+    float unk0;
+    float unk1;
+    float unk2;
+    float timer;
+};
+static_assert(sizeof(MHRWirebugExtrasStructure) == 16);
+
 #pragma pack(pop)
 
 // Ailment fields are sparse, so they are read with explicit offsets rather

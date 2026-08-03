@@ -30,12 +30,13 @@ enum : uint32_t {
     Quest   = 1u << 1,   // 区域·任务 / 剩余 / 猫车 三行
     Weapon  = 1u << 2,   // 武器槽 + 名字 + MR + 锋利度条
     Bars    = 1u << 3,   // HP + ST 两条
-    Mantles = 1u << 4,   // 衣装两格
+    Mantles = 1u << 4,   // 衣装两格 (World only — Rise hides this)
     Debuff  = 1u << 5,   // 异常状态胶囊
     Buff    = 1u << 6,   // 正面状态胶囊 (笛/道具/技能)
+    Wirebug = 1u << 7,   // v0.7.1: 翔虫胶囊 (Rise only — World hides this)
 };
 constexpr uint32_t kAll =
-    Conn | Quest | Weapon | Bars | Mantles | Debuff | Buff;
+    Conn | Quest | Weapon | Bars | Mantles | Debuff | Buff | Wirebug;
 
 inline const QStringList &names()
 {
@@ -47,6 +48,7 @@ inline const QStringList &names()
         QStringLiteral("mantles"),
         QStringLiteral("debuff"),
         QStringLiteral("buff"),
+        QStringLiteral("wirebug"),
     };
     return n;
 }
@@ -61,6 +63,7 @@ inline const QStringList &displayNames()
         QStringLiteral("衣装"),
         QStringLiteral("异常状态"),
         QStringLiteral("正面状态"),
+        QStringLiteral("翔虫"),
     };
     return n;
 }

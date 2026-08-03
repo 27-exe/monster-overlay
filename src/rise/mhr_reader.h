@@ -44,6 +44,7 @@ private:
     void readMonsterQurio(std::uintptr_t monster, MonsterSnapshot &snapshot);
     [[nodiscard]] std::uintptr_t readLockOnTarget() const;
     PlayerSnapshot readPlayer(QString *error);
+    void readWirebugs(PlayerSnapshot &snapshot, QString *error);
     QuestSnapshot readQuest(QString *error);
     [[nodiscard]] QString readUtf16(std::uintptr_t address, int length) const;
 

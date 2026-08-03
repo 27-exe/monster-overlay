@@ -273,6 +273,79 @@ void drawPill(QPainter &p, const QRectF &box, const QColor &pc,
                Qt::AlignRight | Qt::AlignVCenter, timer);
 }
 
+// v0.7.1: wirebug (翔虫) capsule. Visually similar to .pill but the
+// fill colour encodes the cooldown-progress (cooldown / maxCooldown):
+//   cooldown == 0  → teal "ready" (matches the live HUD indicator)
+//   cooldown > 0   → amber "recovering", progress fills from left
+// Temporary (environment / skill) wirebugs get a thinner left accent
+// stripe so the player can tell which slot is the default at a glance.
+void drawWirebug(QPainter &p, const QRectF &box, const QString &name,
+                 float cooldown, float maxCooldown, bool temporary)
+{
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setBrush(QColor(22, 24, 26));
+    p.setPen(Qt::NoPen);
+    p.drawRoundedRect(box, 2, 2);
+
+    const float pct = (maxCooldown > 0.0F)
+        ? std::clamp(cooldown / maxCooldown, 0.0F, 1.0F) : 0.0F;
+    const bool ready = (cooldown <= 0.001F);
+    // Accent colour: teal when ready, amber while recovering. Slightly
+    // muted when the wirebug is a temp slot so the default pops.
+    const QColor accent = ready
+        ? (temporary ? QColor(60, 160, 150)   : QColor(80, 197, 183))
+        : (temporary ? QColor(200, 150, 30)   : QColor(255, 170, 60));
+
+    // Progress fill: full capsule background for ready, left-fill for
+    // recovering. We use a clipping path so the fill respects the
+    // rounded corners.
+    if (ready) {
+        p.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 36));
+        p.drawRoundedRect(box, 2, 2);
+    } else if (pct > 0.0F) {
+        QRectF fillRect(box.x(), box.y(),
+                        box.width() * pct, box.height());
+        QPainterPath clip;
+        clip.addRoundedRect(box, 2, 2);
+        p.setClipPath(clip);
+        p.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 70));
+        p.drawRect(fillRect);
+        p.setClipping(false);
+    }
+
+    // Left accent stripe (thinner for temporary wirebugs).
+    const QRectF stripe(box.x(), box.y(), temporary ? 2.0 : 3.0, box.height());
+    p.setBrush(accent);
+    p.drawRect(stripe);
+
+    // 1px outline.
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(42, 45, 47), 1));
+    p.drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), 2, 2);
+
+    // Name on the left, timer on the right.
+    QFont bFont(QStringLiteral("Chakra Petch"), 9, QFont::Medium);
+    bFont.setStyleStrategy(QFont::PreferAntialias);
+    p.setFont(bFont);
+    p.setPen(QColor(245, 246, 247));
+    const qreal nameLeft = stripe.right() + 6;
+    const QRectF nameRect(nameLeft, box.y(),
+                          std::max(0.0, box.width() * 0.45F), box.height());
+    p.drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
+               QFontMetrics(bFont).elidedText(name, Qt::ElideRight,
+                                              static_cast<int>(nameRect.width())));
+
+    QFont tFont(QStringLiteral("Chakra Petch"), 9);
+    tFont.setStyleStrategy(QFont::PreferAntialias);
+    p.setFont(tFont);
+    p.setPen(ready ? QColor(80, 197, 183) : QColor(210, 214, 216));
+    const QString timerTxt = ready
+        ? QStringLiteral("READY")
+        : QStringLiteral("%1s").arg(static_cast<int>(cooldown));
+    p.drawText(QRectF(box.x() + 4, box.y(), box.width() - 8, box.height()),
+               Qt::AlignRight | Qt::AlignVCenter, timerTxt);
+}
+
 } // namespace
 
 namespace mh {
@@ -297,6 +370,7 @@ void PlayerPanel::update(const mhw::GameSnapshot &snap)
     player_    = snap.player;
     zone_      = snap.zone;
     quest_     = snap.quest;
+    game_      = snap.game;
     attached_  = snap.attached;
     pid_       = snap.pid;
     imageBase_ = snap.imageBase;
@@ -550,6 +624,7 @@ void PlayerPanel::paintPanel(QPainter &p)
                           + (player_.mantleSlot1Id >= 0 ? 1 : 0);
     const int debuffCount = player_.debuffs.size();
     const int buffCount   = player_.buffs.size();
+    const int wirebugCount = player_.wirebugs.size();
 
     // ---- Section mask (ui/panel_sections.h) ----
     const uint32_t smask     = sectionMask();
@@ -557,9 +632,16 @@ void PlayerPanel::paintPanel(QPainter &p)
     const bool onQuest       = smask & mhw::PlayerSection::Quest;
     const bool onWeapon      = smask & mhw::PlayerSection::Weapon;
     const bool onBars        = smask & mhw::PlayerSection::Bars;
-    const bool onMantles     = smask & mhw::PlayerSection::Mantles;
+    // v0.7.1: Rise has no mantle system. Hide the section entirely when
+    // we're rendering a Rise snapshot so the panel never shows a World-
+    // era row that has no data backing it. World still uses Mantles.
+    const bool onMantles     = (smask & mhw::PlayerSection::Mantles)
+                               && (game_ != mhw::GameId::Rise);
     const bool onDebuff      = smask & mhw::PlayerSection::Debuff;
     const bool onBuff        = smask & mhw::PlayerSection::Buff;
+    // v0.7.1: wirebug capsules are Rise-only. World hides them.
+    const bool onWirebug     = (smask & mhw::PlayerSection::Wirebug)
+                               && (game_ == mhw::GameId::Rise);
 
     // Block-table gap/content constants. Derived from the original serial
     // y-advance so the fully-on layout is pixel-identical to before
@@ -597,12 +679,18 @@ void PlayerPanel::paintPanel(QPainter &p)
         const int buffRows = (buffCount + kPillsPerRow - 1) / kPillsPerRow;
         buffH = buffRows * kPillH + (buffRows - 1) * 4;
     }
+    // v0.7.1: wirebug capsule row height. 1-3 capsules fit in one row
+    // (kPillH tall); the section's gap before it matches the debuff/buff
+    // separators so disabled sections still drop with no neighbour drift.
+    constexpr int kWirebugGap = kGapSection;
+    constexpr int kWirebugH   = kPillH;
 
     int totalH = kMargin + kTitleH;   // title always drawn
     totalH += qrowStreamH;
     if (onWeapon)                        totalH += kWeaponGap + kWeaponH;
     if (onBars)                          totalH += kBarsGap  + kBarsH;
     if (onMantles && mantleCount > 0)    totalH += kMantleGap + kMantleH;
+    if (onWirebug && wirebugCount > 0)   totalH += kWirebugGap + kWirebugH;
     if (onDebuff  && debuffCount > 0)    totalH += kDebuffGap + debuffH;
     if (onBuff    && buffCount > 0)      totalH += kBuffGap   + buffH;
     totalH += kMargin;
@@ -931,6 +1019,30 @@ void PlayerPanel::paintPanel(QPainter &p)
         y += kMbH;
     }
 
+    // ---- wirebugs: 3 capsules, default + env + skill (Rise only) ----
+    if (onWirebug && wirebugCount > 0) {
+        y += kWirebugGap;
+        const int totalW = innerW;
+        const int pillGap = 5;
+        constexpr int kWbPerRow = 3;
+        // Always one row for wirebugs (max 3 by game design). Use a
+        // per-row slot width that evenly distributes whatever the count
+        // is so a 1-wirebug hunter still gets a wider capsule.
+        const int slotW = (totalW - pillGap * (wirebugCount - 1))
+                        / std::max(1, wirebugCount);
+        for (int i = 0; i < wirebugCount; ++i) {
+            const int cx = innerLeft + i * (slotW + pillGap);
+            const QRectF pillRect(cx, y, slotW, kWirebugH);
+            const auto &w = player_.wirebugs[i];
+            const QString n = (i == 0) ? QStringLiteral("翔虫")
+                            : w.isTemporary ? QStringLiteral("翔虫·%1").arg(i + 1)
+                                            : QStringLiteral("翔虫·%1").arg(i + 1);
+            drawWirebug(p, pillRect, n, w.cooldown, w.maxCooldown,
+                        w.isTemporary);
+        }
+        y += kWirebugH;
+    }
+
     // ---- debuffs: .pill row, max 3 per row, wraps to a second line ----
     if (onDebuff && debuffCount > 0) {
         y += kGapSection;
@@ -1004,6 +1116,9 @@ void PlayerPanel::setupDemoData()
     zone_      = mhw::Zone::AncientForest;
     quest_     = {66801, 6, 2, 0, 0, 3, 2497.0F, true};
     status_    = QStringLiteral("示例 Demo");
+    // v0.7.1: demo runs in Rise mode so the wirebug row is visible in
+    // the control panel preview (Mantles are hidden automatically).
+    game_      = mhw::GameId::Rise;
 
     player_ = mhw::PlayerSnapshot{};
     player_.valid = true;
@@ -1019,6 +1134,27 @@ void PlayerPanel::setupDemoData()
     playerMR_ = 247;
     playerName_ = QStringLiteral("苍蓝星");   // demo local player name
     partyCount_ = 4;                         // demo party size
+
+    // v0.7.1: demo wirebug state for Rise preview — one default (ready)
+    // and two temporary (recovering). Mantles are hidden in Rise mode
+    // so the control panel preview only shows the wirebug row.
+    {
+        WirebugSnapshot w0; w0.slot = 0; w0.isAvailable = true;
+        w0.cooldown = 0.0F;  w0.maxCooldown = 30.0F;
+        player_.wirebugs.append(w0);
+    }
+    {
+        WirebugSnapshot w1; w1.slot = 1; w1.isAvailable = true;
+        w1.isTemporary = true;
+        w1.cooldown = 18.0F; w1.maxCooldown = 30.0F;
+        player_.wirebugs.append(w1);
+    }
+    {
+        WirebugSnapshot w2; w2.slot = 2; w2.isAvailable = true;
+        w2.isTemporary = true;
+        w2.cooldown = 7.0F;  w2.maxCooldown = 30.0F;
+        player_.wirebugs.append(w2);
+    }
 
     // Sharpness demo (matches HTML v8 concept — Purple 47/120).
     // Hand-crafted thresholds[7] for a Purple-able Great Sword.

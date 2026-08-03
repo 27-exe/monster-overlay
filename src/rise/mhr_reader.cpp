@@ -517,8 +517,90 @@ PlayerSnapshot MhrReader::readPlayer(QString *error)
             result.weaponId = *wp;
     }
 
+    // v0.7.1: wirebug (翔虫) state. Reads up to 3 wirebugs: the default
+    // plus any environment- or skill-granted extras. Empty when the
+    // hunter hasn't unlocked wirebug gathering yet or the offsets fail
+    // to resolve.
+    readWirebugs(result, nullptr);
+
     result.valid = !result.name.isEmpty();
     return result;
+}
+
+// v0.7.1: read up to 3 wirebugs. The count comes from
+// ABNORMALITIES_ADDRESS + WIREBUG_COUNT_OFFSETS (3 ints), and the per-
+// wirebug pointers come from ABNORMALITIES_ADDRESS + WIREBUG_DATA_OFFSETS
+// (an array of 3 qint64 pointers). Each wirebug struct carries its own
+// cooldown + maxCooldown + extraCooldown floats; environment / skill
+// wirebugs additionally read their bonus timer from
+// WIREBUG_EXTRA_DATA_OFFSETS (MHRWirebugExtrasStructure).
+//
+// The blocked state (IceBlight / Wind Mantle / etc.) is read once from
+// UI_ADDRESS + IS_WIREBUG_BLOCKED_OFFSETS. The task spec says we treat
+// any non-zero value as Blocked for now (no per-cause classification).
+void MhrReader::readWirebugs(PlayerSnapshot &snapshot, QString *error)
+{
+    // Step 1: count = max(0, default + environment + skill). Clamp at 3
+    // because the game never has more than 3 wirebugs active.
+    const std::uintptr_t countBase = MhwReader::followPointerChain(
+        memory_, absolute(QStringLiteral("ABNORMALITIES_ADDRESS")),
+        map_.offsets(QStringLiteral("WIREBUG_COUNT_OFFSETS")), error);
+    if (!countBase)
+        return;
+    const auto countStruct = memory_.read<MHRWirebugCountStructure>(countBase);
+    if (!countStruct)
+        return;
+    const int count = std::max(0, std::min(3,
+        countStruct->default_ + countStruct->environment + countStruct->skill));
+    if (count <= 0)
+        return;
+
+    // Step 2: pointer array at ABNORMALITIES_ADDRESS + WIREBUG_DATA_OFFSETS.
+    const std::uintptr_t arrayPtr = MhwReader::followPointerChain(
+        memory_, absolute(QStringLiteral("ABNORMALITIES_ADDRESS")),
+        map_.offsets(QStringLiteral("WIREBUG_DATA_OFFSETS")), nullptr);
+    if (!arrayPtr)
+        return;
+    const auto ptrs = memory_.readArray<std::int64_t>(arrayPtr, 3);
+    if (ptrs.size() != 3)
+        return;
+
+    // Step 3: optional extras pointer (env / skill wirebug timer).
+    const std::uintptr_t extrasBase = MhwReader::followPointerChain(
+        memory_, absolute(QStringLiteral("ABNORMALITIES_ADDRESS")),
+        map_.offsets(QStringLiteral("WIREBUG_EXTRA_DATA_OFFSETS")), nullptr);
+
+    for (int i = 0; i < count; ++i) {
+        const std::uintptr_t wbAddr = static_cast<std::uintptr_t>(ptrs[i]);
+        if (!isSanePointer(wbAddr))
+            continue;
+        const auto wb = memory_.read<MHRWirebugStructure>(wbAddr);
+        if (!wb)
+            continue;
+
+        WirebugSnapshot snap;
+        snap.slot         = i;
+        snap.isAvailable  = true;
+        // The first slot is always the default; environment / skill are
+        // pushed onto slots 1+ only when the count breakdown says so.
+        snap.isTemporary  = (i > 0) && (countStruct->environment > 0
+                                       || countStruct->skill > 0)
+                                       && (i >= countStruct->default_);
+        snap.cooldown     = std::isfinite(wb->cooldown)     ? wb->cooldown     : 0.0F;
+        snap.maxCooldown  = std::isfinite(wb->maxCooldown)
+                            && wb->maxCooldown > 0.0F ? wb->maxCooldown : 30.0F;
+        snap.timer        = 0.0F;
+        snap.maxTimer     = 0.0F;
+        // Env / skill wirebug bonus timer (only on slot >= default count).
+        if (snap.isTemporary && extrasBase) {
+            const auto extras = memory_.read<MHRWirebugExtrasStructure>(extrasBase);
+            if (extras) {
+                snap.timer    = std::isfinite(extras->timer) ? extras->timer : 0.0F;
+                snap.maxTimer = snap.timer > 0.0F ? snap.timer : 1.0F;
+            }
+        }
+        snapshot.wirebugs.push_back(snap);
+    }
 }
 
 QuestSnapshot MhrReader::readQuest(QString *error)

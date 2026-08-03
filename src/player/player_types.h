@@ -34,6 +34,19 @@ struct PlayerAbnormality {
     float maxTimer{0.0F};// tracked max for progress bar scaling
 };
 
+// v0.7.1: wirebug (翔虫) snapshot. Rise-specific — World has no wirebug
+// system. Read once per poll from MHRWirebugStructure + the in-game
+// extras array; rendered by PlayerPanel as a horizontal capsule row.
+struct WirebugSnapshot {
+    int   slot{0};
+    bool  isAvailable{false};
+    bool  isTemporary{false};
+    float cooldown{0.0F};
+    float maxCooldown{0.0F};
+    float timer{0.0F};
+    float maxTimer{0.0F};
+};
+
 struct PlayerSnapshot {
     QString name;          // character name (HunterPie MHWPlayer.Name)
     float health{};
@@ -71,6 +84,10 @@ struct PlayerSnapshot {
     // Ranged weapons leave valid=false; the panel hides the bar in
     // that case.
     SharpnessSnapshot sharpness;
+    // v0.7.1: wirebug (翔虫) state — Rise only. The hunter has 1-3
+    // wirebugs at a time depending on equipment and switch skills. The
+    // panel renders one capsule per entry, coloured by cooldown progress.
+    QVector<WirebugSnapshot> wirebugs;
 };
 
 struct PartyMemberSnapshot {

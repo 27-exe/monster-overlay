@@ -24,6 +24,7 @@ public:
         IconNone = -1,
         // Player panel
         IconConn, IconQuest, IconWeapon, IconBars, IconMantles, IconDebuff,
+        IconBuff, IconWirebug,
         // Monster panel
         IconInfo, IconHp, IconEnrage, IconAil, IconParts,
         // Damage panel

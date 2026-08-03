@@ -162,6 +162,22 @@ void SectionRow::drawIcon(QPainter &p, const QRectF &box) const
         p.drawLine(QPointF(x + w/2, y + h/2 - 2.5), QPointF(x + w/2, y + h/2 + 2.5));
         break;
     }
+    case IconBuff: {   // capsule with a "+" mark (positive effect)
+        p.drawRoundedRect(QRectF(x + 1, y + h/2 - 2.5, w - 2, 5), 2.5, 2.5);
+        const qreal midx = x + w/2;
+        const qreal midy = y + h/2;
+        p.drawLine(QPointF(midx - 2, midy), QPointF(midx + 2, midy));
+        p.drawLine(QPointF(midx, midy - 2), QPointF(midx, midy + 2));
+        break;
+    }
+    case IconWirebug: { // 3 small dots (翔虫三联)
+        const qreal gap = (w - 6) / 2.0;
+        p.setBrush(fillAlpha > 0 ? QBrush(fill) : Qt::NoBrush);
+        p.drawEllipse(QPointF(x + 1,            c.y()), 1.7, 1.7);
+        p.drawEllipse(QPointF(x + 1 + gap + 2,  c.y()), 1.7, 1.7);
+        p.drawEllipse(QPointF(x + w - 3,        c.y()), 1.7, 1.7);
+        break;
+    }
     case IconInfo: {   // hexagon (六角肖像)
         QPainterPath hp; const qreal cx = c.x(), cy = c.y(), r = w/2 - 1;
         for (int i = 0; i < 6; ++i) {

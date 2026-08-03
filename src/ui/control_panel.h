@@ -90,6 +90,11 @@ private:
                                const QString &summary, int idx);
     QWidget *buildRule();
     QWidget *buildEditModeBlock();
+    // v0.7.1: dedicated narrow column for the World/Rise game selector.
+    // Returns a QWidget the caller parents to the horizontal QSplitter
+    // on the left edge of the window; the existing rail sits to its
+    // right and keeps its HUD OBJECTS / WORKSPACE rows unchanged.
+    QWidget *buildGameColumn();
     void selectPanel(int idx);
     void updatePanelSummary(int idx);
     void launchOverlay(bool editMode);
@@ -161,6 +166,10 @@ private:
     int                 savedStageSize_ = 0;
     bool                stageVisible_   = true;
     QSplitter          *consoleSplitter_ = nullptr;
+    // v0.7.1: horizontal splitter that splits the left edge of the window
+    // into [narrow game column | original rail]. Sized 80:320 by default
+    // and persisted through QSettings under ui/leftSplitter.
+    QSplitter          *leftSplitter_   = nullptr;
     QPropertyAnimation *stageAnim_      = nullptr;
     // backing storage for the Q_PROPERTY — the actual animated value.
     int                 stagePaneHeight_ = 0;
