@@ -1363,9 +1363,16 @@ void ControlPanel::switchGame(mhw::GameId game)
     // to crash on connect() during the next paint cycle (SEGV in
     // QObjectPrivate::connectImpl), so we mutate the existing widgets
     // instead of recreating the stack.
-    if (selectedPanel_ == 0) {
-        for (int b = 0; b < ctl_[0].subs.size(); ++b) {
-            auto *row = ctl_[0].subs[b];
+    //
+    // Apply unconditionally across all panels: only Player (idx 0) has
+    // the World-only Mantles / Rise-only Wirebug bits — Monster and
+    // Damage loops are empty and a no-op. A previous version gated this
+    // on selectedPanel_ == 0 which broke the user flow "switch game
+    // while looking at the Monster inspector": the gate skipped the
+    // hide, then switching back to Player still showed both rows.
+    for (int p = 0; p < 3; ++p) {
+        for (int b = 0; b < ctl_[p].subs.size(); ++b) {
+            auto *row = ctl_[p].subs[b];
             if (!row) continue;
             const bool hideForWorld = (game == mhw::GameId::World
                                        && b == int(mhw::PlayerSection::Wirebug));
