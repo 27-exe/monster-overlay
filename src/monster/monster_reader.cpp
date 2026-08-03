@@ -67,7 +67,8 @@ void MhwReader::readMonsterAilments(MonsterSnapshot &monster)
 
 // v0.7.4: Refactored from readMonsterTenderizes() to write tenderize state
 // into each affected PartSnapshot instead of accumulating into a separate
-// MonsterSnapshot.tenderizes vector.
+// slot vector (the slot vector was removed from MonsterSnapshot in the same
+// commit).
 //
 // HunterPie model (MHWMonster.GetMonsterPartTenderizes, lines 413-433 of
 // MHWMonster.cs): the in-memory MHWTenderizeInfoStructure[10] is a fixed-size
@@ -565,7 +566,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             m.isManualTargeted  = (comp == manualTargetAddress_);
             m.isQuestTargeted   = (comp == questTargetAddress_);
             m.isManuallyTargeted = m.isManualTargeted || m.isQuestTargeted;
-            // v0.7.3: ailments + tenderizes were only refreshed in the
+            // v0.7.3: ailments + tenderize were only refreshed in the
             // cache-miss path, so the cached snapshot kept stale
             // status. HunterPie runs GetMonsterAilments + GetTenderize
             // every tick — we now mirror that semantic here too.

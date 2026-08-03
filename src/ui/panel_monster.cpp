@@ -271,6 +271,11 @@ constexpr int kPcMiniH    = 4;     // .pc .mini height:4
 constexpr int kPcPnGap    = 3;     // .pc .pn margin-bottom
 constexpr int kPcTnH      = 3;     // tenderize mini bar (only when active)
 constexpr int kPcTnGap    = 2;     // gap between .pn and the tenderize strip
+// v0.7.4 PR C follow-up: when a tenderize strip is drawn we also render
+// the "Ns" countdown label IMMEDIATELY above the strip (compact layout).
+// The label sits in a kPcTnLabelH tall row; visually it occupies the
+// gap between .pn and the strip (no extra kPcTnLabelGap needed).
+constexpr int kPcTnLabelH = 9;     // "Ns" label height (matches kPcTagFont)
 
 struct PcEntry {
     QString name;          // 头 / 左翼 / 右翼 / 尾巴 / 左脚 / 右脚
@@ -360,29 +365,34 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
     }
 
     // v0.7.4 PR C: per-part tenderize strip. Drawn ABOVE .mini and below
-    // .pn (the caller reserves the extra kPcTnH + kPcTnGap when this card
-    // has an active tenderize). Amber palette matches the .sev tag and
-    // the deleted standalone .tsc section. Text "Ns" sits to the right
-    // so the player can read the remaining seconds at a glance; the
-    // fill bar underneath shows the fraction of maxDuration.
+    // .pn (the caller reserves the extra kPcTnLabelH + kPcTnH + kPcTnGap
+    // when this card has an active tenderize). Amber palette matches
+    // the .sev tag and the deleted standalone .tsc section. Layout
+    // (compact variant — S3 follow-up):
+    //   .pn row
+    //   ↓ kPcTnGap
+    //   "Ns" label (right-aligned, kPcTnLabelH tall)
+    //   ↓ (no extra gap — label sits visually glued to the bar)
+    //   amber fill bar (kPcTnH tall)
+    //   ↓ kPcTnGap
+    //   .mini row
     if (e.tenderizeDuration > 0.0F) {
         const QColor amber(246, 165, 34);    // #f6a522
-        // The strip sits immediately above .mini with kPcPadY inset from
-        // the cell's left/right edges (mirrors .mini layout).
-        const int tnY = static_cast<int>(miniRect.top())
-                        - kPcTnGap - kPcTnH;
-        const QRectF tnRect(cell.x() + kPcPadX, tnY,
+        // Strip + label layout: stack from .mini top going up.
+        const int barY = static_cast<int>(miniRect.top())
+                         - kPcTnGap - kPcTnH;
+        const int labelY = barY - kPcTnLabelH;
+        const QRectF tnRect(cell.x() + kPcPadX, barY,
                             cell.width() - 2 * kPcPadX, kPcTnH);
-        // Label "Ns" right-aligned above the bar.
+        // "Ns" label — right-aligned, sits IMMEDIATELY above the bar.
         QFont tnFont(QStringLiteral("Chakra Petch"), kPcTagFont, QFont::Bold);
         tnFont.setStyleStrategy(QFont::PreferAntialias);
         p.setFont(tnFont);
         p.setPen(amber);
         const QFontMetrics tnFm(tnFont);
         const int labelW = tnFm.horizontalAdvance(QStringLiteral("00s")) + 4;
-        p.drawText(QRectF(tnRect.right() - labelW,
-                          static_cast<int>(cell.top()) + kPcPadY,
-                          labelW, kPcPnFont + 2),
+        const int labelH = kPcTnLabelH;
+        p.drawText(QRectF(tnRect.right() - labelW, labelY, labelW, labelH),
                    Qt::AlignRight | Qt::AlignVCenter,
                    QStringLiteral("%1s").arg(static_cast<int>(e.tenderizeDuration)));
         // Track.
@@ -547,7 +557,12 @@ void MonsterPanel::paintPanel(QPainter &p)
         const int pcRows = (pcCount + kPcCols - 1) / kPcCols;
         constexpr int kPcBaseCellH = kPcPadY + kPcPnFont + 2 + kPcPnGap
                                     + kPcMiniH + kPcPadY;
-        const int kPcTnExtra = kPcTnH + kPcTnGap;
+        // S3 follow-up: label height is included in the kPcTnGap budget,
+        // i.e. the strip+label sandwich occupies kPcTnLabelH + kPcTnH +
+        // kPcTnGap vertical real estate (label sits in what used to be
+        // the .pn→.mini gap, so it adds kPcTnLabelH + kPcTnH rather than
+        // just kPcTnH).
+        const int kPcTnExtra = kPcTnLabelH + kPcTnH + kPcTnGap;
         QVector<int> cellHeights(pcCount, kPcBaseCellH);
         for (int i = 0; i < pcCount; ++i) {
             if (monster_.parts[i].tenderizeDuration > 0.0F)
@@ -883,7 +898,9 @@ void MonsterPanel::paintPanel(QPainter &p)
         y += kRowGap;
         constexpr int kPcBaseCellH = kPcPadY + kPcPnFont + 2 + kPcPnGap
                                     + kPcMiniH + kPcPadY;
-        const int kPcTnExtra = kPcTnH + kPcTnGap;
+        // S3 follow-up: matches the reservation formula above (label +
+        // bar + gap stacked between .pn and .mini).
+        const int kPcTnExtra = kPcTnLabelH + kPcTnH + kPcTnGap;
         // Reuse the per-cell heights from above (where pcAreaH was
         // computed) so the .pgrid render stays aligned with the panel
         // height reservation. We recompute here because pcList is built
@@ -1001,15 +1018,16 @@ void MonsterPanel::setupDemoData()
         m.parts.append(ps);
     }
 
-    // v0.7.4 PR B: tenderize is now per-part (HunterPie model). Stamp two
-    // demo parts with active tenderize; PR C will draw the mini bar.
-    // 头 (idx 0) — 45s / 90s; 尾巴 (idx 3) — 12s / 90s.
-    if (m.parts.size() >= 4) {
-        m.parts[0].tenderizeDuration    = 45.0F;
-        m.parts[0].tenderizeMaxDuration = 90.0F;
-        m.parts[3].tenderizeDuration    = 12.0F;
-        m.parts[3].tenderizeMaxDuration = 90.0F;
-    }
+    // v0.7.4 PR B + PR C: tenderize is now per-part (HunterPie model).
+    // Stamp two demo parts with active tenderize so the .pc strip lights up
+    // in the control panel. 头 (idx 0) — 45s / 90s; 尾巴 (idx 3) — 12s / 90s.
+    // Demo schemas above always emit >= 4 parts (头/左翼/右翼/尾巴/左脚/右脚
+    // for 火龙 id=1), so the assert only fires on a malformed demo set.
+    Q_ASSERT(m.parts.size() >= 4);
+    m.parts[0].tenderizeDuration    = 45.0F;
+    m.parts[0].tenderizeMaxDuration = 90.0F;
+    m.parts[3].tenderizeDuration    = 12.0F;
+    m.parts[3].tenderizeMaxDuration = 90.0F;
 
     monster_ = m;
     hasData_ = true;
