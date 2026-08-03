@@ -95,6 +95,8 @@ private:
     void launchOverlay(bool editMode);
     void stopOverlay();
     void switchGame(mhw::GameId game);
+    void restartOverlayWithCurrentGame();
+    void refreshAutoDetect();
     void onOverlayExited();
     void setOverlayRunning(bool running);
     void syncAppearance(int idx);
@@ -121,6 +123,8 @@ private:
     // v0.6 Phase 4: World/Rise game selector at the top of the rail.
     QPushButton *gameWorldBtn_ = nullptr;
     QPushButton *gameRiseBtn_  = nullptr;
+    // v0.6 Phase 5: live auto-detect chip beside the game selector.
+    QLabel *autoDetectBadge_ = nullptr;
     QStackedWidget *inspectorStack_ = nullptr;
     HudCanvas *canvas_ = nullptr;
     QPushButton *safeAreaBtn_ = nullptr;
@@ -146,6 +150,9 @@ private:
     // new --game once onOverlayExited() observes the exit.
     mhw::GameId  currentGame_ = mhw::GameId::World;
     bool         pendingRestart_ = false;
+    // v0.6 Phase 5: most recent successful /proc scan (persisted under the
+    // "detectedGame" QSettings key). Refreshed every 5s by the live badge.
+    mhw::GameId  lastDetectedGame_ = mhw::GameId::World;
 
     // v0.5.6 polish: animated stage toggle. savedStageSize_ captures the
     // user-chosen (or default 45/55) stage height when the user hides

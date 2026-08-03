@@ -202,6 +202,14 @@ QString qssBase()
         "padding:8px 0;font-family:'Chakra Petch';font-weight:600;font-size:13px;letter-spacing:1px;}"
         "QPushButton#gameBtn:hover{background:%3;color:%2;}"
         "QPushButton#gameBtn[selected=\"true\"]{background:%3;color:%10;border-color:%10;}"
+        // v0.6 Phase 5: auto-detect chip in the GAME row. grey = nothing
+        // running, cyan = detected game matches the selection, amber =
+        // mismatch (clickable to switch).
+        "QLabel#autoDetect{font-family:'Chakra Petch';font-size:12px;"
+        " letter-spacing:1px;background:transparent;border:none;padding-top:2px;}"
+        "QLabel#autoDetect[state=\"gray\"]{color:%6;}"
+        "QLabel#autoDetect[state=\"cyan\"]{color:%10;}"
+        "QLabel#autoDetect[state=\"amber\"]{color:%9;}"
     );
     // Replace longest placeholders first. QString::arg historically treats
     // %1 as a prefix of %10/%11 in chained substitutions, which produced
@@ -377,8 +385,14 @@ ControlPanel::ControlPanel(QWidget *parent)
     gameRiseBtn_ = new QPushButton(QStringLiteral("RISE"));
     gameRiseBtn_->setObjectName("gameBtn");
     gameRiseBtn_->setCursor(Qt::PointingHandCursor);
+    autoDetectBadge_ = new QLabel(QStringLiteral("● NO GAME RUNNING"));
+    autoDetectBadge_->setObjectName("autoDetect");
+    autoDetectBadge_->setProperty("state", "gray");
+    autoDetectBadge_->setWordWrap(true);
+    autoDetectBadge_->installEventFilter(this);
     gameRow->addWidget(gameWorldBtn_);
     gameRow->addWidget(gameRiseBtn_);
+    gameRow->addWidget(autoDetectBadge_);
     scrollLayout->addLayout(gameRow);
     scrollLayout->addSpacing(20);
     connect(gameWorldBtn_, &QPushButton::clicked, this, [this]{ switchGame(mhw::GameId::World); });
@@ -671,17 +685,54 @@ ControlPanel::ControlPanel(QWidget *parent)
     // v0.6 Phase 4: initial game selection. Honour the persisted choice
     // (written by switchGame); on first run — no saved value — fall back
     // to auto-detecting a running World/Rise process.
+    // v0.6 Phase 5: surface the scan result in the rail badge and persist
+    // it as "detectedGame"; the 5s timer keeps the badge live afterwards.
     {
         QSettings s;
         const QString savedGame = s.value(QStringLiteral("game")).toString();
+        const auto detected = mhw::detectGame();
+        if (detected) {
+            lastDetectedGame_ = detected->game;
+            s.setValue(QStringLiteral("detectedGame"),
+                       detected->game == mhw::GameId::Rise ? QStringLiteral("rise")
+                                                           : QStringLiteral("world"));
+        }
         if (savedGame == QStringLiteral("rise")) {
             switchGame(mhw::GameId::Rise);
         } else if (savedGame == QStringLiteral("world")) {
             switchGame(mhw::GameId::World);
         } else {
-            const auto detected = mhw::detectGame();
             switchGame(detected ? detected->game : mhw::GameId::World);
         }
+        // One-shot startup text ("keep / change?" framing); the first
+        // timer tick after 5s takes over with the live-badge format.
+        if (autoDetectBadge_) {
+            if (!detected) {
+                autoDetectBadge_->setText(
+                    QStringLiteral("AUTO-DETECT: NONE — start MHW or MHR"));
+                autoDetectBadge_->setProperty("state", "gray");
+            } else {
+                const QString name = detected->game == mhw::GameId::Rise
+                                         ? QStringLiteral("RISE") : QStringLiteral("WORLD");
+                if (detected->game == currentGame_) {
+                    autoDetectBadge_->setText(
+                        QStringLiteral("AUTO-DETECT: %1 RUNNING (pid %2)")
+                            .arg(name).arg(detected->pid));
+                    autoDetectBadge_->setProperty("state", "cyan");
+                } else {
+                    autoDetectBadge_->setText(
+                        QStringLiteral("AUTO-DETECT: %1 RUNNING — click %1 to switch")
+                            .arg(name));
+                    autoDetectBadge_->setProperty("state", "amber");
+                }
+            }
+            autoDetectBadge_->style()->unpolish(autoDetectBadge_);
+            autoDetectBadge_->style()->polish(autoDetectBadge_);
+        }
+        auto *autoDetectTimer = new QTimer(this);
+        connect(autoDetectTimer, &QTimer::timeout,
+                this, [this]{ refreshAutoDetect(); });
+        autoDetectTimer->start(5000);
     }
 }
 
@@ -796,6 +847,16 @@ bool ControlPanel::eventFilter(QObject *watched, QEvent *event)
         }
     }
     if (event->type() == QEvent::MouseButtonRelease) {
+        // v0.6 Phase 5: clicking the auto-detect chip switches to the
+        // detected game (hot-swaps when the overlay is running).
+        if (watched == autoDetectBadge_) {
+            const auto detected = mhw::detectGame();
+            if (detected) {
+                switchGame(detected->game);
+                refreshAutoDetect();
+            }
+            return true;
+        }
         for (int i = 0; i < 3; ++i) {
             if (watched == ctl_[i].navButton) {
                 selectPanel(i);
@@ -1149,10 +1210,16 @@ QWidget *ControlPanel::buildEditModeBlock()
 
 // v0.6 Phase 4: select the target game. Highlights the matching rail
 // button and persists the choice (read back at construction); the next
-// launchOverlay() passes it to the overlay via --game. A running overlay
-// is left untouched — the switch takes effect on the next launch.
+// launchOverlay() passes it to the overlay via --game.
+//
+// v0.6 Phase 5: hot-swap. Clicking the OTHER game while the overlay is
+// running SIGTERMs it and arms pendingRestart_; the 250ms PID-poll in
+// onOverlayExited() observes the exit and relaunches with the new
+// --game. Clicking the SAME game is a no-op — no persistence write, no
+// SIGTERM, no log noise.
 void ControlPanel::switchGame(mhw::GameId game)
 {
+    const bool changed = (game != currentGame_);
     currentGame_ = game;
     const bool isRise = (game == mhw::GameId::Rise);
 
@@ -1167,9 +1234,23 @@ void ControlPanel::switchGame(mhw::GameId game)
         gameRiseBtn_->style()->polish(gameRiseBtn_);
     }
 
-    QSettings s;
-    s.setValue(QStringLiteral("game"),
-               isRise ? QStringLiteral("rise") : QStringLiteral("world"));
+    if (changed) {
+        QSettings s;
+        s.setValue(QStringLiteral("game"),
+                   isRise ? QStringLiteral("rise") : QStringLiteral("world"));
+    }
+
+    if (changed && overlayPid_ != 0) {
+        pendingRestart_ = true;
+        if (statusBadge_) {
+            statusBadge_->setText(QStringLiteral("●   SWITCHING TO %1…")
+                .arg(isRise ? QStringLiteral("RISE") : QStringLiteral("WORLD")));
+        }
+        stopOverlay();
+        // stopOverlay() pauses the poll timer; the hot-swap needs it
+        // alive to observe the exit and trigger the relaunch.
+        if (overlayWatch_) overlayWatch_->start();
+    }
 }
 
 // L3: spawn mhw-overlay as a detached subprocess, hide the console while
@@ -1296,9 +1377,61 @@ void ControlPanel::onOverlayExited()
     if (editBtn_)  editBtn_->setEnabled(true);
     if (statusBadge_) statusBadge_->setText(QStringLiteral("READY"));
     setOverlayRunning(false);
+    // v0.6 Phase 5: hot-swap — the user switched game while running, so
+    // relaunch with the freshly-updated currentGame_. If the launch
+    // fails (missing binary, permission denied) launchOverlay() returns
+    // without setting overlayPid_; the console reappears in the READY
+    // state, which is the right fallback.
+    if (pendingRestart_) {
+        pendingRestart_ = false;
+        restartOverlayWithCurrentGame();
+    }
     show();
     raise();
     activateWindow();
+}
+
+// v0.6 Phase 5: relaunch used by the hot-swap path. Saves mask +
+// appearance first (same pattern as launchOverlay's cold start) so the
+// restarted overlay sees the user's latest toggles and sliders.
+void ControlPanel::restartOverlayWithCurrentGame()
+{
+    saveMaskToDisk();
+    if (player_)  player_->saveAppearance();
+    if (monster_) monster_->saveAppearance();
+    if (damage_)  damage_->saveAppearance();
+    launchOverlay(/*editMode=*/false);
+}
+
+// v0.6 Phase 5: live auto-detect badge. Rescans /proc and repaints the
+// chip in the GAME row: grey = nothing running, cyan = detected game
+// matches currentGame_, amber = mismatch (click switches / hot-swaps).
+void ControlPanel::refreshAutoDetect()
+{
+    if (!autoDetectBadge_) return;
+    const auto detected = mhw::detectGame();
+    if (detected) {
+        lastDetectedGame_ = detected->game;
+        QSettings s;
+        s.setValue(QStringLiteral("detectedGame"),
+                   detected->game == mhw::GameId::Rise ? QStringLiteral("rise")
+                                                       : QStringLiteral("world"));
+        const QString name = detected->game == mhw::GameId::Rise
+                                 ? QStringLiteral("RISE") : QStringLiteral("WORLD");
+        const bool match = (detected->game == currentGame_);
+        autoDetectBadge_->setText(
+            QStringLiteral("● DETECTED %1 · pid %2 · switch →")
+                .arg(name).arg(detected->pid));
+        autoDetectBadge_->setProperty("state", match ? "cyan" : "amber");
+        autoDetectBadge_->setCursor(match ? Qt::ArrowCursor
+                                          : Qt::PointingHandCursor);
+    } else {
+        autoDetectBadge_->setText(QStringLiteral("● NO GAME RUNNING"));
+        autoDetectBadge_->setProperty("state", "gray");
+        autoDetectBadge_->setCursor(Qt::ArrowCursor);
+    }
+    autoDetectBadge_->style()->unpolish(autoDetectBadge_);
+    autoDetectBadge_->style()->polish(autoDetectBadge_);
 }
 
 namespace {
