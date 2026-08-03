@@ -68,6 +68,20 @@ public:
     template <typename T>
     std::vector<T> readArray(std::uintptr_t address, std::size_t count, QString *error = nullptr) const
     {
+        // C1 (v0.7.5 audit): clamp garbage counts before they feed the
+        // vector allocator. Every current call site passes a small
+        // constant (2..128), so a bogus count can only arrive if future
+        // code reads it from game memory at a TOCTOU moment (process
+        // death / zone transition); an uncapped std::vector<T>(count)
+        // would then throw bad_alloc/length_error straight into the
+        // poll loop and terminate the whole overlay.
+        constexpr std::size_t kMaxElements = 4096;
+        if (count > kMaxElements) {
+            if (error)
+                *error = QStringLiteral("readArray: count %1 exceeds safety cap")
+                             .arg(static_cast<qulonglong>(count));
+            return {};
+        }
         std::vector<T> values(count);
         if (count == 0)
             return values;
@@ -152,6 +166,13 @@ private:
     int  cachedSharpnessWeaponId_ = -1;
     int  cachedSharpnessThresholds_[7] = {0,0,0,0,0,0,0};
     bool cachedSharpnessThresholdsValid_ = false;
+    // S1 (v0.7.5 audit): HunterPie MHWMeleeWeapon.MaximumSharpness needs
+    // the MINIMUM_SHARPNESSES_ADDRESS table (8 ints, static in game
+    // memory — HunterPie caches it with `??=`) and the weapon's MaxLevel
+    // field to decide whether handicraft bonus applies. Cached here the
+    // same way thresholds are.
+    int  cachedMinimumSharpnesses_[8] = {0,0,0,0,0,0,0,0};
+    bool cachedMinimumSharpnessesValid_ = false;
     // HunterPie LockOn mode: LOCKON chain resolves a list node whose +0x950
     // contains the targeted monster's double-linked-list index.
     int lockOnTargetIndex_ = -1;

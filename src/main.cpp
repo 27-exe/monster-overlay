@@ -290,7 +290,22 @@ int main(int argc, char **argv)
     QTimer timer;
 
     QObject::connect(&timer, &QTimer::timeout, [&] {
-        const mhw::GameSnapshot snap = pollGame();
+        // C1 (v0.7.5 audit): exception barrier around the entire tick.
+        // Any unexpected throw from the read path (bad_alloc in a
+        // readArray that slipped past its clamp, std::bad_variant_access
+        // etc.) must NOT terminate the overlay process — degrade to a
+        // skipped frame instead. readArray clamping is the first line
+        // of defence; this is the last.
+        mhw::GameSnapshot snap;
+        try {
+            snap = pollGame();
+        } catch (const std::exception &e) {
+            qWarning("poll tick skipped (exception): %s", e.what());
+            return;
+        } catch (...) {
+            qWarning("poll tick skipped (unknown exception)");
+            return;
+        }
         const bool showAll = editMode;
 
         // Once edit-mode demo data is seeded, each panel keeps its

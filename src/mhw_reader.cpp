@@ -273,10 +273,19 @@ std::optional<qint64> MhwReader::findGamePid(const QString &exeName)
     const QByteArray exeNameBytes = exeName.toLower().toUtf8();
 
     // Cache hit (found): skip rescan for 5 s.
+    // C2 (v0.7.5 audit): the old check only verified that
+    // /proc/<pid>/maps EXISTS. If the game exited and the kernel reused
+    // the PID within the 5 s cache window, we would keep reading an
+    // unrelated process with the stale imageBase_ — silently wrong
+    // values instead of a clean "not attached". Re-verify that the
+    // cached PID's maps still contain the game exe; a single maps read
+    // is cheap compared to the full /proc scan we're skipping.
     if (cachedPid > 0 && (nowMs - lastScanMs) < 5000) {
-        if (QFile::exists(QStringLiteral("/proc/%1/maps").arg(cachedPid)))
+        QFile maps(QStringLiteral("/proc/%1/maps").arg(cachedPid));
+        if (maps.open(QIODevice::ReadOnly | QIODevice::Text)
+            && maps.readAll().toLower().contains(exeNameBytes))
             return cachedPid;
-        cachedPid = -1;
+        cachedPid = -1;  // stale PID: fall through to a full rescan
     }
     // Cache hit (not found): skip rescan for 5 s as well.
     // Without this, a poll loop in edit mode fires 60 times/sec
@@ -401,8 +410,9 @@ GameSnapshot MhwReader::poll()
         snapshot.monsters = readMonsters(&error);
         const auto t1 = std::chrono::steady_clock::now();
         if (callCount % 10 == 0)
-            qDebug("poll: monsters=%zu in %lldus", snapshot.monsters.size(),
-                     std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+            qDebug("poll: monsters=%lld in %lldus",
+                     static_cast<long long>(snapshot.monsters.size()),
+                     static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()));
     }
     snapshot.player = readPlayer(nullptr);
     // HunterPie: persistent identity (name, MR) comes from the save

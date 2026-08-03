@@ -1,5 +1,7 @@
 #include "mhw_reader.h"
 
+#include <algorithm>
+
 
 namespace mhw {
 
@@ -479,10 +481,64 @@ SharpnessSnapshot MhwReader::readSharpness(int weaponId, QString *error)
 
     result.threshold = (result.level <= 0) ? 0 : result.thresholds[result.level - 1];
 
-    const int base = result.thresholds[result.level];
-    result.maxHits = base + 50;
-    if (result.maxHits > 400)
-        result.maxHits = 400;
+    // S1 (v0.7.5 audit): HunterPie MHWGameUtils.MaximumSharpness, exact.
+    // The old code hardcoded `base + 50` capped at 400, which overstated
+    // the ceiling for weapons that don't reach purple and ignored that
+    // the handicraft bonus only applies at the weapon's FINAL level.
+    //
+    // HunterPie formula (MHWMeleeWeapon.GetWeaponSharpness →
+    // MHWGameUtils.MaximumSharpness):
+    //   actualMax = min(thresholds[level], minimumSharpnesses[MaxLevel])
+    //   isLastLevel = minimumSharpnesses[MaxLevel] < thresholds[level]
+    //   maxHits = actualMax + (isLastLevel ? 10 * min(handicraft, 5) : 0)
+    //
+    // MaxLevel lives in the same weapon struct at +0x1D10; the minimum
+    // table is static game memory (HunterPie caches it with `??=` — we
+    // do the same via cachedMinimumSharpnesses_).
+    const auto maxLevel = memory_.read<std::int32_t>(sharpPtr + 0x1D10ULL);
+
+    if (!cachedMinimumSharpnessesValid_) {
+        // MINIMUM_SHARPNESSES_ADDRESS is a flat table — no pointer chain
+        // (HunterPie: Memory.ReadAsync<int>(absolute, count: 8)).
+        const auto mins = memory_.readArray<std::int32_t>(
+            absolute(QStringLiteral("MINIMUM_SHARPNESSES_ADDRESS")), 8);
+        if (mins.size() == 8) {
+            for (int i = 0; i < 8; ++i)
+                cachedMinimumSharpnesses_[i] = mins[i];
+            cachedMinimumSharpnessesValid_ = true;
+        }
+    }
+
+    const bool haveMaxData = maxLevel.has_value()
+                          && *maxLevel >= 0 && *maxLevel < 8
+                          && cachedMinimumSharpnessesValid_;
+    const int upperBound = result.thresholds[result.level];
+    const int actualMax  = haveMaxData
+        ? std::min(upperBound, cachedMinimumSharpnesses_[*maxLevel])
+        : upperBound;
+    result.maxHits = actualMax;
+
+    // Handicraft (skill id 54): only on the weapon's final level. HunterPie
+    // reads the gear-skill array via ABNORMALITY_ADDRESS + GEAR_SKILL_OFFSETS;
+    // each entry is a 24-byte MHWGearSkill (Pack=1) with LevelGear at +8.
+    // One pointer chain + one byte read per tick — cheap, and equipment
+    // changes don't always coincide with weapon swaps, so no caching here.
+    const bool isLastLevel = haveMaxData
+                          && cachedMinimumSharpnesses_[*maxLevel] < upperBound;
+    if (isLastLevel) {
+        int handicraftLevel = 0;
+        const std::uintptr_t gearSkillsPtr = followPointerChain(
+            memory_,
+            absolute(QStringLiteral("ABNORMALITY_ADDRESS")),
+            map_.offsets(QStringLiteral("GEAR_SKILL_OFFSETS")),
+            nullptr);
+        if (gearSkillsPtr) {
+            if (const auto lvl = memory_.read<std::uint8_t>(
+                    gearSkillsPtr + 54ULL * 24ULL + 8ULL))
+                handicraftLevel = *lvl;
+        }
+        result.maxHits += 10 * std::min(handicraftLevel, 5);
+    }
 
     result.valid = true;
     return result;
