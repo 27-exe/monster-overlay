@@ -1042,9 +1042,29 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     const QStringList &keys = idx == 0 ? mhw::PlayerSection::names()
                             : idx == 1 ? mhw::MonsterSection::names()
                                        : mhw::DamageSection::names();
+    // v0.7.1: hide PlayerSection rows that don't apply to the selected
+    // game. Mantles are MHW-only (no mantle system in Rise); Wirebugs
+    // are MHR-only (no silkbind in World). Section MASK is unchanged —
+    // the bit stays set if the user previously toggled it on, so
+    // switching back to the owning game restores their choice. Only
+    // the toggle row UI is hidden.
     for (int b = 0; b < labels.size(); ++b) {
         auto *row = new SectionRow(labels[b], b < keys.size() ? keys[b] : QString(), iconKind(idx, b));
         row->setAccent(panelAccent(idx));
+        if (idx == 0) {
+            if (currentGame_ == mhw::GameId::World && b == int(mhw::PlayerSection::Wirebug)) {
+                row->setVisible(false);
+                row->setEnabled(false);
+                ctl_[idx].subs.push_back(row);  // still tracked so mask bit index stays aligned
+                continue;
+            }
+            if (currentGame_ == mhw::GameId::Rise && b == int(mhw::PlayerSection::Mantles)) {
+                row->setVisible(false);
+                row->setEnabled(false);
+                ctl_[idx].subs.push_back(row);
+                continue;
+            }
+        }
         ctl_[idx].subs.push_back(row);
         vl->addWidget(row);
     }
@@ -1335,7 +1355,35 @@ void ControlPanel::switchGame(mhw::GameId game)
     // wirebug row, no mantles) regardless of which game the rail
     // picked.
     if (player_) player_->setGameForDemo(game);
-    for (int i = 0; i < 3; ++i) rebuildAndRender(i);
+    // Also rebuild the inspector stack: buildInspector() decided which
+    // section rows to hide based on currentGame_ at construction time,
+    // so switching games must redo that decision (otherwise Rise would
+    // still show Mantles and World would still show Wirebug).
+    if (inspectorStack_) {
+        QWidget *oldPlayer = inspectorStack_->widget(0);
+        QWidget *oldMonster = inspectorStack_->widget(1);
+        QWidget *oldDamage = inspectorStack_->widget(2);
+        inspectorStack_->removeWidget(oldPlayer);
+        inspectorStack_->removeWidget(oldMonster);
+        inspectorStack_->removeWidget(oldDamage);
+        oldPlayer->deleteLater();
+        oldMonster->deleteLater();
+        oldDamage->deleteLater();
+        inspectorStack_->addWidget(buildInspector(QStringLiteral("PLAYER"),
+                                                   QStringLiteral("玩家状态面板"),
+                                                   mhw::PlayerSection::displayNames(), 0));
+        inspectorStack_->addWidget(buildInspector(QStringLiteral("MONSTER"),
+                                                   QStringLiteral("怪物状态面板"),
+                                                   mhw::MonsterSection::displayNames(), 1));
+        inspectorStack_->addWidget(buildInspector(QStringLiteral("DAMAGE"),
+                                                   QStringLiteral("队伍伤害面板"),
+                                                   mhw::DamageSection::displayNames(), 2));
+        selectPanel(selectedPanel_);
+        // After rebuild the new SectionRow instances are empty; restore
+        // the persisted mask so the toggles reflect the user's last state.
+        loadMaskFromDisk();
+        for (int i = 0; i < 3; ++i) rebuildAndRender(i);
+    }
 
     if (changed) {
         QSettings s;
