@@ -542,20 +542,13 @@ void MonsterPanel::paintPanel(QPainter &p)
         pcAreaH = pcRows * kPcCellH + (pcRows - 1) * kPcGap;
     }
     int tzAreaH = 0;
-    const int tzCount = monster_.tenderizes.size();
-    if (tzCount > 0) {
-        const int tzRows = (tzCount + kTzCols - 1) / kTzCols;
-        constexpr int kTzCellH = kTzPadY + kTzTopFont + 4 + kTzMiniH + kTzPadY;
-        tzAreaH = tzRows * kTzCellH + (tzRows - 1) * kTzGap;
-    }
 
     int totalH = kPanelPad;
     if (onInfo)                  totalH += kInfoH;
     if (onHp)                    totalH += kRowGap + hpH;
     if (rageDrawn)               totalH += kRowGap + rageH;
     if (onAil && scCount > 0)    totalH += kRowGap + (rageDrawn ? kRowGap : 0) + scAreaH;
-    if (onTenderize && tzCount > 0)
-                                   totalH += kRowGap + tzAreaH;
+    if (onTenderize)               totalH += 0; // v0.7.4 PR C will reintroduce
     if (onParts && pcCount > 0)  totalH += kRowGap + pcAreaH;
     totalH += kPanelPad;
     setContentSize(kPanelWidth, totalH);
@@ -795,40 +788,14 @@ void MonsterPanel::paintPanel(QPainter &p)
         y += scRows * kScCellH + (scRows - 1) * kScGap;
     }
 
-    // ---- 5b. v0.7.3 .tsc — Tenderize (Clutch Claw soft-timer) pills ------
-    // Each pill shows partId (no TenderizeIds → part name map yet), the
-    // remaining integer seconds, and a fill bar driven by duration /
-    // maxDuration. Only renders when at least one slot is active; the
-    // section toggle (MonsterSection::Tenderize) lets the user hide it
-    // entirely.
-    if (onTenderize && tzCount > 0) {
-        y += kRowGap;
-        constexpr int kTzCellH = kTzPadY + kTzTopFont + 4 + kTzMiniH + kTzPadY;
-        const int tzCellW = (innerW - kTzGap * (kTzCols - 1)) / kTzCols;
-        const int tzRows = (tzCount + kTzCols - 1) / kTzCols;
-        for (int i = 0; i < tzCount; ++i) {
-            const int row = i / kTzCols;
-            const int col = i % kTzCols;
-            const int cy = y + row * (kTzCellH + kTzGap);
-            const int cx = innerLeft + col * (tzCellW + kTzGap);
-            const auto &s = monster_.tenderizes[i];
-            TzEntry e;
-            e.partId = s.partId;
-            e.duration = s.duration;
-            e.maxDuration = s.maxDuration > 0.0F ? s.maxDuration : s.duration;
-            drawTenderize(p, QRectF(cx, cy, tzCellW, kTzCellH), e);
-        }
-        y += tzRows * kTzCellH + (tzRows - 1) * kTzGap;
-    }
-
     // ---- 6. .pgrid (HTML .pc cards: 头/翼/尾/脚) ----
     // Solo: per-part HP + counter.
     // Multiplayer: part HP cannot be read, so the mini bar carries the
     // total monster HP percentage and the tag chip shows the cumulative
     // break / sever count once a part has been touched.
-    const float totalPct = (monster_.maxHealth > 0.0F)
-        ? std::clamp(monster_.health / monster_.maxHealth, 0.0F, 1.0F)
-        : 0.0F;
+    // (v0.7.4 PR B: totalPct removed — was never consumed in either
+    // solo or multiplayer path; multiplayer stale-HP gating happens via
+    // p.health/p.maxHealth on each entry below.)
     QVector<PcEntry> pcList;
     pcList.reserve(monster_.parts.size());
     for (const auto &p : monster_.parts) {
@@ -949,24 +916,25 @@ void MonsterPanel::setupDemoData()
         ps.name = QString::fromUtf8(dp.name);
         ps.health = dp.hp;
         ps.maxHealth = dp.maxHp;
+        ps.flinch = dp.hp;            // mirror for flinch bar pre-PR C
+        ps.maxFlinch = dp.maxHp;
         ps.counter = dp.counter;
         ps.isBreakable = dp.breakable;
         ps.isSeverable = dp.severable;
+        ps.partType = dp.severable ? mhw::PartType::Severable
+                    : (dp.breakable ? mhw::PartType::Breakable
+                                    : mhw::PartType::Flinch);
         m.parts.append(ps);
     }
 
-    // v0.7.3 demo: two active tenderize slots.
-    struct DTz { std::uint32_t partId; float dur; float maxD; };
-    const DTz dtz[] = {
-        { 0, 45.0F, 90.0F },      // 头
-        { 3, 12.0F, 90.0F },      // 尾巴
-    };
-    for (const auto &t : dtz) {
-        TenderizeSlot tz;
-        tz.partId = t.partId;
-        tz.duration = t.dur;
-        tz.maxDuration = t.maxD;
-        m.tenderizes.append(tz);
+    // v0.7.4 PR B: tenderize is now per-part (HunterPie model). Stamp two
+    // demo parts with active tenderize; PR C will draw the mini bar.
+    // 头 (idx 0) — 45s / 90s; 尾巴 (idx 3) — 12s / 90s.
+    if (m.parts.size() >= 4) {
+        m.parts[0].tenderizeDuration    = 45.0F;
+        m.parts[0].tenderizeMaxDuration = 90.0F;
+        m.parts[3].tenderizeDuration    = 12.0F;
+        m.parts[3].tenderizeMaxDuration = 90.0F;
     }
 
     monster_ = m;

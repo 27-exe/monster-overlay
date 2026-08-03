@@ -108,7 +108,11 @@ private:
     Zone readZone(QString *error);
     QVector<MonsterSnapshot> readMonsters(QString *error);
     void readMonsterAilments(MonsterSnapshot &monster);
-    void readMonsterTenderizes(MonsterSnapshot &monster);
+    // v0.7.4: Tenderize is folded into PartSnapshot; this routine walks
+    // the 10 in-memory TenderizeInfoStructure slots and writes each slot's
+    // (Duration, MaxDuration) into every PartSnapshot whose PartSchema
+    // declares the slot's PartId in its tenderizeIds list.
+    void applyTenderizesToParts(MonsterSnapshot &monster);
     PlayerSnapshot readPlayer(QString *error);
     QVector<PartyMemberSnapshot> readParty(QString *error);
     QuestSnapshot readQuest(QString *error);

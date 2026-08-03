@@ -7,9 +7,25 @@
 
 namespace mhw {
 
+// v0.7.4 (PR B — monster-state-and-tenderize-20260803):
+// Mirrors HunterPie-v2 MHWMonsterPart.Type dispatch (PartType.cs).
+// UpdateSeverableData / UpdateFlinchData / UpdateBreakableData each populate
+// different fields, so the UI needs to know which set is meaningful.
+enum class PartType {
+    Flinch,      // No sever flag, no break thresholds → only flinch bar matters.
+    Severable,   // IsSeverable → only sever bar (Health / MaxHealth) matters.
+    Breakable,   // BreakThresholds non-empty → cumulative threshold math on
+                 // Health / MaxHealth, plus flinch bar for the current layer.
+};
+
+// v0.7.4: Tenderize state lives on the part (HunterPie MHWMonsterPart.Tenderize
+// / MaxTenderize), not on a separate slot model. Each part writes its own
+// tenderize* fields when the runtime walks the 10 TenderizeInfoStructure slots
+// and matches slot.PartId against this part's PartSchema.tenderizeIds.
 struct PartSnapshot {
     int index{-1};
     QString name;
+    PartType partType{PartType::Flinch};
     float health{};
     float maxHealth{};
     float extraHealth{};
@@ -18,6 +34,8 @@ struct PartSnapshot {
     float maxFlinch{};
     int counter{};
     int firstThreshold{0};
+    float tenderizeDuration{};          // 0.0 → no active tenderize on this part
+    float tenderizeMaxDuration{};       // paired with tenderizeDuration
     bool isSeverable{false};
     bool isBreakable{false};
     bool isBroken{};
@@ -34,15 +52,9 @@ struct MonsterAilmentSnapshot {
     int counter{};
 };
 
-// v0.7.3: Clutch Claw Tenderize slot (HunterPie MHWTenderizeInfoStructure).
-// Layout: +0x08 Duration(f32) / +0x0C MaxDuration(f32) / +0x30 PartId(u32).
-// Address field at +0x00 is scanner-injected — not a real data field.
-struct TenderizeSlot {
-    std::uint32_t partId{0xFFFFFFFFu};
-    float    duration{0.0F};
-    float    maxDuration{0.0F};
-    bool isValid() const { return partId != 0xFFFFFFFFu && duration > 0.0F; }
-};
+// v0.7.4: Tenderize data is folded into PartSnapshot (see above).
+// MonsterSnapshot no longer carries a separate tenderize slot vector —
+// the runtime writes each PartSnapshot.tenderizeDuration directly.
 
 struct MonsterSnapshot {
     std::uintptr_t address{};
@@ -67,7 +79,6 @@ struct MonsterSnapshot {
                                 // maxHealth.
     QVector<PartSnapshot> parts;
     QVector<MonsterAilmentSnapshot> ailments;
-    QVector<TenderizeSlot> tenderizes;     // v0.7.3: Clutch Claw 软化
 
     // Qurio (Rise only)
     bool qurioActive{false};

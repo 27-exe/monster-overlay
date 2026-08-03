@@ -65,24 +65,51 @@ void MhwReader::readMonsterAilments(MonsterSnapshot &monster)
 }
 
 
-void MhwReader::readMonsterTenderizes(MonsterSnapshot &monster)
+// v0.7.4: Refactored from readMonsterTenderizes() to write tenderize state
+// into each affected PartSnapshot instead of accumulating into a separate
+// MonsterSnapshot.tenderizes vector.
+//
+// HunterPie model (MHWMonster.GetMonsterPartTenderizes, lines 413-433 of
+// MHWMonster.cs): the in-memory MHWTenderizeInfoStructure[10] is a fixed-size
+// scratch table; the *truth* lives on each part as
+// MHWMonsterPart.Tenderize / MaxTenderize. We follow the same model.
+//
+// Step 1 — read all 10 raw slots once.
+// Step 2 — for each slot whose PartId is not the 0xFFFFFFFFu sentinel,
+//          look up the monster schema and find every PartSchema whose
+//          tenderizeIds contains the slot's PartId, then write the slot's
+//          (Duration, MaxDuration) onto the matching PartSnapshot.
+//
+// We zero each part's tenderize fields before applying, so a slot that
+// expired between ticks (slot cleared to 0xFFFFFFFFu) leaves the part at
+// 0.0 — which the UI uses to hide the mini bar.
+void MhwReader::applyTenderizesToParts(MonsterSnapshot &monster)
 {
-    // v0.7.3: clear so per-tick refresh from the cache-hit path works
-    monster.tenderizes.clear();
-
-    // HunterPie MHWMonster.GetMonsterTenderize():
-    //   monster + 0x1C458 → 10 × MHWTenderizeInfoStructure
-    // The struct's "Address" field at +0x00 is a scanner-injected pointer
-    // we ignore; real data starts at +0x08 (Duration), +0x0C (MaxDuration),
-    // +0x30 (PartId, 0xFFFFFFFF = empty slot).
+    // Layout reference: HunterPie MHWTenderizeInfoStructure
+    //   +0x00 Address(i64) — scanner-injected, not real data
+    //   +0x08 Duration(f32)
+    //   +0x0C MaxDuration(f32)
+    //   +0x30 PartId(u32) — 0xFFFFFFFFu = empty slot
     constexpr std::uintptr_t TENDERIZE_OFFSET = 0x1C458ULL;
-    constexpr int SLOT_COUNT  = 10;
-    constexpr int SLOT_SIZE   = 64;          // sizeof(MHWTenderizeInfoStructure)
+    constexpr int SLOT_COUNT = 10;
+    constexpr int SLOT_SIZE  = 64;          // sizeof(MHWTenderizeInfoStructure)
+
+    // Reset before applying so expired slots actually clear the part.
+    for (PartSnapshot &p : monster.parts) {
+        p.tenderizeDuration = 0.0F;
+        p.tenderizeMaxDuration = 0.0F;
+    }
 
     std::vector<std::uint8_t> buf(SLOT_COUNT * SLOT_SIZE);
     if (!memory_.readBytes(monster.address + TENDERIZE_OFFSET,
                            buf.data(), buf.size(), nullptr))
         return;
+
+    // Resolve the schema for this monster. If unknown we cannot map a
+    // slot.PartId to a part, so silently skip — same behaviour as when
+    // HunterPie's MonsterRepository returns UnknownDefinition.
+    const QVector<PartSchema> schema = kPartSchemas.value(monster.id);
+    if (schema.isEmpty()) return;
 
     for (int i = 0; i < SLOT_COUNT; ++i) {
         const std::uint8_t *p = buf.data() + i * SLOT_SIZE;
@@ -92,15 +119,26 @@ void MhwReader::readMonsterTenderizes(MonsterSnapshot &monster)
         std::memcpy(&maxDuration, p + 0x0C, 4);
         std::memcpy(&partId,      p + 0x30, 4);
 
-        // Filter empty / expired slots.
-        if (partId == 0xFFFFFFFFu) continue;
-        if (duration <= 0.0F)      continue;
+        if (partId == 0xFFFFFFFFu) continue;  // empty slot
+        if (duration <= 0.0F)      continue;  // expired slot
 
-        TenderizeSlot t;
-        t.partId      = partId;
-        t.duration    = duration;
-        t.maxDuration = maxDuration;
-        monster.tenderizes.push_back(t);
+        // Slot PartId is a 0..9 slot-index, not a part Id. Match against
+        // every PartSchema that lists it. Schema ordering matches the
+        // in-memory part ordering used by the rest of this function, so
+        // we can write to monster.parts at the same index.
+        for (int s = 0; s < schema.size() && s < monster.parts.size(); ++s) {
+            const PartSchema &ps = schema[s];
+            for (std::uint32_t k = 0; k < ps.tenderizeCount; ++k) {
+                if (ps.tenderizeIds[k] == partId) {
+                    // HunterPie overwrites; last slot touching this part wins.
+                    // In practice the engine only activates a slot once per
+                    // part, but writing twice is benign.
+                    monster.parts[s].tenderizeDuration = duration;
+                    monster.parts[s].tenderizeMaxDuration = maxDuration;
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -400,13 +438,17 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                             // Severable layer is bound to data.Health /
                             // data.MaxHealth verbatim (HunterPie
                             // UpdateSeverableData, no threshold math).
+                            // UpdateSeverableData only touches Sever/MaxSever;
+                            // it leaves Flinch untouched, so we mirror that
+                            // here and let the UI drive the sever bar from
+                            // health/maxHealth (PR C will route it through
+                            // a Type-dispatched painter).
                             p.health = chp;
                             p.maxHealth = mhp;
-                            p.flinch = chp;
-                            p.maxFlinch = mhp;
                             p.extraHealth = ehp;
                             p.extraMaxHealth = emhp;
                             p.counter = counter;
+                            p.partType = PartType::Severable;
                             p.isSeverable = true;
                             p.isBreakable = ps.thresholds[0] != '\0';
                             // Severed = the game cuts this part off and
@@ -457,6 +499,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                     p.counter = counter;
                     p.isSeverable = false;
                     p.isBreakable = ps.thresholds[0] != '\0';
+                    p.partType = p.isBreakable ? PartType::Breakable : PartType::Flinch;
                     // applyBreakable fills Health/MaxHealth + firstThreshold
                     // for parts that have BreakThresholds; it leaves
                     // p.health/p.maxHealth untouched for no-threshold parts
@@ -527,7 +570,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             // status. HunterPie runs GetMonsterAilments + GetTenderize
             // every tick — we now mirror that semantic here too.
             readMonsterAilments(m);
-            readMonsterTenderizes(m);
+            applyTenderizesToParts(m);
             result.push_back(m);
             monsterCache_[comp] = {m, maxHP};
             continue;
@@ -679,7 +722,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             m.isManuallyTargeted = m.isManualTargeted || m.isQuestTargeted;
         m.parts = parts;
         readMonsterAilments(m);
-        readMonsterTenderizes(m);
+        applyTenderizesToParts(m);
         monsterCache_[comp] = {m, maxHP};
         result.push_back(m);
     }
