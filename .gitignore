@@ -1,3 +1,7 @@
 build/
 .codewhale/
 .scratch/
+# local backups created during schema migrations
+*.pre-PRA
+*.pre-PRB
+*.pre-PRC

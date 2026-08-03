@@ -78,11 +78,27 @@ struct MonsterSnapshot {
 };
 
 // One schema entry per Part in HunterPie's MonsterData.xml.
+//
+// v0.7.4 (PR A — monster-state-and-tenderize-20260803):
+// Added tenderizeIds / tenderizeCount fields so the runtime can map a
+// Clutch Claw Tenderize slot's PartId back to one (or several) schema
+// parts. HunterPie XML's max is 4 ids per part (em26:10=[2,6,8,9],
+// em97:1=[0,4,8,9]) so a std::array<uint32_t,4> covers the empirical
+// upper bound; sentinel=0xFFFFFFFFu is never written by HunterPie XML.
+//
+// TenderizeIds semantics (mirrors HunterPie MHWMonster.GetMonsterPartTenderizes
+// in HunterPie-v2/HunterPie.Integrations/Datasources/MonsterHunterWorld/
+// Entity/Enemy/MHWMonster.cs:413-433): runtime walks the 10 in-memory
+// TenderizeInfoStructure slots, takes each slot's PartId, and updates
+// every schema part whose tenderizeIds contains it. The IDs here are
+// therefore slot indices (0..9), not part Ids.
 struct PartSchema {
     int id;
     bool isSeverable;
     const char* name;
     const char* thresholds;
+    std::array<std::uint32_t, 4> tenderizeIds{};   // HunterPie XML TenderizeIds
+    std::uint32_t tenderizeCount{0};              // # of valid entries in tenderizeIds
 };
 
 // Generated from data/MonsterHunterWorld.421810.map / MonsterData.xml.
