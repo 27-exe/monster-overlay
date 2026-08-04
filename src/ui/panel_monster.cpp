@@ -394,7 +394,11 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
         const int labelH = kPcTnLabelH;
         p.drawText(QRectF(tnRect.right() - labelW, labelY, labelW, labelH),
                    Qt::AlignRight | Qt::AlignVCenter,
-                   QStringLiteral("%1s").arg(static_cast<int>(e.tenderizeDuration)));
+                   // v0.7.5: tenderizeDuration already stores REMAINING
+                   // seconds (reader converts max-duration); round UP so a
+                   // 0.4s tail reads "1s" rather than a sticky "0s".
+                   QStringLiteral("%1s").arg(
+                       static_cast<int>(std::ceil(e.tenderizeDuration))));
         // Track.
         p.setPen(Qt::NoPen);
         p.setBrush(QColor(10, 11, 12));
@@ -467,8 +471,16 @@ void MonsterPanel::paintPanel(QPainter &p)
     // ---- Build status card entries from ailments (mirrors .sc ordering) ----
     QVector<ScEntry> scList;
     for (const auto &a : monster_.ailments) {
-        // Hide cards that are completely idle.
-        if (!a.active && a.buildup <= 0.0F && a.counter <= 0)
+        // Hide cards that are not actually affecting the monster RIGHT
+        // NOW. Previously `counter > 0` kept the card alive forever —
+        // once an ailment ever triggered (e.g. drool flinch) it stayed
+        // on the panel at "0s" for the whole fight. HunterPie's
+        // auto-hide semantics: hide when no timer is running and no
+        // build-up is accumulating; the historical counter alone must
+        // not pin the card.
+        const bool timerRunning = a.active && a.timer > 0.0F;
+        const bool buildingUp  = a.buildup > 0.0F;
+        if (!timerRunning && !buildingUp)
             continue;
         ScEntry e;
         e.name = a.name;
@@ -505,25 +517,24 @@ void MonsterPanel::paintPanel(QPainter &p)
         }
         // The card is "active" the moment the monster is being affected:
         //   - the ailment has triggered (timer counting down), or
-        //   - the build-up is in progress (mini bar moving), or
-        //   - the ailment has ever triggered (counter > 0).
-        e.active = a.active || a.buildup > 0.0F || a.counter > 0;
+        //   - the build-up is in progress (mini bar moving).
+        e.active = timerRunning || buildingUp;
 
         // Mini progress + timer text. Order matches the HTML examples:
         //   active + maxTimer     → "Ns" (countdown)
         //   else + maxBuildup     → "N%" (buildup fill)
-        //   else                  → "×N"  (counter, e.g. poison "×2")
-        if (a.active && a.maxTimer > 0.0F) {
+        if (timerRunning && a.maxTimer > 0.0F) {
+            // HunterPie exposes the remaining seconds directly; round UP
+            // so a 0.4s tail still shows "1s" instead of a sticky "0s"
+            // (the card disappears the moment timer hits 0 anyway).
             e.pct = std::clamp(a.timer / a.maxTimer, 0.0F, 1.0F);
-            e.tm  = QStringLiteral("%1s").arg(static_cast<int>(a.timer));
+            e.tm  = QStringLiteral("%1s").arg(static_cast<int>(std::ceil(a.timer)));
         } else if (a.maxBuildup > 0.0F) {
             e.pct = std::clamp(a.buildup / a.maxBuildup, 0.0F, 1.0F);
             e.tm  = QStringLiteral("%1%").arg(static_cast<int>(e.pct * 100));
         } else {
             e.pct = 0.0F;
-            e.tm  = a.counter > 0
-                  ? QStringLiteral("\u00d7%1").arg(a.counter)
-                  : QString();
+            e.tm  = QString();
         }
         scList.append(e);
     }

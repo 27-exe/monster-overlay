@@ -134,7 +134,14 @@ void MhwReader::applyTenderizesToParts(MonsterSnapshot &monster)
                     // HunterPie overwrites; last slot touching this part wins.
                     // In practice the engine only activates a slot once per
                     // part, but writing twice is benign.
-                    monster.parts[s].tenderizeDuration = duration;
+                    //
+                    // v0.7.5: the game's Duration counts UP from the moment
+                    // the claw attaches (0 → max). We store REMAINING time
+                    // (max - duration) so the strip's "Ns" label and fill
+                    // bar are a countdown — matching what the player sees
+                    // on the monster's own tenderize gauge.
+                    monster.parts[s].tenderizeDuration = std::max(
+                        0.0F, maxDuration - duration);
                     monster.parts[s].tenderizeMaxDuration = maxDuration;
                     break;
                 }
