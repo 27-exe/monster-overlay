@@ -176,6 +176,42 @@ private:
     // HunterPie LockOn mode: LOCKON chain resolves a list node whose +0x950
     // contains the targeted monster's double-linked-list index.
     int lockOnTargetIndex_ = -1;
+    // v0.7.5: mantle / equipment CD cache. The EQUIPMENT_ADDRESS and
+    // ABNORMALITY_ADDRESS chains occasionally return 0 in multiplayer
+    // (4-player sessions), causing the panel to flash the "no mantle
+    // equipped" placeholder mid-combat for one tick at a time. We
+    // stash the last successful read's mantle fields and replay them
+    // when the chain fails, gated by a 5-second TTL so the panel
+    // doesn't show stale data long after the player swapped gear.
+    struct CachedMantles {
+        // abnormality timers (line 100-122 of player_reader.cpp)
+        float mantleHealthTimer       = 0.0F;
+        float mantleHealthLargeTimer  = 0.0F;
+        float mantleStaminaTimer      = 0.0F;
+        float mantleStaminaLargeTimer = 0.0F;
+        float mantleToolTimer         = 0.0F;
+        float mantleToolLargeTimer    = 0.0F;
+        float earplugTimer            = 0.0F;
+        // equipment slot ids / timers / cooldowns (line 139-170)
+        int   mantleSlot0Id           = -1;
+        float mantleSlot0Timer        = 0.0F;
+        float mantleSlot0Cooldown     = 0.0F;
+        float mantleSlot0CooldownMax  = 270.0F;
+        int   mantleSlot1Id           = -1;
+        float mantleSlot1Timer        = 0.0F;
+        float mantleSlot1Cooldown     = 0.0F;
+        float mantleSlot1CooldownMax  = 270.0F;
+    };
+    CachedMantles cachedMantles_{};
+    // Wall-clock of last successful mantle read, in ms since process start.
+    // We use a counter rather than QDateTime so we don't need QDateTime in
+    // the hot path; this header stays light-weight. Caller (poll loop)
+    // bumps pollTicks_ each tick.
+    qint64 mantlesCachedAtTick_ = -1;
+    qint64 pollTick_ = 0;
+    // TTL: how many polls a cached mantle read may live before we treat
+    // it as stale. At ~4 Hz polling that's roughly 5 seconds.
+    static constexpr qint64 kMantleCacheTtl = 20;
 };
 
 } // namespace mhw

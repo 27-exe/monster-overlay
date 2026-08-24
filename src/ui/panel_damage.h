@@ -44,6 +44,14 @@ private:
     QVector<int>  masterRanks_;
     QVector<int>  slots_;            // party slot (0-3) for color assignment
     QVector<bool> locals_;           // self flag (HunterPie name match)
+    QVector<bool> left_;             // true once a previously-seen player
+                                     // disappears from snap.party (party
+                                     // shrink, drop-out, kick). Their row
+                                     // freezes at the last recorded damage
+                                     // until the quest resets the panel.
+                                     // Fixes the v0.5.x bug where a member
+                                     // dropping out zeroed their total
+                                     // damage mid-chart.
     bool hasData_{false};
     bool riseMode_{true};            // Rise placeholder until real data arrives
     bool questEnded_{false};         // freeze after quest completes (Success/Completed/Failed)

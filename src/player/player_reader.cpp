@@ -52,6 +52,15 @@ void MhwReader::refreshPlayerIdentity(PlayerSnapshot &player)
 
 // ===================================================================
 // readPlayer — HunterPie MHWPlayer.ReadVitals / GetMantlesData / debuffs
+//
+// Mantle / equipment CD sections may briefly fail to read in multiplayer
+// (4-player sessions) when the EQUIPMENT_ADDRESS pointer chain is being
+// updated by the engine. We cache the last successful per-section read
+// (abnormalityBase mantle timers, equipmentBase slot ids/cooldowns) and
+// replay it on a transient failure so the panel doesn't flash a stale
+// "no mantle equipped" placeholder for a single frame.
+//
+// See mhw_reader.h:CachedMantles for the field set.
 // ===================================================================
 PlayerSnapshot MhwReader::readPlayer(QString *error)
 {
@@ -100,6 +109,7 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
     constexpr std::size_t kSlotCount = 75;
     std::vector<float> timers;
     bool timersValid = false;
+    bool abnormalitySectionRead = false;  // v0.7.5: cache gate
     if (abnormalityBase) {
         timers = memory_.readArray<float>(
             abnormalityBase + 0x38ULL, kSlotCount, nullptr);
@@ -119,7 +129,24 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
             result.mantleToolTimer         = slot(0x64);
             result.mantleToolLargeTimer    = slot(0x68);
             result.earplugTimer            = slot(0x88);
+            abnormalitySectionRead = true;
         }
+    }
+    // v0.7.5 cache fallback: if the chain failed this poll but we have
+    // a fresh cache (within kMantleCacheTtl ticks), copy the abnormality
+    // timer fields back so the panel doesn't flicker to "no mantle". The
+    // TTL prevents stale data showing up minutes after the player swapped
+    // gear.
+    if (!abnormalitySectionRead
+        && mantlesCachedAtTick_ >= 0
+        && (pollTick_ - mantlesCachedAtTick_) <= kMantleCacheTtl) {
+        result.mantleHealthTimer       = cachedMantles_.mantleHealthTimer;
+        result.mantleHealthLargeTimer  = cachedMantles_.mantleHealthLargeTimer;
+        result.mantleStaminaTimer      = cachedMantles_.mantleStaminaTimer;
+        result.mantleStaminaLargeTimer = cachedMantles_.mantleStaminaLargeTimer;
+        result.mantleToolTimer         = cachedMantles_.mantleToolTimer;
+        result.mantleToolLargeTimer    = cachedMantles_.mantleToolLargeTimer;
+        result.earplugTimer            = cachedMantles_.earplugTimer;
     }
 
     // ---- equipment mantles (EQUIPMENT_ADDRESS -> EQUIPMENT_OFFSETS) ----
@@ -128,6 +155,7 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
         absolute(QStringLiteral("EQUIPMENT_ADDRESS")),
         map_.offsets(QStringLiteral("EQUIPMENT_OFFSETS")),
         nullptr);
+    bool equipmentSectionRead = false;  // v0.7.5: cache gate
     if (equipmentBase) {
         // HunterPie GetMantlesData() reads 40 floats per array:
         //   timers[id]      = active timer
@@ -166,7 +194,45 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
                 }
                 ++slot;
             }
+            equipmentSectionRead = true;
         }
+    }
+    // v0.7.5 cache fallback (same TTL semantics as the abnormality
+    // section above). Only the equipment slot fields are restored —
+    // not the broad "did the chain resolve" flag.
+    if (!equipmentSectionRead
+        && mantlesCachedAtTick_ >= 0
+        && (pollTick_ - mantlesCachedAtTick_) <= kMantleCacheTtl) {
+        result.mantleSlot0Id          = cachedMantles_.mantleSlot0Id;
+        result.mantleSlot0Timer       = cachedMantles_.mantleSlot0Timer;
+        result.mantleSlot0Cooldown    = cachedMantles_.mantleSlot0Cooldown;
+        result.mantleSlot0CooldownMax = cachedMantles_.mantleSlot0CooldownMax;
+        result.mantleSlot1Id          = cachedMantles_.mantleSlot1Id;
+        result.mantleSlot1Timer       = cachedMantles_.mantleSlot1Timer;
+        result.mantleSlot1Cooldown    = cachedMantles_.mantleSlot1Cooldown;
+        result.mantleSlot1CooldownMax = cachedMantles_.mantleSlot1CooldownMax;
+    }
+    // Stash whatever we successfully read this tick into the cache, so a
+    // future failed tick can replay it. We do this *unconditionally* if
+    // at least one section read (the abnormal-only or equipment-only
+    // case still has useful data to preserve).
+    if (abnormalitySectionRead || equipmentSectionRead) {
+        cachedMantles_.mantleHealthTimer       = result.mantleHealthTimer;
+        cachedMantles_.mantleHealthLargeTimer  = result.mantleHealthLargeTimer;
+        cachedMantles_.mantleStaminaTimer      = result.mantleStaminaTimer;
+        cachedMantles_.mantleStaminaLargeTimer = result.mantleStaminaLargeTimer;
+        cachedMantles_.mantleToolTimer         = result.mantleToolTimer;
+        cachedMantles_.mantleToolLargeTimer    = result.mantleToolLargeTimer;
+        cachedMantles_.earplugTimer            = result.earplugTimer;
+        cachedMantles_.mantleSlot0Id           = result.mantleSlot0Id;
+        cachedMantles_.mantleSlot0Timer        = result.mantleSlot0Timer;
+        cachedMantles_.mantleSlot0Cooldown     = result.mantleSlot0Cooldown;
+        cachedMantles_.mantleSlot0CooldownMax  = result.mantleSlot0CooldownMax;
+        cachedMantles_.mantleSlot1Id           = result.mantleSlot1Id;
+        cachedMantles_.mantleSlot1Timer        = result.mantleSlot1Timer;
+        cachedMantles_.mantleSlot1Cooldown     = result.mantleSlot1Cooldown;
+        cachedMantles_.mantleSlot1CooldownMax  = result.mantleSlot1CooldownMax;
+        mantlesCachedAtTick_ = pollTick_;
     }
 
     // ---- debuffs (abnormalityBase + offset) ----

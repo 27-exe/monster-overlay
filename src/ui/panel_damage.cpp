@@ -12,6 +12,8 @@
 #include <QPainterPath>
 #include <QFontMetrics>
 #include <QLinearGradient>
+#include <QHash>
+#include <QStringList>
 
 #include <algorithm>
 
@@ -229,19 +231,30 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
     if (snap.quest.maxTimerSeconds > 0.0F)
         lastElapsedSeconds_ = snap.quest.elapsedSeconds;
 
-    // HunterPie: InHuntingZone = ZoneId != Stage.MainMenu. We mirror
-    // that here so the panel stays live in free-roam zones like the
-    // Guiding Lands (zone=109, not a quest id) where party damage
-    // still accumulates but quest.state never enters 2.
-    const bool inHuntingZone = isHuntingZone(snap.zone);
-    if (!inHuntingZone && !questEnded_) {
-        questEnded_ = true;
-        // Keep showing the last snapshot but don't record new samples.
-        canvas()->update();
-        return;
-    }
-    // Reset when returning to a hunting zone (new quest / Guiding Lands).
-    if (inHuntingZone && questEnded_) {
+    // 3-state quest lifecycle keyed off snap.quest.state.
+    //
+    //   state == 2 (InQuest)  → record samples, DPS live
+    //   state 3/4/5/6/7       → FREEZE: 60s settlement / abandon screen
+    //                            where zone is still a hunting zone but
+    //                            damage counters must NOT advance
+    //   state ≤ 1             → CLEAR: back at lobby / mission select,
+    //                            wipe chart and reset baselines
+    //
+    // The previous inHuntingZone()-only gate (v0.5.x) ran into the
+    // 60-second settlement window: zone stays a hunting zone, so we
+    // kept appending samples and ticking DPS for a full minute after
+    // the quest had already finished. Authoritative reference: project
+    // L2 page mhw-hunterpie-dps-algorithm.md.
+    const int qstate = snap.quest.state;
+    const bool inQuest = (qstate == 2) && (snap.quest.id > 0);
+    const bool inResultScreen = (qstate >= 3 && qstate <= 7);
+    const bool atLobby = (qstate <= 1);
+
+    if (inQuest && questEnded_) {
+        // New quest started while the old one was frozen → full reset.
+        // All row identity vectors must clear too, otherwise the drop-out
+        // carry-over block below would mistake leftover names from the
+        // previous quest for a still-present row in this one.
         questEnded_ = false;
         history_.clear();
         tick_ = 0;
@@ -249,20 +262,51 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
         baselineDamage_.clear();
         rawDamage_.clear();
         lastElapsedSeconds_ = 0.0F;
-    }
-
-    // During quest-end freeze, keep the frozen data visible. The party
-    // pointer is still valid in the settlement screen because the
-    // engine keeps the party array alive while we're at the results
-    // UI. We only wipe when we leave the hunting zone entirely (back
-    // to lobby / Astera / mission select) — handled by the early
-    // !inHuntingZone branch above.
-    if (questEnded_) {
-        // Settlement screen — keep frozen data, just repaint.
+        names_.clear();
+        weaponIds_.clear();
+        masterRanks_.clear();
+        slots_.clear();
+        locals_.clear();
+        left_.clear();
+    } else if (inResultScreen && !questEnded_) {
+        // Quest finished (Success/Completed/Failed/Abandon/Quit) —
+        // freeze immediately. Keep the chart and per-row damage
+        // visible; stop appending new samples.
+        questEnded_ = true;
+        canvas()->update();
+        return;
+    } else if (questEnded_ && atLobby) {
+        // Back at lobby / Ready state — fully clear and unhide.
+        questEnded_ = false;
+        history_.clear();
+        tick_ = 0;
+        firstHitTick_.clear();
+        baselineDamage_.clear();
+        rawDamage_.clear();
+        lastElapsedSeconds_ = 0.0F;
+        names_.clear();
+        weaponIds_.clear();
+        masterRanks_.clear();
+        slots_.clear();
+        locals_.clear();
+        left_.clear();
+        hasData_ = false;
+        canvas()->update();
+        return;
+    } else if (questEnded_) {
+        // Still in the 60s settlement screen — keep frozen data
+        // visible; do NOT record, do NOT bump tick_. The party
+        // pointer may have shrunk if a member disconnected, so we
+        // intentionally don't touch the chart and let the per-row
+        // "left" markers handle the visual gap (see readParty).
         canvas()->update();
         return;
     }
 
+    // Below this point we're guaranteed !questEnded_ && inQuest, so we
+    // can safely record new samples. If party is empty the engine
+    // simply has no one to track (single-player / pre-quest), but we
+    // still want the placeholder off-screen until first damage.
     hasData_ = !snap.party.isEmpty();
     if (!hasData_) {
         history_.clear();
@@ -270,6 +314,10 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
         firstHitTick_.clear();
         baselineDamage_.clear();
         rawDamage_.clear();
+        // Keep names_/left_ in place: a brief party-empty dip in
+        // multiplayer (lobby reassembly, host reconnect) must not wipe
+        // carry-over rows. The next tick where party.size() > 0 will
+        // re-evaluate.
         canvas()->update();
         return;
     }
@@ -280,68 +328,128 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
     // repopulate the party before the zone transition is observable. Treat a
     // counter rollback as the authoritative new-hunt boundary; otherwise the
     // old chart/ticks continue and DPS is divided by multiple hunts' time.
-    bool damageCounterReset = rawDamage_.size() == n && !history_.isEmpty();
-    bool comparedActiveCounter = false;
-    if (damageCounterReset) {
-        for (int i = 0; i < n; ++i) {
-            if (rawDamage_[i] > 0) {
-                comparedActiveCounter = true;
-                if (snap.party[i].damage >= rawDamage_[i]) {
-                    damageCounterReset = false;
-                    break;
-                }
-            }
+    //
+    // The carry-over drop-out detection (below) can retire a row whose
+    // rawDamage_ carries over a non-zero value from the pre-drop era. That
+    // rejoin tick must NOT trip this detector — the counter legitimately
+    // "rolls back" when a returning member's engine-side slot starts
+    // accumulating damage from 0 again. To avoid that false-positive we
+    // *defer* the reset check until after the carry-over rebaseline has
+    // already aligned rawDamage_[i] for i < liveN. See the deferred block
+    // at the end of this function.
+    const bool deferDamageCounterReset = rawDamage_.size() == n
+                                     && !history_.isEmpty();
+
+    // --- Drop-out / party-shrink handling ---
+    //
+    // v0.5.x bug: when a non-host member dropped out mid-quest, the engine
+    // zeroed their damage counter (DAMAGE_ADDRESS + index*0x2A0 → 0).
+    // The overlay happily reflected that as "this player did 0 damage",
+    // wiping their cumulative total and their entire row in the chart.
+    //
+    // Strategy: never shrink the visible party mid-quest. The layout
+    // size `n` is the max of (live party size, number of previously-seen
+    // names that are still !left_). Drop-outs move into a `left_` flag;
+    // rejoins with the same name clear the flag and resume normal
+    // tracking. The panel resets `left_` to all-false on every new
+    // quest (3-state lifecycle above already handles that path).
+    const int liveN = n;
+    int prevSeen = 0;
+    for (int i = 0; i < names_.size(); ++i)
+        if (!names_.value(i).isEmpty()) ++prevSeen;
+
+    // `n` already holds liveN. Bump it up to absorb rows for players
+    // who used to be present but dropped this tick. Existing rows are
+    // preserved via their index; their `left_` flag flips below.
+    if (liveN < prevSeen) {
+        // We can't simply extend n past the live party because the
+        // row indices below are positional — index i maps to
+        // snap.party[i] for i < liveN, and to a frozen history row for
+        // i >= liveN. Track a "carry-over" list of frozen names keyed
+        // by their original snap-party index (0..3), so the loop can
+        // process them after the live block.
+        for (int i = liveN; i < prevSeen; ++i) {
+            if (left_.value(i, false))      continue;
+            if (names_.value(i).isEmpty())  continue;
+            if (i >= left_.size()) left_.resize(i + 1);
+            left_[i] = true;
         }
-        damageCounterReset = damageCounterReset && comparedActiveCounter;
     }
-    if (damageCounterReset) {
-        history_.clear();
-        tick_ = 0;
-        firstHitTick_.fill(0, n);
-        baselineDamage_.fill(0, n);
-        lastElapsedSeconds_ = snap.quest.elapsedSeconds;
+    // Final layout size: max of live party + previously-seen players
+    // (the frozen carry-over rows live at indices [liveN, prevSeen)).
+    const int layoutN = std::max(liveN, prevSeen);
+
+    // `left_` index parity: the flag at index i corresponds to row i,
+    // which equals snap.party[i] when i < liveN, and a frozen carry-over
+    // row when i >= liveN. The per-player loop below handles both.
+    left_.resize(layoutN);
+
+    // Map: name → live party index (-1 if absent from this tick's snap).
+    QHash<QString, int> liveByName;
+    liveByName.reserve(liveN * 2);
+    for (int i = 0; i < liveN; ++i)
+        liveByName.insert(snap.party[i].name, i);
+
+    // Per-name rejoin detection: if a name reappears in the live party
+    // after being marked `left_`, the corresponding row's flag clears
+    // here so the loop can rebaseline it as a fresh player.
+    for (int i = 0; i < layoutN; ++i) {
+        if (!left_.value(i, false))     continue;
+        if (names_.value(i).isEmpty())  continue;
+        if (liveByName.contains(names_[i])) {
+            left_[i] = false;
+            // Force rebaseline so post-rejoin damage isn't blended
+            // with pre-disconnect damage — this also matches the
+            // "playerChanged" semantics in the original loop.
+            firstHitTick_[i] = 0;
+            baselineDamage_[i] = 0;
+        }
     }
 
-    // Detect party-size shrink so we don't leak stale baselines from
-    // players who have left the party this tick. resize() only zeroes
-    // the new tail, leaving the old ones in place — that's exactly the
-    // bug we're fixing here.
-    const int prevN = static_cast<int>(firstHitTick_.size());
-    if (n < prevN) {
-        firstHitTick_.resize(n);
-        baselineDamage_.resize(n);
-    }
-    names_.resize(n);
-    weaponIds_.resize(n);
-    masterRanks_.resize(n);
-    slots_.resize(n);
-    locals_.resize(n);
+    names_.resize(layoutN);
+    weaponIds_.resize(layoutN);
+    masterRanks_.resize(layoutN);
+    slots_.resize(layoutN);
+    locals_.resize(layoutN);
 
     // Per-player first-hit tracking. Resize on party-size change.
-    firstHitTick_.resize(n);
-    baselineDamage_.resize(n);
-    rawDamage_.resize(n);
+    firstHitTick_.resize(layoutN);
+    baselineDamage_.resize(layoutN);
+    rawDamage_.resize(layoutN);
 
-    for (int i = 0; i < n; ++i) {
+    for (int i = 0; i < layoutN; ++i) {
+        const bool isCarryOver = (i >= liveN);
         const QString previousName = names_.value(i);
         const int previousWeaponId = weaponIds_.value(i, -1);
-        names_[i] = snap.party[i].name;
-        weaponIds_[i] = snap.party[i].weaponId;
-        masterRanks_[i] = snap.party[i].masterRank;
-        slots_[i] = snap.party[i].slot;
-        locals_[i] = snap.party[i].local;
+
+        // Live slot: pull fresh data from snap.party. Carry-over
+        // slot (i >= liveN): keep the frozen name/weapon/etc, the
+        // player is no longer in the live party array.
+        if (!isCarryOver) {
+            names_[i]       = snap.party[i].name;
+            weaponIds_[i]   = snap.party[i].weaponId;
+            masterRanks_[i] = snap.party[i].masterRank;
+            slots_[i]       = snap.party[i].slot;
+            locals_[i]      = snap.party[i].local;
+        } else {
+            // Make sure the row renders even if resize left a hole.
+            if (names_.value(i).isEmpty()) names_[i] = QString();
+            if (slots_.value(i, -1) < 0)   slots_[i] = i;  // stable color
+            if (!locals_.value(i, false))  locals_[i] = false;
+        }
 
         // HunterPie: baseline captured when THIS player first deals damage.
         // Reset the baseline if the player joined fresh (slot/signature
         // changed) so we don't blend pre-join damage with post-join.
-        const bool playerChanged = firstHitTick_[i] != 0
+        const bool playerChanged = !isCarryOver
+            && firstHitTick_[i] != 0
             && (previousWeaponId != snap.party[i].weaponId
              || previousName     != snap.party[i].name);
         if (playerChanged) {
             firstHitTick_[i] = 0;
             baselineDamage_[i] = 0;
         }
-        if (firstHitTick_[i] == 0 && snap.party[i].damage > 0) {
+        if (!isCarryOver && firstHitTick_[i] == 0 && snap.party[i].damage > 0) {
             firstHitTick_[i] = tick_;
             baselineDamage_[i] = snap.party[i].damage;
         }
@@ -350,8 +458,18 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
     // Record sample
     Sample s;
     s.tick = tick_++;
-    s.damage.resize(n);
-    for (int i = 0; i < n; ++i) {
+    s.damage.resize(layoutN);
+    for (int i = 0; i < layoutN; ++i) {
+        const bool isCarryOver = (i >= liveN);
+        if (isCarryOver) {
+            // Frozen row — preserve the last recorded cumulative
+            // damage. Don't touch rawDamage_ either, so the
+            // damageCounterReset detector above stays stable across
+            // drops (the engine zeroes the live counter which is no
+            // longer indexed by us at this slot anyway).
+            s.damage[i] = history_.isEmpty() ? 0 : history_.last().damage.value(i, 0);
+            continue;
+        }
         const int raw = static_cast<int>(snap.party[i].damage);
         if (firstHitTick_[i] > 0) {
             if (raw >= baselineDamage_[i]) {
@@ -372,6 +490,36 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
     history_.append(s);
     if (history_.size() > kMaxSamples)
         history_.removeFirst();
+
+    // Deferred damageCounterReset check (v0.7.5 carry-over fix).
+    //
+    // We delayed the original reset detector past the carry-over block so
+    // rawDamage_[i] for rejoin rows (i < liveN, formerly carry-over at
+    // index >= prev-liveN) is aligned to the engine's live counter before
+    // we compare. If a rollback survives that alignment across ALL live
+    // members, it's a genuine new hunt boundary and we reset the chart.
+    if (deferDamageCounterReset) {
+        bool rollback = false;
+        bool comparedActiveCounter = false;
+        for (int i = 0; i < liveN; ++i) {
+            if (rawDamage_[i] > 0) {
+                comparedActiveCounter = true;
+                if (snap.party[i].damage < rawDamage_[i]) {
+                    rollback = true;
+                    break;
+                }
+            }
+        }
+        if (rollback && comparedActiveCounter) {
+            // Genuine new-hunt boundary: clear the chart but keep identity
+            // rows (so the first sample of the new hunt still maps by slot).
+            history_.clear();
+            tick_ = 0;
+            firstHitTick_.fill(0, liveN);
+            baselineDamage_.fill(0, liveN);
+            lastElapsedSeconds_ = snap.quest.elapsedSeconds;
+        }
+    }
 
     canvas()->update();
 }
@@ -795,6 +943,13 @@ void DamagePanel::setupDemoData()
     masterRanks_.clear(); slots_.clear();
     firstHitTick_.clear(); baselineDamage_.clear(); rawDamage_.clear();
     history_.clear();     tick_ = 0;
+    left_.clear();        // v0.7.5: drop-out carry-over flag must
+                           // reset alongside the identity rows. If a
+                           // future change re-enables setupDemoData
+                           // in a fresh live-mode path, missing this
+                           // would cause the drop-out branch to flag
+                           // demo players as "previously seen" and
+                           // re-create the v0.5.x phantom-row bug.
     for (int i = 0; i < kDemoPlayers; ++i) {
         names_.append(kDemoParty[i].name);
         weaponIds_.append(kDemoParty[i].weaponId);

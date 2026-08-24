@@ -328,12 +328,18 @@ void Panel::paintEvent(QPaintEvent *)
     // and identifiable for positioning. In live mode, paintPanel()
     // handles both the connected (real data) and disconnected
     // ("not connected" placeholder) cases itself.
-    // Demo content shown in edit mode: build mock data on the first
-    // call only (paintEvent may re-enter when setContentSize resizes
-    // the widget, and any heavy work inside paintDemo otherwise becomes
-    // a CPU hotspot). We delegate to paintPanel so the edit preview is
-    // identical to live behaviour.
-    if (!demoPrimed_) {
+    //
+    // Demo content shown in edit mode only: setupDemoData() seeds
+    // `names_` / `firstHitTick_` / `baselineDamage_` / `history_`
+    // with hard-coded test data. Calling it in live mode causes the
+    // carry-over drop-out detection to latch those demo names as
+    // "previously-seen players" the moment `update(snap)` arrives
+    // with a smaller party, producing phantom rows that only clear
+    // when the next quest starts. (v0.7.5 audit reproducer — the
+    // bug the user filed as "extra 测试用的长昵称测试C rows in 2p").
+    // Demo gate is therefore edit-mode-only; live mode defers entirely
+    // to update(snap).
+    if (!demoPrimed_ && editMode_) {
         demoPrimed_ = true;
         setupDemoData();
     }
@@ -527,7 +533,18 @@ void Panel::drawV03Chrome(QPainter &p, Accent accent) const
     //   --bg-panel #16181a + 1px --border #2a2d2f + 2px radius
     //   2px left accent stripe (orange for monster, purple for player, teal for damage)
     //   1px top gloss gradient (transparent → white-6% → transparent)
-    const QRectF r(rect());
+    //
+    // Paint in *logical* coordinates, not device. paintEvent applies
+    // `p.scale(scale_, scale_)` before paintPanel() runs (line 310-311),
+    // so reading `rect()` here would pick up the device-pixel rect and
+    // the background would be drawn at 1/scale of the content — the
+    // "缩小后背景跟文字错位" reproducer (v0.7.5 audit). logicalSize_ is
+    // the unscaled canvas size; combined with (0,0) origin it produces
+    // a rect that the scaled painter maps back to the full device
+    // surface exactly the way content rects do.
+    const QRectF r(0.0, 0.0,
+                   static_cast<qreal>(logicalSize_.width()),
+                   static_cast<qreal>(logicalSize_.height()));
     constexpr double kRadius = 2.0;
     const QColor accentCol = accentColor(accent);
 

@@ -393,6 +393,9 @@ GameSnapshot MhwReader::poll()
     if (!ensureAttached(snapshot))
         return snapshot;
 
+    // v0.7.5: bump the per-instance poll counter so readPlayer()'s
+    // mantle cache can compute ages in kMantleCacheTtl increments.
+    ++pollTick_;
     snapshot.zone = readZone(nullptr);
     static Zone lastZone = Zone::Unknown;
     if (snapshot.zone != lastZone) {
