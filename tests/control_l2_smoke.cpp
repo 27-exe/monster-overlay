@@ -19,7 +19,7 @@
 
 namespace {
 // The path MUST match ControlPanel::maskConfigPath() in
-// ui/control_panel.cpp: $XDG_CONFIG_HOME/mhw-overlay/mhw-overlay.conf.
+// ui/control_panel.cpp: $XDG_CONFIG_HOME/monster-overlay/monster-overlay.conf.
 // Keep them in sync if you change one.
 QString configPath()
 {
@@ -27,7 +27,7 @@ QString configPath()
     const QString root = base.isEmpty()
         ? QDir::homePath() + "/.config"
         : QString::fromLocal8Bit(base);
-    return root + QStringLiteral("/mhw-overlay/mhw-overlay.conf");
+    return root + QStringLiteral("/monster-overlay/monster-overlay.conf");
 }
 
 // Walk ControlPanel's private ctl_ via Qt's introspection: every
@@ -65,7 +65,7 @@ QString readBack()
 
 int main(int argc, char *argv[])
 {
-    qputenv("XDG_CONFIG_HOME", "/tmp/mhw-control-smoke");
+    qputenv("XDG_CONFIG_HOME", "/tmp/monster-control-smoke");
     // XDG_CONFIG_HOME (read by QStandardPaths::GenericConfigLocation) is
     // picked up immediately on first writableLocation() call.
     QFile::remove(configPath());

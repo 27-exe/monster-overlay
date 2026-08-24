@@ -273,7 +273,7 @@ QColor panelAccent(int panel)
 ControlPanel::ControlPanel(QWidget *parent)
     : QMainWindow(parent)
 {
-    setObjectName("mhw-control-panel");
+    setObjectName("monster-control-panel");
     setStyleSheet(qssBase());
     setWindowTitle(QStringLiteral("MHW Overlay Control"));
     // v0.5.6: top row consumes rail+inspector height (~600-700px);
@@ -1319,7 +1319,7 @@ QWidget *ControlPanel::buildGameColumn()
 // R5: EDIT MODE block — orange "ENTER EDIT" button on the right,
 // caption "进入后三个面板强制显示，方向键移动" on the left.
 //
-// L3: also add a "START" button to spawn mhw-overlay. Same orange
+// L3: also add a "START" button to spawn monster-overlay. Same orange
 // CTA visual, separate action. ENTER EDIT still exists as a synonym
 // for START with --edit — both hide the console, both re-show on
 // exit; the only difference is whether the overlay enters edit mode.
@@ -1450,7 +1450,7 @@ void ControlPanel::switchGame(mhw::GameId game)
     }
 }
 
-// L3: spawn mhw-overlay as a detached subprocess, hide the console while
+// L3: spawn monster-overlay as a detached subprocess, hide the console while
 // it runs, then show the console again when the overlay exits.
 //
 // Why detached: the overlay and the console are independent Qt apps
@@ -1516,15 +1516,15 @@ void ControlPanel::launchOverlay(bool editMode)
                 .arg(currentGame_ == mhw::GameId::Rise
                          ? QStringLiteral("rise") : QStringLiteral("world"));
 
-    // mhw-overlay lives next to mhw-control in the same build dir.
+    // monster-overlay lives next to monster-control in the same build dir.
     const QString overlay = QCoreApplication::applicationDirPath()
-                          + QStringLiteral("/mhw-overlay");
+                          + QStringLiteral("/monster-overlay");
 
     qint64 pid = 0;
     if (!QProcess::startDetached(overlay, args,
                                  QCoreApplication::applicationDirPath(),
                                  &pid)) {
-        qWarning("mhw-control: failed to launch %s", qPrintable(overlay));
+        qWarning("monster-control: failed to launch %s", qPrintable(overlay));
         return;
     }
     overlayPid_ = pid;
@@ -1649,7 +1649,7 @@ namespace {
 //
 //   * AppConfigLocation = ~/.config/<OrgName>/<AppName> (Linux). Doesn't
 //     honour XDG_CONFIG_HOME, but it's the canonical user-config root.
-//   * We append "/mhw-overlay.conf" so the same directory can later
+//   * We append "/monster-overlay.conf" so the same directory can later
 //     carry other keys (locale, map path) without inventing new files.
 //
 // For tests we override via the env-var honoured by GenericConfigLocation
@@ -1658,8 +1658,8 @@ QString maskConfigPath()
 {
     const QString dir = QStandardPaths::writableLocation(
         QStandardPaths::GenericConfigLocation)
-        + QStringLiteral("/mhw-overlay");
-    return dir + QStringLiteral("/mhw-overlay.conf");
+        + QStringLiteral("/monster-overlay");
+    return dir + QStringLiteral("/monster-overlay.conf");
 }
 } // namespace
 
@@ -1722,7 +1722,7 @@ void ControlPanel::saveMaskToDisk() const
 
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-        qWarning("mhw-control: cannot write %s", qPrintable(path));
+        qWarning("monster-control: cannot write %s", qPrintable(path));
         return;
     }
     QTextStream out(&f);

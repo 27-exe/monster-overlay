@@ -57,8 +57,8 @@ int main(int argc, char **argv)
           "currentLocale stays empty after failed load()");
 
     if (failures == 0)
-        std::printf("\nmhw-core-tests: ALL PASSED\n");
+        std::printf("\nmonster-core-tests: ALL PASSED\n");
     else
-        std::fprintf(stderr, "\nmhw-core-tests: %d FAILURES\n", failures);
+        std::fprintf(stderr, "\nmonster-core-tests: %d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;
 }

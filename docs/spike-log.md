@@ -55,11 +55,11 @@ surface 兼容性差(无单独 fix 报告)。
 
 ## 占用数据(关键决策依据)
 
-`ps -o pid,pcpu,pmem,rss,cmd -C mhw-overlay-web,QtWebEngineProcess`:
+`ps -o pid,pcpu,pmem,rss,cmd -C monster-overlay-web,QtWebEngineProcess`:
 
 | 进程 | RSS | 说明 |
 |---|---|---|
-| mhw-overlay-web (主) | 420 MB | Qt + WebEngine 主进程 |
+| monster-overlay-web (主) | 420 MB | Qt + WebEngine 主进程 |
 | QtWebEngineProcess (zygote 1) | 79 MB | sandbox |
 | QtWebEngineProcess (zygote 2) | 79 MB | sandbox |
 | QtWebEngineProcess (zygote 3) | 19 MB | |
@@ -82,14 +82,14 @@ surface 兼容性差(无单独 fix 报告)。
 
 - `src/spike_web.cpp` — spike binary 源(~200 行)
 - `web/spike.html` — spike HTML(single panel mock-up)
-- `CMakeLists.txt` line 65+ — `mhw-overlay-web` target
+- `CMakeLists.txt` line 65+ — `monster-overlay-web` target
 
-编译:`cmake --build build --target mhw-overlay-web`
+编译:`cmake --build build --target monster-overlay-web`
 运行:
 ```bash
 QT_QPA_PLATFORM=wayland \
   QT_WAYLAND_DISABLE_WINDOWDECORATION=1 \
-  ./build/mhw-overlay-web
+  ./build/monster-overlay-web
 ```
 
 ---

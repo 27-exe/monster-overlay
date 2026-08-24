@@ -8,7 +8,7 @@
 // Dump all of these each second so we can see whether the equipped
 // mantle ID changes and whether the timer / cooldown fields move.
 //
-// Usage: ./build/mhw-probe-mantles [/tmp/log]
+// Usage: ./build/monster-probe-mantles [/tmp/log]
 
 #include "mhw_reader.h"
 
@@ -31,7 +31,7 @@ int main(int argc, char **argv)
     std::signal(SIGINT, onSig);
     QCoreApplication app(argc, argv);
 
-    const char *path = (argc >= 2) ? argv[1] : "/tmp/mhw-probe-mantles.log";
+    const char *path = (argc >= 2) ? argv[1] : "/tmp/monster-probe-mantles.log";
     g_log = std::fopen(path, "w");
     if (!g_log) { std::fprintf(stderr, "open %s failed\n", path); return 1; }
     std::setvbuf(g_log, nullptr, _IOLBF, 0);

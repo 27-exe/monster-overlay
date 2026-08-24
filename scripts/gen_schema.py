@@ -11,7 +11,7 @@ Usage:
     scripts/gen_schema.py > src/mhw_reader.schema.fragment # pipe into cpp
 
 This requires HunterPie cloned locally — the default paths match the
-mhw-linux-overlay skill layout at /tmp/HunterPie. To regenerate after a
+monster-overlay skill layout at /tmp/HunterPie. To regenerate after a
 HunterPie update:
 
     git -C /tmp/HunterPie pull

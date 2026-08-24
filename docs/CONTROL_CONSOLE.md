@@ -1,4 +1,4 @@
-# Control Console (mhw-control)
+# Control Console (monster-control)
 
 The control console is a standalone Qt GUI for managing the
 overlay without editing the command line. It owns the overlay
@@ -15,10 +15,10 @@ process and persists its toggle state.
 
 ```bash
 # Run the console
-./build/mhw-control
+./build/monster-control
 
 # Take a screenshot of the console (no display needed)
-QT_QPA_PLATFORM=offscreen ./build/mhw-control --snap /tmp/console.png
+QT_QPA_PLATFORM=offscreen ./build/monster-control --snap /tmp/console.png
 ```
 
 ## Architecture
@@ -46,14 +46,14 @@ ControlPanel (QMainWindow)
 ├── Hairline divider
 │
 └── EDIT MODE block
-    ├── "ENTER EDIT" → spawn mhw-overlay --edit
-    └── "START"      → spawn mhw-overlay (live)
+    ├── "ENTER EDIT" → spawn monster-overlay --edit
+    └── "START"      → spawn monster-overlay (live)
 ```
 
 ## State flow
 
 1. **Launch**: `ControlPanel` ctor calls `loadMaskFromDisk()` to
-   restore toggle state from `~/.config/mhw-overlay/mhw-overlay.conf`.
+   restore toggle state from `~/.config/monster-overlay/monster-overlay.conf`.
    Defaults to all-on if the file is missing.
 2. **Toggle**: any switch in a group calls `rebuildAndRender(idx)`,
    which:
@@ -78,7 +78,7 @@ ControlPanel (QMainWindow)
 
 ## Persistence format
 
-`~/.config/mhw-overlay/mhw-overlay.conf` (XDG path via
+`~/.config/monster-overlay/monster-overlay.conf` (XDG path via
 `QStandardPaths::GenericConfigLocation`, honours `XDG_CONFIG_HOME`):
 
 ```text
@@ -92,7 +92,7 @@ ignored on load; the file is rewritten atomically on save.
 
 ## Smoke test
 
-`mhw-control-l2-smoke` exercises the persistence round-trip:
+`monster-control-l2-smoke` exercises the persistence round-trip:
 
 1. Sets `XDG_CONFIG_HOME` to a temp dir.
 2. Builds a `ControlPanel` and flips `player sub 2` and
@@ -100,7 +100,7 @@ ignored on load; the file is rewritten atomically on save.
 3. Lets the dtor save to disk.
 4. Re-opens a `ControlPanel` and verifies the row states match.
 
-Run: `QT_QPA_PLATFORM=offscreen ./build/mhw-control-l2-smoke`.
+Run: `QT_QPA_PLATFORM=offscreen ./build/monster-control-l2-smoke`.
 Expected output ends with `PASS`.
 
 ## Renderer delegation
@@ -137,7 +137,7 @@ for (Panel *p : {player_, monster_, damage_}) {
 
 - **Long-running overlay** — the console PID-poller keeps running
   forever if the overlay is launched externally. There is no
-  "I’m not the parent" detection; if you started `mhw-overlay`
+  "I’m not the parent" detection; if you started `monster-overlay`
   by hand and the console is closed, the console still tracks it.
   This is acceptable; the console is a launcher, not a service.
 - **PID reuse** — the 250 ms poll uses `kill(pid, 0)`. If the OS
@@ -155,7 +155,7 @@ for (Panel *p : {player_, monster_, damage_}) {
 ## v0.5 design notes
 
 The current v0.4 console layout is a 2-column list-and-preview
-grid. The v0.5 target (per `mhw-overlay-concept .html`) is a
+grid. The v0.5 target (per `monster-overlay-concept .html`) is a
 3-column layout:
 
 ```

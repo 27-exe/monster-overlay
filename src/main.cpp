@@ -48,7 +48,7 @@ int main(int argc, char **argv)
     // set_blur_region request -> crisp see-through panels on Plasma 6.7.
     // Overlay is pure QPainter-drawn, so no visual change from losing Kvantum.
     app.setStyle(QStringLiteral("Fusion"));
-    QApplication::setApplicationName(QStringLiteral("mhw-linux-overlay"));
+    QApplication::setApplicationName(QStringLiteral("monster-overlay"));
     QApplication::setApplicationDisplayName(QStringLiteral("MHW Linux Overlay"));
     QApplication::setApplicationVersion(QStringLiteral("0.7.5"));
     QApplication::setOrganizationName(QStringLiteral("a27exe"));

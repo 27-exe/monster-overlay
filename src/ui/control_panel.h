@@ -59,7 +59,7 @@ protected:
     void keyPressEvent(QKeyEvent *e) override;
 
 private:
-    // L2: persistent mask state lives at ~/.config/MHW Overlay/mhw-overlay.conf
+    // L2: persistent mask state lives at ~/.config/MHW Overlay/monster-overlay.conf
     // so the user's last toggle choices survive across console restarts. The
     // console writes on exit (and any time we explicitly call saveMask());
     // reads happen once at construction so the checkboxes open with the
@@ -149,7 +149,7 @@ private:
     // alive. Flipped back to "READY" by onOverlayExited().
     QLabel *statusBadge_ = nullptr;
 
-    // L3: state for the running mhw-overlay subprocess. overlayPid_ is
+    // L3: state for the running monster-overlay subprocess. overlayPid_ is
     // 0 when nothing is running; overlayWatch_ fires every 250ms while
     // a process is alive, polling kill(pid,0) for liveness.
     qint64       overlayPid_ = 0;

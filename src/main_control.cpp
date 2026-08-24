@@ -6,7 +6,7 @@
 // off-screen (WA_DontShowOnScreen) using the same QPainter code the
 // live overlay uses, with mock data seeded by setEditMode(true).
 //
-// No connection to a running mhw-overlay process yet — pure preview.
+// No connection to a running monster-overlay process yet — pure preview.
 
 #include "ui/control_panel.h"
 #include "ui/screen_query.h"
@@ -21,12 +21,12 @@
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
-    // Same Kvantum blur opt-out as mhw-overlay (see src/main.cpp): the
+    // Same Kvantum blur opt-out as monster-overlay (see src/main.cpp): the
     // Kvantum style plugin auto-requests KWin blur-behind for translucent
     // top-levels via BlurHelper::update(). Fusion skips the plugin so the
     // console's translucent chrome stays crisp on Plasma 6.7.
     app.setStyle(QStringLiteral("Fusion"));
-    app.setApplicationName(QStringLiteral("mhw-control"));
+    app.setApplicationName(QStringLiteral("monster-control"));
     // Quit as soon as the last visible window is closed. Required because
     // the three panel previews are QMainWindows in the live overlay —
     // without this, closing the console's main window leaves them around

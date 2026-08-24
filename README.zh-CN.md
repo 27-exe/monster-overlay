@@ -50,7 +50,7 @@ backend;NVIDIA + Wayland 走系统的 `libEGL.so`,不需要 Vulkan、不
 
 | 状态 | 截图 | 描述 |
 |------|------|------|
-| **控制台** | ![控制台](assets/screenshots/01-control-console.png) | `mhw-control` GUI:游戏选择(WORLD / RISE)、HUD object 列表、每个 section 的开关、缩放控制、底部实时 HUD canvas 预览。 |
+| **控制台** | ![控制台](assets/screenshots/01-control-console.png) | `monster-control` GUI:游戏选择(WORLD / RISE)、HUD object 列表、每个 section 的开关、缩放控制、底部实时 HUD canvas 预览。 |
 | **任务外(据点 / 月辰集会所)** | ![据点](assets/screenshots/02-out-of-quest.png) | 只有 **Player** panel —— 没有活的怪物、没有可计算的伤害,另两块故意不渲染。HP / ST / MR / 锋利度 / 猫车照样显示。 |
 | **任务中** | ![任务中](assets/screenshots/03-in-quest.png) | 三块全部就位 —— 珊瑚高地 ★12,狩猎 Apex 火龙。怪物 HP 4 855 / 43 470、部位 HP、Apex 图标、激怒;**截图瞬间是 3 个在场的猎人**(第 4 个在截图后才进队)。 |
 | **任务结束(捕获 / 转场)** | ![结算](assets/screenshots/04-quest-end.png) | 「発見調査班報告 / Investigation Complete」banner,20 秒后返回据点倒计时。**三块 panel 全部保持显示** —— Player panel、Monster panel(显示任务结算时的 HP —— 因为主机端还没把怪物 struct 清零,比如捕获 / 奖励结算等场景,残留 HP 是正常行为)、完整的 Damage panel(含最终队伍名单)。 |
@@ -81,14 +81,14 @@ backend;NVIDIA + Wayland 走系统的 `libEGL.so`,不需要 Vulkan、不
 
 ```bash
 # 1. 解包
-tar -xzf mhw-overlay-v0.7.5-linux-x86_64.tar.gz
-cd mhw-overlay-v0.7.5
+tar -xzf monster-overlay-v0.7.5-linux-x86_64.tar.gz
+cd monster-overlay-v0.7.5
 
 # 2. 安装运行时依赖(Arch Linux)
 sudo pacman -S --needed qt6-base qt6-declarative qt6-wayland layer-shell-qt
 
 # 3. 启动 Steam 装上怪猎世界,进入任务后,跑控制台:
-./mhw-control
+./monster-control
 ```
 
 在控制台里:
@@ -102,7 +102,7 @@ sudo pacman -S --needed qt6-base qt6-declarative qt6-wayland layer-shell-qt
 
 ```bash
 ./install.sh                 # 拷到 ~/.local/bin/
-sudo setcap cap_sys_ptrace+ep ~/.local/bin/mhw-overlay   # 可选
+sudo setcap cap_sys_ptrace+ep ~/.local/bin/monster-overlay   # 可选
 ```
 
 ### 权限:读 `/proc/<pid>/mem`
@@ -114,7 +114,7 @@ sudo setcap cap_sys_ptrace+ep ~/.local/bin/mhw-overlay   # 可选
 sudo sysctl kernel.yama.ptrace_scope=0
 
 # 选项 B —— 永久,且仅作用在那个二进制上
-sudo setcap cap_sys_ptrace+ep ./mhw-overlay
+sudo setcap cap_sys_ptrace+ep ./monster-overlay
 ```
 
 `install.sh` **不会**自动设 capability。详细说明见
@@ -138,27 +138,27 @@ Ctrl-S 持久化、Space minimize、Esc 优雅退出、每 section 的位掩码
 ## 快速开始(开发者)
 
 ```bash
-git clone https://github.com/27-exe/mhw-linux-overlay
-cd mhw-linux-overlay
+git clone https://github.com/27-exe/monster-overlay
+cd monster-overlay
 
 # 编译
 cmake -B build -G Ninja
 cmake --build build -j$(nproc)
 
 # 对活的 MHW 跑(.map 在 data/)
-./build/mhw-overlay --map data/MonsterHunterWorld.421810.map
+./build/monster-overlay --map data/MonsterHunterWorld.421810.map
 
 # edit 模式(不依赖活的游戏;用键盘摆位)
-./build/mhw-overlay --edit --poll 250
+./build/monster-overlay --edit --poll 250
 #   点击 panel 聚焦,然后:
 #     ←↑↓→   微调 10 px  |  Shift + ←↑↓→   微调 50 px
 #     滚轮              缩放 0.5× – 2×
-#     Ctrl + S           把位置持久化到 ~/.config/mhw-linux-overlay/panels.ini
+#     Ctrl + S           把位置持久化到 ~/.config/monster-overlay/panels.ini
 #     Space              切换最小化(变成 32×32 小字块)
 #     Esc                优雅退出
 
 # 控制台(替掉命令行那种交互)
-./build/mhw-control
+./build/monster-control
 
 # 跑测试
 ctest --test-dir build --output-on-failure
@@ -197,8 +197,8 @@ sudo pacman -S qt6-base qt6-declarative qt6-wayland layer-shell-qt cmake ninja
 
 ```text
 src/
-├── main.cpp                  # mhw-overlay 入口
-├── main_control.cpp          # mhw-control 入口
+├── main.cpp                  # monster-overlay 入口
+├── main_control.cpp          # monster-control 入口
 ├── mhw_reader.{h,cpp}        # 把各 domain reader 编排在一起的协调器
 ├── core/                     # StringTable + 通用工具
 ├── ui/                       # Player / Monster / Damage panel + 控制台
@@ -221,10 +221,10 @@ assets/
 docs/
 ├── ARCHITECTURE.md           # reader 分层、为什么不用注入、ptrace_scope
 ├── ASSETS.md                 # 图标 / 曲线 / 字体怎么加载、怎么加新的
-├── CONTROL_CONSOLE.md        # mhw-control 的架构 + 状态流
+├── CONTROL_CONSOLE.md        # monster-control 的架构 + 状态流
 ├── I18N.md                   # 加一个新的 locale、加一条 UI 文案
 ├── USAGE.md                  # 完整用法指南:按键、拖拽、preview、mask
-└── PROBE-TOOLS.md            # 每个 mhw-probe-* 干什么(仅开发者用)
+└── PROBE-TOOLS.md            # 每个 monster-probe-* 干什么(仅开发者用)
 ```
 
 ---
@@ -267,8 +267,8 @@ Capcom 自有的资产。完整的第三方 attribution 在
 
 ## 参与贡献
 
-- **Bug report** —— 请带上 `~/.config/mhw-overlay/mhw-overlay.conf`、
-  reader snapshot(`~/.cache/mhw-overlay/`)以及游戏 build ID(游戏内
+- **Bug report** —— 请带上 `~/.config/monster-overlay/monster-overlay.conf`、
+  reader snapshot(`~/.cache/monster-overlay/`)以及游戏 build ID(游戏内
   `Options → Game Options → Game Version`)。
 - **Rise 实测** —— 如果你有怪猎崛起并且愿意跑一遍 overlay,目前
   从 HunterPie 2.14.0.461 移植过来的 offsets 需要跟你活体任务里
@@ -290,12 +290,12 @@ Apache-2.0。
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) —— reader 分层、`tr()`
   ADL 陷阱、Yama `ptrace_scope` 注意事项、为什么坚持用 logical px。
-- [`docs/CONTROL_CONSOLE.md`](docs/CONTROL_CONSOLE.md) —— `mhw-control`
+- [`docs/CONTROL_CONSOLE.md`](docs/CONTROL_CONSOLE.md) —— `monster-control`
   架构与状态流。
 - [`docs/USAGE.md`](docs/USAGE.md) —— 完整交互手册(preview 拖拽、方向键 nudge
   + Shift 加大步、Ctrl-S 持久化、Space 折起、Esc 退出、section bitmask
   数学、`--mask-*` 与 `--no-*` 的分工)。
 - [`docs/I18N.md`](docs/I18N.md) —— 加一条 UI 文案、加一个 locale。
-- [`docs/PROBE-TOOLS.md`](docs/PROBE-TOOLS.md) —— 每个 `mhw-probe-*`
+- [`docs/PROBE-TOOLS.md`](docs/PROBE-TOOLS.md) —— 每个 `monster-probe-*`
   干什么,什么场景用哪个。
 - [`docs/ASSETS.md`](docs/ASSETS.md) —— 图标 / 曲线 / 字体的加载流水线。

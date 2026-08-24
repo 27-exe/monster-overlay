@@ -138,9 +138,9 @@ int main(int argc, char *argv[])
               << std::hex << (base + kScanBytes) << ")\n" << std::dec;
 
     // The candidate from the .rdata string scan was a red herring; the
-    // first followPointerChain output from mhw-overlay was 0x27b97798
+    // first followPointerChain output from monster-overlay was 0x27b97798
     // (heap allocation), with slot 0 = 0x81b62a40 (empty name). The
-    // mhw-probe found deref(0x0500CF40) = 0x27b97760 directly, so
+    // monster-probe found deref(0x0500CF40) = 0x27b97760 directly, so
     // probe the heap monster struct at 0x81b62a40 with a generous set
     // of field candidates and print floats near 184784 / 19868.
     const std::uintptr_t target = 0x81b62a40ULL;

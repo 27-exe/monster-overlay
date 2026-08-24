@@ -7,7 +7,7 @@
 > exist exactly as described. The reader at `src/mhw_reader.cpp` is
 > an orchestrator over the per-domain readers.
 >
-> For the v0.4 control console architecture (mhw-control subprocess,
+> For the v0.4 control console architecture (monster-control subprocess,
 > section masks, master visibility), see `docs/CONTROL_CONSOLE.md`.
 
 ---
@@ -33,7 +33,7 @@ internal split is planned for v0.2 alongside the UI rebuild.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  mhw-overlay (Qt GUI, layer-shell, single-process)   │
+│  monster-overlay (Qt GUI, layer-shell, single-process)   │
 │                                                      │
 │  ┌────────────┐  ┌──────────────────────────────┐  │
 │  │ OverlayWindow│ │ MhwReader (orchestrator)     │  │
@@ -154,7 +154,7 @@ to `1` ("only a parent process can ptrace"). Under this mode:
 
 We run as a desktop process reading a Proton-wrapped game in a
 different session. We use `process_vm_readv` and never `open(mem)`.
-The mhw-probe tools follow the same rule.
+The monster-probe tools follow the same rule.
 
 ## What goes where (v0.2 split plan)
 

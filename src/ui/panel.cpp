@@ -28,7 +28,7 @@ constexpr int kBorderWidth = 2;
 QSettings &settings()
 {
     static QSettings s(QSettings::IniFormat, QSettings::UserScope,
-                       QStringLiteral("mhw-linux-overlay"),
+                       QStringLiteral("monster-overlay"),
                        QStringLiteral("panels"));
     return s;
 }
@@ -114,7 +114,7 @@ void Panel::applyGeometry()
     layer->setKeyboardInteractivity(
         LayerShellQt::Window::KeyboardInteractivityNone);
     layer->setExclusiveZone(-1);
-    layer->setScope(QStringLiteral("mhw-linux-overlay"));
+    layer->setScope(QStringLiteral("monster-overlay"));
     layer->setActivateOnShow(false);
 
     // Anchor the panel to its corner. This is the KEY difference from
@@ -515,7 +515,7 @@ void Panel::wheelEvent(QWheelEvent *e)
     saveConfig();
 }
 
-// -- v0.3 visual helpers (mirrors mhw-overlay-concept.html tokens) --
+// -- v0.3 visual helpers (mirrors monster-overlay-concept.html tokens) --
 
 QColor Panel::accentColor(Accent a) const
 {

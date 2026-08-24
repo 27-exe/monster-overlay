@@ -1,4 +1,4 @@
-# Usage Guide — `mhw-overlay` & `mhw-control`
+# Usage Guide — `monster-overlay` & `monster-control`
 
 Everything in this document has been verified against the `v0.7.5` build
 (`ac60017`). Source of truth: `src/ui/panel.cpp`, `src/ui/hud_canvas.cpp`,
@@ -10,10 +10,10 @@ Everything in this document has been verified against the `v0.7.5` build
 
 | Binary | Job | Visual style |
 |--------|-----|--------------|
-| `mhw-overlay` | The HUD itself. Three layer-shell surfaces anchored to corners. | Translucent dark, role-themed (player=teal, monster=violet, damage=pink). |
-| `mhw-control` | The control console. Spawns `mhw-overlay` as a child process and owns its lifecycle. | A native Qt `QMainWindow` with a left rail (`WORLD` / `RISE` / `DETECTED`) and a central preview canvas. |
+| `monster-overlay` | The HUD itself. Three layer-shell surfaces anchored to corners. | Translucent dark, role-themed (player=teal, monster=violet, damage=pink). |
+| `monster-control` | The control console. Spawns `monster-overlay` as a child process and owns its lifecycle. | A native Qt `QMainWindow` with a left rail (`WORLD` / `RISE` / `DETECTED`) and a central preview canvas. |
 
-You don't have to use `mhw-control` — `mhw-overlay` accepts every
+You don't have to use `monster-control` — `monster-overlay` accepts every
 setting as a CLI flag — but the console is the easiest way to flip
 sections on/off and reposition the panels without restarting.
 
@@ -28,7 +28,7 @@ sections on/off and reposition the panels without restarting.
    five seconds; if it just says `WORLD` (no `DETECTED` marker) you need
    to grant the `ptrace` capability (`install.sh` does not do this):
    ```bash
-   sudo setcap cap_sys_ptrace+ep ./mhw-overlay
+   sudo setcap cap_sys_ptrace+ep ./monster-overlay
    ```
 3. **Click START OVERLAY.** The console window hides; the three panels
    appear on top of the game.
@@ -37,7 +37,7 @@ sections on/off and reposition the panels without restarting.
 
 ---
 
-## 3. The control console (`mhw-control`)
+## 3. The control console (`monster-control`)
 
 The console is a single window with three regions stacked vertically
 when the stage is expanded, side-by-side when collapsed:
@@ -65,7 +65,7 @@ when the stage is expanded, side-by-side when collapsed:
 | Left rail | Auto-detected badge | Refreshes every 5 s. Shows `WORLD` / `RISE` / `--` if not found. |
 | Center top | `▾ HIDE STAGE` button | Collapses the preview canvas. The HUD objects list and "START OVERLAY" stay reachable. |
 | Center top | `▴ SHOW STAGE` button | Re-opens it. |
-| Center top | `▶ START OVERLAY` button | Spawns `mhw-overlay` as a child process; console hides. |
+| Center top | `▶ START OVERLAY` button | Spawns `monster-overlay` as a child process; console hides. |
 | Center top | `■ STOP OVERLAY` button | Gracefully terminates the overlay (`SIGINT`), console re-appears. |
 | Right column | `P` / `M` / `D` switch (master) | Disable the whole player / monster / damage panel. Independent of sub-row toggles. |
 | Right column | sub-rows (Conn / Quest / Weapon / Bars / Mantles / Debuff, …) | Per-section visibility. Bitmask layout in `panel_sections.h`. |
@@ -87,7 +87,7 @@ three real panels in size and position; every interaction has the
 - **Arrow keys over the canvas** — 10 px nudge.
 - **Shift + arrow keys** — 50 px nudge (use it to make big sweeps).
 - **Wheel** — zoom the preview 0.5×–2.0× (visual only; not persisted).
-- **Position is persisted** to `~/.config/mhw-linux-overlay/panels.ini`
+- **Position is persisted** to `~/.config/monster-overlay/panels.ini`
   on quit. There is no "save" button — `Esc` or the `STOP OVERLAY`
   button writes the file.
 
@@ -97,22 +97,22 @@ three real panels in size and position; every interaction has the
 
 ---
 
-## 4. Edit-mode interaction in `mhw-overlay` (no game)
+## 4. Edit-mode interaction in `monster-overlay` (no game)
 
 ```bash
-./build/mhw-overlay --edit
+./build/monster-overlay --edit
 ```
 
 Edit mode runs without a live game: every panel renders demo data so
 you can reposition it. The **same binding table applies** as in
-`mhw-control`'s preview canvas, plus these that are specific to a
+`monster-control`'s preview canvas, plus these that are specific to a
 focused panel window:
 
 | Key / gesture | Action |
 |---------------|--------|
 | `←` `→` `↑` `↓` | Nudge the focused panel by 10 px. |
 | `Shift + ←` `→` `↑` `↓` | Nudge by 50 px. |
-| `Ctrl + S` | Persist the current panel positions to `~/.config/mhw-linux-overlay/panels.ini` immediately (otherwise they persist on quit). |
+| `Ctrl + S` | Persist the current panel positions to `~/.config/monster-overlay/panels.ini` immediately (otherwise they persist on quit). |
 | `Mouse wheel` (over the panel) | Scale panel content 0.5× – 2.0×. |
 | `Space` | Toggle **minimize** — collapses the panel to a 32×32 letter chip. Hit Space again to restore. |
 | `Esc` | Graceful quit — saves all current positions, then exits. |
@@ -183,7 +183,7 @@ after a Steam overlay popup doesn't blank the curve).
 
 ---
 
-## 6. CLI flags (mhw-overlay)
+## 6. CLI flags (monster-overlay)
 
 ```text
   -m, --map <path>           HunterPie legacy map file (default: bundled
@@ -215,7 +215,7 @@ There are two related but **different** flags, both useful:
 The bit layout per panel lives in `src/ui/panel_sections.h`. To
 figure out the correct hex value for your combination, use the
 console — it writes the current mask to
-`~/.config/mhw-overlay/mhw-overlay.conf` and the next launch reads
+`~/.config/monster-overlay/monster-overlay.conf` and the next launch reads
 from there.
 
 ---
@@ -224,9 +224,9 @@ from there.
 
 | File | Written by | Read by |
 |------|------------|---------|
-| `~/.config/mhw-overlay/mhw-overlay.conf` | `mhw-control` on mask change + on quit | `mhw-overlay` on startup |
-| `~/.config/mhw-linux-overlay/panels.ini` | `mhw-overlay` on Ctrl-S / on quit | `mhw-overlay` on startup (panel positions + scales) |
-| `~/.cache/mhw-overlay/` | `mhw-reader` (snapshot dump for bug reports) | you, when filing an issue |
+| `~/.config/monster-overlay/monster-overlay.conf` | `monster-control` on mask change + on quit | `monster-overlay` on startup |
+| `~/.config/monster-overlay/panels.ini` | `monster-overlay` on Ctrl-S / on quit | `monster-overlay` on startup (panel positions + scales) |
+| `~/.cache/monster-overlay/` | `monster-reader` (snapshot dump for bug reports) | you, when filing an issue |
 
 Delete any of these to start fresh — there's no schema-version check.
 
@@ -238,9 +238,9 @@ Delete any of these to start fresh — there's no schema-version check.
   with `Qt::Tool` window flag, so the overlay doesn't show up in your
   compositor's task list / dock. That means quitting the game without
   pressing `Esc` leaves the overlay surface stacked: kill it with
-  `pkill mhw-overlay` (or `kill <pid>` from the console title bar).
+  `pkill monster-overlay` (or `kill <pid>` from the console title bar).
 - **`ptrace_scope`** — on hardened distros you may need
-  `sudo setcap cap_sys_ptrace+ep ./mhw-overlay`. See
+  `sudo setcap cap_sys_ptrace+ep ./monster-overlay`. See
   `docs/ARCHITECTURE.md` for the full write-up.
 - **Layout in MQ<2560×1080** — at narrow widths the three panel
   anchors may overlap; bump the screen height to ≥1080 (or scale each

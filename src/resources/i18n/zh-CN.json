@@ -6,7 +6,7 @@
   },
   "ui": {
     "app_title": "MHW Linux Overlay",
-    "object_scope": "mhw-linux-overlay",
+    "object_scope": "monster-overlay",
     "font_family": "Noto Sans CJK SC",
     "status_default": "MHW Linux Overlay",
     "context_disconnected": "未连接",

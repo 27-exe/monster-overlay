@@ -121,7 +121,7 @@ protected:
     void wheelEvent(QWheelEvent *e) override;
     void showEvent(QShowEvent *e) override;
 
-    // v0.3 visual helpers — match mhw-overlay-concept.html tokens.
+    // v0.3 visual helpers — match monster-overlay-concept.html tokens.
     enum class Accent { Player, Monster, Damage };
     void drawV03Chrome(QPainter &p, Accent accent) const;
     QColor accentColor(Accent a) const;

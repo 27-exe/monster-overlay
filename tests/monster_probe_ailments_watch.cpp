@@ -10,7 +10,7 @@
 //   - writes to a log file path supplied on the command line so you can
 //     scroll back and find the moment sleep/paralysis was active.
 //
-// Usage: ./build/mhw-probe-ailments-watch /tmp/ailments.log
+// Usage: ./build/monster-probe-ailments-watch /tmp/ailments.log
 //
 // Stop with Ctrl-C; the log is appended on every iteration, so search
 // backward through it for `active=1 id=N` once you've had a trigger.

@@ -149,7 +149,7 @@ void SpikeWindow::tick(int frame)
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
-    QApplication::setApplicationName(QStringLiteral("mhw-overlay-web"));
+    QApplication::setApplicationName(QStringLiteral("monster-overlay-web"));
     QApplication::setOrganizationName(QStringLiteral("a27exe"));
 
     const QString htmlPath =

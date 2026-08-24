@@ -50,7 +50,7 @@ in each game state — this is observed behavior, not aspirational:
 
 | State | Screenshot | What you'll see |
 |-------|------------|-----------------|
-| **Control console** | ![console](assets/screenshots/01-control-console.png) | `mhw-control` GUI: game selector (`WORLD` / `RISE`), HUD-object list, per-section toggles, zoom controls, and the live HUD canvas preview at the bottom. |
+| **Control console** | ![console](assets/screenshots/01-control-console.png) | `monster-control` GUI: game selector (`WORLD` / `RISE`), HUD-object list, per-section toggles, zoom controls, and the live HUD canvas preview at the bottom. |
 | **Out of quest (hub / Seliana)** | ![hub](assets/screenshots/02-out-of-quest.png) | Only the **Player** panel — no live monster and no live quest damage, so the other two are intentionally blank / hidden. HP / ST / MR / sharpness / cat-cars still rendered. |
 | **In quest** | ![quest](assets/screenshots/03-in-quest.png) | All three panels active on a Coral Palace ★12 hunt against an Apex Rathalos. Live monster HP 4 855 / 43 470, per-part HP, Apex icon and enrage; damage ranking for the **3 hunters active at the snapshot moment** (a 4th joined a moment after capture). |
 | **Quest end (capture / transition)** | ![end](assets/screenshots/04-quest-end.png) | The 「発見調査班報告 / Investigation Complete」 banner with a 20-second return countdown. **All three panels stay on** here — the player panel, the **Monster** panel (still showing the post-defeat HP — *which is non-zero by design because the host hasn't zero'd the monster struct yet, e.g. capture or partial reward*), and the full **Damage** panel with the final party roster. |
@@ -82,15 +82,15 @@ build step, no system install needed.
 
 ```bash
 # 1. extract
-tar -xzf mhw-overlay-v0.7.5-linux-x86_64.tar.gz
-cd mhw-overlay-v0.7.5
+tar -xzf monster-overlay-v0.7.5-linux-x86_64.tar.gz
+cd monster-overlay-v0.7.5
 
 # 2. install runtime dependencies (Arch Linux)
 sudo pacman -S --needed qt6-base qt6-declarative qt6-wayland layer-shell-qt
 
 # 3. launch Steam with Monster Hunter: World and start a quest,
 #    then run the control console:
-./mhw-control
+./monster-control
 ```
 
 In the console:
@@ -106,7 +106,7 @@ To install the binaries system-wide instead of running in place:
 
 ```bash
 ./install.sh                 # copies to ~/.local/bin/
-sudo setcap cap_sys_ptrace+ep ~/.local/bin/mhw-overlay   # optional
+sudo setcap cap_sys_ptrace+ep ~/.local/bin/monster-overlay   # optional
 ```
 
 ### Permissions: reading `/proc/<pid>/mem`
@@ -119,7 +119,7 @@ default. Pick **one**:
 sudo sysctl kernel.yama.ptrace_scope=0
 
 # option B — permanent, scoped to the binary
-sudo setcap cap_sys_ptrace+ep ./mhw-overlay
+sudo setcap cap_sys_ptrace+ep ./monster-overlay
 ```
 
 `install.sh` does **not** set capabilities on its own. See
@@ -146,27 +146,27 @@ the split behaviour of the per-section `--mask-*` versus whole-panel
 ## Quick start (developer)
 
 ```bash
-git clone https://github.com/27-exe/mhw-linux-overlay
-cd mhw-linux-overlay
+git clone https://github.com/27-exe/monster-overlay
+cd monster-overlay
 
 # build
 cmake -B build -G Ninja
 cmake --build build -j$(nproc)
 
 # run against a live MHW (the .map ships in data/)
-./build/mhw-overlay --map data/MonsterHunterWorld.421810.map
+./build/monster-overlay --map data/MonsterHunterWorld.421810.map
 
 # run in edit mode (no game needed; position panels with the keyboard)
-./build/mhw-overlay --edit --poll 250
+./build/monster-overlay --edit --poll 250
 #   click a panel to focus it, then:
 #     ←↑↓→   nudge 10 px  |  Shift + ←↑↓→   nudge 50 px
 #     wheel               zoom 0.5× – 2×
-#     Ctrl + S            persist position to ~/.config/mhw-linux-overlay/panels.ini
+#     Ctrl + S            persist position to ~/.config/monster-overlay/panels.ini
 #     Space               toggle minimized (small letter block)
 #     Esc                 graceful quit
 
 # control console (replaces the command-line toggles)
-./build/mhw-control
+./build/monster-control
 
 # tests
 ctest --test-dir build --output-on-failure
@@ -205,8 +205,8 @@ Per-section bit layouts live in `src/ui/panel_sections.h`.
 
 ```text
 src/
-├── main.cpp                  # mhw-overlay entry
-├── main_control.cpp          # mhw-control entry
+├── main.cpp                  # monster-overlay entry
+├── main_control.cpp          # monster-control entry
 ├── mhw_reader.{h,cpp}        # orchestrator over the per-domain readers
 ├── core/                     # StringTable + shared utilities
 ├── ui/                       # Player / Monster / Damage panels + control console
@@ -229,10 +229,10 @@ assets/
 docs/
 ├── ARCHITECTURE.md           # reader layering, why-proc-mem-not-injection, ptrace_scope
 ├── ASSETS.md                 # how icons/charts/fonts are loaded, how to add more
-├── CONTROL_CONSOLE.md        # mhw-control architecture + state flow
+├── CONTROL_CONSOLE.md        # monster-control architecture + state flow
 ├── I18N.md                   # adding a locale, adding a UI string
 ├── USAGE.md                  # full interaction walkthrough (drag, arrow-keys, masks)
-└── PROBE-TOOLS.md            # what each mhw-probe-* does (developer-only)
+└── PROBE-TOOLS.md            # what each monster-probe-* does (developer-only)
 ```
 
 ---
@@ -283,8 +283,8 @@ text we ship.
 ## Contributing
 
 - **Bug reports** — please include
-  `~/.config/mhw-overlay/mhw-overlay.conf`, the reader snapshot
-  (`~/.cache/mhw-overlay/`), and the game build ID (in-game:
+  `~/.config/monster-overlay/monster-overlay.conf`, the reader snapshot
+  (`~/.cache/monster-overlay/`), and the game build ID (in-game:
   `Options → Game Options → Game Version`).
 - **Rise validation** — if you own MHRise and can run the overlay
   against it, the offsets ported from HunterPie 2.14.0.461 need a
@@ -307,13 +307,13 @@ this project is *also* Apache-2.0.
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — reader layering, the `tr()`
   ADL trap, Yama `ptrace_scope` caveat, why we keep coordinates as logical px.
-- [`docs/CONTROL_CONSOLE.md`](docs/CONTROL_CONSOLE.md) — `mhw-control`
+- [`docs/CONTROL_CONSOLE.md`](docs/CONTROL_CONSOLE.md) — `monster-control`
   architecture and state flow.
 - [`docs/USAGE.md`](docs/USAGE.md) — full interaction walkthrough (preview
   drag, arrow-key nudge + Shift, Ctrl-S persist, Space minimise, Esc quit,
   per-section bitmask math, `--mask-*` vs `--no-*`).
 - [`docs/I18N.md`](docs/I18N.md) — adding a UI string, adding a locale.
-- [`docs/PROBE-TOOLS.md`](docs/PROBE-TOOLS.md) — what each `mhw-probe-*`
+- [`docs/PROBE-TOOLS.md`](docs/PROBE-TOOLS.md) — what each `monster-probe-*`
   binary does and when to use which.
 - [`docs/ASSETS.md`](docs/ASSETS.md) — icon/chart/font pipeline and
   attribution discipline.
