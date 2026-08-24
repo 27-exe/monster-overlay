@@ -50,7 +50,7 @@ int main(int argc, char **argv)
     app.setStyle(QStringLiteral("Fusion"));
     QApplication::setApplicationName(QStringLiteral("mhw-linux-overlay"));
     QApplication::setApplicationDisplayName(QStringLiteral("MHW Linux Overlay"));
-    QApplication::setApplicationVersion(QStringLiteral("0.5.7"));
+    QApplication::setApplicationVersion(QStringLiteral("0.7.5"));
     QApplication::setOrganizationName(QStringLiteral("a27exe"));
     app.setQuitOnLastWindowClosed(true);
 

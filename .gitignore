@@ -5,3 +5,14 @@ build/
 *.pre-PRA
 *.pre-PRB
 *.pre-PRC
+
+# Private local-only reference material — kept in the working tree,
+# intentionally excluded from the public repo (see README.md / See also):
+docs/V0.*-STATUS.md
+docs/spike-log.md
+docs/plans/
+
+# Release artifacts — produced by the local release-v0.7.5/ script and
+# uploaded to GitHub Releases, never committed back into the repo:
+release-*/
+*.tar.gz

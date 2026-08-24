@@ -1,47 +1,162 @@
 # MHW Linux Overlay
 
-A native-Linux overlay for **Monster Hunter: World** running under
-Steam + GE-Proton. Reads the game's process memory directly via
-`/proc/<pid>/mem` and renders a Qt-based HUD in a KDE Wayland
-layer-shell surface.
+A native-Linux HUD overlay for the **Monster Hunter** series running
+under Steam + GE-Proton. Reads the game's process memory directly via
+`/proc/<pid>/mem` and renders a Qt 6 HUD on Wayland through
+`zwlr_layer_shell_v1`.
 
-## Status: v0.4
+This is a **Linux port of [HunterPie v2](https://github.com/HunterPie/HunterPie)**
+— we do *not* inject a DLL into the game. The overlay is a separate
+process that attaches to the running MHW process and reads what it
+needs to render.
 
-`v0.4` is the current stable product. The overlay binary
-(`mhw-overlay`) and the control console (`mhw-control`) are both
-in active use. Read `docs/V0.4-STATUS.md` for the full v0.4 status
-snapshot.
+**Current stable:** `v0.7.5` (commit `ac60017`).
 
-### What shipped in v0.4
+### Environment support
 
-- **Master visibility** — `--no-player / --no-monster / --no-damage`
-  CLI flags gate the whole panel independently of the per-section
-  masks. A panel with all sections off still shows its title row
-  (intended — that’s “enable panel, but every sub is off”;
-  “disable the whole panel” is a different state and is what
-  `--no-*` now means).
-- **Per-section masks** — `--mask-player/--mask-monster/--mask-damage`
-  accept hex32 bitmasks; default `0xFFFFFFFF` is all-on and matches
-  the legacy behaviour.
-- **Control console** (`mhw-control`) — a separate Qt GUI that owns
-  a sub-process of `mhw-overlay`. The console window hides when the
-  overlay spawns and re-shows on overlay exit (SIGINT / ESC / quit).
-  Per-section toggles + master toggles are persisted to
-  `~/.config/mhw-overlay/mhw-overlay.conf`.
+The overlay was developed and primary-tested on **KDE Plasma 6 Wayland**;
+it is now in daily use on the maintainer's machine running **Niri**,
+and the screenshots in this README are captured there. Compositors
+implementing `zwlr_layer_shell_v1` are expected to work:
 
-Read `docs/V0.4-STATUS.md` for the full status snapshot.
+| Compositor | Status | Notes |
+|------------|:------:|-------|
+| **KDE Plasma 6 Wayland** | ✅ Works | Where the overlay was originally developed. |
+| **Niri** | ✅ Works (screenshot rig) | Confirmed running perfectly — every panel + console + drag preview works identically here. |
+| **Hyprland / Sway / river / Wayfire** | ✅ Should work | All four implement `zwlr_layer_shell_v1`; not regularly tested, please report. |
+| **GNOME (X11 or Wayland)** | ❌ Not supported | GNOME ships no `zwlr_layer_shell_v1`. The overlay would fall back to an un-anchored window. |
+| **Plain X11 (no compositor)** | ❌ Out of scope | Layer-shell is the only positioning mechanism we use. |
 
-## Quick start
+GPU is **driver-agnostic** — Qt 6 picks `egl` / `wayland-client` automatically;
+NVIDIA + Wayland uses the system `libEGL.so`. No Vulkan or DRI requirements.
+
+[中文文档 — 简体中文](README.zh-CN.md)
+
+---
+
+## What it shows
+
+There are three independent panels, anchored to screen corners via
+`zwlr_layer_shell_v1`. The grid below shows exactly what each one does
+in each game state — this is observed behavior, not aspirational:
+
+| Panel | Out of quest (hub) | In quest | Quest-end transition |
+|-------|:------------------:|:--------:|:---------------------:|
+| **Player** — HP / ST bars, weapon icon + sharpness, mantle names + CD countdowns, party slot count, debuff / blight timers, MR rank, quest slot / zone / timer | ✅ full | ✅ full | ✅ full (frozen) |
+| **Monster** — total HP + percentage, per-part HP bars, ailment timers, enrage / sleep countdown, Ail/Part severable+flinch logic per HunterPie | hidden (no live monster) | ✅ full | ✅ **stays on** — the residual HP may be non-zero if the host is mid-transition (capture / reward settlement). Normal behaviour, not a bug. |
+| **Damage** — party list, per-row percent bars, DPS / hit ranking, time-series chart | hidden | ✅ live rolling | ✅ **frozen at the final quest state**, **full party roster preserved** (including the slot where a player dropped off mid-quest — `dropOut` is sticky by design) |
+
+### Screenshots
+
+| State | Screenshot | What you'll see |
+|-------|------------|-----------------|
+| **Control console** | ![console](assets/screenshots/01-control-console.png) | `mhw-control` GUI: game selector (`WORLD` / `RISE`), HUD-object list, per-section toggles, zoom controls, and the live HUD canvas preview at the bottom. |
+| **Out of quest (hub / Seliana)** | ![hub](assets/screenshots/02-out-of-quest.png) | Only the **Player** panel — no live monster and no live quest damage, so the other two are intentionally blank / hidden. HP / ST / MR / sharpness / cat-cars still rendered. |
+| **In quest** | ![quest](assets/screenshots/03-in-quest.png) | All three panels active on a Coral Palace ★12 hunt against an Apex Rathalos. Live monster HP 4 855 / 43 470, per-part HP, Apex icon and enrage; damage ranking for the **3 hunters active at the snapshot moment** (a 4th joined a moment after capture). |
+| **Quest end (capture / transition)** | ![end](assets/screenshots/04-quest-end.png) | The 「発見調査班報告 / Investigation Complete」 banner with a 20-second return countdown. **All three panels stay on** here — the player panel, the **Monster** panel (still showing the post-defeat HP — *which is non-zero by design because the host hasn't zero'd the monster struct yet, e.g. capture or partial reward*), and the full **Damage** panel with the final party roster. |
+
+> All HUD text is driven by `src/resources/i18n/<locale>.json`. See
+> [`docs/I18N.md`](docs/I18N.md). The shipping locale today is `zh-CN`;
+> `en-US`/`ja-JP` slots are wired in but not yet populated.
+
+---
+
+## Game support matrix
+
+| Game | Status | Memory map | Notes |
+|------|:------:|------------|-------|
+| **Monster Hunter: World** | ✅ Stable | `data/MonsterHunterWorld.421810.map` (Steam build 421810) | Full feature set, v0.7.5 in daily use. |
+| **Monster Hunter: Rise** | ⚠️ Adapted, **not tested** | `data/MonsterHunterRise.16.0.2.0.map` | Offsets ported from HunterPie v2; structurally verified against the binary but no live-game run by the maintainer. Expect schema drift if Capcom shifted struct layouts since HunterPie 2.14.0.461. |
+| **Monster Hunter: Wilds** | ⏳ Parked (waiting on Capcom) | — | Wilds is unplayable on Linux in its current state, so the maintainer is holding off until Capcom ships a stable build worth buying. HunterPie v2 already publishes Wilds offsets (e.g. `MonsterHunterWilds.1.1.1.0.map`), and the port would be mechanical — drop the map into `data/` + a few wire-up lines in the reader. So the bottleneck isn't engineering; it's the upstream Linux / Proton story. |
+
+Selecting `RISE` in the console today will load the map, but the
+reader will most likely produce empty snapshots until the offsets are
+re-validated against a live session.
+
+---
+
+## Quick start (end user)
+
+Download the release tarball, extract it, and run two commands — no
+build step, no system install needed.
 
 ```bash
-# Build all targets (overlay + console + tests + probes)
-cmake -B build
+# 1. extract
+tar -xzf mhw-overlay-v0.7.5-linux-x86_64.tar.gz
+cd mhw-overlay-v0.7.5
+
+# 2. install runtime dependencies (Arch Linux)
+sudo pacman -S --needed qt6-base qt6-declarative qt6-wayland layer-shell-qt
+
+# 3. launch Steam with Monster Hunter: World and start a quest,
+#    then run the control console:
+./mhw-control
+```
+
+In the console:
+
+1. Pick `WORLD` (or `RISE` if you have validated it for your build).
+2. Toggle the sections you want on each panel.
+3. Click **START OVERLAY**. The console window hides and the overlay
+   spawns on top of the game.
+4. Quit the game (or press `Esc` over the overlay) — the console
+   re-appears.
+
+To install the binaries system-wide instead of running in place:
+
+```bash
+./install.sh                 # copies to ~/.local/bin/
+sudo setcap cap_sys_ptrace+ep ~/.local/bin/mhw-overlay   # optional
+```
+
+### Permissions: reading `/proc/<pid>/mem`
+
+`/proc/<pid>/mem` reads from a non-child process are blocked by
+default. Pick **one**:
+
+```bash
+# option A — temporary (until next reboot)
+sudo sysctl kernel.yama.ptrace_scope=0
+
+# option B — permanent, scoped to the binary
+sudo setcap cap_sys_ptrace+ep ./mhw-overlay
+```
+
+`install.sh` does **not** set capabilities on its own. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full write-up.
+
+### Requirements
+
+- **Steam + GE-Proton 10-34** (or Proton 9+)
+- **Any Wayland compositor** implementing `zwlr_layer_shell_v1` — KDE Plasma 6
+  (default test rig), Niri (current daily-use), Hyprland, Sway, river, Wayfire
+  have all been confirmed or are trivially expected to work. See the matrix above.
+- A running `MonsterHunterWorld.exe` (or Rise) process for live mode
+- Qt 6.8+ runtime libraries (`qt6-base`, `qt6-declarative`, `qt6-wayland`,
+  `layer-shell-qt` on Arch)
+
+For the **complete walkthrough of every interaction** — the HUD-canvas
+drag in the control console, arrow-key nudging + Shift modifiers, Ctrl-S
+persist, Space minimize, Esc graceful-quit, per-section bitmask math, and
+the split behaviour of the per-section `--mask-*` versus whole-panel
+`--no-*` flags — see [`docs/USAGE.md`](docs/USAGE.md).
+
+---
+
+## Quick start (developer)
+
+```bash
+git clone https://github.com/27-exe/mhw-linux-overlay
+cd mhw-linux-overlay
+
+# build
+cmake -B build -G Ninja
 cmake --build build -j$(nproc)
 
-# Run the overlay against a live MHW
+# run against a live MHW (the .map ships in data/)
 ./build/mhw-overlay --map data/MonsterHunterWorld.421810.map
 
-# Run in edit mode (no MHW needed; position the 3 panels with keyboard)
+# run in edit mode (no game needed; position panels with the keyboard)
 ./build/mhw-overlay --edit --poll 250
 #   click a panel to focus it, then:
 #     ←↑↓→   nudge 10 px  |  Shift + ←↑↓→   nudge 50 px
@@ -50,165 +165,155 @@ cmake --build build -j$(nproc)
 #     Space               toggle minimized (small letter block)
 #     Esc                 graceful quit
 
-# Run the control console (replaces the command line)
+# control console (replaces the command-line toggles)
 ./build/mhw-control
 
-# Tests
+# tests
 ctest --test-dir build --output-on-failure
 ```
 
-The `421810.map` ships in `data/` and is resolved automatically
-from `MHW_DEFAULT_MAP` (set by CMake) if `--map` is omitted.
+Build dependencies on Arch:
 
-## Requirements
-
-- Arch Linux (or any distro with Qt 6.8+)
-- Steam + GE-Proton 10-34 (or Proton 9+)
-- A running `MonsterHunterWorld.exe` process (live mode reads it)
-- KDE Plasma 6 on Wayland for the layer-shell surface
-- Build deps: `qt6-base qt6-declarative qt6-wayland layer-shell-qt cmake ninja`
-
-## What the overlay shows
-
-```
-┌─────────────────────────────────────┐
-│  狩猎 · 古代树森林                    │  ← context (zone + quest state)
-│  任务 66801 · ★6 · 剩余 41:37 · 猫车 0/3 │  ← quest
-│  猎人  HP 172/200 (86.0%)  ST 130/150 │  ← player
-│  武器  转身 60s · 不动 (冷却) 280s    │  ← mantles
-│  A27exe  MR 214  伤害 12840           │  ← party damage
-│  em\em100_00 [ID 100]                │  ← monster
-│  HP  14280 / 20880   68.4%  🔥74s    │  ← total HP + enrage countdown
-│    头部                              │  ← per-part
-│    尾巴 (硬直 200/200  100.0%  mp)   │  ← multi: counter only
-└─────────────────────────────────────┘
+```bash
+sudo pacman -S qt6-base qt6-declarative qt6-wayland layer-shell-qt cmake ninja
 ```
 
-UI strings are externalised to `src/resources/i18n/<locale>.json`;
-all text on the panel is i18n-driven and re-renders without rebuilding
-when the JSON is updated.
+`MonsterHunterWorld.421810.map` is resolved automatically from
+`MHW_DEFAULT_MAP` (set by CMake) if `--map` is omitted.
+
+---
+
+## CLI flags
+
+| Flag | Meaning |
+|------|---------|
+| `-m, --map <path>` | HunterPie legacy map file (default: bundled) |
+| `--locale <code>`  | UI locale, default `zh-CN` (currently the only shipped locale) |
+| `--edit`           | Edit mode — no game required, demo data on the panels |
+| `--poll <ms>`      | Polling interval, default 250, range 30–5000 |
+| `--mask-player <hex32>`  | per-section mask for the player panel (default `0xFFFFFFFF` = all on) |
+| `--mask-monster <hex32>` | per-section mask for the monster panel |
+| `--mask-damage <hex32>`  | per-section mask for the damage panel |
+| `--no-player` / `--no-monster` / `--no-damage` | hide the whole panel |
+| `-h, --help` / `-v, --version` | self-explanatory |
+
+Per-section bit layouts live in `src/ui/panel_sections.h`.
+
+---
 
 ## Repo layout
 
 ```text
 src/
 ├── main.cpp                  # mhw-overlay entry
-├── main_control.cpp          # mhw-control entry (control console)
+├── main_control.cpp          # mhw-control entry
 ├── mhw_reader.{h,cpp}        # orchestrator over the per-domain readers
-├── core/                     # foundational types
-│   └── string_table.{h,cpp}  # mhw::StringTable, QRC JSON loader
-│
-├── monster/                  # monsters/HP/parts/ailments/enrage
-├── player/                   # HP/ST + abnormalities + mantles
-├── quest/                    # quest state, timer, deaths
-├── world/                    # zone, scene
-└── ui/                       # panel widgets, control console, icons
-    ├── panel.{h,cpp}         # base class (layer-shell anchor, edit mode, save/load config)
-    ├── panel_player.{h,cpp}  # player panel (kConn/kQuest/kWeapon/...)
-    ├── panel_monster.{h,cpp} # monster panel (kInfo/kHp/kEnrage/kAil/kParts)
-    ├── panel_damage.{h,cpp}  # damage panel (kRows/kShare/kChart)
-    ├── panel_sections.h      # per-panel section enum + names + displayNames
-    ├── control_panel.{h,cpp} # mhw-control main window
-    ├── toggle_chip.{h,cpp}   # iOS-style master toggle
-    ├── section_row.{h,cpp}   # per-section row widget
-    ├── formatters.{h,cpp}    # integer / time / percent formatting
-    ├── icon.{h,cpp}          # SVG/PNG icon loader
-
-assets/
-├── icons/                    # per-monster / per-status icons
-├── charts/                   # DPS chart textures
-└── icons.qrc                 # Qt resource manifest
+├── core/                     # StringTable + shared utilities
+├── ui/                       # Player / Monster / Damage panels + control console
+├── memory/                   # /proc/<pid>/mem helpers + HunterPie map loader
+├── resources/i18n/           # UI strings (currently zh-CN)
+├── resources/monsters/       # ailments.json, parts.json (HunterPie-derived)
+└── tests/                    # schema integrity, mask round-trip, etc.
 
 data/
-└── MonsterHunterWorld.421810.map  # HunterPie legacy offset table
+├── MonsterHunterWorld.421810.map   # Steam MH:W build offsets
+└── MonsterHunterRise.16.0.2.0.map  # MHRise offsets (untested)
 
-tests/                        # ctest targets — 4 unit + 7 diagnostic probes
-├── reader_tests.cpp
-├── string_table_tests.cpp
-├── snap_player_demo.cpp        # offscreen render of player panel
-├── snap_all_demo.cpp           # offscreen render of monster + damage panels
-├── control_l2_smoke.cpp        # round-trip mhw-control mask persistence
-├── mhw_probe.cpp                # generic reader probe
-├── mhw_scan.cpp                 # find monster struct table in heap
-├── mhw_probe_parts.cpp          # part table dump (normal + severable)
-├── mhw_probe_ailments.cpp       # one-shot ailment probe
-├── mhw_probe_ailments_watch.cpp # continuous ailment watch
-├── mhw_probe_mantles.cpp        # mantle probe
-└── mhw_probe_mantles_wide.cpp   # full region dump around EQUIPMENT_OFFSETS
+assets/
+├── icons/                    # MHW-derived SVG icons (OthelloRhin MIT + HunterPie Apache-2.0)
+├── fonts/                    # WorkSans (OFL-1.1)
+├── charts/alligator_noise_512x512.jpg   # chart-grain texture (HunterPie Apache-2.0)
+├── NOTICE                    # third-party attribution
+└── screenshots/              # README + docs image assets
 
-scripts/                       # maintenance scripts
-├── gen_schema.py              # regenerate src/monster/part_schemas.cpp
-
-web/                           # web prototype (Ctrl-F/T/C web)
-tools/                         # standalone CLI tools
+docs/
+├── ARCHITECTURE.md           # reader layering, why-proc-mem-not-injection, ptrace_scope
+├── ASSETS.md                 # how icons/charts/fonts are loaded, how to add more
+├── CONTROL_CONSOLE.md        # mhw-control architecture + state flow
+├── I18N.md                   # adding a locale, adding a UI string
+├── USAGE.md                  # full interaction walkthrough (drag, arrow-keys, masks)
+└── PROBE-TOOLS.md            # what each mhw-probe-* does (developer-only)
 ```
 
-## Build details
+---
 
-CMake targets:
+## How it works (one paragraph)
 
-| target                  | description                                            |
-|-------------------------|--------------------------------------------------------|
-| `mhw-overlay`           | the GUI binary; the thing you actually run             |
-| `mhw-control`           | control console (launches `mhw-overlay` subprocess)   |
-| `mhw-core`              | static lib: `mhw::StringTable` + utilities             |
-| `mhw-reader-tests`      | schema integrity check (kPartSchemas has 72 entries)   |
-| `mhw-core-tests`        | `mhw::StringTable` load / miss / fallback             |
-| `mhw-control-l2-smoke`  | `mhw-control` mask persistence round-trip              |
-| `mhw-snap-player-demo`  | offscreen render of player panel (PNG)                 |
-| `mhw-snap-all-demo`     | offscreen render of monster + damage panels (PNG)      |
-| `mhw-probe*`            | 7 diagnostic CLIs; skipped by ctest if MHW not running |
+The overlay is a Qt 6 Wayland client. It opens three layer-shell
+surfaces, one per panel, each anchored to a screen corner. A reader
+thread attaches to `MonsterHunterWorld.exe` by PID, opens
+`/proc/<pid>/mem`, follows a HunterPie-v2 pointer chain into the
+player / monster / damage structs, and copies the relevant fields
+into a typed snapshot every `--poll` ms. The UI thread takes the
+snapshot, runs i18n substitution, and re-renders with QPainter into
+the layer-shell surfaces.
 
-`ctest` runs the unit tests. The probe binaries are wired up but
-`SKIP_RETURN_CODE`’d so they pass on a box that doesn’t have MHW running.
+There is **no DLL injection, no in-process hooks, no asset extraction
+at runtime** — we read strings from process memory as data, never as
+files.
 
-## CLI flags (mhw-overlay)
+Full architecture notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-| flag                  | meaning                                              |
-|-----------------------|------------------------------------------------------|
-| `-m, --map <path>`    | HunterPie legacy map file (default: bundled)          |
-| `--locale <code>`     | UI locale (default: `zh-CN`)                         |
-| `--edit`              | edit mode (drag panels, ESC quits)                  |
-| `--poll <ms>`         | polling interval (default: 250, range 30–5000)      |
-| `--mask-player <hex32>` | player panel section mask (default: 0xFFFFFFFF)     |
-| `--mask-monster <hex32>`| monster panel section mask (default: 0xFFFFFFFF)    |
-| `--mask-damage <hex32>` | damage panel section mask (default: 0xFFFFFFFF)      |
-| `--no-player`         | disable the player panel entirely                     |
-| `--no-monster`        | disable the monster panel entirely                    |
-| `--no-damage`         | disable the damage panel entirely                     |
-| `-h, --help`          | show help                                            |
-| `-v, --version`       | show version                                         |
+---
 
-## Edge cases / known restrictions
+## Credits
 
-- **`SECCOMP` / `ptrace_scope`** — `/proc/<pid>/mem` reads need
-  `CAP_SYS_PTRACE` or `kernel.yama.ptrace_scope = 0`. See
-  `docs/ARCHITECTURE.md` for the full caveat.
-- **Layer-shell re-render** — KDE occasionally reuses an old
-  surface after mtime changes. If a panel looks stale, kill all
-  `mhw-overlay` processes and relaunch.
-- **Offscreen testing** — `mhw-snap-player-demo` and
-  `mhw-snap-all-demo` write PNGs to file. They run under
-  `QT_QPA_PLATFORM=offscreen` and don’t touch Wayland.
+This project stands on the shoulders of:
+
+- **[HunterPie v2](https://github.com/HunterPie/HunterPie)** (C#,
+  Apache-2.0) — the reference implementation. We re-implemented its
+  memory-reader logic in C++ and validated every field offset against
+  `HunterPie-v2/Core/*.cs` before shipping. Original offsets are
+  credited inline in `mhw_reader.cpp`.
+- **[MHW_Icons_SVG](https://github.com/OthelloRhin/MHW_Icons_SVG)**
+  (MIT) — path data for status/ailment icons was adapted from
+  HunterPie's XAML resources; the SVG icons in `assets/icons/` come
+  from this project.
+- **[WorkSans](https://github.com/weiweihuanghuang/Work-Sans)**
+  (OFL-1.1) — HUD typography.
+
+We **do not** extract anything from the MHW binary at runtime and we
+**do not** ship any Capcom-owned assets. See
+[`assets/NOTICE`](assets/NOTICE) for the full third-party
+attribution and `LICENSES/HunterPie-APACHE-2.0.txt` for the license
+text we ship.
+
+---
+
+## Contributing
+
+- **Bug reports** — please include
+  `~/.config/mhw-overlay/mhw-overlay.conf`, the reader snapshot
+  (`~/.cache/mhw-overlay/`), and the game build ID (in-game:
+  `Options → Game Options → Game Version`).
+- **Rise validation** — if you own MHRise and can run the overlay
+  against it, the offsets ported from HunterPie 2.14.0.461 need a
+  fresh diff against a live session before the `RISE` button is
+  honest.
+- **Wilds offsets** — depends on HunterPie publishing them first.
+  Until then, this project has no Wilds support.
+
+---
 
 ## License
 
-The core offsets and struct layouts in `mhw_reader.cpp` are derived
-from the HunterPie project (HunterPie/HunterPie, Apache-2.0). Original
-offsets and layouts are credited in the file comments.
+Apache-2.0. See [`LICENSE-APACHE-2.0.txt`](LICENSE-APACHE-2.0.txt)
+(the HunterPie license we mirror). The Linux port glue written for
+this project is *also* Apache-2.0.
 
-The Linux port glue (panel / control-panel widgets, core utilities,
-build system, packaging) is also Apache-2.0. See `LICENSES/`.
+---
 
-## See also
+## See also (developer docs)
 
-- `docs/ARCHITECTURE.md` — how the reader is wired together, why we
-  avoid the QObject::tr ADL trap, the Yama `ptrace_scope` caveat.
-- `docs/V0.4-STATUS.md` — v0.4 status snapshot and CLI flag matrix.
-- `docs/I18N.md` — adding a new locale, adding a new UI string.
-- `docs/PROBE-TOOLS.md` — what each `mhw-probe-*` binary does and when
-  to use which.
-- `docs/ASSETS.md` — where icons/charts live and how to add new ones.
-- `control-panel-v0.5-A.html` — the canonical HTML design mock
-  for the v0.5 control console (sidebar + inspector + unified canvas).
-  Visual fidelity work for the console happens against this file.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — reader layering, the `tr()`
+  ADL trap, Yama `ptrace_scope` caveat, why we keep coordinates as logical px.
+- [`docs/CONTROL_CONSOLE.md`](docs/CONTROL_CONSOLE.md) — `mhw-control`
+  architecture and state flow.
+- [`docs/USAGE.md`](docs/USAGE.md) — full interaction walkthrough (preview
+  drag, arrow-key nudge + Shift, Ctrl-S persist, Space minimise, Esc quit,
+  per-section bitmask math, `--mask-*` vs `--no-*`).
+- [`docs/I18N.md`](docs/I18N.md) — adding a UI string, adding a locale.
+- [`docs/PROBE-TOOLS.md`](docs/PROBE-TOOLS.md) — what each `mhw-probe-*`
+  binary does and when to use which.
+- [`docs/ASSETS.md`](docs/ASSETS.md) — icon/chart/font pipeline and
+  attribution discipline.
