@@ -9,6 +9,11 @@ namespace mhw {
 struct QuestSnapshot {
     int id{};
     int stars{};
+    // True only when Rise read the explicit anomaly data branch. Do not
+    // infer this from the numeric level: normal quests may also have a
+    // three-digit display value.
+    bool isAnomaly{};
+    int rank{};           // v0.8: 1=LR 2=HR 3=MR (MHRNormalQuestDataStructure.cs:16)
     int state{};
     int category{};
     int deaths{};

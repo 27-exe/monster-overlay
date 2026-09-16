@@ -332,6 +332,24 @@ std::uintptr_t MhwReader::followPointerChain(const ProcessMemory &memory,
     return address;
 }
 
+std::uintptr_t MhwReader::followPointerChainOffsetThenDeref(
+    const ProcessMemory &memory, std::uintptr_t address,
+    const std::vector<std::uintptr_t> &offsets, QString *error)
+{
+    for (const std::uintptr_t offset : offsets) {
+        if (address > std::numeric_limits<std::uintptr_t>::max() - offset) {
+            if (error)
+                *error = QStringLiteral("pointer chain offset overflow");
+            return 0;
+        }
+        const auto next = memory.read<std::uintptr_t>(address + offset, error);
+        if (!next || !isSanePointer(*next))
+            return 0;
+        address = *next;
+    }
+    return address;
+}
+
 bool MhwReader::ensureAttached(GameSnapshot &snapshot)
 {
     if (!mapError_.isEmpty()) {

@@ -1,9 +1,12 @@
 #pragma once
 
+#include <QHash>
+#include <QSet>
 #include <QString>
 #include <QVector>
 #include <array>
 #include <cstdint>
+#include <optional>
 
 namespace mhw {
 
@@ -130,6 +133,24 @@ extern const QHash<int, QString> kAilmentNames;
 // Per-monster crown size thresholds: {Mini, Silver, Gold}.
 extern const QHash<int, std::array<float, 3>> kCrownThresholds;
 
+// Generated from HunterPie Game/Rise/Data/MonsterData.xml <Crowns>.
+// Only monsters with a <Crowns> element are present. A zero component means
+// that individual threshold attribute was absent in the XML.
+extern const QHash<int, std::array<float, 3>> kRiseCrownThresholds;
+
+// Rise MonsterData.xml has no Capture=N attribute. It explicitly marks only
+// IsNotCapturable=true monsters; all other Rise capture thresholds are unknown
+// to this static metadata and must not inherit World thresholds.
+extern const QSet<int> kRiseNotCapturableMonsterIds;
+
+// Returns nullptr when the game-specific XML has no crown entry. In particular,
+// this does not supply World defaults for Rise IDs with missing <Crowns>.
+const std::array<float, 3> *crownThresholdsFor(GameId game, int monsterId);
+
+// 0 is an explicit non-capturable result. std::nullopt means no static capture
+// threshold is available for this game/monster combination.
+std::optional<int> captureThresholdFor(GameId game, int monsterId);
+
 // v0.7.5: Rise ailment slot names (HunterPie Game/Rise/Data/MonsterData.xml
 // <Ailments>). World uses kAilmentNames; the two id tables are UNRELATED.
 extern const QHash<int, QString> kRiseAilmentNames;
@@ -138,5 +159,25 @@ extern const QHash<int, QString> kRiseAilmentNames;
 // Each entry is the in-game HP percentage at which that monster becomes
 // capturable (0 = uncapturable, e.g. Elder Dragons).
 extern const QHash<int, int> kMonsterCaptureThresholds;
+
+inline const std::array<float, 3> *crownThresholdsFor(GameId game, int monsterId)
+{
+    const auto &thresholds = game == GameId::Rise ? kRiseCrownThresholds : kCrownThresholds;
+    const auto it = thresholds.constFind(monsterId);
+    return it == thresholds.cend() ? nullptr : &it.value();
+}
+
+inline std::optional<int> captureThresholdFor(GameId game, int monsterId)
+{
+    if (game == GameId::Rise) {
+        if (kRiseNotCapturableMonsterIds.contains(monsterId))
+            return 0;
+        return std::nullopt;
+    }
+    const auto it = kMonsterCaptureThresholds.constFind(monsterId);
+    return it == kMonsterCaptureThresholds.cend()
+        ? std::nullopt
+        : std::optional<int>{it.value()};
+}
 
 } // namespace mhw

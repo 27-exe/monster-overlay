@@ -84,9 +84,11 @@ struct PlayerSnapshot {
     // Ranged weapons leave valid=false; the panel hides the bar in
     // that case.
     SharpnessSnapshot sharpness;
-    // v0.7.1: wirebug (翔虫) state — Rise only. The hunter has 1-3
-    // wirebugs at a time depending on equipment and switch skills. The
-    // panel renders one capsule per entry, coloured by cooldown progress.
+    // v0.7.1: wirebug (翔虫) state — Rise only. Up to four source slots
+    // (default + environment + skill) depending on equipment and switch
+    // skills; the Rise reader reads at most kRiseWirebugSlotCap (4)
+    // source slots. The panel renders one capsule per entry, coloured by
+    // cooldown progress.
     QVector<WirebugSnapshot> wirebugs;
 };
 

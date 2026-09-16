@@ -141,6 +141,7 @@ target_compile_definitions(snap-all-demo PRIVATE
 )
 target_compile_options(snap-all-demo PRIVATE -Wall -Wextra -Wpedantic)
 
+
 # Control console — standalone Qt window, no layer-shell. Reuses the same
 # panel paint code as the live overlay to preview section toggles.
 add_executable(monster-control
@@ -332,6 +333,38 @@ target_compile_options(monster-overlay-web PRIVATE -Wall -Wextra -Wpedantic)
 
 include(CTest)
 if(BUILD_TESTING)
+    # Diagnostic snapshot tool for the MonsterPanel no-data state. It is
+    # intentionally not a CTest: rendering is an offscreen visual aid, not a
+    # deterministic assertion. Keep it available for explicit test-period
+    # builds without pulling it into the default build.
+    add_executable(snap-empty-state EXCLUDE_FROM_ALL
+        tests/snap_empty_state.cpp
+        src/mhw_reader.cpp
+        src/mhw_reader.h
+        src/player/player_reader.cpp
+        src/quest/quest_reader.cpp
+        src/world/world_reader.cpp
+        src/monster/monster_reader.cpp
+        src/monster/part_schemas.cpp
+        src/monster/target_selector.cpp
+        src/ui/formatters.cpp
+        src/ui/icon.cpp
+        src/ui/panel.cpp
+        src/ui/panel_player.cpp
+        src/ui/panel_damage.cpp
+        src/ui/panel_monster.cpp
+        src/world/world_types.cpp
+        src/resources/resources.qrc
+        assets/icons.qrc
+    )
+    target_link_libraries(snap-empty-state PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+        LayerShellQt::Interface
+        monster-core
+    )
+    target_include_directories(snap-empty-state PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(snap-empty-state PRIVATE -Wall -Wextra -Wpedantic)
+
     # All reader-dependent targets need these sources since MhwReader member
     # functions are defined across multiple .cpp files (one per domain).
     set(MHW_READER_SOURCES
@@ -428,6 +461,17 @@ if(BUILD_TESTING)
         monster-probe-ailments-watch monster-probe-mantles monster-probe-mantles-wide
         PROPERTIES SKIP_RETURN_CODE "1;3")
 
+    # Unit tests for Rise/World monster metadata isolation. These use only
+    # static tables generated from HunterPie XML and never touch live game memory.
+    add_executable(rise-monster-metadata-tests
+        tests/rise_monster_metadata_tests.cpp
+        src/monster/part_schemas.cpp
+    )
+    target_link_libraries(rise-monster-metadata-tests PRIVATE Qt6::Core)
+    target_include_directories(rise-monster-metadata-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(rise-monster-metadata-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-monster-metadata-tests COMMAND rise-monster-metadata-tests)
+
     # Unit tests for the core string table — independent of MHW.
     add_executable(monster-core-tests
         tests/string_table_tests.cpp
@@ -438,4 +482,13 @@ if(BUILD_TESTING)
     target_include_directories(monster-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-core-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME monster-core-tests COMMAND monster-core-tests)
+
+    # Pure Rise stage-name regression: no game process is required.
+    add_executable(rise-zone-mapping-tests
+        tests/rise_zone_mapping_tests.cpp
+    )
+    target_link_libraries(rise-zone-mapping-tests PRIVATE monster-core)
+    target_include_directories(rise-zone-mapping-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(rise-zone-mapping-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-zone-mapping-tests COMMAND rise-zone-mapping-tests)
 endif()

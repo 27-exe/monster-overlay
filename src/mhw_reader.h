@@ -111,6 +111,12 @@ public:
                                              std::uintptr_t address,
                                              const std::vector<std::uintptr_t> &offsets,
                                              QString *error = nullptr);
+    // HunterPie ReadPtrAsync semantics: at each hop read the pointer stored at
+    // address + offset. Keep it separate from followPointerChain (ReadAsync)
+    // because Rise maps deliberately use both encodings.
+    static std::uintptr_t followPointerChainOffsetThenDeref(
+        const ProcessMemory &memory, std::uintptr_t address,
+        const std::vector<std::uintptr_t> &offsets, QString *error = nullptr);
 
 private:
     bool ensureAttached(GameSnapshot &snapshot);

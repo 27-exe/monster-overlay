@@ -1,4 +1,10 @@
+#if defined(MHW_WIREBUG_SLOT_LABEL_TEST)
+#include <QString>
+#include "rise/mhr_reader.h"
+#else
 #include "panel_player.h"
+
+#include "rise/mhr_reader.h"
 
 #include "core/string_table.h"
 #include "player/player_types.h"
@@ -16,6 +22,26 @@
 
 #include <cmath>
 #include <algorithm>
+#endif
+
+namespace {
+
+// Reader snapshots retain their original Mono-array slot even when `None`
+// entries are omitted from QVector. Never derive this label from vector index.
+QString wirebugSlotLabel(int slot)
+{
+    if (slot == 0)
+        return QStringLiteral("翔虫");
+    if (slot > 0 && slot < mhw::kRiseWirebugSlotCap)
+        return QStringLiteral("翔虫·%1").arg(slot + 1);
+    // Corrupt slots have no trustworthy identity. Keep the generic label
+    // rather than inventing a number or indexing any source-slot storage.
+    return QStringLiteral("翔虫");
+}
+
+} // namespace
+
+#if !defined(MHW_WIREBUG_SLOT_LABEL_TEST)
 
 using mhw::Icon;
 
@@ -89,7 +115,19 @@ QString zoneLabel(mhw::Zone z)
     if (z == mhw::Zone::Unknown)
         return QStringLiteral("未知区域");
     const QString name = QString::fromUtf8(mhw::zoneName(z));
-    return name.isEmpty() ? QStringLiteral("区域%1").arg(static_cast<int>(z)) : name;
+    // v0.8.x: enum-internal ID range for peace zones (village / hub).
+    // computeZoneId() returns the raw villageId (0..100) for type==4,
+    // which static_cast<Zone>() then maps to integer values that
+    // overlap with no named enum entry. zoneName() returns "未知" for
+    // those, so we provide a friendlier "据点 N" fallback (bug #7 —
+    // "据点显示未知地点").
+    if (name.isEmpty() || name == QStringLiteral("未知")) {
+        const int raw = static_cast<int>(z);
+        if (raw >= 0 && raw <= 100)
+            return QStringLiteral("据点%1").arg(raw);
+        return QStringLiteral("区域%1").arg(raw);
+    }
+    return name;
 }
 
 QString fmtMmSs(float seconds)
@@ -485,33 +523,42 @@ static int drawSharpnessBar(QPainter &p, const mhw::SharpnessSnapshot &s,
 
     // Skip when the weapon can't reach the current level (allows zero
     // thresholds from the in-game data to clip the bar cleanly).
-    constexpr int kMinWidth = 3;   // pixels — a 0-width segment collapses
+    // Compute per-segment widths from thresholds[i]-thresholds[i-1].
+    // 0 means the weapon can't reach that level — skip it entirely
+    // (don't allocate pixels). Falling back to kMinWidth would make
+    // thin segments visible at 3px and let `total` undercount, which
+    // then makes the scale factor amplify the real segments into
+    // "stretched" oversized chunks (visible as the "x"红斩特长一条"
+    // symptom). Cumulative `thresholds` come from mhr_reader.cpp
+    // (HunterPie MHRMeleeWeapon.cs::CalculateThresholds mirror).
     const int numX  = rightX - kShpNum;
     const int numY  = rowY + (rowH - kShpNum) / 2;
     const int gX    = numX - kShpGap - 130;
     const int gY    = rowY + (rowH - kShpGH) / 2;
     const int gRight = gX + 130;
-
-    // Compute per-segment widths from thresholds[i]-thresholds[i-1].
-    // Fallback to a 5px stub when the in-game array has a 0 (weapons
-    // that don't reach that level).
     int widths[7];
     int prev = 0;
     int total = 0;
     for (int i = 0; i < 7; ++i) {
         const int hi = s.thresholds[i];
-        const int w  = (hi > prev) ? (hi - prev) : kMinWidth;
+        if (hi <= prev) {
+            widths[i] = 0;            // skip — weapon doesn't reach this colour
+            continue;
+        }
+        const int w = hi - prev;
         widths[i] = w;
         total += w;
         prev = hi;
     }
-    // Scale to fit 130px without distortion (long weapons can have
-    // > 130 raw hits across all 7 segments).
-    qreal scale = 130.0 / total;
-    if (scale > 1.0) scale = 1.0; // never stretch — never width-inflate
+    if (total <= 0) return rightX;   // no sharpness data, hide bar
+    constexpr int kBarWidth = 130;    // total gauge pixel width
+    qreal scale = qreal(kBarWidth) / qreal(total);
+    if (scale > 1.0) scale = 1.0;     // never stretch — width-inflate would
+                                      // exaggerate real proportions
     int cumX = gX;
     for (int i = 0; i < 7; ++i) {
-        const int w = std::max(kMinWidth, qRound(widths[i] * scale));
+        if (widths[i] == 0) continue; // skip 0-width segments entirely
+        const int w = std::max(1, qRound(widths[i] * scale));
         const QRectF seg(cumX, gY, w, kShpGH);
         cumX += w;
         // background: segment colour, dim when not current level
@@ -539,29 +586,27 @@ static int drawSharpnessBar(QPainter &p, const mhw::SharpnessSnapshot &s,
         }
     }
 
-    // Current-segment fill overlay: show currentHits / segment width.
-    // Walk the active segment and only fill up to (currentHits/段宽)
-    // of it so the bar can never over-fill into the next segment.
-    {
+    // Current-segment fill overlay. Use the shared int64-safe conversion so
+    // red, zero-width, negative and out-of-range cases cannot overfill.
+    const mhw::RiseSharpnessSegment currentSegment = mhw::riseSharpnessCurrentSegment(s);
+    const int activeLevel = s.level;
+    const int segmentTotal = currentSegment.total;
+    const int segmentRemaining = currentSegment.remaining;
+    const bool hasCurrentSegment = currentSegment.valid && widths[activeLevel] == segmentTotal;
+    if (hasCurrentSegment) {
         int ax = gX;
-        for (int i = 0; i < s.level; ++i)
-            ax += std::max(kMinWidth, qRound(widths[i] * scale));
-        const int activeW = std::max(kMinWidth, qRound(widths[s.level] * scale));
-        float ratio = 0.0F;
-        // HunterPie: ratio = currentHits / maxHits (maxHits includes
-        // the handicraft bonus, not just the level's natural width).
-        // maxHits is the same value used in the sketch HTML for the
-        // 47/120 readout; widths[s.level] is the level's natural
-        // length which can be much smaller (e.g. 20 for Purple).
-        if (s.maxHits > 0)
-            ratio = static_cast<float>(s.currentHits)
-                  / static_cast<float>(s.maxHits);
-        if (ratio < 0.0F) ratio = 0.0F;
-        if (ratio > 1.0F) ratio = 1.0F;
+        for (int i = 0; i < activeLevel; ++i) {
+            if (widths[i] > 0)
+                ax += std::max(1, qRound(widths[i] * scale));
+        }
+        const int activeW = std::max(1, qRound(segmentTotal * scale));
+        const float ratio = std::clamp(
+            static_cast<float>(segmentRemaining) / static_cast<float>(segmentTotal),
+            0.0F, 1.0F);
         const int fillW = qRound(activeW * ratio);
         if (fillW > 0) {
             const QRectF fillRect(ax, gY, fillW, kShpGH);
-            QColor fillCol = QColor(kSharpColors[s.level + 1]);
+            QColor fillCol = QColor(kSharpColors[activeLevel + 1]);
             fillCol.setAlphaF(1.0);
             p.fillRect(fillRect, fillCol);
         }
@@ -596,7 +641,7 @@ static int drawSharpnessBar(QPainter &p, const mhw::SharpnessSnapshot &s,
     numFont.setStyleHint(QFont::SansSerif);
     p.setFont(numFont);
     p.setPen(levelCol);
-    p.drawText(numRect, Qt::AlignCenter, QString::number(s.currentHits));
+    p.drawText(numRect, Qt::AlignCenter, QString::number(std::max(0, segmentRemaining)));
     return gX;
 }
 
@@ -671,8 +716,8 @@ void PlayerPanel::paintPanel(QPainter &p)
     // running y only when its mask bit AND data precondition hold; the
     // gap is consumed by the *following* block, so disabling a block
     // drops its trailing spacing cleanly with no neighbour drift.
-    // Conn + Quest share a single qrow stream (max 4 rows: 1 Conn +
-    // 3 Quest). Its height is N*rowH + (N-1)*gap so the last row's
+    // Conn + Quest share a single qrow stream (max 5 rows: 1 Conn +
+    // 4 Quest). Its height is N*rowH + (N-1)*gap so the last row's
     // trailing gap is never counted — matching the draw-time trim.
     constexpr int kWeaponGap = kGapSection;                             // 9
     constexpr int kWeaponH   = 26;                                      // prow
@@ -682,7 +727,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     constexpr int kMantleH   = kMbH;                                    // 60
     constexpr int kDebuffGap = kGapSection;                             // 9
 
-    const int n_qrow = (onConn ? 1 : 0) + (onQuest ? 3 : 0);
+    const int n_qrow = (onConn ? 1 : 0) + (onQuest ? 4 : 0);
     const int qrowStreamH = n_qrow > 0
         ? n_qrow * kQrowH + (n_qrow - 1) * kGapQrow : 0;
 
@@ -699,7 +744,7 @@ void PlayerPanel::paintPanel(QPainter &p)
         const int buffRows = (buffCount + kPillsPerRow - 1) / kPillsPerRow;
         buffH = buffRows * kPillH + (buffRows - 1) * 4;
     }
-    // v0.7.1: wirebug capsule row height. 1-3 capsules fit in one row
+    // v0.7.1: wirebug capsule row height. Up to four source slots fit in one row
     // (kPillH tall); the section's gap before it matches the debuff/buff
     // separators so disabled sections still drop with no neighbour drift.
     constexpr int kWirebugGap = kGapSection;
@@ -787,7 +832,9 @@ void PlayerPanel::paintPanel(QPainter &p)
         y += kQrowH + kGapQrow;
     };
 
-    // Row 1: 已连接 · PID 12345 · BASE 0x7FFE0000  + 4H 队伍
+    // Row 1: 已连接 · PID 12345 · BASE 0x7FFE0000  +  4H 队伍 (· #66801)
+    // v0.8.x: 任务 #ID 放不下 → 隐藏 / 跟 PID/内存放到一行 (bug #6).
+    // 把 ID 移到右侧 ellipsised 形式,当 Row 2 整体被压缩时也能看到。
     if (onConn) {
         const QString mem = QStringLiteral("PID %1 · BASE 0x%2")
                                 .arg(pid_ > 0 ? QString::number(pid_)
@@ -795,9 +842,12 @@ void PlayerPanel::paintPanel(QPainter &p)
                                 .arg(imageBase_
                                        ? QString::number(static_cast<qulonglong>(imageBase_), 16)
                                        : QStringLiteral("--"));
-        const QString partyLabel = partyCount_ > 0
+        QString right = partyCount_ > 0
             ? QStringLiteral("%1人").arg(partyCount_)
             : QStringLiteral("--");
+        if (quest_.active && quest_.id > 0)
+            right += QStringLiteral(" · #%1").arg(quest_.id);
+        const QString partyLabel = right;
         drawQrow(QStringLiteral("已连接 · %1").arg(mem),
                      partyLabel,
                      QrowStyle{&qFontSmallL, &qFontSmallR,
@@ -807,18 +857,47 @@ void PlayerPanel::paintPanel(QPainter &p)
                            QColor(kConnGreen, kConnGreenG, kConnGreenB)});
     }
 
-    // Row 2: 区域 · 任务  +  古代树森林#66801 ★6 · 进行中
+    // Row 2a: 区域  +  古代树森林
+    // v0.8.x (symptom 4): previously zone and quest info shared a
+    // single right-column cell, so when a quest was active the
+    // zone name was silently overwritten by the rank/stars/state
+    // summary. Splitting into a dedicated row keeps the locale
+    // visible both while in-quest and after settlement (where the
+    // quest row collapses but the zone row remains). Aligned to
+    // HTML v8 .qrow where zone/quest sit on independent lines.
     if (onQuest) {
-        QString zone = zoneLabel(zone_);
-        if (zone.length() > 6) zone = zone.left(6) + QStringLiteral("…");
+        const QString zoneTxt = zoneLabel(zone_);
+        drawQrow(QStringLiteral("区域"),
+                 zoneTxt,
+                 QrowStyle{&qFontL, &qFontL10,
+                           QColor(146, 148, 149),           // --t3 label
+                           QColor(220, 222, 224),            // --t2 value
+                           false, QColor()});
+    }
+
+    // Row 2b: 任务  +  MR ★100 · 进行中
+    // v0.8.x: keeps the rank / stars / state trio isolated so the
+    // rank prefix (LR / HR / MR) never collides with the zone name.
+    // Anomaly quests surface as "Lv<stars>"; the reader marks that
+    // branch explicitly because a numeric star threshold is ambiguous.
+    if (onQuest) {
+        // rank: 1=LR 2=HR 3=MR (MHRNormalQuestDataStructure.cs:16).
+        // For anomaly quests rank is absent; the explicit branch flag
+        // chooses the level label without a numeric-value heuristic.
+        QString rankPrefix;
+        if (quest_.rank == 1) rankPrefix = QStringLiteral("LR ");
+        else if (quest_.rank == 2) rankPrefix = QStringLiteral("HR ");
+        else if (quest_.rank == 3) rankPrefix = QStringLiteral("MR ");
+        const QString starsStr = quest_.isAnomaly
+            ? QStringLiteral("Lv%1").arg(quest_.stars)
+            : QStringLiteral("★%1").arg(quest_.stars);
         const QString questTxt = quest_.active
-            ? QStringLiteral("%1#%2 ★%3 · %4")
-                  .arg(zone)
-                  .arg(quest_.id)
-                  .arg(quest_.stars)
+            ? QStringLiteral("%1%2 · %3")
+                  .arg(rankPrefix)
+                  .arg(starsStr)
                   .arg(questStateLabel(quest_.state))
-            : QStringLiteral("%1 · 空闲").arg(zone);
-        drawQrow(QStringLiteral("区域 · 任务"),
+            : QStringLiteral("-- · 空闲");
+        drawQrow(QStringLiteral("任务"),
                  questTxt,
                  QrowStyle{&qFontL, &qFontL10,
                            QColor(146, 148, 149),          // --t3 label
@@ -955,6 +1034,12 @@ void PlayerPanel::paintPanel(QPainter &p)
         p.setFont(vFont);
         p.setPen(QColor(245, 246, 247));
         const QRectF barRect(innerLeft, y, innerW, kBarH);
+        // v0.8: show raw "current / max" values (the in-game UI convention).
+        // The raw max in Rise is 150 (HP) / 4500 (Stamina with food bonus
+        // & petalace) which is non-intuitive, but it matches the game's
+        // own display style. We previously hid this behind "90%" —
+        // user feedback was that the percent-only display lost precision
+        // and felt less informative than the in-game numeric bars.
         const QString leftText = hpKnown
             ? QStringLiteral("%1 / %2")
                   .arg(mhw::groupNumber(static_cast<int>(player_.health)))
@@ -981,6 +1066,7 @@ void PlayerPanel::paintPanel(QPainter &p)
         p.setFont(sFont);
         p.setPen(QColor(245, 246, 247));
         const QRectF barRect(innerLeft, y, innerW, kStBarH);
+        // v0.8: see HP comment — raw "current / max" matches in-game style.
         const QString leftText = stKnown
             ? QStringLiteral("%1 / %2")
                   .arg(mhw::groupNumber(static_cast<int>(player_.stamina)))
@@ -1039,7 +1125,7 @@ void PlayerPanel::paintPanel(QPainter &p)
         y += kMbH;
     }
 
-    // ---- wirebugs: 1-3 capsules, default + env + skill (Rise only) ----
+    // ---- wirebugs: up to four capsules, default + env + skill (Rise only) ----
     // v0.7.2: only wirebugs with cooldown > 0 are rendered. Column index
     // is the index of the active wirebug, not its slot in the source
     // vector, so a cooldown=0 wirebug doesn't leave a visible gap.
@@ -1047,7 +1133,7 @@ void PlayerPanel::paintPanel(QPainter &p)
         y += kWirebugGap;
         const int totalW = innerW;
         const int pillGap = 5;
-        // Always one row for wirebugs (max 3 by game design). Slot width
+        // Always one row for wirebugs (four source slots maximum). Slot width
         // distributes evenly across the visible count so a 1-wirebug
         // hunter still gets a wider capsule.
         const int slotW = (totalW - pillGap * (wirebugActiveCount - 1))
@@ -1058,9 +1144,7 @@ void PlayerPanel::paintPanel(QPainter &p)
             if (w.cooldown <= 0.001F) continue;
             const int cx = innerLeft + col * (slotW + pillGap);
             const QRectF pillRect(cx, y, slotW, kWirebugH);
-            const QString n = (i == 0) ? QStringLiteral("翔虫")
-                            : w.isTemporary ? QStringLiteral("翔虫·%1").arg(i + 1)
-                                            : QStringLiteral("翔虫·%1").arg(i + 1);
+            const QString n = wirebugSlotLabel(w.slot);
             drawWirebug(p, pillRect, n, w.cooldown, w.maxCooldown,
                         w.isTemporary);
             ++col;
@@ -1139,7 +1223,10 @@ void PlayerPanel::setupDemoData()
     pid_       = 12345;
     imageBase_ = 0x7FFE00000000ULL;
     zone_      = mhw::Zone::AncientForest;
-    quest_     = {66801, 6, 2, 0, 0, 3, 2497.0F, true};
+    // Order matches QuestSnapshot in quest_types.h: id, stars, isAnomaly,
+    // rank, state, category, deaths, maxDeaths, timeLeftSeconds,
+    // maxTimerSeconds, elapsedSeconds, active.
+    quest_     = {66801, 6, false, 2, 2, 0, 0, 3, 2497.0F, 0.0F, 0.0F, true};
     status_    = QStringLiteral("示例 Demo");
     // v0.7.1: game_ now reflects the rail selection (set by switchGame
     // → setGameForDemo). Below we seed Rise-flavoured (wirebug) demo
@@ -1269,3 +1356,5 @@ void PlayerPanel::setupDemoData()
 
     hasData_ = true;
 }
+
+#endif // !defined(MHW_WIREBUG_SLOT_LABEL_TEST)

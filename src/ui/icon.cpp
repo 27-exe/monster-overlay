@@ -209,8 +209,20 @@ QString Icon::mantlePath(int toolType)
 QString Icon::monsterPath(int monsterId, GameId game)
 {
     if (game == GameId::Rise) {
+        // v0.8: 78-ID set covering base Rise (0..19), Sunbreak main
+        // (20..45 + 76..78), the rest of Sunbreak's larger set (79..98),
+        // and Sunbreak's Risen elders + Primordial + Chaotic + Velkhana
+        // + Amatsu (107..115). Rise_46 (Giant Mechanized Toa) is
+        // intentionally absent: it is neither in kRiseKnown nor the
+        // qrc package set. IDs not listed here fall through to
+        // Unknown.png; no resource registration or behavior changes
+        // are made for missing IDs.
         static const QSet<int> kRiseKnown = {
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+            20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+            37, 38, 39, 40, 41, 42, 43, 44, 45,
+            // 46 omitted (no portrait, see comment above)
+            76, 77, 78,
             79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98,
             107, 108, 109, 110, 111, 112, 113, 114, 115
         };

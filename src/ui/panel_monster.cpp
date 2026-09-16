@@ -111,24 +111,22 @@ QPainterPath hexPolygon(const QRectF &r)
 
 // HunterPie V2 / MonsterData.xml capture mechanic:
 //   > 50%       → green       (full health)
-//   amber≤capture≤50% → amber  (limping soon)
-//   ≤ capture%  → red         (capturable per game data; 0 = never)
+//   capture<HP≤50% → amber    (limping soon)
+//   ≤ capture%   → red        (capturable per game data)
 //
-// `capturePct` is read from MonsterData.xml <Monster Capture=N>; each
-// monster has its own threshold (火龙=20, 飞雷龙=20, 黑轰=25, 银火=15,
-// 绚辉龙=10, …) so the red colour appears at the exact moment the
-// in-game capture flag flips.
-QColor healthColor(float pct, int monsterId)
+// Rise MonsterData.xml has no Capture=N percentage. Its known
+// IsNotCapturable=true entries and all unknown Rise entries therefore stay
+// green/amber; they must never inherit a World threshold.
+QColor healthColor(float pct, mhw::GameId game, int monsterId)
 {
-    int cap = mhw::kMonsterCaptureThresholds.value(monsterId, 0);
-    // 0 means uncapturable (Elder Dragons / 黑死病); keep amber/green
-    // for all values, never drop to red.
-    const float capturePct = (cap > 0)
-        ? static_cast<float>(cap) / 100.0F
-        : 1.0F;
-    if (pct > kHpAmberPct)   return QColor(kHpHighR, kHpHighG, kHpHighB);
-    if (pct > capturePct)    return QColor(kHpMidR,  kHpMidG,  kHpMidB);
-    return                        QColor(kHpLowR,  kHpLowG,  kHpLowB);
+    if (pct > kHpAmberPct)
+        return QColor(kHpHighR, kHpHighG, kHpHighB);
+
+    const auto cap = mhw::captureThresholdFor(game, monsterId);
+    if (cap && *cap > 0 && pct <= static_cast<float>(*cap) / 100.0F)
+        return QColor(kHpLowR, kHpLowG, kHpLowB);
+
+    return QColor(kHpMidR, kHpMidG, kHpMidB);
 }
 
 // Draw the .hex block: SVG polygon stroke + drop shadow + inner .pic clipped
@@ -463,10 +461,57 @@ void MonsterPanel::onEnragePulseTick()
 
 void MonsterPanel::paintPanel(QPainter &p)
 {
-    if (!hasData_)
-        return;
+    // v0.8.x + symptom7 fix: empty-state placeholder.
+    //
+    // drawV03Chrome reads logicalSize_ for its rect (panel.cpp:545),
+    // so setContentSize() MUST run before drawV03Chrome. The v0.8.x
+    // patch moved drawV03Chrome to the top of paintPanel but did NOT
+    // add a setContentSize() call on the empty-state branch.
+    // logicalSize_ stayed at its default QSize() = 0×0, so the rounded
+    // background drew at zero size and was clipped away — leaving
+    // only the placeholder text visible against the layer-shell
+    // surface. Symptom7: "任务内怪物面板只显示 '等待进入任务' 连背景
+    // 半透明框都没有".
+    //
+    // UX symmetry with the damage Rise empty state (panel_damage.cpp
+    // paintPanel): title row + kRowGap + message block, padded top
+    // and bottom with kPanelPad. Same kPanelWidth so the corner
+    // anchor doesn't jump when quest data arrives.
+    if (!hasData_) {
+        constexpr int kPlaceholderH = 28;
+        const int totalH = kPanelPad + kTitleH + kRowGap + kPlaceholderH + kPanelPad;
+        setContentSize(kPanelWidth, totalH);
 
-    drawV03Chrome(p, Panel::Accent::Monster);
+        drawV03Chrome(p, Panel::Accent::Monster);
+
+        // Title row — same "怪物 MONSTER" treatment as the real panel
+        // (panel.h:108 vs damage empty state at panel_damage.cpp:539)
+        // so the placeholder is recognisably the same panel.
+        QFont hdrFont(QStringLiteral("Chakra Petch"), 9, QFont::Bold);
+        hdrFont.setLetterSpacing(QFont::AbsoluteSpacing, 2.5);
+        hdrFont.setStyleStrategy(QFont::PreferAntialias);
+        p.setFont(hdrFont);
+        p.setPen(QColor(245, 246, 247));
+        const QRectF titleRect(kPanelPad, kPanelPad,
+                               kPanelWidth - 2 * kPanelPad, kTitleH);
+        p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
+                   QStringLiteral("怪物 MONSTER"));
+
+        // Centered message in logical coordinates. canvas()->rect()
+        // returns DEVICE pixels and the scaled painter (paintEvent
+        // applies p.scale(scale_, scale_) before paintPanel runs) would
+        // map a 320×120 device rect to 640×240 logical, well outside
+        // the surface. Logical rect avoids that entirely.
+        QFont msgFont(QStringLiteral("Chakra Petch"), 10);
+        msgFont.setStyleStrategy(QFont::PreferAntialias);
+        p.setFont(msgFont);
+        p.setPen(QColor(150, 150, 150));
+        const QRectF msgRect(kPanelPad, kPanelPad + kTitleH + kRowGap,
+                             kPanelWidth - 2 * kPanelPad, kPlaceholderH);
+        p.drawText(msgRect, Qt::AlignCenter,
+                   QStringLiteral("等待进入任务 · 怪物将自动加载"));
+        return;
+    }
 
     // ---- Build status card entries from ailments (mirrors .sc ordering) ----
     QVector<ScEntry> scList;
@@ -651,7 +696,7 @@ void MonsterPanel::paintPanel(QPainter &p)
 
     // ---- 2. .hexwrap ----
     const QRectF hexCell(innerLeft, y, kHexW, kHexH);
-    drawHex(p, hexCell, mhw::Icon::monsterPath(monster_.id));
+    drawHex(p, hexCell, mhw::Icon::monsterPath(monster_.id, monster_.game));
 
     // .mtitle sits in the right column of the flex row.
     constexpr int kNmFont = 15;
@@ -660,6 +705,8 @@ void MonsterPanel::paintPanel(QPainter &p)
     nmFont.setStyleStrategy(QFont::PreferAntialias);
     p.setFont(nmFont);
     p.setPen(QColor(245, 246, 247));
+    // Rise MonsterData.xml contains no display-name field or localization key.
+    // Keep the established runtime-name / ID fallback instead of inventing one.
     const QString nm = monster_.internalName.isEmpty()
         ? QStringLiteral("Monster %1").arg(monster_.id)
         : monster_.internalName;
@@ -667,15 +714,23 @@ void MonsterPanel::paintPanel(QPainter &p)
     const int nmH = kNmFont + 2;
     int nmX = static_cast<int>(hexCell.right()) + 10;
 
-    // .crownmini (15×15). Thresholds and tint colours come from HunterPie.
-    constexpr std::array<float, 3> kDefaultCrown = {0.90F, 1.15F, 1.23F};
-    const auto thr = mhw::kCrownThresholds.value(monster_.id, kDefaultCrown);
-    if (monster_.size > 0.0F && thr[2] > 0.0F) {
+    // .crownmini (15×15). Use only explicit metadata for the active game.
+    // Missing Rise <Crowns> data (and missing individual thresholds) disables
+    // the crown rather than borrowing a World table/default.
+    const auto *thr = mhw::crownThresholdsFor(monster_.game, monster_.id);
+    if (monster_.size > 0.0F && thr) {
         QString crownPath;
-        QColor  crownTint;
-        if      (monster_.size >= thr[2]) { crownPath = QStringLiteral(":/icons/crowns/crown_king.svg");  crownTint = QColor(231, 197,   7); }
-        else if (monster_.size >= thr[1]) { crownPath = QStringLiteral(":/icons/crowns/crown_large.svg"); crownTint = QColor(189, 189, 189); }
-        else if (monster_.size <= thr[0]) { crownPath = QStringLiteral(":/icons/crowns/crown_mini.svg");  crownTint = QColor( 33, 150, 243); }
+        QColor crownTint;
+        if (thr->at(2) > 0.0F && monster_.size >= thr->at(2)) {
+            crownPath = QStringLiteral(":/icons/crowns/crown_king.svg");
+            crownTint = QColor(231, 197, 7);
+        } else if (thr->at(1) > 0.0F && monster_.size >= thr->at(1)) {
+            crownPath = QStringLiteral(":/icons/crowns/crown_large.svg");
+            crownTint = QColor(189, 189, 189);
+        } else if (thr->at(0) > 0.0F && monster_.size <= thr->at(0)) {
+            crownPath = QStringLiteral(":/icons/crowns/crown_mini.svg");
+            crownTint = QColor(33, 150, 243);
+        }
         if (!crownPath.isEmpty()) {
             const QPixmap crown = mhw::Icon::render(crownPath, kCrownSize, crownTint);
             if (!crown.isNull()) {
@@ -767,7 +822,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         y += kRowGap;   // gap before HP (was hexwrap's trailing gap)
     const float hpPct = (monster_.maxHealth > 0.0F)
         ? monster_.health / monster_.maxHealth : 0.0F;
-    const QColor hpC = healthColor(hpPct, monster_.id);
+    const QColor hpC = healthColor(hpPct, monster_.game, monster_.id);
     const QRectF hpBarRect(innerLeft, y, innerW, kBarH + 2 * kBarVPad);
     drawBarV(p, hpBarRect, hpPct, hpC.lighter(115), hpC);
     {
@@ -871,16 +926,19 @@ void MonsterPanel::paintPanel(QPainter &p)
             ? QStringLiteral("部位 %1").arg(p.index)
             : p.name;
         e.counter = p.counter;
-        e.broken = (p.counter > 0)
-                   || (p.maxHealth > 0.0F && p.health <= 0.0F);
-        if (p.isBreakable && p.counter > 0)
-            { e.tag = QStringLiteral("破"); e.tagKind = QStringLiteral("brk"); }
-        else if (p.isSeverable && p.counter > 0)
-            { e.tag = QStringLiteral("斩"); e.tagKind = QStringLiteral("sev"); }
-        else if (p.isBreakable)
-            { e.tag = QStringLiteral("破"); e.tagKind = QStringLiteral("brk"); }
-        else if (p.isSeverable)
-            { e.tag = QStringLiteral("斩"); e.tagKind = QStringLiteral("sev"); }
+        e.broken = p.isBroken;
+        switch (p.partType) {
+        case mhw::PartType::Severable:
+            e.tag = QStringLiteral("斩");
+            e.tagKind = QStringLiteral("sev");
+            break;
+        case mhw::PartType::Breakable:
+            e.tag = QStringLiteral("破");
+            e.tagKind = QStringLiteral("brk");
+            break;
+        case mhw::PartType::Flinch:
+            break;
+        }
         // v0.7.4 PR C: per-part tenderize values feed the new strip
         // drawn inside each .pc card. The struct fields are 0 by default
         // (no active tenderize), so we only need to copy when nonzero.

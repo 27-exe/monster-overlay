@@ -38,6 +38,33 @@ enum class Zone : int {
     TrainingArea = 504,
     ChamberOfFive = 505,
     SelianaRoom = 506,
+    // Rise stage.type == 4, villageId == 5.  Kept distinct from RiseLoc5
+    // (HuntingId 5) because the reader rebases VillageId values to 700..799.
+    RiseTrainingRoom = 705,
+    // Rise maps (HunterPie uses HuntingId + 200, MHRPlayer.cs:218-222,
+    // but 200..216 collides with World zones 201/202/203 which use the
+    // same ints. To avoid the value collision we shift into the unused
+    // 600..616 range and let computeZoneId() do the +400 translation
+    // instead. HunterPie's own client only sees 200..216 internally
+    // — the overlay's job is to give the panel a stable identifier,
+    // not to mirror HunterPie's internal enum exactly.)
+    RiseLoc0 = 600,
+    RiseLoc1 = 601,
+    RiseLoc2 = 602,
+    RiseLoc3 = 603,
+    RiseLoc4 = 604,
+    RiseLoc5 = 605,
+    RiseLoc6 = 606,
+    RiseLoc7 = 607,
+    RiseLoc8 = 608,
+    RiseLoc9 = 609,
+    RiseLoc10 = 610,
+    RiseLoc11 = 611,
+    RiseLoc12 = 612,
+    RiseLoc13 = 613,
+    RiseLoc14 = 614,
+    RiseLoc15 = 615,
+    RiseLoc16 = 616,
     Unknown = -1
 };
 
