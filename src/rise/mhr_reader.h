@@ -430,6 +430,16 @@ private:
     [[nodiscard]] std::uintptr_t readLockOnTarget() const;
     PlayerSnapshot readPlayer(QString *error);
     void readWirebugs(PlayerSnapshot &snapshot, QString *error);
+    // v0.8.4-r18 player-abnormalities: consumable buffs + debuffs from
+    // ABNORMALITIES_ADDRESS + CONS_/DEBUFF_ABNORMALITIES_OFFSETS. Mirrors
+    // HunterPie MHRPlayer.GetConsumableAbnormalities (:436-494),
+    // GetPlayerDebuffAbnormalities (:497-554), GetPlayerAbnormalitiesCleanup
+    // (:395-405) and GetPlayerConditions (:862-886). Publishes nothing
+    // outside a hunting zone (the cleanup path) or when a category blob
+    // fails to resolve. The schema table + pure evaluation live in
+    // rise/mhr_abnormalities.h.
+    void readAbnormalities(PlayerSnapshot &snapshot, bool inHuntingZone,
+                           QString *error);
     // BUG #5: read weapon sharpness from SHARPNESS_ADDRESS +
     // SHARPNESS_OFFSETS / SHARPNESS_ARRAY_OFFSETS.
     SharpnessSnapshot readSharpness(int weaponId, QString *error);

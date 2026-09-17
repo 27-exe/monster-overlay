@@ -6,6 +6,7 @@
 #include <QRectF>
 #include <QSettings>
 #include <QSize>
+#include <QString>
 #include <QWidget>
 #include <cstdint>
 
@@ -96,6 +97,13 @@ public:
     // the console passes persist=false and writes on exit instead.
     void setMargins(QMargins m, bool persist = true);
 
+    // v0.8: per-panel screen selection. Pass an empty string to revert
+    // to "follow OS primary". The name must match QScreen::name() in
+    // QGuiApplication::screens() — on Niri that string is exactly the
+    // wlr-output name (eDP-1 / DP-1 / HDMI-A-1 / …).
+    void setOutputName(QString name, bool persist = true);
+    [[nodiscard]] QString outputName() const { return outputName_; }
+
     // Reset mask, scale, opacity, and margins to factory values
     // and re-sync the layer-shell surface. Always persists.
     void resetToDefaults();
@@ -153,6 +161,11 @@ private:
     double scale_{1.0};
     double opacity_{0.85};
     int bgAlpha_{170};   // panel background alpha (0-255), default ~67%
+    // v0.8: per-panel screen selection. Empty = follow primaryScreen().
+    // Set by setOutputName() / loaded by loadConfig() from
+    // [panels.ini <key>]/outputName. Matched against QScreen::name()
+    // in applyGeometry() — on Niri that string IS the wlr-output name.
+    QString outputName_;
     bool editMode_{false};
     bool minimized_{false};
     QSize normalSize_;   // remembered full-layout size

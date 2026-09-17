@@ -49,7 +49,7 @@ void dumpCandidate(mhw::ProcessMemory &mem, std::uintptr_t monster,
         const auto entry = mem.read<std::uintptr_t>(cursor, nullptr);
         if (!entry || *entry < 0x10000) {
             std::printf("  [%2d] no entry (0x%" PRIxPTR ")\n", i,
-                        entry ? (qulonglong)*entry : 0ULL);
+                        entry ? (unsigned long)*entry : 0UL);
             continue;
         }
         const std::uintptr_t structAddr = *entry + c.structOff;
@@ -69,18 +69,28 @@ void dumpCandidate(mhw::ProcessMemory &mem, std::uintptr_t monster,
         std::memcpy(&id,    raw + 0x10, 4);
 
         // Try common float positions for MaxDuration
-        float f14 = 0, f18 = 0, f1C = 0, f34 = 0, f50 = 0, f5C = 0, f60 = 0, f64 = 0;
+        float f14 = 0, f18 = 0, f1C = 0, f30 = 0, f34 = 0, f40 = 0, f50 = 0,
+              f5C = 0, f60 = 0, f64 = 0, f70 = 0;
         std::memcpy(&f14, raw + 0x14, 4);
         std::memcpy(&f18, raw + 0x18, 4);
         std::memcpy(&f1C, raw + 0x1C, 4);
+        // v0.8.4-r23: the three fields the overlay consumes —
+        // Buildup(+0x30), MaxBuildup(+0x40), Duration(+0x70) per
+        // MHWMonsterAilmentStructure.cs. Without them a live capture
+        // cannot answer buildup>0? / maxBuildup>0? / Duration direction.
+        std::memcpy(&f30, raw + 0x30, 4);
         std::memcpy(&f34, raw + 0x34, 4);
+        std::memcpy(&f40, raw + 0x40, 4);
         std::memcpy(&f50, raw + 0x50, 4);
         std::memcpy(&f5C, raw + 0x5C, 4);
         std::memcpy(&f60, raw + 0x60, 4);
         std::memcpy(&f64, raw + 0x64, 4);
+        std::memcpy(&f70, raw + 0x70, 4);
 
         std::int32_t counter = 0;
-        std::memcpy(&counter, raw + 0x74, 4);
+        // v0.8.4-r23: Counter is at +0x78 (C# sequential layout; +0x74 is
+        // Unk25). The old +0x74 printed a field the overlay never reads.
+        std::memcpy(&counter, raw + 0x78, 4);
 
         const std::int64_t monsterI = static_cast<std::int64_t>(monster);
         const bool ownerOk = (owner == monsterI);
@@ -92,6 +102,9 @@ void dumpCandidate(mhw::ProcessMemory &mem, std::uintptr_t monster,
                     active, unk1, id, counter);
         std::printf("       floats  0x14=%6.2f  0x18=%6.2f  0x1C=%6.2f  0x34=%6.2f  0x50=%6.2f  0x5C=%6.2f  0x60=%6.2f  0x64=%6.2f\n",
                     f14, f18, f1C, f34, f50, f5C, f60, f64);
+        std::printf("       maxDur 0x14=%7.2f  buildup 0x30=%7.2f  "
+                    "maxBuildup 0x40=%7.2f  duration 0x70=%7.2f\n",
+                    f14, f30, f40, f70);
     }
 }
 

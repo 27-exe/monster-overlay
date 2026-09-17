@@ -36,18 +36,9 @@ constexpr int kFooter = 38;
 constexpr int kArrowStep = 10;      // logical px per arrow press
 constexpr int kArrowBigStep = 50;   // with Shift
 
-struct ScreenInfo {
-    screen_query::Result result;
-    bool valid{false};
-};
-
-const screen_query::Result &screenInfo()
-{
-    static const ScreenInfo info{
-        screen_query::detect(QGuiApplication::primaryScreen()),
-        true};
-    return info.result;
-}
+// v0.8: removed the unused file-scope screenInfo() shim — every caller
+// now goes through HudCanvas::previewScreenInfo(), which honours the
+// user's output selection. See hud_canvas.h::setPreviewScreen.
 
 QRect anchoredRect(const QRect &screen, Corner corner, const QMargins &m,
                    const QSize &content, qreal scale)
@@ -165,7 +156,7 @@ QSize HudCanvas::sizeHint() const
     if (zoom_ <= 1.0)
         return QSize(820, 520);
     // When zoomed, report the enlarged size so QScrollArea shows bars.
-    const QSize phys = screenInfo().physical;
+    const QSize phys = previewScreenInfo().physical;
     const qreal ar = phys.height() / qreal(phys.width());
     const int w = qRound(820 * zoom_);
     const int h = qRound(w * ar) + kHeader + kFooter;
@@ -174,17 +165,84 @@ QSize HudCanvas::sizeHint() const
 
 int HudCanvas::heightForWidth(int width) const
 {
-    const QSize phys = screenInfo().physical;
+    const QSize phys = previewScreenInfo().physical;
     const qreal ar = phys.height() / qreal(phys.width());
     return std::max(360, qRound(width * ar) + kHeader + kFooter);
 }
 
-QSize HudCanvas::screenSize() const { return screenInfo().physical; }
+QSize HudCanvas::screenSize() const { return previewScreenInfo().physical; }
 
 QString HudCanvas::screenLabel() const
 {
-    const auto &r = screenInfo();
-    return QStringLiteral("%1 × %2").arg(r.physical.width()).arg(r.physical.height());
+    const auto &r = previewScreenInfo();
+    // v0.8: surface which output the preview is showing. Before this
+    // field existed, the label was just "<w> × <h>" — useless once the
+    // user could redirect the panels to a non-primary output, because
+    // the dimensions alone can't tell the two screens apart on Niri
+    // (HDMI-A-1 portrait vs DP-1 landscape, same diagonal but very
+    // different layouts).
+    const QString suffix = previewOutputName_.isEmpty()
+        ? QStringLiteral("primary")
+        : previewOutputName_;
+    return QStringLiteral("%1 × %2  ·  %3").arg(r.physical.width())
+                                            .arg(r.physical.height())
+                                            .arg(suffix);
+}
+
+// v0.8: pick the screen_query::Result that drives every "screen frame"
+// decision in this widget — preview rectangle, drag clamps, ruler ticks.
+// Resolution order:
+//   1. previewOutputName_ matched against QGuiApplication::screens()
+//   2. QGuiApplication::primaryScreen() (matches the v0.7.x behaviour
+//      where the preview always showed the primary output)
+//
+// We do NOT call screen_query::detect() per-paint: that path can shell
+// out to kscreen-doctor / wlr-randr with an 800 ms budget, and it would
+// stutter the canvas every time the user drags a panel. QScreen's own
+// geometry + devicePixelRatio is good enough for preview purposes.
+const screen_query::Result &HudCanvas::previewScreenInfo() const
+{
+    // v0.8: cached screen list, keyed by QScreen::name(). Built lazily
+    // (first call) and never invalidated — outputs don't come and go
+    // mid-session often enough to bother hooking QScreen::destroyed;
+    // if the user docks a new monitor the next setPreviewScreen() call
+    // will trigger a re-paint and the worst case is "preview shows the
+    // old size until you click SCREEN again", which is acceptable.
+    static const screen_query::Result *kFallback = []() -> const screen_query::Result * {
+        static const screen_query::Result r = screen_query::detect();
+        return &r;
+    }();
+    if (previewOutputName_.isEmpty())
+        return *kFallback;
+    static const QHash<QString, const screen_query::Result *> kByName = []() {
+        QHash<QString, const screen_query::Result *> m;
+        static QHash<QString, screen_query::Result> owned;
+        owned.clear();
+        for (QScreen *s : QGuiApplication::screens()) {
+            if (!s) continue;
+            screen_query::Result r;
+            r.physical = s->geometry().size() * s->devicePixelRatio();
+            r.logical  = s->geometry().size();
+            r.dpr      = s->devicePixelRatio();
+            r.source   = screen_query::Source::QScreen;
+            owned.insert(s->name(), r);
+            m.insert(s->name(), &owned[s->name()]);
+        }
+        return m;
+    }();
+    const auto it = kByName.constFind(previewOutputName_);
+    if (it != kByName.cend())
+        return *it.value();
+    return *kFallback;
+}
+
+void HudCanvas::setPreviewScreen(QString outputName)
+{
+    if (outputName == previewOutputName_)
+        return;
+    previewOutputName_ = std::move(outputName);
+    updateGeometry();
+    update();
 }
 
 QString HudCanvas::cornerLabel(int index) const
@@ -200,7 +258,7 @@ QMargins HudCanvas::movedMargins(int index, int dxLogical, int dyLogical) const
     if (index < 0 || index >= 3 || !slots_[index].bound) return {};
     const Corner corner = slots_[index].src->corner();
     QMargins m = dragStartMargins_;   // set at drag/key start
-    const QSize logical = screenInfo().logical;
+    const QSize logical = previewScreenInfo().logical;
     const QSize panel = slots_[index].src->contentSize() * slots_[index].src->scale();
     const int maxX = std::max(0, logical.width() - panel.width());
     const int maxY = std::max(0, logical.height() - panel.height());
@@ -243,7 +301,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
     headFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.5);
     p.setFont(headFont);
     p.setPen(QColor(140, 145, 147));
-    const auto &si = screenInfo();
+    const auto &si = previewScreenInfo();
     const QString head = QStringLiteral(
         "LIVE HUD CANVAS  ·  %1 × %2 PHYS  ·  %3 × %4 LOGICAL  ·  DPR ×%5  ·  %6")
         .arg(si.physical.width())
@@ -422,7 +480,7 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
 void HudCanvas::mouseMoveEvent(QMouseEvent *e)
 {
     if (!dragging_ || dragIndex_ < 0) return;
-    const auto &si = screenInfo();
+    const auto &si = previewScreenInfo();
     const QSize logical = si.logical;
     const QRectF avail = QRectF(rect()).adjusted(22, 46, -22, -kFooter);
     const QSize phys = si.physical;

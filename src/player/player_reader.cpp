@@ -434,10 +434,22 @@ QVector<PartyMemberSnapshot> MhwReader::readParty(QString *error)
 // Mem path (all pre-resolved in data/MonsterHunterWorld.421810.map):
 //   WEAPON_ADDRESS + WEAPON_SHARPNESS_OFFSETS
 //     +0x1D10 int MaxLevel            (Purple = 6, max possible)
-//     +0x20F8 int Sharpness           (raw hit count, current segment)
-//     +0x20FC int Level               (enum Red=0..Purple=6, Broken=-1)
+//     +0x20F8 int Sharpness           (raw hit counter; the weapon's
+//                                      whole-bar remainder — the badge
+//                                      subtracts the current level's
+//                                      threshold to show "current colour
+//                                      remaining", 0 = colour used up)
+//     +0x20FC int Level               (enum Red=0..Purple=6, Broken=-1;
+//                                      this IS the render colour — the
+//                                      game's own current-level field.
+//                                      r23 tried deriving the colour from
+//                                      the counter instead and a live
+//                                      purple weapon rendered blue; that
+//                                      experiment is reverted — the field
+//                                      keeps the colour, the counter feeds
+//                                      the segmented number only)
 //   WEAPON_ADDRESS + WEAPON_ID_OFFSETS
-//     int weaponId                    (HunterPie 0..13, <-1 on failure)
+//     int weaponType                  (caller-side WeaponType byte, -1 ok)
 //   WEAPON_DATA_ADDRESS + WEAPON_DATA_OFFSETS
 //     then [weaponId * 8 + 0xC] deref → short[7]  per-level upper bounds
 //   MINIMUM_SHARPNESSES_ADDRESS + 0..7 * 4 int  minimum hits per level
@@ -451,8 +463,9 @@ SharpnessSnapshot MhwReader::readSharpness(int weaponId, QString *error)
     // HunterPie MHWMeleeWeapon.GetWeaponSharpness:
     //   1. always read the sharpness struct first
     //   2. only return early if the in-game Level field is invalid
-    //   3. weaponId is only used for the (cached) per-weapon threshold
-    //      array, not for gating the read.
+    //   3. the caller's weapon TYPE byte only gates ranged weapons; the
+    //      threshold array is indexed by the weapon-data ROW id read from
+    //      WEAPON_ID_OFFSETS (hundreds of table rows are legal).
     //
     // We previously early-returned on weaponId<0 — that produced an
     // empty bar even when the game WAS feeding valid sharpness data
@@ -477,31 +490,47 @@ SharpnessSnapshot MhwReader::readSharpness(int weaponId, QString *error)
     if (*level < 0 || *level > 6) {
         return result;
     }
-    result.level = *level;
+    // r23 regression note: this field IS the render colour (the game's
+    // own current-level value); live sessions kept it correct. An r23
+    // experiment that DERIVED the level from the raw counter "mis-fired
+    // purple -> blue" — root cause found later the same night: the
+    // thresholds it compared against came from the WRONG table row (type
+    // byte instead of row id, see below). Derivation removed; with the
+    // correct row its scan agrees with this field at every sample.
+    result.level = static_cast<int>(*level);
 
     if (const auto raw = memory_.read<std::int32_t>(sharpPtr + 0x20F8ULL))
         result.currentHits = *raw;
 
-    // Always re-fetch thresholds when the weaponId changes. The caller
-    // may pass -1 on first tick before the player struct's weapon byte
-    // resolves; fall back to WEAPON_ID_OFFSETS as a second source.
-    int sharpWeaponId = weaponId;
-    if (sharpWeaponId < 0 || sharpWeaponId > 13) {
-        const std::uintptr_t idPtr = followPointerChain(
-            memory_,
-            absolute(QStringLiteral("WEAPON_ADDRESS")),
-            map_.offsets(QStringLiteral("WEAPON_ID_OFFSETS")),
-            nullptr);
-        if (idPtr) {
-            if (const auto w = memory_.read<std::int32_t>(idPtr))
-                sharpWeaponId = *w;
-        }
-    }
-    // Ranged weapons (Bow=11, HBG=13, LBG=14) have no sharpness.
-    if (sharpWeaponId == 11 || sharpWeaponId == 13 || sharpWeaponId == 14) {
+    // Ranged weapons have no sharpness (weapon-type bytes 11+: Bow / HBG /
+    // LBG in the game's ordering); >10 also rejects garbage type reads.
+    // -1 = "not resolved yet" falls through (the level gate above already
+    // protects that case).
+    if (weaponId > 10) {
         return result;
     }
-    if (sharpWeaponId < 0 || sharpWeaponId > 10) {
+
+    // HunterPie indexes the per-weapon thresholds array with the value read
+    // from WEAPON_ID_OFFSETS: the weapon's ROW in the weapon-data table
+    // (~hundreds), not the 0..13 type enum. r23 live forensics: this reader
+    // indexed with the type byte (1) and therefore read a different row
+    // ([140,250,290,330,380,400,0] vs the weapon's real
+    // [140,160,180,250,290,320,400]) — raw=370 then derived "blue" for a
+    // purple weapon and the panel badge collapsed to 0 (th[6] == 0 in the
+    // wrong row). The row id (202 in that session) is validated against
+    // the live raw/level transitions.
+    const std::uintptr_t idPtr = followPointerChain(
+        memory_,
+        absolute(QStringLiteral("WEAPON_ADDRESS")),
+        map_.offsets(QStringLiteral("WEAPON_ID_OFFSETS")),
+        nullptr);
+    int sharpWeaponId = -1;
+    if (idPtr) {
+        if (const auto w = memory_.read<std::int32_t>(idPtr))
+            sharpWeaponId = *w;
+    }
+    // Generous sanity bound for a table row id; garbage -> no thresholds.
+    if (sharpWeaponId < 0 || sharpWeaponId > 8191) {
         return result;
     }
 
@@ -545,6 +574,13 @@ SharpnessSnapshot MhwReader::readSharpness(int weaponId, QString *error)
     for (int i = 0; i < 7; ++i)
         result.thresholds[i] = cachedSharpnessThresholds_[i];
 
+    // Segmented badge ("current colour remaining", Rise semantics): the
+    // raw counter is the weapon's whole-bar remainder, so the current
+    // colour's remaining hits are `currentHits - thresholds[level - 1]`
+    // with the level field's colour (cf4d741). 0 = this colour is used
+    // up, the next hit drops a colour. Live validation of these numbers
+    // rides the r23 watch probe (logs raw / level / thresholds / this
+    // subtraction every second).
     result.threshold = (result.level <= 0) ? 0 : result.thresholds[result.level - 1];
 
     // S1 (v0.7.5 audit): HunterPie MHWGameUtils.MaximumSharpness, exact.

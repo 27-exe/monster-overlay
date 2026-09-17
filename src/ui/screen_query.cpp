@@ -8,7 +8,9 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QList>
 #include <QProcess>
+#include <QRect>
 #include <QRegularExpression>
 #include <QScreen>
 #include <QSize>
@@ -332,6 +334,34 @@ Result detect(const QScreen *screen)
                       QSize(int(phys.width()),
                             int(phys.height())),
                       Source::Fallback);
+}
+
+// v0.8: per-screen listing for the control console. Walks every QScreen
+// Qt knows about and returns its (name, geometry, dpr, primary) tuple.
+// Cheap (no I/O) and safe to call from the GUI thread on every dropdown
+// refresh — QGuiApplication::screens() is in-process.
+QList<OutputInfo> listOutputs()
+{
+    QList<OutputInfo> out;
+    const auto screens = QGuiApplication::screens();
+    QScreen *primary = QGuiApplication::primaryScreen();
+    out.reserve(screens.size());
+    for (QScreen *s : screens) {
+        if (!s) continue;
+        OutputInfo oi;
+        oi.name     = s->name();
+        oi.geometry = s->geometry();
+        oi.dpr      = s->devicePixelRatio();
+        oi.primary  = (s == primary);
+        // Fallback name for the rare case Qt hasn't populated it yet
+        // (e.g. session just started): keep the geometry so the user
+        // can still tell which screen this is.
+        if (oi.name.isEmpty())
+            oi.name = QStringLiteral("screen@%1,%2")
+                          .arg(oi.geometry.x()).arg(oi.geometry.y());
+        out.push_back(oi);
+    }
+    return out;
 }
 
 } // namespace screen_query

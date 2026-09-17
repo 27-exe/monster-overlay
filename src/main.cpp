@@ -180,6 +180,24 @@ int main(int argc, char **argv)
         QStringLiteral("Target game: auto, world or rise (default auto)"),
         QStringLiteral("game"),
         QStringLiteral("auto"));
+    // v0.8: per-panel screen selection. Value is a QScreen::name()
+    // (on Niri that string is the wlr-output id, e.g. eDP-1, DP-2,
+    // HDMI-A-1). Empty / unset = "follow OS primary". Independent
+    // per panel so the user can split panels across monitors. The
+    // control console passes these flags through verbatim when it
+    // spawns monster-overlay.
+    QCommandLineOption outputPlayerOption(
+        QStringLiteral("output-player"),
+        QStringLiteral("Player panel QScreen name (default: OS primary)"),
+        QStringLiteral("name"));
+    QCommandLineOption outputMonsterOption(
+        QStringLiteral("output-monster"),
+        QStringLiteral("Monster panel QScreen name (default: OS primary)"),
+        QStringLiteral("name"));
+    QCommandLineOption outputDamageOption(
+        QStringLiteral("output-damage"),
+        QStringLiteral("Damage panel QScreen name (default: OS primary)"),
+        QStringLiteral("name"));
 
     parser.addOption(mapOption);
     parser.addOption(localeOption);
@@ -192,6 +210,9 @@ int main(int argc, char **argv)
     parser.addOption(noMonsterOption);
     parser.addOption(noDamageOption);
     parser.addOption(gameOption);
+    parser.addOption(outputPlayerOption);
+    parser.addOption(outputMonsterOption);
+    parser.addOption(outputDamageOption);
     parser.process(app);
 
     if (!mhw::StringTable::instance().load(
@@ -263,6 +284,19 @@ int main(int argc, char **argv)
     playerPanel.setPanelEnabled(!parser.isSet(noPlayerOption));
     monsterPanel.setPanelEnabled(!parser.isSet(noMonsterOption));
     damagePanel.setPanelEnabled(!parser.isSet(noDamageOption));
+
+
+    // v0.8: CLI --output-* overrides whatever the persisted panels.ini
+    // already has. Pass-through with persist=false (we don't write the
+    // CLI value back — that lets the user override per-run without
+    // polluting the saved config; the next console-driven save is what
+    // commits the choice to disk).
+    if (parser.isSet(outputPlayerOption))
+        playerPanel.setOutputName(parser.value(outputPlayerOption), false);
+    if (parser.isSet(outputMonsterOption))
+        monsterPanel.setOutputName(parser.value(outputMonsterOption), false);
+    if (parser.isSet(outputDamageOption))
+        damagePanel.setOutputName(parser.value(outputDamageOption), false);
 
     playerPanel.show();
     monsterPanel.show();

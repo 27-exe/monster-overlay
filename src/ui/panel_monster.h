@@ -7,6 +7,7 @@
 #include <QElapsedTimer>
 #include <QObject>
 #include <QTimer>
+#include <array>
 
 // HunterPie-style monster HP panel:
 //   - One big total-HP progress bar
@@ -35,6 +36,17 @@ private:
     // Pulse phase in [0,1), refreshed every kPulsePeriodMs. paint()
     // reads this to compute sin() alpha for the enrage label.
     double enragePhase_{0.0};
+
+    // v0.8.4-r23: HunterPie-style ailment auto-hide tracker. One slot per
+    // World ailment id (0..24); MonsterAilmentSnapshot.id is the same id
+    // HunterPie's MonsterAilmentRepository keys on. `sig` is the quantized
+    // (timer, buildup) signature, `stampMs` the wall-clock millisecond at
+    // which it last changed (see paintPanel()'s kAilAutoHideMs).
+    struct AilTrack {
+        quint64 sig{0};
+        qint64  stampMs{0};
+    };
+    std::array<AilTrack, 32> ailTrack_{};
 
     mhw::MonsterSnapshot monster_;
     bool hasData_{false};

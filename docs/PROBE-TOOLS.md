@@ -11,7 +11,9 @@ exit with code 1 (most) or 3 (`monster-probe-ailments` /
 diagnostic.
 
 `ctest` registers all seven with `SKIP_RETURN_CODE 1;3` so the
-test suite stays green on a machine without MHW.
+test suite stays green on a machine without MHW. With a game
+running, the watch-style probes never exit on their own — `ctest`
+reports those as timed out, which is expected; run them manually.
 
 ---
 
@@ -132,6 +134,22 @@ grep -E 'IsActive=1' /tmp/ailments.log
 The log is line-oriented and grep-friendly. Search for the ailment
 ID you care about (e.g. `id=3` for sleep, per
 `HunterPie/Game/World/Data/MonsterData.xml` Ailments section).
+
+Since r23 the watch probe also prints, once per tick:
+
+- a `[sharpness]` block — the World player's weapon-sharpness inputs:
+  the weapon-data row id (`WEAPON_ID_OFFSETS`), the raw counter
+  (`+0x20F8`), the level field (`+0x20FC`), `MaxLevel`, the row's 7
+  thresholds, the upstream-style level scan, and hex windows around
+  `+0x1D00` / `+0x20E0`. This is the tool that cracked the "purple
+  rendered blue" bug: the reader had been indexing the thresholds
+  with the weapon TYPE byte instead of the data row id.
+- a `stamina=… maxStamina=…` line — the World monster's stamina pair
+  (`MHWMonster.GetMonsterStaminaData`, `monster + 0x1C0F0`, two
+  floats), handy for fatigue / drool correlations.
+
+The address map is compiled in (`MHW_DEFAULT_MAP`), so the probe can
+run from any directory, not just the repo root.
 
 ## `monster-probe-mantles`
 

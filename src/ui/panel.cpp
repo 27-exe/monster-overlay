@@ -106,6 +106,36 @@ void Panel::applyGeometry()
     if (!layer)
         return;
 
+    // v0.8 (screen selection): pick the target QScreen. Resolution order:
+    //   1. outputName_ (set by setOutputName() / CLI --output-*)
+    //   2. fall back to QGuiApplication::primaryScreen()
+    // Then push it both to the QWindow (Qt paints/widgets use it) AND to
+    // LayerShellQt::Window::setScreen() — the latter is what triggers
+    // the wlr-layer-shell `set_output` event on the compositor. Without
+    // setScreen(), Niri/Sway/Hyprland/KWin all pick an output for the
+    // surface based on the initial geometry — which on multi-monitor
+    // Wayland sessions often resolves to the wrong screen and there is
+    // no later hook to redirect it. setCloseOnDismissed(false) keeps
+    // the surface alive if the chosen output briefly disconnects, so a
+    // dock undock / monitor sleep doesn't kill the overlay.
+    QScreen *targetScreen = nullptr;
+    if (!outputName_.isEmpty()) {
+        const auto screens = QGuiApplication::screens();
+        for (QScreen *s : screens) {
+            if (s && s->name() == outputName_) { targetScreen = s; break; }
+        }
+    }
+    if (!targetScreen)
+        targetScreen = QGuiApplication::primaryScreen();
+    if (targetScreen) {
+        if (native->screen() != targetScreen)
+            native->setScreen(targetScreen);
+        if (layer->screen() != targetScreen)
+            layer->setScreen(targetScreen);
+        layer->setCloseOnDismissed(false);
+        layer->setWantsToBeOnActiveScreen(false);
+    }
+
     layer->setLayer(LayerShellQt::Window::LayerOverlay);
     // Default: KeyboardInteractivityNone — the surface is invisible
     // to the compositor's focus chain. Show/hide never steals focus,
@@ -158,6 +188,12 @@ void Panel::loadConfig()
     scale_ = settings().value(QStringLiteral("scale"), 2.0).toDouble();   // v0.3: 2x scale to make icons undeniably visible
     opacity_ = settings().value(QStringLiteral("opacity"), 1.0).toDouble();
     bgAlpha_ = std::clamp(settings().value(QStringLiteral("bgAlpha"), 170).toInt(), 0, 255);
+    // v0.8: per-panel screen selection. Empty = use whatever the OS calls
+    // primary. A non-empty value matches QScreen::name() in
+    // QGuiApplication::screens() — on Niri that string is exactly the
+    // output name (eDP-1 / DP-1 / HDMI-A-1 …), so the value is also
+    // what wlr-randr / kscreen-doctor would print.
+    outputName_ = settings().value(QStringLiteral("outputName")).toString();
     settings().endGroup();
 
     scale_ = std::clamp(scale_, kMinScale, kMaxScale);
@@ -201,6 +237,10 @@ void Panel::saveAppearance()
     settings().setValue(QStringLiteral("mt"), margins_.top());
     settings().setValue(QStringLiteral("mr"), margins_.right());
     settings().setValue(QStringLiteral("mb"), margins_.bottom());
+    // v0.8: persist per-panel screen selection. The control console
+    // writes this from setOutputName(); loadConfig() reads it back
+    // on the overlay's next start.
+    settings().setValue(QStringLiteral("outputName"), outputName_);
     settings().endGroup();
     settings().sync();
 }
@@ -480,6 +520,45 @@ void Panel::setMargins(QMargins m, bool persist)
     update();
     if (persist)
         saveConfig();
+}
+
+// v0.8: switch this panel to a different Wayland output. Empty name =
+// revert to "follow OS primary". Validating against
+// QGuiApplication::screens() up front lets the control console catch a
+// typo before the overlay tries to apply it (the surface already exists
+// at that point, but at least the user sees a warning).
+//
+// persist=true writes the value through saveAppearance() — the same
+// path the console's other setters use, so a quit without save still
+// remembers the screen the user picked. persist=false is for the live
+// console's preview-only path.
+void Panel::setOutputName(QString name, bool persist)
+{
+    if (name == outputName_)
+        return;
+    if (!name.isEmpty()) {
+        const auto screens = QGuiApplication::screens();
+        bool ok = false;
+        for (QScreen *s : screens) {
+            if (s && s->name() == name) { ok = true; break; }
+        }
+        if (!ok) {
+            qWarning("Panel::setOutputName: '%s' is not a known output; "
+                     "available: %s. Reverting to primary.",
+                     qPrintable(name),
+                     qPrintable([&]() {
+                         QStringList n;
+                         for (QScreen *s : QGuiApplication::screens())
+                             if (s) n << s->name();
+                         return n.join(QLatin1String(", "));
+                     }()));
+            name = QString();
+        }
+    }
+    outputName_ = name;
+    applyGeometry();
+    if (persist)
+        saveAppearance();
 }
 
 void Panel::paintMinimized(QPainter &p)

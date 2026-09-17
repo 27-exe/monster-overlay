@@ -2,11 +2,13 @@
 
 #include "core/string_table.h"
 #include "monster/monster_types.h"
+#include "rise/mhr_part_names.h"
 #include "ui/formatters.h"
 #include "ui/icon.h"
 #include "ui/panel_sections.h"
 
 #include <QColor>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QLinearGradient>
 #include <QPainter>
@@ -66,6 +68,9 @@ constexpr int kBarH       = 15;    // .bar height
 constexpr int kRageBarH   = 6;     // .bar.er visual text band; small strip
                                     // with the MAX/% reading centred in it.
                                     // (Text glyph caps sit ~6px tall at 8pt.)
+constexpr int kStamBarH   = 10;    // .bar.st — monster stamina (fatigue)
+                                    // meter. HunterPie draws this gauge
+                                    // 10px tall directly under the HP bar.
 constexpr int kBarVPad    = 3;     // Vertical padding inside .bar so the
                                     // glyph doesn't sit flush against the
                                     // bar edges. Visual height = kBarH +
@@ -89,6 +94,8 @@ constexpr int kHpLowR  = 244, kHpLowG  =  67, kHpLowB  =  54; // red:    HunterP
 constexpr float kHpAmberPct   = 0.50F;  // ≤50% flips to amber
 constexpr int kErBar1R = 230, kErBar1G =  74, kErBar1B = 25;  // --c
 constexpr int kErBar2R = 255, kErBar2G = 112, kErBar2B = 67;  // --c2
+constexpr int kStamR   = 246, kStamG   = 165, kStamB   =  34; // stamina:
+                                    // HunterPie Yellow #F6A522, Scheme.xaml
 
 constexpr int kPulsePeriodMs = 1600;  // .erpulse 1.6s
 
@@ -263,6 +270,9 @@ constexpr int kPcGap      = 5;     // .pgrid gap
 constexpr int kPcPadX     = 6;     // .pc padding 4 6
 constexpr int kPcPadY     = 4;
 constexpr int kPcPnFont   = 9;     // .pc .pn font-size
+constexpr int kPcValueFont = 8;    // current/max HP row
+constexpr int kPcValueH    = kPcValueFont + 2;
+constexpr int kPcValueGap  = 2;
 constexpr int kPcTagFont  = 8;     // .pc .tag font-size
 constexpr int kPcTagPadX  = 4;     // .pc .tag padding 0 4
 constexpr int kPcMiniH    = 4;     // .pc .mini height:4
@@ -275,13 +285,44 @@ constexpr int kPcTnGap    = 2;     // gap between .pn and the tenderize strip
 // gap between .pn and the strip (no extra kPcTnLabelGap needed).
 constexpr int kPcTnLabelH = 9;     // "Ns" label height (matches kPcTagFont)
 
+// v0.8.4-r18 parts-display-filter: the .pgrid only displays parts the
+// player can actually act on — severable (可切断) or breakable (可破坏).
+// A live Rise read (reported monster id=14) collected 16 parts; every one
+// of them was rendered as a card ("部位 0"…"部位 15"), so the grid was
+// dominated by flinch-only body parts the player never interacts with
+// ("部位是不是太多了？只显示有用的比较好").
+//
+// Rule: keep partType != Flinch. Fallback: when that leaves nothing
+// (a monster whose entire part table is flinch-only, e.g. malformed /
+// not-yet-decoded schema), show the first kFlinchFallbackParts parts in
+// their original order so the section never collapses to an empty box.
+constexpr int kFlinchFallbackParts = 4;
+
+QVector<mhw::PartSnapshot> displayableParts(const QVector<mhw::PartSnapshot> &parts)
+{
+    QVector<mhw::PartSnapshot> shown;
+    shown.reserve(parts.size());
+    for (const mhw::PartSnapshot &p : parts) {
+        if (p.partType != mhw::PartType::Flinch)
+            shown.append(p);
+    }
+    if (shown.isEmpty()) {
+        const int n = std::min(kFlinchFallbackParts,
+                               static_cast<int>(parts.size()));
+        for (int i = 0; i < n; ++i)
+            shown.append(parts[i]);
+    }
+    return shown;
+}
+
 struct PcEntry {
     QString name;          // 头 / 左翼 / 右翼 / 尾巴 / 左脚 / 右脚
     QString tag;           // empty / "破" / "斩"
     QString tagKind;       // "" / "brk" / "sev"
     int     counter{0};    // HunterPie raw counter
     bool    broken{false}; // true if part has been broken/severed at least once
-    float   pct{0.0F};     // 0..1 (solo: per-part HP, multiplayer: monster total HP)
+    float   pct{0.0F};     // 0..1 (solo: per-part HP; non-host multi: flinch layer)
+    QString value;         // compact current/max, e.g. 34k/57k
     // v0.7.4 PR C: per-part tenderize. When tenderizeDuration > 0 the
     // card renders a small amber strip showing the remaining seconds
     // and a fill bar driven by duration / tenderizeMaxDuration.
@@ -304,19 +345,21 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
     p.setPen(QColor(200, 205, 208));         // --t2
     const int pnY = static_cast<int>(cell.top()) + kPcPadY;
     const int pnH = kPcPnFont + 2;
-    p.drawText(QRectF(cell.x() + kPcPadX, pnY,
-                      cell.width() / 2 - kPcPadX, pnH),
-               Qt::AlignLeft | Qt::AlignVCenter, e.name);
+    const int nameW = std::max(0, static_cast<int>(cell.width())
+        - 2 * kPcPadX - (e.tag.isEmpty() ? 0 : 36));
+    p.drawText(QRectF(cell.x() + kPcPadX, pnY, nameW, pnH),
+               Qt::AlignLeft | Qt::AlignVCenter,
+               QFontMetrics(pnFont).elidedText(e.name, Qt::ElideRight, nameW));
 
     if (!e.tag.isEmpty()) {
-        // When the part has been broken at least once we suffix the
-        // chip with the counter so the row communicates "broken N
-        // times" rather than just "broken" (HunterPie V2 doesn't show
-        // the counter in the chip, but for non-host members that's
-        // the only signal we have about the part's state).
-        const QString tagText = e.counter > 0
-            ? QStringLiteral("%1 %2").arg(e.tag).arg(e.counter)
-            : e.tag;
+        // v0.8.4-r23: show the raw counter unconditionally, mirroring
+        // HunterPie V2's chip (BossMonsterBreakablePartView.xaml /
+        // BossMonsterSeverablePartView.xaml bind "Breaks", which is
+        // MHWMonsterPart.Count ← data.Counter). On a non-host client
+        // this count is the one per-part signal the game keeps in
+        // sync, so hiding it at 0 made untouched cards read as empty.
+        const QString tagText =
+            QStringLiteral("%1 %2").arg(e.tag).arg(e.counter);
         QFont tagFont(QStringLiteral("Chakra Petch"),
                       kPcTagFont, QFont::Bold);
         tagFont.setStyleStrategy(QFont::PreferAntialias);
@@ -357,10 +400,32 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
     p.drawRect(miniRect);
     const float clamped = std::clamp(e.pct, 0.0F, 1.0F);
     if (clamped > 0.001F) {
-        p.setBrush(QColor(120, 144, 156));   // #78909c
+        // v0.8.4-r23: broken/severed parts paint the fill in the tag
+        // palette (brk pink / sev amber) — HunterPie swaps its gauge
+        // brush to Broken.Foreground on IsPartBroken/IsPartSevered.
+        // This keeps the state visible even when the HP layer itself is
+        // unreadable on a non-host client.
+        QColor fill = QColor(120, 144, 156); // #78909c default
+        if (e.broken) {
+            fill = (e.tagKind == QLatin1String("sev"))
+                ? QColor(246, 165, 34)   // #f6a522
+                : QColor(244, 17, 98);   // #f41162
+        }
+        p.setBrush(fill);
         p.drawRect(miniRect.x(), miniY,
                    miniRect.width() * clamped, miniRect.height());
     }
+
+    const int tenderizeHeight = e.tenderizeDuration > 0.0F
+        ? kPcTnLabelH + kPcTnH + kPcTnGap : 0;
+    QFont valueFont(QStringLiteral("Chakra Petch"), kPcValueFont, QFont::Medium);
+    valueFont.setStyleStrategy(QFont::PreferAntialias);
+    p.setFont(valueFont);
+    p.setPen(QColor(150, 154, 158));
+    p.drawText(QRectF(cell.x() + kPcPadX,
+                      miniY - kPcValueGap - tenderizeHeight - kPcValueH,
+                      cell.width() - 2 * kPcPadX, kPcValueH),
+               Qt::AlignRight | Qt::AlignVCenter, e.value);
 
     // v0.7.4 PR C: per-part tenderize strip. Drawn ABOVE .mini and below
     // .pn (the caller reserves the extra kPcTnLabelH + kPcTnH + kPcTnGap
@@ -515,17 +580,46 @@ void MonsterPanel::paintPanel(QPainter &p)
 
     // ---- Build status card entries from ailments (mirrors .sc ordering) ----
     QVector<ScEntry> scList;
+    // v0.8.4-r23: HunterPie's card visibility is *change*-based, not
+    // value-based. MonsterAilmentViewModel inherits AutoVisibilityViewModel:
+    // every Timer / BuildUp / IsTimerActive change restarts a per-cell timer
+    // (AutoVisibilityViewModel.cs:61-68) and the cell hides once that timer
+    // elapses with no further change; MonsterWidgetConfig.AutoHideAilmentsDelay
+    // defaults to 15 s (MonsterWidgetConfig.cs:153 `new(15, 300, 1, 1)`).
+    // The old "buildup > 0" gate pinned a card for as long as the game kept
+    // a stale build-up value — World build-up decays slowly once nothing is
+    // being applied — which is what turned the section into a wall of
+    // frozen cards. Edit mode keeps the demo cards pinned so the control
+    // console preview and screenshots still show every card.
+    constexpr qint64 kAilAutoHideMs = 15000;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     for (const auto &a : monster_.ailments) {
-        // Hide cards that are not actually affecting the monster RIGHT
-        // NOW. Previously `counter > 0` kept the card alive forever —
-        // once an ailment ever triggered (e.g. drool flinch) it stayed
-        // on the panel at "0s" for the whole fight. HunterPie's
-        // auto-hide semantics: hide when no timer is running and no
-        // build-up is accumulating; the historical counter alone must
-        // not pin the card.
-        const bool timerRunning = a.active && a.timer > 0.0F;
-        const bool buildingUp  = a.buildup > 0.0F;
-        if (!timerRunning && !buildingUp)
+        // HunterPie ignores build-up without a known threshold
+        // (MonsterAilmentContextHandler.cs:89-96 `if (e.MaxBuildUp <= 0) return;`),
+        // so a (buildup > 0, maxBuildup <= 0) pair is not renderable
+        // progress — it used to draw a blank card (pct 0, empty text).
+        const bool timerRunning = a.timer > 0.0F;
+        const bool buildupKnown = a.buildup > 0.0F && a.maxBuildup > 0.0F;
+
+        // Quantized (timer, buildup) signature at 0.1 resolution: coarse
+        // enough to ignore float noise, fine enough to catch the changes
+        // HunterPie reacts to. Counter changes deliberately do NOT refresh
+        // the card — HunterPie's OnCounterUpdate is a plain SetValue
+        // (MonsterAilmentContextHandler.cs:87), so a historical counter
+        // alone can never pin a card.
+        const quint64 ailSig =
+            (static_cast<quint64>(static_cast<quint32>(qRound(a.timer * 10.0F))) << 32)
+            | static_cast<quint32>(qRound(a.buildup * 10.0F));
+        bool recent = true;   // edit-mode demo: never auto-hide
+        if (!editMode() && a.id >= 0 && a.id < static_cast<int>(ailTrack_.size())) {
+            AilTrack &track = ailTrack_[a.id];
+            if (track.sig != ailSig) {
+                track.sig = ailSig;
+                track.stampMs = nowMs;
+            }
+            recent = track.stampMs > 0 && (nowMs - track.stampMs) < kAilAutoHideMs;
+        }
+        if (!timerRunning && !recent)
             continue;
         ScEntry e;
         e.name = a.name;
@@ -563,7 +657,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         // The card is "active" the moment the monster is being affected:
         //   - the ailment has triggered (timer counting down), or
         //   - the build-up is in progress (mini bar moving).
-        e.active = timerRunning || buildingUp;
+        e.active = timerRunning || buildupKnown;
 
         // Mini progress + timer text. Order matches the HTML examples:
         //   active + maxTimer     → "Ns" (countdown)
@@ -574,7 +668,7 @@ void MonsterPanel::paintPanel(QPainter &p)
             // (the card disappears the moment timer hits 0 anyway).
             e.pct = std::clamp(a.timer / a.maxTimer, 0.0F, 1.0F);
             e.tm  = QStringLiteral("%1s").arg(static_cast<int>(std::ceil(a.timer)));
-        } else if (a.maxBuildup > 0.0F) {
+        } else if (buildupKnown) {
             e.pct = std::clamp(a.buildup / a.maxBuildup, 0.0F, 1.0F);
             e.tm  = QStringLiteral("%1%").arg(static_cast<int>(e.pct * 100));
         } else {
@@ -592,13 +686,19 @@ void MonsterPanel::paintPanel(QPainter &p)
     const bool onEnrage   = smask & mhw::MonsterSection::Enrage;
     const bool onAil      = smask & mhw::MonsterSection::Ail;
     const bool onParts    = smask & mhw::MonsterSection::Parts;
-    // v0.7.4 PR C: per-part tenderize strip is always drawn when active,
-    // regardless of the section toggle. Kept for backwards compat with
-    // MonsterSection::Tenderize (still respected via MonsterPanel config
-    // — see panel_sections.h); the on/off behaviour now lives on the
-    // data side, not the layout side.
+    // v0.8.4-r23: the 软化/TENDERIZE control-panel toggle gates the
+    // per-part tenderize strip again. v0.7.4 PR C dropped the standalone
+    // .tsc section and left `onTenderize` computed-but-unused, which
+    // turned the control-panel switch into a silent no-op. The strip is
+    // data-driven AND mask-gated: the height reservation (below) and the
+    // pcList fill must use the same condition or the panel height and
+    // the drawn cards drift apart.
     const bool onTenderize = smask & mhw::MonsterSection::Tenderize;
-    (void)onTenderize;
+
+    // v0.8.4-r23 fatigue-semantics: monster stamina row. The reader only
+    // fills the pair when the 0x320 chain resolved (0/0 = unknown → row
+    // hidden). Follows the HP toggle until a dedicated section bit exists.
+    const bool stamDrawn = onHp && monster_.maxStamina > 0.0F;
 
     const bool showRage = monster_.enrageMaxBuildup > 0.0F || monster_.enraged;
     const bool rageDrawn = onEnrage && showRage;
@@ -611,6 +711,7 @@ void MonsterPanel::paintPanel(QPainter &p)
     // term) so the fully-on rage→ail 2-row gap is preserved bit-exact.
     constexpr int kInfoH = kTitleH + kRowGap + kHexH;
     const int hpH        = kBarH + 2 * kBarVPad;
+    const int stamH      = kStamBarH + 2 * kBarVPad;
     const int rageH      = kRageBarH + 2 * kBarVPad;
     int scAreaH = 0;
     if (scCount > 0) {
@@ -618,8 +719,17 @@ void MonsterPanel::paintPanel(QPainter &p)
         constexpr int kScCellH = kScPadY + kScTopFont + 4 + kScMiniH + kScPadY;
         scAreaH = scRows * kScCellH + (scRows - 1) * kScGap;
     }
+    // v0.8.4-r18 parts-display-filter: resolve the parts the .pgrid will
+    // actually render (severable/breakable only, with a first-4 fallback
+    // when a monster has nothing but flinch bars). Resolved ONCE, before
+    // the height reservation, so the reservation below and the .pgrid
+    // render further down consume the exact same list — any divergence
+    // would misalign rows and clip the panel.
+    const QVector<mhw::PartSnapshot> shownParts =
+        displayableParts(monster_.parts);
+
     int pcAreaH = 0;
-    const int pcCount = monster_.parts.size();
+    const int pcCount = shownParts.size();
     if (pcCount > 0) {
         // v0.7.4 PR C: cell height is dynamic — any part with an active
         // Clutch Claw tenderize (PartSnapshot.tenderizeDuration > 0)
@@ -628,6 +738,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         // aligned with the tallest cell in each row.
         const int pcRows = (pcCount + kPcCols - 1) / kPcCols;
         constexpr int kPcBaseCellH = kPcPadY + kPcPnFont + 2 + kPcPnGap
+                                    + kPcValueH + kPcValueGap
                                     + kPcMiniH + kPcPadY;
         // S3 follow-up: label height is included in the kPcTnGap budget,
         // i.e. the strip+label sandwich occupies kPcTnLabelH + kPcTnH +
@@ -637,7 +748,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         const int kPcTnExtra = kPcTnLabelH + kPcTnH + kPcTnGap;
         QVector<int> cellHeights(pcCount, kPcBaseCellH);
         for (int i = 0; i < pcCount; ++i) {
-            if (monster_.parts[i].tenderizeDuration > 0.0F)
+            if (onTenderize && shownParts[i].tenderizeDuration > 0.0F)
                 cellHeights[i] += kPcTnExtra;
         }
         // Per-row max height → row height. Sum of (rowHeights + gaps).
@@ -656,6 +767,7 @@ void MonsterPanel::paintPanel(QPainter &p)
     int totalH = kPanelPad;
     if (onInfo)                  totalH += kInfoH;
     if (onHp)                    totalH += kRowGap + hpH;
+    if (stamDrawn)               totalH += kRowGap + stamH;
     if (rageDrawn)               totalH += kRowGap + rageH;
     if (onAil && scCount > 0)    totalH += kRowGap + (rageDrawn ? kRowGap : 0) + scAreaH;
     // v0.7.4 PR C: per-part tenderize strip is rendered inside each
@@ -664,6 +776,17 @@ void MonsterPanel::paintPanel(QPainter &p)
     if (onParts && pcCount > 0)  totalH += kRowGap + pcAreaH;
     totalH += kPanelPad;
     setContentSize(kPanelWidth, totalH);
+
+    // v0.8.4-r18 panel-bg fix: the full-data path lost its chrome call in
+    // the v0.8.x refactor (drawV03Chrome only survived in the empty-state
+    // branch above), so a panel that actually had a monster rendered no
+    // dark #0c0e10 background / accent stripe — "预览状态下丢失深色背景".
+    // Order matters: setContentSize() must run first because
+    // Panel::drawV03Chrome derives its rect from logicalSize_ (the
+    // logicalSize_.width() read inside drawV03Chrome, src/ui/panel.cpp),
+    // and the chrome must be painted before the content rows so rows land
+    // on top of it.
+    drawV03Chrome(p, Panel::Accent::Monster);
 
     const int innerLeft  = kPanelPad;
     const int innerRight = kPanelWidth - kPanelPad;
@@ -846,6 +969,39 @@ void MonsterPanel::paintPanel(QPainter &p)
             y += kBarH + 2 * kBarVPad;
     } // end Hp
 
+    // ---- 3b. .bar.st (monster stamina / fatigue meter) ----
+    // v0.8.4-r23 fatigue-semantics: the reader's stamina pair is the real
+    // fatigue meter (HunterPie draws this gauge 10px tall under the HP
+    // bar). The drooling / exhausted state the player sees in-game is
+    // stamina == 0; the exhaust ailment card (slot 6) is a separate 減気
+    // gauge and never reaches 100 % at that moment.
+    if (stamDrawn) {
+        y += kRowGap;
+        const float stPct = std::clamp(
+            monster_.stamina / monster_.maxStamina, 0.0F, 1.0F);
+        const QColor stHi(kStamR, kStamG, kStamB);
+        const QRectF stBarRect(innerLeft, y, innerW,
+                               kStamBarH + 2 * kBarVPad);
+        drawBarV(p, stBarRect, stPct, stHi.lighter(115), stHi);
+        QFont stFont(QStringLiteral("Chakra Petch"), 8);
+        stFont.setStyleStrategy(QFont::PreferAntialias);
+        p.setFont(stFont);
+        const QRectF stRect(innerLeft, y + kBarVPad, innerW, kStamBarH);
+        p.setPen(QColor(245, 246, 247));
+        p.drawText(stRect.adjusted(8, 0, 0, 0),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   QStringLiteral("体力"));
+        p.setPen(QColor(245, 246, 247));
+        p.drawText(stRect.adjusted(0, 0, -8, 0),
+                   Qt::AlignRight | Qt::AlignVCenter,
+                   QStringLiteral("%1 / %2")
+                       .arg(mhw::groupNumber(
+                                static_cast<int>(monster_.stamina)))
+                       .arg(mhw::groupNumber(
+                                static_cast<int>(monster_.maxStamina))));
+        y += kStamBarH + 2 * kBarVPad;
+    }
+
     // ---- 4. .bar.er (enrage meter) ----
     // Compact: no left label, just the value at the right. The HP bar
     // already names the fight so this strip stays out of the way.
@@ -911,16 +1067,20 @@ void MonsterPanel::paintPanel(QPainter &p)
     }
 
     // ---- 6. .pgrid (HTML .pc cards: 头/翼/尾/脚) ----
-    // Solo: per-part HP + counter.
-    // Multiplayer: part HP cannot be read, so the mini bar carries the
-    // total monster HP percentage and the tag chip shows the cumulative
-    // break / sever count once a part has been touched.
+    // Solo / host: per-part HP + counter.
+    // Non-host client: the Health layer is not replicated to the client
+    // (mhw-parts-hp-frozen-on-client-2026-07-23), so a stuck-at-full
+    // pair is never drawn as HP. The card falls back to the signals
+    // that ARE live on a client — Flinch/MaxFlinch (local stagger
+    // layer) for the bar + value, and the Counter (+0x18) + broken /
+    // severed state in the tag chip, which is no longer cleared
+    // (v0.8.4-r23; the old gate blanked the chip, which is why the
+    // grid "几乎不显示" in multiplayer).
     // (v0.7.4 PR B: totalPct removed — was never consumed in either
-    // solo or multiplayer path; multiplayer stale-HP gating happens via
-    // p.health/p.maxHealth on each entry below.)
+    // solo or multiplayer path.)
     QVector<PcEntry> pcList;
-    pcList.reserve(monster_.parts.size());
-    for (const auto &p : monster_.parts) {
+    pcList.reserve(shownParts.size());
+    for (const auto &p : shownParts) {
         PcEntry e;
         e.name = p.name.isEmpty()
             ? QStringLiteral("部位 %1").arg(p.index)
@@ -942,8 +1102,11 @@ void MonsterPanel::paintPanel(QPainter &p)
         // v0.7.4 PR C: per-part tenderize values feed the new strip
         // drawn inside each .pc card. The struct fields are 0 by default
         // (no active tenderize), so we only need to copy when nonzero.
-        e.tenderizeDuration    = p.tenderizeDuration;
-        e.tenderizeMaxDuration = p.tenderizeMaxDuration;
+        // v0.8.4-r23: gate on the 软化 section bit so the control-panel
+        // toggle actually hides the strip (and the reservation above
+        // stays in lockstep with the drawn cards).
+        e.tenderizeDuration    = onTenderize ? p.tenderizeDuration : 0.0F;
+        e.tenderizeMaxDuration = onTenderize ? p.tenderizeMaxDuration : 0.0F;
         // v0.7.4 PR C: pick the right HP pair per PartType.
         //   - Severable: only Health/MaxHealth is meaningful (HunterPie
         //     UpdateSeverableData leaves Flinch untouched).
@@ -955,18 +1118,43 @@ void MonsterPanel::paintPanel(QPainter &p)
         //     the "脏数据" complaint — body/leg parts now show real
         //     flinch bar values instead of the broken double-filled
         //     health/flinch pair.
-        const float mHP = (p.partType == mhw::PartType::Flinch)
-                          ? p.maxFlinch : p.maxHealth;
-        const float cHP = (p.partType == mhw::PartType::Flinch)
-                          ? p.flinch   : p.health;
+        const mhw::PartHealthPair hp = mhw::partHealthForDisplay(p);
+        const float mHP = hp.maximum;
+        const float cHP = hp.current;
+        e.value = mhw::compactPartHealth(cHP, mHP);
         if (multiplayer_) {
-            const bool staleFullHp =
-                mHP > 0.0F && cHP >= mHP
-                && p.counter == 0 && !p.isBroken;
+            // v0.8.4-r23 non-host readability: on a non-host client the
+            // Health/MaxHealth layer pair is not replicated by the game
+            // (mhw-parts-hp-frozen-on-client-2026-07-23) — it stays at
+            // its last authoritative value, usually full, even while
+            // teammates break the part. Never draw a stuck-at-full pair
+            // as if it were live HP: a broken part would show a 90-100%
+            // bar and an untouched one "--/--" with the chip stripped
+            // (the old gate also cleared tag/tagKind, which is why the
+            // grid "几乎不显示" in multiplayer).
+            //
+            // The signals that ARE live on a client (and that HunterPie
+            // keeps rendering in the same situation):
+            //   * Flinch/MaxFlinch — locally simulated stagger layer.
+            //     Once it has moved it is the only trustworthy per-part
+            //     number, so it carries the bar + the value row.
+            //   * Counter (+0x18) and the broken/severed state — break
+            //     events are replicated; the tag chip keeps them
+            //     visible unconditionally.
+            const bool staleFullHp = mHP > 0.0F && cHP >= mHP;
             if (staleFullHp) {
-                e.pct = 0.0F;
-                e.tag.clear();
-                e.tagKind.clear();
+                const bool flinchLive =
+                    p.maxFlinch > 0.0F && p.flinch + 1.0e-4F < p.maxFlinch;
+                if (flinchLive) {
+                    e.value = mhw::compactPartHealth(p.flinch, p.maxFlinch);
+                    e.pct = std::clamp(p.flinch / p.maxFlinch, 0.0F, 1.0F);
+                } else {
+                    e.value = QStringLiteral("--/--");
+                    e.pct = 0.0F;
+                }
+                // NOTE: the tag chip is deliberately NOT cleared here —
+                // the counter/state is exactly the readable signal for
+                // non-host members.
             } else {
                 e.pct = (mHP > 0.0F)
                     ? std::clamp(cHP / mHP, 0.0F, 1.0F)
@@ -982,6 +1170,7 @@ void MonsterPanel::paintPanel(QPainter &p)
     if (onParts && !pcList.isEmpty()) {
         y += kRowGap;
         constexpr int kPcBaseCellH = kPcPadY + kPcPnFont + 2 + kPcPnGap
+                                    + kPcValueH + kPcValueGap
                                     + kPcMiniH + kPcPadY;
         // S3 follow-up: matches the reservation formula above (label +
         // bar + gap stacked between .pn and .mini).
@@ -989,7 +1178,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         // Reuse the per-cell heights from above (where pcAreaH was
         // computed) so the .pgrid render stays aligned with the panel
         // height reservation. We recompute here because pcList is built
-        // from monster_.parts and the heights are 1:1.
+        // from shownParts (filtered) and the heights are 1:1.
         QVector<int> cellHeights(pcList.size(), kPcBaseCellH);
         for (int i = 0; i < pcList.size(); ++i) {
             if (pcList[i].tenderizeDuration > 0.0F)

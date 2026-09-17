@@ -14,6 +14,7 @@ class QSplitter;
 class QPropertyAnimation;
 
 class QCheckBox;
+class QComboBox;
 class QFrame;
 class QLabel;
 class QPushButton;
@@ -82,6 +83,11 @@ private:
         QSlider *opacitySlider = nullptr;
         QSlider *bgAlphaSlider = nullptr;
             QLabel *posLabel = nullptr;
+        // v0.8: per-panel screen selection dropdown. Entries are the
+        // outputs QGuiApplication::screens() reports; the special first
+        // entry "<PRIMARY>" (empty userData) means "follow OS primary".
+        // Selection is persisted to panels.ini via Panel::setOutputName().
+        QComboBox *outputCombo = nullptr;
     };
 
     QWidget *buildInspector(const QString &title, const QString &sub,

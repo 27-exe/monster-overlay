@@ -12,6 +12,7 @@
 // failed assertion.
 
 #include <QApplication>
+#include <QDir>
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
@@ -165,6 +166,20 @@ int testHudCanvasHitTest()
 
 int main(int argc, char *argv[])
 {
+    // v0.8.4-r23: Panel::settings() is a fixed IniFormat/UserScope
+    // QSettings ("monster-overlay"/"panels"), so without this redirect
+    // the test writes a [stub] section into the user's real
+    // ~/.config/monster-overlay/panels.ini on every run (verified: the
+    // section is present in a live config). Point XDG_CONFIG_HOME —
+    // honoured by QSettings and QStandardPaths::GenericConfigLocation —
+    // at a throwaway dir before the first QSettings use, mirroring
+    // tests/control_l2_smoke.cpp.
+    {
+        const QString testRoot =
+            QDir::tempPath() + QStringLiteral("/monster-control-p0-config");
+        QDir().mkpath(testRoot);
+        qputenv("XDG_CONFIG_HOME", testRoot.toLocal8Bit());
+    }
     QApplication app(argc, argv);
 
     if (int rc = testPanelSetters(); rc != 0) return rc;

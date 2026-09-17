@@ -6,10 +6,14 @@
 #include <QRect>
 #include <QRectF>
 #include <QSize>
+#include <QString>
 #include <QWidget>
 #include <array>
 
 class PanelSource;
+namespace screen_query {
+struct Result;
+}
 
 // Paint the three overlay panels at the position they will actually occupy
 // on the user's screen. The control console calls HudCanvas::bindPanel()
@@ -28,6 +32,15 @@ public:
     void setPanelPixmap(int index, const QPixmap &pixmap, bool enabled);
     void setSelectedPanel(int index);
     void bindPanel(int index, const PanelSource *src);
+
+    // v0.8: name of the Wayland output whose geometry should drive
+    // the preview's screen frame. Empty (the default) means "follow
+    // QGuiApplication::primaryScreen()". The control console calls
+    // this every time the user picks a different panel in the
+    // SCREEN dropdown, so the preview rectangle always matches the
+    // output the panels will actually land on.
+    void setPreviewScreen(QString outputName);
+    [[nodiscard]] QString previewScreen() const { return previewOutputName_; }
 
     void setShowSafeArea(bool on);
     void setShowGrid(bool on);
@@ -76,12 +89,21 @@ private:
     QSize screenSize() const;
     QString cornerLabel(int index) const;
     QString screenLabel() const;
+    // v0.8: like screenSize()/screenLabel() but honours the user's
+    // selected Wayland output (previewOutputName_). Cheap (just a
+    // hashmap lookup + cached QScreen data); safe to call from
+    // paintEvent / drag / sizeHint.
+    const screen_query::Result &previewScreenInfo() const;
 
     std::array<Slot, 3> slots_{};
     int selected_{0};
     bool showSafeArea_{true};
     bool showGrid_{true};
     qreal zoom_{1.0};
+    // v0.8: tracks the user's SCREEN selection so the preview's
+    // "screen frame" rectangle and the per-panel drag clamps match
+    // the output the panels are bound to. Empty = primary.
+    QString previewOutputName_;
 
     // Drag state
     bool dragging_{false};

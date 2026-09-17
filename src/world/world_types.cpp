@@ -7,10 +7,11 @@ const char *zoneName(Zone zone)
     // Rise villages (stage.type == 4) are mapped by computeZoneId()
     // into 700..799. Inline Chinese name table (was mhrVillageName()
     // in v0.8.x; simplified here since the table is small).
-    // Mapping derived from HunterPie WirebugWidgetContextHandler.cs /
-    // MHRGame.cs + community reverse-engineering of village sub-section
-    // IDs: 1=Room, 3=GatheringHub, 4=HubPrepPlaza, 5=TrainingRoom;
-    // 0/2/6/7 = Kamura main/Buddy plaza/Elgado main/Elgado hunter room.
+    // IDs verified against the official HunterPie table
+    // (Strings/Stages/Rise/Stage in /localization/zh-cn.xml, v0.8.4-r18
+    // zone-names): 0=Village 1=Room 2=BuddyPlaza 3=GatheringHub
+    // 4=HubPrepPlaza 5=TrainingArea 6=Elgado 7=Elgado'sRoom
+    // 11=Elgado's Command Post.
     {
         const int raw = static_cast<int>(zone);
         if (raw >= 700 && raw <= 799) {
@@ -23,6 +24,9 @@ const char *zoneName(Zone zone)
             case 5: return "训练场";
             case 6: return "艾鲁多";
             case 7: return "艾鲁多·猎人房间";
+            // StageId 11 = Elgado's Command Post — present in the
+            // official table, was missing here (v0.8.4-r18 zone-names).
+            case 11: return "骑士团指挥所";
             default: break;
             }
             return "未知";
@@ -65,52 +69,51 @@ const char *zoneName(Zone zone)
     case Zone::ChamberOfFive: return "五星之间";
     case Zone::SelianaRoom: return "月辰·休息室";
     case Zone::RiseTrainingRoom: return "训练场";
-    // v0.8 / v0.8.x: Rise maps — HunterPie emits `HuntingId + 200`
-    // (MHRPlayer.cs:222), the overlay re-bases them into the
-    // 600..616 range to keep the two games' enums disjoint
-    // (world_types.h:42-47). The Chinese names below match the
-    // HunterPie MHRise community mapping — i.e. the canonical
-    // Capcom "Stage" order encoded in mhrice's MapProductId and the
-    // GameCat / fextralife localisation tables.
-    //
-    // v0.8.x (symptom 5): previous entries were arbitrarily named
-    // ("古代林", "冰海龙宫" …) and did not line up with the in-game
-    // hunting area the user actually stood in. The ordering below
-    // is the community-verified HuntingId → stage name mapping:
-    //   hid 0  Shrine Ruins   → 废神社 / 大社遗迹
-    //   hid 1  Frost Islands  → 冰封群岛
-    //   hid 2  Sandy Plains   → 沙原
-    //   hid 3  Flooded Forest → 水没林
-    //   hid 4  Lava Caverns   → 溶岩洞
-    //   hid 5  Arena          → 斗技场
-    //   hid 6  Red Stronghold → 翡叶要塞 (百龙夜行)
-    //   hid 7  StageId 207   → 百龙夜行 (HunterPie treats StageId 207 as Rampage)
-    //   hid 8  Infernal Springs → 狱泉乡
-    //   hid 9  Jungle         → 密林
-    //   hid 10 Citadel        → 城塞高地
-    //   hid 11 Yawning Abyss  → 渊劫地狱
-    //   hid 12 Forlorn Arena  → 塔之秘境
-    // HunterPie never decodes hid 13..16 to a name (those IDs only
-    // appear in Sunbreak's MR-rank hunting sub-tours and the
-    // overlay's reader clamps them at computeZoneId() anyway), so
-    // they are kept as a generic placeholder for completeness.
-    case Zone::RiseLoc0:  return "大社遗迹";
-    case Zone::RiseLoc1:  return "冰封群岛";
+    // v0.8.4-r18 zone-names: table re-anchored to HunterPie's official
+    // stage table. HunterPie emits StageId = HuntingId + 200
+    // (MHRPlayer.cs:216-227) and resolves the label from the localization
+    // entry `Strings/Stages/Rise/Stage`; the zh-CN strings below are
+    // verbatim from that file, fetched from the official CDN:
+    //   https://cdn.hunterpie.com/localization/zh-cn.xml
+    //   sha256 2a4b1bb318fc21a55c0b5b978e2d33cb8c2ea74457b34fcac88b9236c19a06db
+    //   (matches /v1/localization/checksum on api.hunterpie.com and
+    //    mirror.hunterpie.com). Full table, provenance and the
+    //   three-way comparison: v0.8.4-r18/zone-names/REPORT.md.
+    // StageId 200 / 206 / 208 / 216 have no entry upstream (a hunt never
+    // reports them) and keep the generic placeholder.
+    //   hid 1  -> 201 Shrine Ruins      废神社     (in-game verified)
+    //   hid 2  -> 202 Sandy Plains      沙原
+    //   hid 3  -> 203 Flooded Forest    水没林
+    //   hid 4  -> 204 Frost Islands     冰封群岛   (in-game verified)
+    //   hid 5  -> 205 Lava Caverns      熔岩洞
+    //   hid 7  -> 207 Red Stronghold    翡叶要塞   (百龙夜行 map)
+    //   hid 9  -> 209 Infernal Springs  狱泉乡
+    //   hid 10 -> 210 Arena             斗技场
+    //   hid 11 -> 211 Coral Palace      龙宫古城
+    //   hid 12 -> 212 Jungle            密林
+    //   hid 13 -> 213 Citadel           城塞高地
+    //   hid 14 -> 214 Forlorn Arena     塔之秘境
+    //   hid 15 -> 215 Yawning Abyss     渊劫地狱
+    // The previous (v0.8.x) table used the community-site *navigation*
+    // order (Shrine, Frost, Sandy, Flooded, Lava …) as if it were the
+    // memory HuntingId order — every label from hid 4 on was shifted.
+    case Zone::RiseLoc0:  return "未知狩猎区"; // StageId 200: no entry upstream
+    case Zone::RiseLoc1:  return "废神社";
     case Zone::RiseLoc2:  return "沙原";
     case Zone::RiseLoc3:  return "水没林";
-    case Zone::RiseLoc4:  return "溶岩洞";
-    case Zone::RiseLoc5:  return "斗技场";
-    case Zone::RiseLoc6:  return "翡叶要塞";
-    case Zone::RiseLoc7:  return "百龙夜行";
-    case Zone::RiseLoc8:  return "狱泉乡";
-    case Zone::RiseLoc9:  return "密林";
-    case Zone::RiseLoc10: return "城塞高地";
-    case Zone::RiseLoc11: return "渊劫地狱";
-    case Zone::RiseLoc12: return "塔之秘境";
-    case Zone::RiseLoc13: return "未知狩猎区";
-    case Zone::RiseLoc14: return "未知狩猎区";
-    case Zone::RiseLoc15: return "未知狩猎区";
-    case Zone::RiseLoc16: return "未知狩猎区";
+    case Zone::RiseLoc4:  return "冰封群岛";
+    case Zone::RiseLoc5:  return "熔岩洞";
+    case Zone::RiseLoc6:  return "未知狩猎区"; // StageId 206: no entry upstream
+    case Zone::RiseLoc7:  return "翡叶要塞";
+    case Zone::RiseLoc8:  return "未知狩猎区"; // StageId 208: no entry upstream
+    case Zone::RiseLoc9:  return "狱泉乡";
+    case Zone::RiseLoc10: return "斗技场";
+    case Zone::RiseLoc11: return "龙宫古城";
+    case Zone::RiseLoc12: return "密林";
+    case Zone::RiseLoc13: return "城塞高地";
+    case Zone::RiseLoc14: return "塔之秘境";
+    case Zone::RiseLoc15: return "渊劫地狱";
+    case Zone::RiseLoc16: return "未知狩猎区"; // StageId 216: no entry upstream
     case Zone::Unknown: return "未知";
     }
     return "未知";

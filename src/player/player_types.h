@@ -34,6 +34,26 @@ struct PlayerAbnormality {
     float maxTimer{0.0F};// tracked max for progress bar scaling
 };
 
+// v0.8.4-r18 player-abnormalities: Rise-only. One *active* abnormality from
+// the Rise consumable/debuff blob (HunterPie MHRPlayer.GetConsumable-
+// Abnormalities / GetPlayerDebuffAbnormalities). The World reader keeps
+// filling the buff/debuff vectors above; this vector stays empty under World
+// and is what the player panel's 「状态」 block renders under Rise.
+enum class AbnormalityKind {
+    Buff,    // consumable / skill / dango buff  (Category "Consumables")
+    Debuff,  // debuff / blight                  (Category "Debuffs")
+};
+
+struct PlayerAbnormalitySnapshot {
+    QString id;             // schema id, e.g. "ABN_POISON" (probe/debug)
+    QString name;           // zh-cn display name (never empty)
+    float   timer{0.0F};    // remaining seconds; buildup entries: the counter
+    float   maxTimer{0.0F}; // MaxTimer / MaxBuildup, 0 = none
+    AbnormalityKind kind{AbnormalityKind::Buff};
+    bool    isBuildup{false};
+    bool    isInfinite{false};
+};
+
 // v0.7.1: wirebug (翔虫) snapshot. Rise-specific — World has no wirebug
 // system. Read once per poll from MHRWirebugStructure + the in-game
 // extras array; rendered by PlayerPanel as a horizontal capsule row.
@@ -90,6 +110,13 @@ struct PlayerSnapshot {
     // source slots. The panel renders one capsule per entry, coloured by
     // cooldown progress.
     QVector<WirebugSnapshot> wirebugs;
+    // v0.8.4-r18: Rise-only — active consumable buffs + debuffs read from
+    // ABNORMALITIES_ADDRESS + CONS_/DEBUFF_ABNORMALITIES_OFFSETS (see
+    // rise/mhr_abnormalities.h). The reader appends consumables first, then
+    // debuffs (upstream call order); the panel re-orders debuffs-first when
+    // it builds its rows, so nothing here depends on that order. Empty
+    // under World, which keeps using the buffs/debuffs vectors above.
+    QVector<PlayerAbnormalitySnapshot> abnormalities;
 };
 
 struct PartyMemberSnapshot {

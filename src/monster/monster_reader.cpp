@@ -42,6 +42,18 @@ void MhwReader::readMonsterAilments(MonsterSnapshot &monster)
             continue;
         }
 
+        // v0.8.4-r23: mirror HunterPie's repository filter. World
+        // MonsterData.xml lists ids 0 / 13 / 17 / 20 with a String that is
+        // not an AILMENT_* key; XmlNodeToAilmentDefinitionMapper.cs:18
+        // flags those IsUnknown and MHWMonster.GetMonsterAilments
+        // (MHWMonster.cs:468-469) skips them. Without this filter the
+        // panel rendered junk cards named "异常13" / "异常17" / "异常20".
+        static const QSet<int> kHunterPieUnknownAilmentIds{0, 13, 17, 20};
+        if (kHunterPieUnknownAilmentIds.contains(header.id)) {
+            cursor += sizeof(std::uintptr_t);
+            continue;
+        }
+
         const auto maxDur = memory_.read<float>(structAddr + 0x14ULL);
         const auto buildup = memory_.read<float>(structAddr + 0x30ULL);
         const auto maxBuildup = memory_.read<float>(structAddr + 0x40ULL);
@@ -51,7 +63,13 @@ void MhwReader::readMonsterAilments(MonsterSnapshot &monster)
         MonsterAilmentSnapshot ail;
         ail.id = header.id;
         ail.name = kAilmentNames.value(header.id, QStringLiteral("异常%1").arg(header.id));
-        ail.active = (header.active != 0) && (duration && *duration > 0.0F);
+        // v0.8.4-r23: HunterPie never gates the timer on the struct's
+        // IsActive word — MHWMonsterAilment.Update stores Timer =
+        // data.Duration and the UI derives "timer running" from Timer > 0
+        // alone (MonsterAilmentContextHandler.cs:105 `IsTimerActive =
+        // e.Timer > 0`). Requiring IsActive != 0 here hid legitimate
+        // countdowns whenever the game left that word at 0.
+        ail.active = duration && *duration > 0.0F;
         ail.maxTimer = maxDur ? *maxDur : 0.0F;
         // HunterPie: Timer = Duration (already countdown). Display remaining.
         ail.timer = duration ? *duration : 0.0F;

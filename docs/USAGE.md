@@ -69,6 +69,7 @@ when the stage is expanded, side-by-side when collapsed:
 | Center top | `■ STOP OVERLAY` button | Gracefully terminates the overlay (`SIGINT`), console re-appears. |
 | Right column | `P` / `M` / `D` switch (master) | Disable the whole player / monster / damage panel. Independent of sub-row toggles. |
 | Right column | sub-rows (Conn / Quest / Weapon / Bars / Mantles / Debuff, …) | Per-section visibility. Bitmask layout in `panel_sections.h`. |
+| Right column | `SCREEN` dropdown (per panel) | Bind the panel to a specific monitor on multi-monitor setups (empty = primary). Persisted with the layout; handed to the overlay as `--output-*`. |
 | Right column | `ZOOM ×1.0` display | Read-only; click the preview canvas, scroll wheel to change. Range 0.5× – 2.0×. |
 | Right column | `SAFE AREA` / `GRID` / `LIGHT` (preview chrome) | Decoration toggles inside the preview canvas. |
 | Footer hint | `←→↑↓ MOVE` | Drag the selected panel with the keyboard (10 px per press, **Shift = 50 px**). |
@@ -87,9 +88,9 @@ three real panels in size and position; every interaction has the
 - **Arrow keys over the canvas** — 10 px nudge.
 - **Shift + arrow keys** — 50 px nudge (use it to make big sweeps).
 - **Wheel** — zoom the preview 0.5×–2.0× (visual only; not persisted).
-- **Position is persisted** to `~/.config/monster-overlay/panels.ini`
-  on quit. There is no "save" button — `Esc` or the `STOP OVERLAY`
-  button writes the file.
+- **Position and the per-panel `SCREEN` choice are persisted** to
+  `~/.config/monster-overlay/panels.ini` on quit. There is no "save"
+  button — `Esc` or the `STOP OVERLAY` button writes the file.
 
 > Tip: when the stage is **hidden** (`HIDE STAGE`), the preview canvas
 > is collapsed but the inspector on the right stays reachable — useful

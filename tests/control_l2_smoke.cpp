@@ -30,27 +30,33 @@ QString configPath()
     return root + QStringLiteral("/monster-overlay/monster-overlay.conf");
 }
 
-// Walk ControlPanel's private ctl_ via Qt's introspection: every
-// ToggleChip and SectionRow is a child of the central widget tree.
-// Easier path for the test: add a thin friend hook instead? No —
-// just dig via findChildren by class name.
-void flipViaTree(ControlPanel *cp, int idx, int subIdx, bool on)
+// Locate a SectionRow by its English key label (e.g. "WEAPON"), which is
+// unique across the whole console. Index-based lookup is a trap: the
+// QStackedWidget page order — and therefore findChildren()'s traversal
+// order — is NOT the ctl_[0..2] order, so the old hard-coded starts
+// {6,5,3} silently flipped the wrong panel's rows (and the counts were
+// stale anyway: Player has 8 bits since v0.7.1 Wirebug, Monster 6 since
+// v0.7.3 Tenderize).
+SectionRow *findRow(ControlPanel *cp, const QString &key)
 {
-    auto rows = cp->findChildren<SectionRow *>();
-    if (subIdx >= rows.size()) {
-        qCritical("FAIL: not enough SectionRow children");
+    const QString want = key.toUpper();
+    for (SectionRow *r : cp->findChildren<SectionRow *>()) {
+        for (QLabel *l : r->findChildren<QLabel *>()) {
+            if (l->text() == want)
+                return r;
+        }
+    }
+    return nullptr;
+}
+
+void flipViaKey(ControlPanel *cp, const QString &key, bool on)
+{
+    SectionRow *row = findRow(cp, key);
+    if (!row) {
+        qCritical("FAIL: SectionRow '%s' not found", qPrintable(key));
         std::exit(4);
     }
-    // Group by parent — ctl_[0] children are first, then [1], then [2].
-    // Sections-per-panel: 6, 5, 3. Use cumulative to pick the right one.
-    int start = 0;
-    for (int i = 0; i < idx; ++i) {
-        // We need the per-panel count; read it back from the file
-        // format count of subs. Hard-code from panel_sections.h.
-        static const int kCounts[3] = { 6, 5, 3 };
-        start += kCounts[i];
-    }
-    rows[start + subIdx]->setChecked(on);
+    row->setChecked(on);
 }
 
 QString readBack()
@@ -78,8 +84,12 @@ int main(int argc, char *argv[])
         cp.show();
         app.processEvents();
 
-        flipViaTree(&cp, 0, 2, false);  // player sub 2 OFF
-        flipViaTree(&cp, 1, 4, false);  // monster sub 4 OFF
+        flipViaKey(&cp, QStringLiteral("weapon"), false);  // PlayerSection::Weapon OFF
+        flipViaKey(&cp, QStringLiteral("parts"),  false);  // MonsterSection::Parts OFF
+        // After both flips the file must read:
+        //   player=fb  (0xff & ~(1<<2))
+        //   monster=2f (0x3f & ~(1<<4))
+        //   damage=7
         app.processEvents();
 
         // Trigger save before destruction (dtor also saves, but being
@@ -100,19 +110,18 @@ int main(int argc, char *argv[])
         ControlPanel cp2;
         cp2.show();
         app.processEvents();
-        auto rows = cp2.findChildren<SectionRow *>();
-        // player sub 2 should be OFF
-        // Cumulative: player 6 entries (0..5), sub 2 → row index 2.
-        if (rows.size() < 7) {
-            fprintf(stderr, "FAIL: not enough rows on reopen (have %d)\n", rows.size());
+        SectionRow *weapon = findRow(&cp2, QStringLiteral("weapon"));
+        SectionRow *parts  = findRow(&cp2, QStringLiteral("parts"));
+        if (!weapon || !parts) {
+            fprintf(stderr, "FAIL: rows missing on reopen\n");
             return 5;
         }
-        if (rows[2]->isChecked()) {
-            fprintf(stderr, "FAIL: player sub 2 should be OFF after load\n");
+        if (weapon->isChecked()) {
+            fprintf(stderr, "FAIL: player weapon section should be OFF after load\n");
             return 6;
         }
-        if (rows[6 + 4]->isChecked()) {
-            fprintf(stderr, "FAIL: monster sub 4 should be OFF after load\n");
+        if (parts->isChecked()) {
+            fprintf(stderr, "FAIL: monster parts section should be OFF after load\n");
             return 7;
         }
     }

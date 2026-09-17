@@ -2,6 +2,9 @@
 // Core offsets and structures are derived from HunterPie/HunterPie (Apache-2.0).
 
 #include "rise/mhr_reader.h"
+#include "rise/mhr_abnormalities.h"
+#include "rise/mhr_monster_names.h"
+#include "rise/mhr_part_names.h"
 
 #include <QDir>
 #include <QRegularExpression>
@@ -343,7 +346,7 @@ void MhrReader::readMonsterParts(std::uintptr_t monster, MonsterSnapshot &snapsh
         part.isBreakable = breakMax > 0.0F;
         part.isSeverable = severMax > 0.0F;
         part.partType = risePartType(part.isSeverable, part.isBreakable);
-        part.name = QStringLiteral("部位 %1").arg(i);
+        part.name = risePartDisplayName(snapshot.id, i);
         switch (part.partType) {
         case PartType::Severable:
             part.health = severCur;
@@ -556,7 +559,16 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
         snapshot.address = monster;
         snapshot.id = *idOpt;
         snapshot.game = GameId::Rise;
-        snapshot.internalName = QStringLiteral("Monster #%1").arg(*idOpt);
+        // v0.8.4-r19 monster-identity: official localized name. The id read
+        // above is the same schema Id HunterPie resolves as
+        // `//Strings/Monsters/Rise/Monster[@Id='{Id}']` (MHRMonster.cs:46-48);
+        // the table is generated verbatim from HunterPie's zh-cn.xml. Ids the
+        // localization file has no entry for (the upstream gaps 47..75 /
+        // 99..106) keep the numeric placeholder.
+        if (const char *localizedName = riseMonsterName(*idOpt))
+            snapshot.internalName = QString::fromUtf8(localizedName);
+        else
+            snapshot.internalName = QStringLiteral("Monster #%1").arg(*idOpt);
 
         const std::uintptr_t healthComponent = MhwReader::followPointerChainOffsetThenDeref(
             memory_, monster,
@@ -573,12 +585,26 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
             }
         }
 
+        // Rise crown / body-size (HunterPie MHRMonster.GetMonsterCrown,
+        // MHRMonster.cs:501-517): ReadPtrAsync(monster, MONSTER_CROWN_OFFSETS)
+        // -> MHRSizeStructure at that object + kMhrSizeStructureOffset -> the
+        // product of the two floats, which is the crown ratio compared against
+        // MonsterData.xml <Crowns> (kRiseCrownThresholds) and printed by the
+        // panel's crown icons / size chip.
+        //
+        // v0.8.4-r19 monster-identity: the product is validated
+        // (riseMonsterSizeFromFactors) so an unreadable or absurd read leaves
+        // snapshot.size at its 0.0F "unknown" default instead of the 1.0F
+        // placeholder that made every monster display a dead `1.00x`.
         const std::uintptr_t sizeBase = MhwReader::followPointerChainOffsetThenDeref(
             memory_, monster,
             map_.offsets(QStringLiteral("MONSTER_CROWN_OFFSETS")), nullptr);
         if (sizeBase) {
-            if (const auto sizeStruct = memory_.read<MHRSizeStructure>(sizeBase + 0x24ULL))
-                snapshot.size = sizeStruct->sizeMultiplier * sizeStruct->unkMultiplier;
+            if (const auto sizeStruct =
+                    memory_.read<MHRSizeStructure>(sizeBase + kMhrSizeStructureOffset)) {
+                snapshot.size = riseMonsterSizeFromFactors(sizeStruct->sizeMultiplier,
+                                                           sizeStruct->unkMultiplier);
+            }
         }
 
         const std::uintptr_t enrageAddr = MhwReader::followPointerChainOffsetThenDeref(
@@ -591,6 +617,29 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
                 snapshot.enrageMaxSeconds = enrage->maxTimer;
                 snapshot.enrageBuildup = enrage->buildup;
                 snapshot.enrageMaxBuildup = enrage->maxBuildup;
+            }
+        }
+
+        // v0.8.4-r23 fatigue-semantics: monster stamina ("fatigue" meter).
+        // HunterPie MHRMonster.GetMonsterStamina resolves
+        // MONSTER_STAMINA_OFFSETS (a single 0x320 hop) and reads the
+        // MHRStaminaStructure pair {Stamina @+0x20, MaxStamina @+0x24}.
+        // Dragging stamina to zero is exactly the drooling / exhausted
+        // state the player sees in-game; the exhaust ailment (slot 6) is a
+        // separate 減気 gauge and must not be mistaken for this value.
+        // riseMonsterStaminaFromPair keeps the honest-zero convention: a
+        // failed or absurd read leaves the snapshot at 0/0 and the panel
+        // hides the stamina row (same contract as riseMonsterSizeFromFactors).
+        const std::uintptr_t staminaAddr = MhwReader::followPointerChainOffsetThenDeref(
+            memory_, monster,
+            map_.offsets(QStringLiteral("MONSTER_STAMINA_OFFSETS")), nullptr);
+        if (staminaAddr) {
+            if (const auto staminaStruct =
+                    memory_.read<MHRStaminaStructure>(staminaAddr)) {
+                riseMonsterStaminaFromPair(staminaStruct->stamina,
+                                           staminaStruct->maxStamina,
+                                           &snapshot.stamina,
+                                           &snapshot.maxStamina);
             }
         }
 
@@ -793,6 +842,163 @@ void MhrReader::readWirebugs(PlayerSnapshot &snapshot, QString *error)
     }
 }
 
+namespace {
+
+// One category blob of the abnormalities structure — the shared body of
+// MHRPlayer.GetConsumableAbnormalities (MHRPlayer.cs:452-493) and
+// GetPlayerDebuffAbnormalities (:512-553).
+//
+// Every gate is applied before its reads so a schema that cannot be active
+// costs nothing: flag gate (pure) -> DependsOn sub-id -> value slot. A read
+// that fails skips the entry: upstream's failed read yields default(0), which
+// for a timer is indistinguishable from "not active", and fabricating an
+// active entry from a failed read would be worse than omitting it.
+void appendRiseAbnormalities(const ProcessMemory &memory,
+                             const RiseAbnormalitySchema *schemas,
+                             std::size_t schemaCount,
+                             std::uintptr_t blobBase,
+                             const RiseAbnormalityConditions &conditions,
+                             PlayerSnapshot &snapshot)
+{
+    if (blobBase == 0)
+        return;
+
+    for (std::size_t i = 0; i < schemaCount; ++i) {
+        const RiseAbnormalitySchema &schema = schemas[i];
+
+        if (!riseAbnormalityFlagSatisfied(schema, conditions))
+            continue;
+
+        int subId = 0;
+        if (schema.dependsOn != 0) {
+            const auto value = memory.read<std::int32_t>(
+                blobBase + static_cast<std::uintptr_t>(schema.dependsOn));
+            if (!value)
+                continue;  // cannot validate WithValue -> not published
+            subId = *value;
+        }
+        if (subId != schema.withValue)
+            continue;
+
+        float rawValue = 0.0F;
+        bool valueRead = true;
+        if (!schema.isInfinite) {
+            const auto slot = memory.read<MHRAbnormalityValue>(
+                blobBase + static_cast<std::uintptr_t>(schema.offset));
+            valueRead = slot.has_value();
+            if (slot) {
+                rawValue = schema.isInteger
+                    ? static_cast<float>(slot->integer)
+                    : slot->timer;
+            }
+        }
+
+        const RiseAbnormalityEvaluation evaluation = riseEvaluateAbnormality(
+            schema, conditions, subId, rawValue, valueRead);
+        if (!evaluation.active)
+            continue;
+
+        PlayerAbnormalitySnapshot entry;
+        entry.id = QString::fromUtf8(schema.id);
+        entry.name = QString::fromUtf8(schema.name);
+        entry.timer = evaluation.timer;
+        entry.kind = schema.kind == RiseAbnormalityKind::Debuff
+            ? AbnormalityKind::Debuff
+            : AbnormalityKind::Buff;
+        entry.isBuildup = schema.isBuildup;
+        entry.isInfinite = schema.isInfinite;
+        entry.maxTimer = schema.isBuildup
+            ? static_cast<float>(schema.maxBuildup)
+            : schema.maxTimer;
+        snapshot.abnormalities.push_back(entry);
+    }
+}
+
+} // namespace
+
+// ===================================================================
+// readAbnormalities — Rise consumable buffs + debuffs.
+//
+// Mirrors HunterPie
+//   MHRPlayer.GetPlayerAbnormalitiesCleanup  (MHRPlayer.cs:395-405)
+//   MHRPlayer.GetConsumableAbnormalities     (MHRPlayer.cs:436-494)
+//   MHRPlayer.GetPlayerDebuffAbnormalities   (MHRPlayer.cs:497-554)
+//   MHRPlayer.GetPlayerConditions            (MHRPlayer.cs:862-886)
+//
+// Mem path (all pre-resolved in data/MonsterHunterRise.16.0.2.0.map):
+//   ABNORMALITIES_ADDRESS      + CONS_ABNORMALITIES_OFFSETS    consumable blob
+//   ABNORMALITIES_ADDRESS      + DEBUFF_ABNORMALITIES_OFFSETS  debuff blob
+//   LOCAL_PLAYER_DATA_ADDRESS  + PLAYER_CONDITION_OFFSETS      condition object
+//       -> CommonConditions ulong @ +0x10, DebuffConditions ulong @ +0x38
+//   LOCAL_PLAYER_DATA_ADDRESS  + PLAYER_ACTIONFLAG_OFFSETS     action-flag object
+//       -> uint @ +0x20
+//
+// The per-schema body (flag gate, WithValue sub-id, IsInfinite, raw/60,
+// MaxTimer inversion) lives in rise/mhr_abnormalities.h so it is unit
+// testable without a game process. The snapshot is rebuilt every poll, so
+// the upstream "clear" paths are expressed as an empty vector.
+// ===================================================================
+void MhrReader::readAbnormalities(PlayerSnapshot &snapshot, bool inHuntingZone,
+                                  QString *error)
+{
+    if (!inHuntingZone)
+        return;
+
+    const std::uintptr_t consumableBase = MhwReader::followPointerChain(
+        memory_, absolute(QStringLiteral("ABNORMALITIES_ADDRESS")),
+        map_.offsets(QStringLiteral("CONS_ABNORMALITIES_OFFSETS")), error);
+    const std::uintptr_t debuffBase = MhwReader::followPointerChain(
+        memory_, absolute(QStringLiteral("ABNORMALITIES_ADDRESS")),
+        map_.offsets(QStringLiteral("DEBUFF_ABNORMALITIES_OFFSETS")), nullptr);
+    if (consumableBase == 0 && debuffBase == 0)
+        return;
+
+    // GetPlayerConditions: a chain that fails to resolve leaves the words at
+    // 0, which is what HunterPie keeps after reporting CommonConditions.None
+    // / DebuffConditions.None (and what a fresh field starts at).
+    RiseAbnormalityConditions conditions;
+    const std::uintptr_t conditionPtr = MhwReader::followPointerChain(
+        memory_, absolute(QStringLiteral("LOCAL_PLAYER_DATA_ADDRESS")),
+        map_.offsets(QStringLiteral("PLAYER_CONDITION_OFFSETS")), nullptr);
+    if (conditionPtr) {
+        if (const auto common = memory_.read<std::uint64_t>(
+                conditionPtr + kMhrCommonConditionsOffset))
+            conditions.common = *common;
+        if (const auto debuff = memory_.read<std::uint64_t>(
+                conditionPtr + kMhrDebuffConditionsOffset))
+            conditions.debuff = *debuff;
+    }
+    const std::uintptr_t actionPtr = MhwReader::followPointerChain(
+        memory_, absolute(QStringLiteral("LOCAL_PLAYER_DATA_ADDRESS")),
+        map_.offsets(QStringLiteral("PLAYER_ACTIONFLAG_OFFSETS")), nullptr);
+    if (actionPtr) {
+        if (const auto action = memory_.read<std::uint32_t>(
+                actionPtr + kMhrActionFlagOffset))
+            conditions.action = *action;
+    }
+
+    // Hoist the accessor calls OUT of the appendRiseAbnormalities()
+    // argument list: they write the count through the reference, and the
+    // evaluation order of function arguments is unspecified. GCC
+    // (x86-64, every opt level) evaluates arguments right-to-left, so the
+    // plain `consumableCount` argument was evaluated BEFORE the accessor
+    // wrote it — the callee always received 0 and iterated zero schemas,
+    // leaving the snapshot permanently empty even with active buffs
+    // (live-confirmed 2026-09-17; assembler trace in the v0.8.4-r22
+    // status-reader report). Keep these as separate statements so the
+    // count is written before anything reads it.
+    std::size_t consumableCount = 0;
+    const RiseAbnormalitySchema *consumableSchemas =
+        riseConsumableAbnormalities(consumableCount);
+    std::size_t debuffCount = 0;
+    const RiseAbnormalitySchema *debuffSchemas =
+        riseDebuffAbnormalities(debuffCount);
+    appendRiseAbnormalities(memory_, consumableSchemas, consumableCount,
+                            consumableBase, conditions, snapshot);
+    appendRiseAbnormalities(memory_, debuffSchemas, debuffCount, debuffBase,
+                            conditions, snapshot);
+}
+
 QuestSnapshot MhrReader::readQuest(QString *error)
 {
     QuestSnapshot result;
@@ -879,6 +1085,11 @@ GameSnapshot MhrReader::poll()
         snapshot.monsters = readMonsters(&error);
 
     snapshot.player = readPlayer(nullptr);
+
+    // v0.8.4-r18 player-abnormalities: consumable buffs + debuffs. Rise-only
+    // (World keeps its own reader); the cleanup path empties them outside a
+    // hunting zone, so the zone flag is threaded through from readZone().
+    readAbnormalities(snapshot.player, stageInfo.inHuntingZone, nullptr);
 
     snapshot.quest = stageInfo.inHuntingZone ? readQuest(nullptr) : QuestSnapshot{};
 

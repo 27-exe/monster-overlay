@@ -76,6 +76,21 @@ ControlPanel (QMainWindow)
    back to READY, stops the QTimer, deletes it, re-enables the
    START/EDIT buttons, and `show()`s the console.
 
+## Screens and switches
+
+- **SCREEN** — every panel group has a per-panel `SCREEN` dropdown
+  listing the compositor's outputs. Empty = primary. The choice is
+  persisted alongside the layout and handed to the overlay as
+  `--output-player` / `--output-monster` / `--output-damage`; the
+  preview frame and the live overlay both bind the panel to its own
+  output (r23: the preview used the wrong output's rectangle for
+  panels assigned to a non-primary screen).
+- **Switch semantics (r23)** — the monster panel's **parts** section
+  works for both games (RISE used to be masked out by a cross-panel
+  bit collision); **TENDERIZE** gates the per-part tenderize strip
+  (Clutch Claw softening countdown) and used to be inert; **POSITION**
+  nudges respect the panel's own SCREEN.
+
 ## Persistence format
 
 `~/.config/monster-overlay/monster-overlay.conf` (XDG path via

@@ -75,7 +75,13 @@ struct MonsterSnapshot {
     float maxHealth{};
     float stamina{};
     float maxStamina{};
-    float size{1.0F};           // sizeModifier(+0x7730) × sizeMultiplier(+0x184)
+    float size{};              // 0 = not read (unknown); panel hides the chip.
+                               // World: sizeModifier(+0x7730) ÷ sizeMultiplier(+0x184),
+                               // Rise: SizeMultiplier × UnkMultiplier (crown ratio).
+                               // v0.8.4-r19 monster-identity: this used to default to
+                               // 1.0F, which made a failed read indistinguishable from
+                               // a genuine 100 % monster — every Rise monster showed a
+                               // dead "1.00×". A real 1.0 is still reported as 1.0.
     float enrageSeconds{};
     float enrageMaxSeconds{};
     float enrageBuildup{};

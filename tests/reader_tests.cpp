@@ -331,6 +331,30 @@ Address OTHER 0xCAFE # inline comment
     check(!mhw::isRisePlayerValid({}, 100.0F, 150.0F, 75.0F, 10001.0F),
           "Rise stamina maximum above the safety bound is invalid");
 
+    // v0.8.4-r18 stamina-units-r2: the Rise HUD reports stamina in thirtieths
+    // of the bar's human-scale domain — live user measurements (240 rendered
+    // as 720 and 100 as 300 under the falsified /10 pass) pin raw = bar x30,
+    // and the session probe read raw 3000 / 3000 / maxExtendableStamina 4500,
+    // i.e. the bar's 100 / 100 / 150. PlayerPanel scales on the display path
+    // through staminaDisplayValue(), compiled here from the same source
+    // include as wirebugSlotLabel; the PlayerSnapshot fields and the validity
+    // bounds checked above stay raw.
+    check(staminaDisplayValue(mhw::GameId::Rise, 1500.0F) == 50.0F,
+          "raw Rise stamina 1500 displays as 50 (raw / 30)");
+    check(staminaDisplayValue(mhw::GameId::Rise, 3000.0F) == 100.0F,
+          "raw Rise stamina 3000 (probed base max bar) displays as 100");
+    check(staminaDisplayValue(mhw::GameId::Rise, 7200.0F) == 240.0F,
+          "raw Rise stamina 7200 (measured 240 bar) displays as 240");
+    check(staminaDisplayValue(mhw::GameId::Rise, 4500.0F) == 150.0F,
+          "raw Rise stamina 4500 (probed maxExtendableStamina) displays as 150");
+    check(staminaDisplayValue(mhw::GameId::Rise, 2790.0F) == 93.0F,
+          "raw Rise stamina 2790 displays as 93 (panel demo parity)");
+    check(staminaDisplayValue(mhw::GameId::Rise, 0.0F) == 0.0F,
+          "zero Rise stamina stays zero across the display conversion");
+    check(staminaDisplayValue(mhw::GameId::World, 93.0F) == 93.0F
+              && staminaDisplayValue(mhw::GameId::World, 150.0F) == 150.0F,
+          "World stamina is passed through unscaled (already bar-domain)");
+
     // Rise lock-on reads the selected slot in two pointer stages. The helper
     // only derives the first slot address; keeping the actual dereferences in
     // the reader means this test stays offline and does not mock /proc.

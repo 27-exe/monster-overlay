@@ -4,6 +4,7 @@
 #else
 #include "panel_player.h"
 
+#include "rise/mhr_abnormalities.h"
 #include "rise/mhr_reader.h"
 
 #include "core/string_table.h"
@@ -25,6 +26,47 @@
 #endif
 
 namespace {
+
+// v0.8.4-r18 stamina-units-r2: the Rise HUD's raw Stamina / MaxStamina are in
+// thirtieths of the bar's human-scale domain, so the panel divides by 30.
+// Live user measurements (2026-09-17) falsified the earlier /10 pass of this
+// fix with an exact 3x overshoot: 240 in-game stamina rendered as "720" and
+// 100 rendered as "300" — both are the raw value (7200 / 3000) over 10, while
+// raw / 30 gives back the value the game itself shows (7200/30 = 240,
+// 3000/30 = 100). A raw probe in the same session read stamina = 3000 /
+// maxStamina = 3000 / maxExtendableStamina = 4500, which at /30 is the
+// observed 100 / 100 / 150 bar.
+//
+// This overturns the /10 conclusion recorded in the v0.8.4-r1/symptom4 README
+// ("1 s of stamina = 10 raw units"), which that round then implemented. The
+// raw magnitudes it sampled (90 / 930 / 1500 / 3000) are simply bar value x30:
+// raw 930 = bar 31, raw 1500 = bar 50, raw 3000 = bar 100, raw 4500 = bar 150,
+// raw 7200 = bar 240. Test vectors in tests/reader_tests.cpp pin these.
+//
+// HunterPie is consistent with the same x30 raw ratio: its numeric widget
+// takes these raw fields unscaled (MHRPlayer.cs:771-776 ->
+// PlayerHudView.xaml:284-302) and its PETALACE_STAMINA_MULTIPLIER = 30 is a
+// petalace-point -> raw factor. Do NOT scale by any of its constants; divide
+// raw by kRiseStaminaUnitScale only.
+//
+// World is NOT in this domain — its HUD stamina is already the bar value
+// (player_reader.cpp reads hud+0x12C/0x130, ~150 max) — hence the GameId
+// gate, which also keeps the two readers' snapshot semantics untouched.
+// Health is never scaled, in either game (raw HP is already the bar value).
+//
+// This is a display-only conversion: PlayerSnapshot keeps raw values because
+// the validity bounds (isRisePlayerValid: maxStamina <= 10000) and the
+// diagnostic probes are raw-domain. Never write the result back into a
+// snapshot. Kept in the shared helper block so the Core-only reader test
+// target can pin the scaling without pulling in the Qt widgets panel.
+constexpr float kRiseStaminaUnitScale = 30.0F;
+
+float staminaDisplayValue(mhw::GameId game, float rawStamina)
+{
+    return game == mhw::GameId::Rise
+        ? rawStamina / kRiseStaminaUnitScale
+        : rawStamina;
+}
 
 // Reader snapshots retain their original Mono-array slot even when `None`
 // entries are omitted from QVector. Never derive this label from vector index.
@@ -66,6 +108,16 @@ constexpr int kGapSection = 9;    // HTML: .mantlerow/.debuffs margin-top:9 padd
 constexpr int kMantleMaxSec = 120; // common mantle active duration, used
                                      // as the denominator for the
                                      // vertical progress strip.
+// v0.8.4-r18 player-abnormalities: the Rise 「状态」 block (consumable buffs
+// + debuffs). v0.8.4-r22 status-grid: pills flow kRiseStatusPillsPerRow per
+// row, wrapping like the World debuff/buff rows, instead of one full-width
+// row per entry. Capped so a fully buffed hunter cannot push the panel
+// off-screen; when more entries are active than fit, the final pill becomes
+// a "+N" overflow hint. The label row reuses the qrow line height so the
+// block aligns with the rest of the panel.
+constexpr int kRiseStatusPillsPerRow = 3;
+constexpr int kRiseStatusMaxEntries  = 8;
+constexpr int kRiseStatusRowGap      = 4;
 
 // ---- Colour palette (HTML CSS variables) ----
 constexpr int kHpGreen    = 76;  constexpr int kHpGreenG  = 175; constexpr int kHpGreenB  = 80;
@@ -309,6 +361,38 @@ void drawPill(QPainter &p, const QRectF &box, const QColor &pc,
     p.drawText(QRectF(box.x() + 4, box.y(),
                        box.width() - 8, box.height()),
                Qt::AlignRight | Qt::AlignVCenter, timer);
+}
+
+// Buff / debuff pill accents. Kept here (and not inline at each call site) so
+// the World pill rows and the Rise 状态 block can never drift apart: both
+// feed the same names through the same rules.
+//
+//   debuffAccent — default purple, overridden per ailment family.
+//   buffAccent   — default green (songs), overridden per consumable family.
+QColor debuffAccent(const QString &name)
+{
+    QColor pc(167, 79, 255);     // default purple
+    if (name.contains(QStringLiteral("爆破"))) pc = QColor(255, 87, 34);
+    else if (name.contains(QStringLiteral("火"))) pc = QColor(255, 87, 34);
+    else if (name.contains(QStringLiteral("防御"))) pc = QColor(255, 193, 7);
+    else if (name.contains(QStringLiteral("眠")))   pc = QColor(120, 120, 220);
+    else if (name.contains(QStringLiteral("麻")))   pc = QColor(180, 130, 220);
+    return pc;
+}
+
+QColor buffAccent(const QString &name)
+{
+    QColor pc(76, 175, 80);      // default green (songs)
+    if (name.contains(QStringLiteral("鬼人")) || name.contains(QStringLiteral("攻击"))
+        || name.contains(QStringLiteral("怪力")))
+        pc = QColor(244, 67, 54);   // red — attack buffs
+    else if (name.contains(QStringLiteral("硬化")) || name.contains(QStringLiteral("防御"))
+             || name.contains(QStringLiteral("忍耐")))
+        pc = QColor(33, 150, 243);  // blue — defense buffs
+    else if (name.contains(QStringLiteral("冷饮")) || name.contains(QStringLiteral("热饮"))
+             || name.contains(QStringLiteral("耐")))
+        pc = QColor(0, 188, 212);   // cyan — elemental res
+    return pc;
 }
 
 // v0.7.1: wirebug (翔虫) capsule. Visually similar to .pill but the
@@ -708,6 +792,40 @@ void PlayerPanel::paintPanel(QPainter &p)
     const bool onWirebug     = (smask & mhw::PlayerSection::Wirebug)
                                && (game_ == mhw::GameId::Rise);
 
+    // v0.8.4-r18 player-abnormalities: the Rise 「状态」 block. Rows come
+    // from PlayerSnapshot::abnormalities (consumable buffs + debuffs), which
+    // only the Rise reader fills. Debuffs (异常状态 bit) are listed first —
+    // the ones a hunter has to react to — then the buffs (正面状态 bit), each
+    // group in the reader's order. Laid out as a kRiseStatusPillsPerRow-wide
+    // pill grid like the World debuff/buff rows; when more entries are active
+    // than kRiseStatusMaxEntries, the final pill becomes "+N" instead of
+    // pushing the panel taller.
+    QVector<const mhw::PlayerAbnormalitySnapshot *> riseStatusRows;
+    if (game_ == mhw::GameId::Rise) {
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool wantDebuff = (pass == 0);
+            if (!(wantDebuff ? onDebuff : onBuff))
+                continue;
+            for (const auto &a : player_.abnormalities) {
+                if ((a.kind == mhw::AbnormalityKind::Debuff) != wantDebuff)
+                    continue;
+                riseStatusRows.push_back(&a);
+            }
+        }
+    }
+    const int riseStatusTotal = riseStatusRows.size();
+    const int riseStatusShown = std::min(riseStatusTotal, kRiseStatusMaxEntries);
+    const bool riseStatusOverflow = riseStatusTotal > kRiseStatusMaxEntries;
+    // Label row + pill-grid rows (kRiseStatusPillsPerRow per row), sharing
+    // the World pill-row inter-row gap.
+    const int riseStatusGridRows = riseStatusShown > 0
+        ? (riseStatusShown + kRiseStatusPillsPerRow - 1) / kRiseStatusPillsPerRow
+        : 0;
+    const int riseStatusH = riseStatusShown > 0
+        ? kQrowH + riseStatusGridRows * kPillH
+              + (riseStatusGridRows - 1) * kRiseStatusRowGap
+        : 0;
+
     // Block-table gap/content constants. Derived from the original serial
     // y-advance so the fully-on layout is pixel-identical to before
     // (the only delta is 7 px less bottom padding — a fix for the
@@ -749,6 +867,9 @@ void PlayerPanel::paintPanel(QPainter &p)
     // separators so disabled sections still drop with no neighbour drift.
     constexpr int kWirebugGap = kGapSection;
     constexpr int kWirebugH   = kPillH;
+    // Rise 状态 block: label row + capped rows, separated like every other
+    // block so disabling it drops its spacing with no neighbour drift.
+    constexpr int kRiseStatusGap = kGapSection;
 
     int totalH = kMargin + kTitleH;   // title always drawn
     totalH += qrowStreamH;
@@ -756,6 +877,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     if (onBars)                          totalH += kBarsGap  + kBarsH;
     if (onMantles && mantleCount > 0)    totalH += kMantleGap + kMantleH;
     if (onWirebug && wirebugActiveCount > 0)   totalH += kWirebugGap + kWirebugH;
+    if (riseStatusShown > 0)             totalH += kRiseStatusGap + riseStatusH;
     if (onDebuff  && debuffCount > 0)    totalH += kDebuffGap + debuffH;
     if (onBuff    && buffCount > 0)      totalH += kBuffGap   + buffH;
     totalH += kMargin;
@@ -1034,12 +1156,14 @@ void PlayerPanel::paintPanel(QPainter &p)
         p.setFont(vFont);
         p.setPen(QColor(245, 246, 247));
         const QRectF barRect(innerLeft, y, innerW, kBarH);
-        // v0.8: show raw "current / max" values (the in-game UI convention).
-        // The raw max in Rise is 150 (HP) / 4500 (Stamina with food bonus
-        // & petalace) which is non-intuitive, but it matches the game's
-        // own display style. We previously hid this behind "90%" —
-        // user feedback was that the percent-only display lost precision
-        // and felt less informative than the in-game numeric bars.
+        // v0.8: show "current / max" values (the in-game UI convention).
+        // Health needs no scaling in either game: raw health is already the
+        // value the game displays (150 with heal/food bonuses). Stamina does
+        // in Rise — see the ST bar below and staminaDisplayValue() in the
+        // shared helper block at the top of this file.
+        // We previously hid this behind "90%" — user feedback was that the
+        // percent-only display lost precision and felt less informative than
+        // the in-game numeric bars.
         const QString leftText = hpKnown
             ? QStringLiteral("%1 / %2")
                   .arg(mhw::groupNumber(static_cast<int>(player_.health)))
@@ -1066,11 +1190,18 @@ void PlayerPanel::paintPanel(QPainter &p)
         p.setFont(sFont);
         p.setPen(QColor(245, 246, 247));
         const QRectF barRect(innerLeft, y, innerW, kStBarH);
-        // v0.8: see HP comment — raw "current / max" matches in-game style.
+        // v0.8.4-r18 stamina-units-r2: Rise reports raw HUD stamina in
+        // thirtieths of the bar value (raw "3000 / 4500" reads as the game's
+        // "100 / 150"). Convert on the display path only — see
+        // staminaDisplayValue(). World stamina is already the bar value and
+        // passes through untouched. The percentage above is raw/raw, which is
+        // unit-invariant, so the bar length is unaffected by this fix.
+        const float stShown    = staminaDisplayValue(game_, player_.stamina);
+        const float stMaxShown = staminaDisplayValue(game_, player_.maxStamina);
         const QString leftText = stKnown
             ? QStringLiteral("%1 / %2")
-                  .arg(mhw::groupNumber(static_cast<int>(player_.stamina)))
-                  .arg(mhw::groupNumber(static_cast<int>(player_.maxStamina)))
+                  .arg(mhw::groupNumber(static_cast<int>(stShown)))
+                  .arg(mhw::groupNumber(static_cast<int>(stMaxShown)))
             : QStringLiteral("-- / --");
         const QString rightText = stKnown
             ? mhw::percentage(player_.stamina, player_.maxStamina)
@@ -1152,6 +1283,59 @@ void PlayerPanel::paintPanel(QPainter &p)
         y += kWirebugH;
     }
 
+    // ---- 状态: Rise consumable buffs + debuffs (v0.8.4-r18) ----
+    // Debuffs first, then buffs; name on the left and the value on the right
+    // (remaining seconds, "∞" for IsInfinite entries, "43/120" for buildup
+    // counters). The accent colour separates the two families (see
+    // debuffAccent / buffAccent). v0.8.4-r22 status-grid: pills flow
+    // kRiseStatusPillsPerRow per row, wrapping exactly like the World
+    // debuff/buff rows (a partial final row stretches to fill); when more
+    // entries are active than kRiseStatusMaxEntries, the final pill shows "+N".
+    if (riseStatusShown > 0) {
+        y += kRiseStatusGap;
+
+        QFont lFont(QStringLiteral("Chakra Petch"), 9);
+        lFont.setStyleStrategy(QFont::PreferAntialias);
+        p.setFont(lFont);
+        p.setPen(QColor(146, 148, 149));
+        const QRectF statusLabel(innerLeft, y, innerW, kQrowH);
+        p.drawText(statusLabel, Qt::AlignLeft | Qt::AlignVCenter,
+                   QStringLiteral("状态"));
+        p.drawText(statusLabel, Qt::AlignRight | Qt::AlignVCenter,
+                   QString::number(riseStatusTotal));
+        y += kQrowH;
+
+        const int pillGap = 5;
+        for (int i = 0; i < riseStatusShown; ++i) {
+            const int rowIdx     = i / kRiseStatusPillsPerRow;
+            const int colIdx     = i % kRiseStatusPillsPerRow;
+            const int itemsInRow = std::min(
+                kRiseStatusPillsPerRow,
+                riseStatusShown - rowIdx * kRiseStatusPillsPerRow);
+            const int slotW = (innerW - pillGap * (itemsInRow - 1)) / itemsInRow;
+            const int cx    = innerLeft + colIdx * (slotW + pillGap);
+            const QRectF pillRect(cx,
+                                  y + rowIdx * (kPillH + kRiseStatusRowGap),
+                                  slotW, kPillH);
+            if (riseStatusOverflow && i == riseStatusShown - 1) {
+                drawPill(p, pillRect, QColor(90, 92, 94), QStringLiteral("…"),
+                         QStringLiteral("+%1").arg(riseStatusTotal
+                                                   - (riseStatusShown - 1)));
+                continue;
+            }
+            const mhw::PlayerAbnormalitySnapshot &a = *riseStatusRows[i];
+            drawPill(p, pillRect,
+                     a.kind == mhw::AbnormalityKind::Debuff
+                         ? debuffAccent(a.name)
+                         : buffAccent(a.name),
+                     a.name,
+                     mhw::riseAbnormalityTimerText(a.timer, a.isInfinite,
+                                                   a.isBuildup, a.maxTimer));
+        }
+        y += riseStatusGridRows * kPillH
+             + (riseStatusGridRows - 1) * kRiseStatusRowGap;
+    }
+
     // ---- debuffs: .pill row, max 3 per row, wraps to a second line ----
     if (onDebuff && debuffCount > 0) {
         y += kGapSection;
@@ -1167,16 +1351,10 @@ void PlayerPanel::paintPanel(QPainter &p)
             const int cx    = innerLeft + colIdx * (slotW + pillGap);
             const QRectF pillRect(cx, y + rowIdx * (kPillH + 4), slotW, kPillH);
             const auto &d = player_.debuffs[i];
-            // Pill accent colours per type. Demo: purple for 毒, orange for 爆破.
             const QString n = d.name.isEmpty() ? QStringLiteral("状态") : d.name;
             const QString t = QStringLiteral("%1s").arg(static_cast<int>(d.timer));
-            QColor pc(167, 79, 255);     // default purple
-            if (n.contains(QStringLiteral("爆破"))) pc = QColor(255, 87, 34);
-            else if (n.contains(QStringLiteral("火"))) pc = QColor(255, 87, 34);
-            else if (n.contains(QStringLiteral("防御"))) pc = QColor(255, 193, 7);
-            else if (n.contains(QStringLiteral("眠")))   pc = QColor(120, 120, 220);
-            else if (n.contains(QStringLiteral("麻")))   pc = QColor(180, 130, 220);
-            drawPill(p, pillRect, pc, n, t);
+            // Accent colour per ailment family (shared with the Rise block).
+            drawPill(p, pillRect, debuffAccent(n), n, t);
         }
         y += rows * kPillH + (rows - 1) * 4;
     }
@@ -1198,18 +1376,8 @@ void PlayerPanel::paintPanel(QPainter &p)
             const auto &b = player_.buffs[i];
             const QString n = b.name.isEmpty() ? QStringLiteral("增益") : b.name;
             const QString t = QStringLiteral("%1s").arg(static_cast<int>(b.timer));
-            // Green-family accents; vary hue by category for readability.
-            QColor pc(76, 175, 80);      // default green (songs)
-            if (n.contains(QStringLiteral("鬼人")) || n.contains(QStringLiteral("攻击"))
-                || n.contains(QStringLiteral("怪力")))
-                pc = QColor(244, 67, 54);   // red — attack buffs
-            else if (n.contains(QStringLiteral("硬化")) || n.contains(QStringLiteral("防御"))
-                     || n.contains(QStringLiteral("忍耐")))
-                pc = QColor(33, 150, 243);  // blue — defense buffs
-            else if (n.contains(QStringLiteral("冷饮")) || n.contains(QStringLiteral("热饮"))
-                     || n.contains(QStringLiteral("耐")))
-                pc = QColor(0, 188, 212);   // cyan — elemental res
-            drawPill(p, pillRect, pc, n, t);
+            // Accent colour per consumable family (shared with the Rise block).
+            drawPill(p, pillRect, buffAccent(n), n, t);
         }
         y += rows * kPillH + (rows - 1) * 4;
     }
@@ -1238,8 +1406,19 @@ void PlayerPanel::setupDemoData()
     player_.valid = true;
     player_.health = 132.0F;
     player_.maxHealth = 150.0F;
+    // v0.8.4-r18 stamina-units-r2: demo vitals stay in the same unit domain
+    // the reader publishes, so the Rise preview seeds *raw* stamina (bar value
+    // x30: 2790 / 4500) while the World preview keeps the already-bar-domain
+    // values. Both render the identical "93 / 150" text (Rise: 2790/30 and
+    // 4500/30), so the preview stays visually stable across the game rail
+    // while still exercising the Rise scaling. 4500 is the probed
+    // maxExtendableStamina (bar 150).
     player_.stamina = 93.0F;
     player_.maxStamina = 150.0F;
+    if (game_ == mhw::GameId::Rise) {
+        player_.stamina = 2790.0F;    // raw -> 93 displayed (93 x 30)
+        player_.maxStamina = 4500.0F; // raw -> 150 displayed (150 x 30)
+    }
     weaponId_ = 0;                // Great Sword
     playerMR_ = 247;
     playerName_ = QStringLiteral("苍蓝星");   // demo local player name
@@ -1283,75 +1462,123 @@ void PlayerPanel::setupDemoData()
         player_.mantleSlot1Cooldown = 96.0F;
     }
 
-    // Sharpness demo (matches HTML v8 concept — Purple 47/120).
-    // Hand-crafted thresholds[7] for a Purple-able Great Sword.
+    // Sharpness demo (HTML v8 concept — Purple, current colour 47/60).
+    // Hand-crafted thresholds[7] for a Purple-able Great Sword. r23: the
+    // badge shows `currentHits - thresholds[level - 1]` (whole-bar 177 −
+    // purple start 130 = 47), so these numbers must stay consistent.
     sharpness_.valid = true;
     sharpness_.level = 6;        // Purple
-    sharpness_.currentHits = 47;
-    sharpness_.maxHits = 120;
-    sharpness_.threshold = 80;
+    sharpness_.currentHits = 177;   // whole-bar remainder (130 + 47)
+    sharpness_.maxHits = 190;
+    sharpness_.threshold = 130;     // thresholds[level - 1]
     sharpness_.thresholds[0] = 5;
     sharpness_.thresholds[1] = 15;
     sharpness_.thresholds[2] = 30;
     sharpness_.thresholds[3] = 60;
-    sharpness_.thresholds[4] = 80;
-    sharpness_.thresholds[5] = 110;
-    sharpness_.thresholds[6] = 130;
-    {
-        PlayerAbnormality d1;
-        d1.offset = 0; d1.name = QStringLiteral("毒");
-        d1.timer = 12.0F; d1.maxTimer = 60.0F;
-        player_.debuffs.append(d1);
-    }
-    {
-        PlayerAbnormality d2;
-        d2.offset = 1; d2.name = QStringLiteral("爆破");
-        d2.timer = 41.0F; d2.maxTimer = 60.0F;
-        player_.debuffs.append(d2);
-    }
-    // Extra debuffs to demo the 3-per-row wrap into a second line.
-    {
-        PlayerAbnormality d3;
-        d3.offset = 2; d3.name = QStringLiteral("麻");
-        d3.timer = 17.0F; d3.maxTimer = 30.0F;
-        player_.debuffs.append(d3);
-    }
-    {
-        PlayerAbnormality d4;
-        d4.offset = 3; d4.name = QStringLiteral("眠");
-        d4.timer = 28.0F; d4.maxTimer = 45.0F;
-        player_.debuffs.append(d4);
-    }
-    {
-        PlayerAbnormality d5;
-        d5.offset = 4; d5.name = QStringLiteral("防御DOWN");
-        d5.timer = 60.0F; d5.maxTimer = 90.0F;
-        player_.debuffs.append(d5);
-    }
-    // Demo buffs
-    {
-        PlayerAbnormality b1;
-        b1.offset = 0x3C; b1.name = QStringLiteral("攻击强化");
-        b1.timer = 90.0F; b1.maxTimer = 180.0F;
-        player_.buffs.append(b1);
-    }
-    {
-        PlayerAbnormality b2;
-        b2.offset = 0x6CC; b2.name = QStringLiteral("鬼人药");
-        b2.timer = 300.0F; b2.maxTimer = 300.0F;
-        player_.buffs.append(b2);
-    }
-    {
-        PlayerAbnormality b3;
-        b3.offset = 0x6D0; b3.name = QStringLiteral("硬化药");
-        b3.timer = 300.0F; b3.maxTimer = 300.0F;
-        player_.buffs.append(b3);
-    }
-    {
-        PlayerAbnormality b4;
-        b4.offset = 0x690; b4.name = QStringLiteral("急奔饮料");
-        b4.timer = 45.0F; b4.maxTimer = 180.0F;
-        player_.buffs.append(b4);
+    sharpness_.thresholds[4] = 90;
+    sharpness_.thresholds[5] = 130;
+    sharpness_.thresholds[6] = 190;
+    // v0.8.4-r18 player-abnormalities: the two games keep their status data
+    // in different snapshot fields, so the demo seeds whichever field the
+    // selected game actually renders — World keeps the buff/debuff pill rows
+    // (filled by player_reader.cpp), Rise seeds the 「状态」 block
+    // (PlayerSnapshot::abnormalities, filled by mhr_reader.cpp).
+    if (game_ == mhw::GameId::Rise) {
+        // Names and ids come from the generated schema table
+        // (rise/mhr_abnormalities.cpp) so the preview and a live session
+        // print identical strings. Nine entries is one past
+        // kRiseStatusMaxEntries on purpose: the preview also exercises the
+        // "+N" overflow pill of the status grid.
+        const auto seedRise = [this](const char *id, const QString &name,
+                                     float timer, float maxTimer,
+                                     mhw::AbnormalityKind kind, bool infinite,
+                                     bool buildup) {
+            mhw::PlayerAbnormalitySnapshot a;
+            a.id = QString::fromUtf8(id);
+            a.name = name;
+            a.timer = timer;
+            a.maxTimer = maxTimer;
+            a.kind = kind;
+            a.isInfinite = infinite;
+            a.isBuildup = buildup;
+            player_.abnormalities.append(a);
+        };
+        using Kind = mhw::AbnormalityKind;
+        seedRise("ABN_POISON", QStringLiteral("中毒"),
+                 23.0F, 0.0F, Kind::Debuff, false, false);
+        seedRise("ABN_BLAST", QStringLiteral("爆炸异常"),
+                 41.0F, 0.0F, Kind::Debuff, false, false);
+        seedRise("ABN_FRENZY_BUILDUP", QStringLiteral("狂龙症（增长中）"),
+                 43.0F, 120.0F, Kind::Debuff, false, true);
+        seedRise("ABN_BLEED", QStringLiteral("裂伤"),
+                 12.0F, 0.0F, Kind::Debuff, false, false);
+        seedRise("ABN_DEMONDRUG", QStringLiteral("鬼人药"),
+                 1.0F, 0.0F, Kind::Buff, true, false);
+        seedRise("ABN_MIGHT_SEED", QStringLiteral("怪力种子"),
+                 142.0F, 0.0F, Kind::Buff, false, false);
+        seedRise("ABN_SPIRIBIRDS_CALL", QStringLiteral("提供"),
+                 58.0F, 60.0F, Kind::Buff, false, false);
+        seedRise("ABN_BUTTERFLAME", QStringLiteral("炎火蝶"),
+                 95.0F, 0.0F, Kind::Buff, false, false);
+        seedRise("ABN_ARMORSKIN", QStringLiteral("硬化药"),
+                 1.0F, 0.0F, Kind::Buff, true, false);
+    } else {
+        {
+            PlayerAbnormality d1;
+            d1.offset = 0; d1.name = QStringLiteral("毒");
+            d1.timer = 12.0F; d1.maxTimer = 60.0F;
+            player_.debuffs.append(d1);
+        }
+        {
+            PlayerAbnormality d2;
+            d2.offset = 1; d2.name = QStringLiteral("爆破");
+            d2.timer = 41.0F; d2.maxTimer = 60.0F;
+            player_.debuffs.append(d2);
+        }
+        // Extra debuffs to demo the 3-per-row wrap into a second line.
+        {
+            PlayerAbnormality d3;
+            d3.offset = 2; d3.name = QStringLiteral("麻");
+            d3.timer = 17.0F; d3.maxTimer = 30.0F;
+            player_.debuffs.append(d3);
+        }
+        {
+            PlayerAbnormality d4;
+            d4.offset = 3; d4.name = QStringLiteral("眠");
+            d4.timer = 28.0F; d4.maxTimer = 45.0F;
+            player_.debuffs.append(d4);
+        }
+        {
+            PlayerAbnormality d5;
+            d5.offset = 4; d5.name = QStringLiteral("防御DOWN");
+            d5.timer = 60.0F; d5.maxTimer = 90.0F;
+            player_.debuffs.append(d5);
+        }
+        // Demo buffs
+        {
+            PlayerAbnormality b1;
+            b1.offset = 0x3C; b1.name = QStringLiteral("攻击强化");
+            b1.timer = 90.0F; b1.maxTimer = 180.0F;
+            player_.buffs.append(b1);
+        }
+        {
+            PlayerAbnormality b2;
+            b2.offset = 0x6CC; b2.name = QStringLiteral("鬼人药");
+            b2.timer = 300.0F; b2.maxTimer = 300.0F;
+            player_.buffs.append(b2);
+        }
+        {
+            PlayerAbnormality b3;
+            b3.offset = 0x6D0; b3.name = QStringLiteral("硬化药");
+            b3.timer = 300.0F; b3.maxTimer = 300.0F;
+            player_.buffs.append(b3);
+        }
+        {
+            PlayerAbnormality b4;
+            b4.offset = 0x690; b4.name = QStringLiteral("急奔饮料");
+            b4.timer = 45.0F; b4.maxTimer = 180.0F;
+            player_.buffs.append(b4);
+        }
     }
 
     hasData_ = true;

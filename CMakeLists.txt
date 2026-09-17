@@ -22,6 +22,12 @@ add_library(monster-core STATIC
     src/rise/mhr_types.h
     src/rise/mhr_reader.h
     src/rise/mhr_reader.cpp
+    src/rise/mhr_part_names.h
+    src/rise/mhr_part_names.cpp
+    src/rise/mhr_monster_names.h
+    src/rise/mhr_monster_names.cpp
+    src/rise/mhr_abnormalities.h
+    src/rise/mhr_abnormalities.cpp
     src/rise/rise_damage_reader.cpp
     src/world/world_types.h
     src/world/world_types.cpp
@@ -428,6 +434,7 @@ if(BUILD_TESTING)
     target_link_libraries(monster-probe-ailments-watch PRIVATE Qt6::Core monster-core)
     target_include_directories(monster-probe-ailments-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-ailments-watch PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
+    target_compile_definitions(monster-probe-ailments-watch PRIVATE MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map")
 
     add_executable(monster-probe-mantles
         tests/monster_probe_mantles.cpp
@@ -472,6 +479,26 @@ if(BUILD_TESTING)
     target_compile_options(rise-monster-metadata-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-monster-metadata-tests COMMAND rise-monster-metadata-tests)
 
+    # v0.8.4-r19 monster-identity: official Rise monster names (generated from
+    # HunterPie's zh-cn.xml) + the Rise crown-size ratio contract. Pure static
+    # tables/inline helpers — never touches a live game process.
+    add_executable(rise-monster-name-tests
+        tests/rise_monster_name_tests.cpp
+        src/monster/part_schemas.cpp
+    )
+    target_link_libraries(rise-monster-name-tests PRIVATE Qt6::Core monster-core)
+    target_include_directories(rise-monster-name-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(rise-monster-name-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-monster-name-tests COMMAND rise-monster-name-tests)
+
+    add_executable(rise-part-names-hp-tests
+        tests/rise_part_names_hp_tests.cpp
+    )
+    target_link_libraries(rise-part-names-hp-tests PRIVATE Qt6::Core monster-core)
+    target_include_directories(rise-part-names-hp-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(rise-part-names-hp-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-part-names-hp-tests COMMAND rise-part-names-hp-tests)
+
     # Unit tests for the core string table — independent of MHW.
     add_executable(monster-core-tests
         tests/string_table_tests.cpp
@@ -491,4 +518,52 @@ if(BUILD_TESTING)
     target_include_directories(rise-zone-mapping-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(rise-zone-mapping-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-zone-mapping-tests COMMAND rise-zone-mapping-tests)
+
+    # v0.8.4-r18 player-abnormalities: generated Rise consumable/debuff schema
+    # table + the pure evaluation core (flag gates, WithValue sub-ids, the
+    # raw/60 conversion, MaxTimer inversion). No game process is required.
+    add_executable(rise-abnormality-tests
+        tests/rise_abnormality_tests.cpp
+    )
+    target_link_libraries(rise-abnormality-tests PRIVATE Qt6::Core monster-core)
+    target_include_directories(rise-abnormality-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(rise-abnormality-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-abnormality-tests COMMAND rise-abnormality-tests)
 endif()
+
+# ---------------------------------------------------------------------------
+# Rise raw-memory probe.
+#
+# Read-only diagnostic binary that dumps the raw values behind every Rise
+# section of the overlay (stage / hud / petalace / player / quest / monsters /
+# wirebugs) plus the reader's own interpretation, so a live in-game session can
+# be compared against what the process actually contains (zone name mismatch,
+# missing hub HP/ST, stamina > 3000, empty monster panel).
+#
+# Deliberately built EXPLICITLY (EXCLUDE_FROM_ALL) and NOT registered as a
+# CTest: it is only meaningful with a running game, so neither the default
+# `cmake --build .` nor `ctest` changes behaviour. Build it with:
+#
+#   cmake --build <builddir> --target rise-probe
+#   <builddir>/rise-probe [--map <path>]
+# ---------------------------------------------------------------------------
+add_executable(rise-probe EXCLUDE_FROM_ALL
+    tests/rise_probe.cpp
+    # MhwReader is defined across per-domain .cpp files (see
+    # MHW_READER_SOURCES); the probe needs them because monster-core only
+    # ships the Rise reader. Keeping the list here keeps this target
+    # independent of BUILD_TESTING.
+    src/mhw_reader.cpp
+    src/mhw_reader.h
+    src/monster/part_schemas.cpp
+    src/monster/monster_reader.cpp
+    src/monster/target_selector.cpp
+    src/player/player_reader.cpp
+    src/quest/quest_reader.cpp
+    src/world/world_reader.cpp
+)
+target_link_libraries(rise-probe PRIVATE Qt6::Core monster-core)
+target_include_directories(rise-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(rise-probe PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(rise-probe PRIVATE
+    MHR_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterRise.16.0.2.0.map")

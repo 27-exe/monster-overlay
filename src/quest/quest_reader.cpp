@@ -43,6 +43,11 @@ QuestSnapshot MhwReader::readQuest(QString *error)
     result.elapsedSeconds = questElapsedSeconds(
         result.maxTimerSeconds, result.timeLeftSeconds);
 
+    // B2: World doesn't have HunterPie's NormalQuest.Rank concept, so
+    // rank stays at the default 0 — caller can treat rank>0 as "Rise only".
+    // (QuestSnapshot::rank is zero-initialised in quest_types.h:12, so
+    // this explicit assignment is documentation-only.)
+
     result.active = result.id > 0 && result.state == 2;
     return result;
 }

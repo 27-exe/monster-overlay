@@ -41,13 +41,13 @@ enum class Zone : int {
     // Rise stage.type == 4, villageId == 5.  Kept distinct from RiseLoc5
     // (HuntingId 5) because the reader rebases VillageId values to 700..799.
     RiseTrainingRoom = 705,
-    // Rise maps (HunterPie uses HuntingId + 200, MHRPlayer.cs:218-222,
-    // but 200..216 collides with World zones 201/202/203 which use the
-    // same ints. To avoid the value collision we shift into the unused
-    // 600..616 range and let computeZoneId() do the +400 translation
-    // instead. HunterPie's own client only sees 200..216 internally
-    // — the overlay's job is to give the panel a stable identifier,
-    // not to mirror HunterPie's internal enum exactly.)
+    // Rise maps: HunterPie uses StageId = HuntingId + 200 and resolves the
+    // label from its localization table (MHRPlayer.cs:216-227); that table
+    // covers StageId 201..215 (holes at 200/206/208, v0.8.4-r18
+    // zone-names). 200..215 collides with World zones 201/202/203, so the
+    // reader rebases the same HuntingId into the unused 600..616 band
+    // (HuntingId + 600 instead of + 200). RiseLocN == HuntingId N ==
+    // StageId N + 200; names in zoneName() are that table's zh-CN strings.
     RiseLoc0 = 600,
     RiseLoc1 = 601,
     RiseLoc2 = 602,

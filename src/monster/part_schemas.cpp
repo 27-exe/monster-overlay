@@ -815,6 +815,7 @@ extern const QHash<int, QString> kAilmentNames = {
     {7, QStringLiteral("眩晕")},
     {8, QStringLiteral("捕获")},
     {9, QStringLiteral("闪光")},
+    {10, QStringLiteral("闪光")},   // AILMENT_FLASH — duplicate id in MonsterData.xml
     {11, QStringLiteral("倒地")},
     {14, QStringLiteral("麻痹陷阱")},
     {15, QStringLiteral("落穴陷阱")},

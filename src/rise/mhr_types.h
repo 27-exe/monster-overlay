@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -39,11 +40,105 @@ struct MHREnrageStructure {
 };
 static_assert(sizeof(MHREnrageStructure) == 56);
 
+// v0.8.4-r19 monster-identity: crown / body-size data.
+//
+// HunterPie MHRMonster.GetMonsterCrown (MHRMonster.cs:501-517) resolves the
+// object with ReadPtrAsync(monster, MONSTER_CROWN_OFFSETS) — a single 0x308
+// hop — and then reads an 8-byte MHRSizeStructure at *that object + 0x24*:
+//
+//     nint monsterSizePtr = await Memory.ReadPtrAsync(_address, [0x308]);
+//     MHRSizeStructure s  = await Memory.ReadAsync<MHRSizeStructure>(monsterSizePtr + 0x24);
+//     float ratio         = s.SizeMultiplier * s.UnkMultiplier;
+//
+// The 0x24 is a *struct-relative* field offset, so it lives here next to the
+// struct definition rather than in the .map file, whose MONSTER_CROWN_OFFSETS
+// entry deliberately carries only the object hop (0x308) exactly like
+// HunterPie's map does.
+constexpr std::uintptr_t kMhrSizeStructureOffset = 0x24ULL;
+
 struct MHRSizeStructure {
-    float sizeMultiplier;
-    float unkMultiplier;
+    float sizeMultiplier;   // [0x00] float SizeMultiplier
+    float unkMultiplier;    // [0x04] float UnkMultiplier
 };
 static_assert(sizeof(MHRSizeStructure) == 8);
+static_assert(offsetof(MHRSizeStructure, sizeMultiplier) == 0x00);
+static_assert(offsetof(MHRSizeStructure, unkMultiplier) == 0x04);
+
+// Plausibility band for the crown ratio. HunterPie's own Rise metadata
+// (Game/Rise/Data/MonsterData.xml, 33 <Crowns> blocks) uses Mini/Silver/Gold
+// thresholds spanning 0.765 .. 1.17, and the in-game size tables sit around
+// 0.9 .. 1.25, so anything outside [0.5, 1.5] is a read artefact rather than a
+// monster size. The band exists so a mis-read can never be mistaken for data.
+constexpr float kRiseMinPlausibleSize = 0.5F;
+constexpr float kRiseMaxPlausibleSize = 1.5F;
+
+// Crown ratio for a Rise monster (HunterPie MHRMonster.cs:508) with an honest
+// failure mode: 0.0F means "not read / not plausible", never a fabricated
+// value. 1.0F is a *legitimate* result (a monster rolled at 100 %), which is
+// precisely why MonsterSnapshot::size no longer defaults to 1.0F — the old
+// default made "read failed" indistinguishable from "size is exactly 100 %",
+// and the panel therefore showed a dead `1.00x` for every monster
+// (v0.8.4-r19 monster-identity: the reported symptom).
+//
+// The value returned here is the same number HunterPie compares against
+// <Crowns> (src/monster/part_schemas.cpp kRiseCrownThresholds) and that the
+// independent MHR-Overlay project prints as `100 * size` percent.
+inline float riseMonsterSizeFromFactors(float sizeMultiplier, float unkMultiplier)
+{
+    const float product = sizeMultiplier * unkMultiplier;
+    if (!std::isfinite(product) || product <= 0.0F)
+        return 0.0F;
+    if (product < kRiseMinPlausibleSize || product > kRiseMaxPlausibleSize)
+        return 0.0F;
+    return product;
+}
+
+// v0.8.4-r23 fatigue-semantics: monster stamina ("fatigue" meter).
+//
+// HunterPie MHRMonster.GetMonsterStamina (MHRMonster.cs) resolves
+// ReadPtrAsync(monster, MONSTER_STAMINA_OFFSETS) — a single 0x320 hop — and
+// reads MHRStaminaStructure; the pair at +0x20/+0x24 is what the monster
+// widget's stamina gauge draws. Stamina depleted => the monster drools and
+// slows down: THIS — not the exhaust ailment (slot 6, a separate 減気
+// gauge) — is the value the player perceives as "fatigue".
+struct MHRStaminaStructure {
+    std::int64_t reference;   // 0x00  long  Reference
+    std::int32_t unk0;        // 0x08  int   Unk0
+    std::int32_t unk1;        // 0x0C  int   Unk1
+    std::int64_t unk2;        // 0x10  long  Unk2
+    std::int32_t unk3;        // 0x18  int   Unk3 (maybe proc counter?)
+    std::int32_t unk4;        // 0x1C  int   Unk4
+    float        stamina;     // 0x20  float Stamina
+    float        maxStamina;  // 0x24  float MaxStamina
+};
+static_assert(sizeof(MHRStaminaStructure) == 40);
+static_assert(offsetof(MHRStaminaStructure, stamina) == 0x20);
+static_assert(offsetof(MHRStaminaStructure, maxStamina) == 0x24);
+
+// Plausibility bound for the stamina pair. Live Rise values observed at
+// 1000-2000 (r23 probe session); anything above 1e5 (or negative /
+// non-finite) is a read artefact. In contrast to size, stamina == 0 is REAL
+// data — exactly what an exhausted monster shows — so zero is accepted; a
+// stamina slightly above max (the two floats come from a live simulation
+// read a moment apart) is clamped, not rejected. Returns false without
+// touching the outputs on an unusable read; the snapshot then keeps its 0/0
+// defaults and the panel hides the row (same honest-zero convention as
+// riseMonsterSizeFromFactors).
+constexpr float kRiseMaxPlausibleStamina = 1.0e5F;
+
+inline bool riseMonsterStaminaFromPair(float stamina, float maxStamina,
+                                       float *outStamina, float *outMaxStamina)
+{
+    if (!std::isfinite(stamina) || !std::isfinite(maxStamina))
+        return false;
+    if (maxStamina <= 0.0F || maxStamina > kRiseMaxPlausibleStamina)
+        return false;
+    if (stamina < 0.0F || stamina > maxStamina * 1.25F)
+        return false;
+    *outStamina = stamina <= maxStamina ? stamina : maxStamina;
+    *outMaxStamina = maxStamina;
+    return true;
+}
 
 struct MHRPlayerLevelStructure {
     std::int32_t highRank;
@@ -127,6 +222,30 @@ struct MHRWirebugExtrasStructure {
 };
 static_assert(sizeof(MHRWirebugExtrasStructure) == 4);
 static_assert(offsetof(MHRWirebugExtrasStructure, timer) == 0x00);
+
+// v0.8.4-r18 player-abnormalities: the consumable/debuff blob.
+//
+// MHRAbnormalityStructure is declared [StructLayout(LayoutKind.Explicit)] with
+// an int Timer *and* an MHRConsumableStructure / MHRDebuffStructure at
+// FieldOffset(0); both of those carry a single float Timer, so the value slot
+// is 4 bytes and the schema table decides how to read it (IsInteger -> int,
+// see MHRPlayer.cs:476-477 via MHRAbnormalityAdapter.Convert).
+union MHRAbnormalityValue {
+    std::int32_t integer;  // MHRAbnormalityStructure.Timer
+    float        timer;    // MHRConsumable/MHRDebuffStructure.Timer
+};
+static_assert(sizeof(MHRAbnormalityValue) == 4);
+
+// The two ulong condition words MHRPlayer.GetPlayerConditions reads from
+// LOCAL_PLAYER_DATA_ADDRESS + PLAYER_CONDITION_OFFSETS (MHRPlayer.cs:872-885),
+// and the uint action-flag word read from LOCAL_PLAYER_DATA_ADDRESS +
+// PLAYER_ACTIONFLAG_OFFSETS (:897-908). Those *offsets* are struct-relative
+// fields of the resolved condition object, so they live here next to the
+// other Rise field constants rather than in the .map, which carries only the
+// object hop (exactly like HunterPie's address map).
+constexpr std::uintptr_t kMhrCommonConditionsOffset = 0x10;
+constexpr std::uintptr_t kMhrDebuffConditionsOffset = 0x38;
+constexpr std::uintptr_t kMhrActionFlagOffset       = 0x20;
 
 #pragma pack(pop)
 

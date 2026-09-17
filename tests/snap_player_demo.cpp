@@ -25,12 +25,20 @@ int main(int argc, char *argv[])
     }
 
     if (argc < 2) {
-        qCritical("usage: snap_player_demo <output.png>");
+        qCritical("usage: snap_player_demo <output.png> [world|rise]");
         return 2;
     }
     const QString outPath = QString::fromLocal8Bit(argv[1]);
+    // v0.8.4-r18 player-abnormalities: the optional second argument selects
+    // the previewed game so the Rise 「状态」 block (abnormalities) can be
+    // snapshot without the control panel's rail. Defaults to World, the
+    // historical behaviour of this tool.
+    const QString gameArg = argc > 2 ? QString::fromLocal8Bit(argv[2]).toLower()
+                                     : QStringLiteral("world");
+    const bool rise = gameArg == QStringLiteral("rise");
 
     PlayerPanel panel;
+    panel.setGameForDemo(rise ? mhw::GameId::Rise : mhw::GameId::World);
     panel.setEditMode(true);     // triggers setupDemoData() on first paint
     // Set fixed size to the same geometry HTML v8 uses (.op width:378,
     // plus padding). The actual height is computed inside paintPanel

@@ -10,12 +10,14 @@
 #include "ui/section_count_bar.h"
 #include "ui/hud_canvas.h"
 #include "ui/panel_source.h"
+#include "ui/screen_query.h"
 #include "ui/ui_theme.h"
 #include "core/game_detector.h"
 #include "core/string_table.h"
 
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QEvent>
 #include <QKeyEvent>
 #include <QScrollArea>
@@ -970,6 +972,18 @@ void ControlPanel::selectPanel(int idx)
     updatePosLabel(idx);
     if (inspectorStack_) inspectorStack_->setCurrentIndex(idx);
     if (canvas_) canvas_->setSelectedPanel(idx);
+    // v0.8: when the user switches which panel the inspector is
+    // editing, retarget the preview's screen frame to that panel's
+    // chosen output. Each panel can live on a different screen, so
+    // the preview has to follow whichever is in focus — otherwise
+    // the user sees the panel's actual position drawn against the
+    // wrong output's rectangle.
+    if (canvas_) {
+        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
+                    : idx == 1 ? static_cast<Panel*>(monster_)
+                               : static_cast<Panel*>(damage_));
+        canvas_->setPreviewScreen(p ? p->outputName() : QString());
+    }
     for (int i = 0; i < 3; ++i) {
         if (!ctl_[i].navButton) continue;
         ctl_[i].navButton->setProperty("selected", i == idx);
@@ -1211,6 +1225,70 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     bgRow->addWidget(bgVal);
     vl->addLayout(bgRow);
     ctl_[idx].bgAlphaSlider = bgSlider;
+    // v0.8: SCREEN row — per-panel output selection. Lists every
+    // QScreen the Qt platform plugin reports, plus a "<PRIMARY>"
+    // pseudo-entry meaning "follow OS primary" (empty userData).
+    // Picking an entry calls Panel::setOutputName(), which validates
+    // against the same QScreen list and writes through to panels.ini.
+    {
+        auto *screenRow = new QHBoxLayout();
+        screenRow->setSpacing(8);
+        auto *screenLab = new QLabel(QStringLiteral("SCREEN"));
+        screenLab->setObjectName(QStringLiteral("sliderLabel"));
+        auto *combo = new QComboBox();
+        combo->setCursor(Qt::PointingHandCursor);
+        // First entry: explicit "follow primary" — empty userData so
+        // Panel::setOutputName("") clears the override.
+        combo->addItem(QStringLiteral("<PRIMARY>"), QString());
+        const auto outs = screen_query::listOutputs();
+        for (const auto &o : outs) {
+            QString label = o.name;
+            if (o.primary) label += QStringLiteral("  (primary)");
+            // Append the geometry so the user can tell two same-named
+            // outputs apart (rare on Niri, common on X11 multi-GPU).
+            label += QStringLiteral("  ·  %1×%2 @%3,%4")
+                .arg(o.geometry.width()).arg(o.geometry.height())
+                .arg(o.geometry.x()).arg(o.geometry.y());
+            combo->addItem(label, o.name);
+        }
+        // Pick the persisted value (if any) — match either by userData
+        // (output name) or fall back to the first entry.
+        const Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
+                          : idx == 1 ? static_cast<Panel*>(monster_)
+                                     : static_cast<Panel*>(damage_));
+        const QString cur = p ? p->outputName() : QString();
+        if (!cur.isEmpty()) {
+            const int found = combo->findData(cur);
+            if (found >= 0) combo->setCurrentIndex(found);
+        }
+        connect(combo, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, [this, idx, combo](int /*idx2*/){
+            Panel *pan = (idx == 0 ? static_cast<Panel*>(player_)
+                          : idx == 1 ? static_cast<Panel*>(monster_)
+                                     : static_cast<Panel*>(damage_));
+            const QString name = combo->currentData().toString();
+            pan->setOutputName(name, /*persist=*/false);
+            // saveAppearance is gated on editMode for most setters, but
+            // screen selection is meaningful in live mode too — the
+            // console is the only place that ever writes it back, so we
+            // call the persist path explicitly here.
+            pan->saveAppearance();
+            updatePosLabel(idx);
+            // v0.8: redirect the preview's screen frame to the output
+            // the user just picked. The preview is a single widget
+            // shared by all three panels, so we follow whichever panel
+            // the user is currently configuring — switching the P/M/D
+            // inspector tab will update it again from the next combo's
+            // currentData() if the user picks different screens per
+            // panel.
+            if (canvas_)
+                canvas_->setPreviewScreen(name);
+        });
+        screenRow->addWidget(screenLab);
+        screenRow->addWidget(combo, 1);
+        vl->addLayout(screenRow);
+        ctl_[idx].outputCombo = combo;
+    }
     // v0.5 BEHAVIOR → POSITION: shows the panel's anchor corner and
     // current margins. The user moves the panel via canvas drag or
     // arrow keys; this label is read-only feedback.
@@ -1407,13 +1485,16 @@ void ControlPanel::switchGame(mhw::GameId game)
     // QObjectPrivate::connectImpl), so we mutate the existing widgets
     // instead of recreating the stack.
     //
-    // Apply unconditionally across all panels: only Player (idx 0) has
-    // the World-only Mantles / Rise-only Wirebug bits — Monster and
-    // Damage loops are empty and a no-op. A previous version gated this
-    // on selectedPanel_ == 0 which broke the user flow "switch game
-    // while looking at the Monster inspector": the gate skipped the
-    // hide, then switching back to Player still showed both rows.
-    for (int p = 0; p < 3; ++p) {
+    // v0.8.4-r23: only the PLAYER panel (idx 0) owns game-specific rows.
+    // Do NOT run this over Monster/Damage: `rowBit` is the row index
+    // *within that panel*, so e.g. MonsterSection::Parts (1<<4) collides
+    // with PlayerSection::Mantles (1<<4) and the monster 部位 row was
+    // hidden + disabled whenever Rise was selected.
+    // (A previous version gated this on selectedPanel_ == 0 which broke
+    // the user flow "switch game while looking at the Monster
+    // inspector": the gate skipped the hide, then switching back to
+    // Player still showed both rows.)
+    for (int p = 0; p < 1; ++p) {
         const uint32_t wirebugBit = uint32_t(mhw::PlayerSection::Wirebug);
         const uint32_t mantlesBit = uint32_t(mhw::PlayerSection::Mantles);
         for (int b = 0; b < ctl_[p].subs.size(); ++b) {
@@ -1515,6 +1596,24 @@ void ControlPanel::launchOverlay(bool editMode)
     args << QStringLiteral("--game=%1")
                 .arg(currentGame_ == mhw::GameId::Rise
                          ? QStringLiteral("rise") : QStringLiteral("world"));
+
+    // v0.8: per-panel screen selection. Empty outputName == "<PRIMARY>"
+    // pseudo-entry in the console, which means "follow OS primary" —
+    // we omit the flag in that case so the overlay's loadConfig() can
+    // fall through to its own default. A non-empty name matches
+    // QScreen::name() on the overlay side; on Niri that's the wlr-output
+    // id and LayerShellQt::Window::setScreen() binds correctly.
+    auto appendOutput = [&](int idx, const char *flag) {
+        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
+                    : idx == 1 ? static_cast<Panel*>(monster_)
+                               : static_cast<Panel*>(damage_));
+        const QString name = p ? p->outputName() : QString();
+        if (!name.isEmpty())
+            args << QString::fromLatin1(flag) + QStringLiteral("=") + name;
+    };
+    appendOutput(0, "--output-player");
+    appendOutput(1, "--output-monster");
+    appendOutput(2, "--output-damage");
 
     // monster-overlay lives next to monster-control in the same build dir.
     const QString overlay = QCoreApplication::applicationDirPath()
@@ -1900,7 +1999,19 @@ void ControlPanel::updatePosLabel(int idx)
     // layer-shell anchor. Anchor stays fixed (so drag remains stable),
     // while this label follows the actual position when margins cross a
     // half-screen line.
-    const QScreen *screen = QGuiApplication::primaryScreen();
+    // v0.8.4-r23: honour the panel's own SCREEN selection — the canvas
+    // preview and the live overlay both bind to p->outputName(); using
+    // the primary screen here made the quadrant/coords readout wrong
+    // for any panel assigned to a non-primary output.
+    const QScreen *screen = nullptr;
+    const QString outputName = p->outputName();
+    if (!outputName.isEmpty()) {
+        const auto screens = QGuiApplication::screens();
+        for (QScreen *s : screens) {
+            if (s && s->name() == outputName) { screen = s; break; }
+        }
+    }
+    if (!screen) screen = QGuiApplication::primaryScreen();
     const QRect g = screen ? screen->geometry() : QRect(0, 0, 1, 1);
     const QSize content = p->contentSize() * p->scale();
     int x = g.left();
