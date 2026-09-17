@@ -67,7 +67,7 @@ backend;NVIDIA + Wayland 走系统的 `libEGL.so`,不需要 Vulkan、不
 |------|:----:|---------|------|
 | **Monster Hunter: World**(Steam ID 582010) | ✅ 稳定 | `data/MonsterHunterWorld.421810.map`(Steam build 421810) | 全部功能上线,维护者日常使用中。 |
 | **Monster Hunter: Rise**(Steam ID 1446780) | ✅ 支持 | `data/MonsterHunterRise.16.0.2.0.map` | Player / Monster 面板已实机验证(16.0.2.0)。**伤害面板暂不支持:崛起的伤害追踪没有原生实现**,伤害统计目前仅限世界。 |
-| **Monster Hunter: Wilds** | ⏳ 暂缓(等 Capcom) | — | Wilds 现在在 Linux 上还跑不动,维护者不打算现在买,等 Capcom 出一个稳定版再说。HunterPie v2 已经有 Wilds offsets(比如 `MonsterHunterWilds.1.1.1.0.map`),移植本身只是把 .map 拷进 `data/`、reader 里加几行 wire-up,纯工程活——所以瓶颈不是代码,是上游 Linux / Proton 的可玩性 |
+| **Monster Hunter: Wilds** | ⏳ 暂缓(未购买) | — | 荒野目前看起来还不是一款好游戏,维护者没打算购买 —— 没有游戏也就无从适配。若将来(比如 DLC 发售之后)改变主意入手,适配自然也会跟上:HunterPie v2 已经在放出 Wilds offsets(比如 `MonsterHunterWilds.1.1.1.0.map`),到时只需把 .map 拷进 `data/`、reader 里加几行 wire-up。 |
 
 控制台里直接选 `RISE` 即可 —— Player / Monster 面板与 World 表现一致;
 **伤害面板在 Rise 上按设计关闭**(暂无原生伤害数据源)。

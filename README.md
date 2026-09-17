@@ -67,7 +67,7 @@ in each game state — this is observed behavior, not aspirational:
 |------|:------:|------------|-------|
 | **Monster Hunter: World** | ✅ Stable | `data/MonsterHunterWorld.421810.map` (Steam build 421810) | Full feature set; in daily use on the maintainer's machine. |
 | **Monster Hunter: Rise** | ✅ Supported | `data/MonsterHunterRise.16.0.2.0.map` | Player and Monster panels live-validated against 16.0.2.0. **The Damage panel is not supported for Rise** — its damage tracker has no native implementation, so damage stays World-only for now. |
-| **Monster Hunter: Wilds** | ⏳ Parked (waiting on Capcom) | — | Wilds is unplayable on Linux in its current state, so the maintainer is holding off until Capcom ships a stable build worth buying. HunterPie v2 already publishes Wilds offsets (e.g. `MonsterHunterWilds.1.1.1.0.map`), and the port would be mechanical — drop the map into `data/` + a few wire-up lines in the reader. So the bottleneck isn't engineering; it's the upstream Linux / Proton story. |
+| **Monster Hunter: Wilds** | ⏳ Parked (not purchased) | — | Wilds currently doesn't look like a good game, so the maintainer hasn't bought it — and without owning it there is nothing to adapt against. If a DLC release changes that decision (a purchase), adaptation will follow: HunterPie v2 already publishes Wilds offsets (e.g. `MonsterHunterWilds.1.1.1.0.map`), so it would just be dropping the map into `data/` + a few wire-up lines in the reader. |
 
 Pick `RISE` in the console like any other game — the player and
 monster panels behave exactly as on World. The **damage panel is
