@@ -53,7 +53,7 @@ int main(int argc, char **argv)
     app.setStyle(QStringLiteral("Fusion"));
     QApplication::setApplicationName(QStringLiteral("monster-overlay"));
     QApplication::setApplicationDisplayName(QStringLiteral("MHW Linux Overlay"));
-    QApplication::setApplicationVersion(QStringLiteral("0.7.5"));
+    QApplication::setApplicationVersion(QStringLiteral("0.9.0"));
     QApplication::setOrganizationName(QStringLiteral("a27exe"));
     app.setQuitOnLastWindowClosed(true);
 
