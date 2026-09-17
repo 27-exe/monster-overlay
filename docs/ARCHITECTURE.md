@@ -1,8 +1,7 @@
 # Architecture
 
-> **v0.4 reader/layout overview** — see `docs/V0.4-STATUS.md` for the
-> v0.4 status snapshot and the v0.5 design notes. **The v0.2 split plan
-> in §"What goes where" below is now landed** — `src/monster/`,
+> **v0.4 reader/layout overview** — **The v0.2 split plan in
+> §"What goes where" below is now landed** — `src/monster/`,
 > `src/player/`, `src/quest/`, `src/world/`, and `src/ui/panel_*.{h,cpp}`
 > exist exactly as described. The reader at `src/mhw_reader.cpp` is
 > an orchestrator over the per-domain readers.
