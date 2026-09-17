@@ -8,7 +8,6 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Svg)
-find_package(Qt6 6.8 REQUIRED COMPONENTS WebEngineWidgets)
 find_package(LayerShellQt REQUIRED)
 
 # Core library: foundational types, memory reader, string table.
@@ -72,14 +71,6 @@ target_compile_definitions(monster-overlay PRIVATE
 )
 
 target_compile_options(monster-overlay PRIVATE -Wall -Wextra -Wpedantic)
-
-# WebEngine spike: prove transparent layer-shell + Chromium rendering.
-# Builds a separate binary `monster-overlay-web` so the main monster-overlay
-# binary stays unchanged. If the spike succeeds, we wire the same
-# widget into the main binary as a fallback / low-memory mode.
-add_executable(monster-overlay-web src/spike_web.cpp)
-target_compile_definitions(monster-overlay-web PRIVATE
-    SPIKE_HTML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/web/spike.html")
 
 # Offscreen snapshot of the player panel in edit/demo mode. Used for
 # visual regression testing without launching the layer-shell overlay
@@ -326,16 +317,6 @@ target_compile_definitions(monster-control-p0-test PRIVATE
     MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
 )
 target_compile_options(monster-control-p0-test PRIVATE -Wall -Wextra -Wpedantic)
-
-target_link_libraries(monster-overlay-web PRIVATE
-    Qt6::Core
-    Qt6::Gui
-    Qt6::Widgets
-    Qt6::WebEngineWidgets
-    LayerShellQt::Interface
-)
-target_compile_definitions(monster-overlay-web PRIVATE)
-target_compile_options(monster-overlay-web PRIVATE -Wall -Wextra -Wpedantic)
 
 include(CTest)
 if(BUILD_TESTING)

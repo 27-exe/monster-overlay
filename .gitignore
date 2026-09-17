@@ -11,6 +11,8 @@ build/
 docs/V0.*-STATUS.md
 docs/spike-log.md
 docs/plans/
+web/spike.html
+src/spike_web.cpp
 
 # Release artifacts — produced by the local release-v0.7.5/ script and
 # uploaded to GitHub Releases, never committed back into the repo:
