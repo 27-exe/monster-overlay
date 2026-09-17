@@ -22,6 +22,12 @@
 #include "panel.h"
 #include "panel_source.h"
 #include "screen_query.h"
+#include "core/string_table.h"
+
+namespace mh {
+// v0.9 i18n: same inline alias as the console / overlay panels (ODR-safe).
+inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(key); }
+} // namespace mh
 
 namespace {
 
@@ -29,7 +35,22 @@ const QColor kPlayerAccent(167, 79, 255);
 const QColor kMonsterAccent(255, 112, 67);
 const QColor kDamageAccent(64, 169, 255);
 const QColor kAccents[] = {kPlayerAccent, kMonsterAccent, kDamageAccent};
+// i18n: panel display names come from the console string table
+// (console.panel.*) and are resolved at PAINT time, so a language switch
+// only needs a repaint (ControlPanel::retranslateUi() → canvas_->update()).
+// The ASCII names stay as the fallback for a missing key.
+const char *kNameKeys[] = {"console.panel.player",
+                           "console.panel.monster",
+                           "console.panel.damage"};
 const char *kNames[] = {"PLAYER", "MONSTER", "DAMAGE"};
+
+QString panelName(int index)
+{
+    const int i = (index < 0 || index > 2) ? 0 : index;
+    const QString key = QString::fromLatin1(kNameKeys[i]);
+    const QString val = mh::tr(key);
+    return val == key ? QString::fromLatin1(kNames[i]) : val;
+}
 
 constexpr int kHeader = 56;
 constexpr int kFooter = 38;
@@ -69,13 +90,24 @@ QRect anchoredRect(const QRect &screen, Corner corner, const QMargins &m,
 
 QString cornerName(Corner c)
 {
-    switch (c) {
-    case Corner::TopLeft:     return QStringLiteral("TOP LEFT");
-    case Corner::TopRight:    return QStringLiteral("TOP RIGHT");
-    case Corner::BottomLeft:  return QStringLiteral("BOTTOM LEFT");
-    case Corner::BottomRight: return QStringLiteral("BOTTOM RIGHT");
+    // i18n: corner labels (console.corner.*) with an ASCII fallback.
+    struct Entry { Corner corner; const char *key; const char *ascii; };
+    static const Entry kCorners[] = {
+        {Corner::TopLeft,     "console.corner.topLeft",     "TOP LEFT"},
+        {Corner::TopRight,    "console.corner.topRight",    "TOP RIGHT"},
+        {Corner::BottomLeft,  "console.corner.bottomLeft",  "BOTTOM LEFT"},
+        {Corner::BottomRight, "console.corner.bottomRight", "BOTTOM RIGHT"},
+    };
+    for (const Entry &e : kCorners) {
+        if (e.corner != c)
+            continue;
+        const QString key = QString::fromLatin1(e.key);
+        const QString val = mh::tr(key);
+        return val == key ? QString::fromLatin1(e.ascii) : val;
     }
-    return QStringLiteral("UNKNOWN");
+    const QString key = QStringLiteral("console.corner.unknown");
+    const QString val = mh::tr(key);
+    return val == key ? QStringLiteral("UNKNOWN") : val;
 }
 
 } // namespace
@@ -182,7 +214,7 @@ QString HudCanvas::screenLabel() const
     // (HDMI-A-1 portrait vs DP-1 landscape, same diagonal but very
     // different layouts).
     const QString suffix = previewOutputName_.isEmpty()
-        ? QStringLiteral("primary")
+        ? mh::tr(QStringLiteral("console.canvas.primary"))   // i18n
         : previewOutputName_;
     return QStringLiteral("%1 × %2  ·  %3").arg(r.physical.width())
                                             .arg(r.physical.height())
@@ -302,8 +334,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.setFont(headFont);
     p.setPen(QColor(140, 145, 147));
     const auto &si = previewScreenInfo();
-    const QString head = QStringLiteral(
-        "LIVE HUD CANVAS  ·  %1 × %2 PHYS  ·  %3 × %4 LOGICAL  ·  DPR ×%5  ·  %6")
+    const QString head = mh::tr(QStringLiteral("console.canvas.header"))
         .arg(si.physical.width())
         .arg(si.physical.height())
         .arg(si.logical.width())
@@ -405,7 +436,8 @@ void HudCanvas::paintEvent(QPaintEvent *)
             p.setPen(QColor(170, 174, 176));
             p.setFont(QFont(QStringLiteral("Chakra Petch"), 8, QFont::Medium));
             p.drawText(target, Qt::AlignCenter,
-                       QStringLiteral("%1 · DISABLED").arg(QLatin1String(kNames[i])));
+                       mh::tr(QStringLiteral("console.canvas.disabled"))
+                           .arg(panelName(i)));
         }
 
         if (i == selected_ && s.enabled) {
@@ -416,8 +448,8 @@ void HudCanvas::paintEvent(QPaintEvent *)
 
             p.setFont(QFont(QStringLiteral("Chakra Petch"), 8, QFont::Medium));
             p.setPen(ring);
-            const QString tag = QStringLiteral("SELECTED · %1  ·  %2 PX")
-                .arg(QLatin1String(kNames[i]))
+            const QString tag = mh::tr(QStringLiteral("console.canvas.selectedTag"))
+                .arg(panelName(i))
                 .arg(int(z * cs.width()));
             const QFontMetrics fm(p.font());
             const int tagW = fm.horizontalAdvance(tag) + 14;
@@ -442,14 +474,14 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.setPen(QColor(170, 174, 176));
     p.drawText(QRectF(22, height() - 24, footLeftW, 16),
                Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("SELECTED: %1  ·  ANCHORED: %2  ·  ←→↑↓ MOVE")
-                   .arg(QLatin1String(kNames[selected_]))
+               mh::tr(QStringLiteral("console.canvas.footer"))
+                   .arg(panelName(selected_))
                    .arg(cornerLabel(selected_)));
 
     p.setPen(QColor(96, 100, 102));
     p.drawText(QRectF(22, height() - 24, width() - 44, 16),
                Qt::AlignRight | Qt::AlignVCenter,
-               QStringLiteral("SCREEN %1  ·  ZOOM ×%2  ·  DEMO DATA")
+               mh::tr(QStringLiteral("console.canvas.footerRight"))
                    .arg(screenLabel())
                    .arg(QString::number(zoom_, 'f', 1)));
 }

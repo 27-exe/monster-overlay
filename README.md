@@ -55,9 +55,31 @@ in each game state — this is observed behavior, not aspirational:
 | **In quest** | ![quest](assets/screenshots/03-in-quest.png) | All three panels active on a Coral Palace ★12 hunt against an Apex Rathalos. Live monster HP 4 855 / 43 470, per-part HP, Apex icon and enrage; damage ranking for the **3 hunters active at the snapshot moment** (a 4th joined a moment after capture). |
 | **Quest end (capture / transition)** | ![end](assets/screenshots/04-quest-end.png) | The 「発見調査班報告 / Investigation Complete」 banner with a 20-second return countdown. **All three panels stay on** here — the player panel, the **Monster** panel (still showing the post-defeat HP — *which is non-zero by design because the host hasn't zero'd the monster struct yet, e.g. capture or partial reward*), and the full **Damage** panel with the final party roster. |
 
-> All HUD text is driven by `src/resources/i18n/<locale>.json`. See
-> [`docs/I18N.md`](docs/I18N.md). The shipping locale today is `zh-CN`;
-> `en-US`/`ja-JP` slots are wired in but not yet populated.
+### Language (EN / 中文)
+
+The UI ships in **English and Simplified Chinese**, switchable **at
+runtime** — no restart:
+
+- Click the **`中文 | EN`** chip in the control console's top bar. The
+  console flips instantly; the overlay follows within ~1 second (the
+  console writes `locale=` into
+  `~/.config/monster-overlay/monster-overlay.conf`, and the overlay
+  polls that file — no IPC, no restarts, no flicker).
+- The switch covers **everything**: panel chrome, status/connection
+  lines, and the game **data names** — monster names, part names, zones
+  and ailments/abnormalities — for both World and Rise.
+- Startup precedence: `--locale <code>` → conf value → `zh-CN`, so a
+  freshly spawned overlay inherits the console's language.
+
+![Control console in English](assets/screenshots/05-control-console-en.png)
+
+English data names come from HunterPie's official `en-us.xml`; the
+Chinese side stays frozen to the pre-i18n values. Regeneration scripts
+(`scripts/gen_schema.py`, `scripts/extract_rise_monster_names.py`,
+`scripts/generate_rise_part_names.py`, `scripts/extract_rise_abnormalities.py`)
+and key-parity audits (`scripts/i18n_key_parity.py`,
+`scripts/i18n_check_tr_keys.py`) keep the two sides honest — full
+write-up in [`docs/I18N.md`](docs/I18N.md).
 
 ---
 
@@ -188,7 +210,7 @@ sudo pacman -S qt6-base qt6-declarative qt6-wayland layer-shell-qt cmake ninja
 | Flag | Meaning |
 |------|---------|
 | `-m, --map <path>` | HunterPie legacy map file (default: bundled) |
-| `--locale <code>`  | UI locale, default `zh-CN` (currently the only shipped locale) |
+| `--locale <code>`  | UI locale: `zh-CN` (default) or `en-US`. Runtime switching lives in the console's `中文 | EN` chip; the choice persists to the conf file. |
 | `--edit`           | Edit mode — no game required, demo data on the panels |
 | `--poll <ms>`      | Polling interval, default 250, range 30–5000 |
 | `--mask-player <hex32>`  | per-section mask for the player panel (default `0xFFFFFFFF` = all on) |
@@ -211,7 +233,7 @@ src/
 ├── core/                     # StringTable + shared utilities
 ├── ui/                       # Player / Monster / Damage panels + control console
 ├── memory/                   # /proc/<pid>/mem helpers + HunterPie map loader
-├── resources/i18n/           # UI strings (currently zh-CN)
+├── resources/i18n/           # per-locale UI strings (zh-CN/ en-US/, one JSON per domain)
 ├── resources/monsters/       # ailments.json, parts.json (HunterPie-derived)
 └── tests/                    # schema integrity, mask round-trip, etc.
 
@@ -230,7 +252,7 @@ docs/
 ├── ARCHITECTURE.md           # reader layering, why-proc-mem-not-injection, ptrace_scope
 ├── ASSETS.md                 # how icons/charts/fonts are loaded, how to add more
 ├── CONTROL_CONSOLE.md        # monster-control architecture + state flow
-├── I18N.md                   # adding a locale, adding a UI string
+├── I18N.md                   # runtime EN/CH switch, adding a locale/string, data-name tables
 ├── USAGE.md                  # full interaction walkthrough (drag, arrow-keys, masks)
 └── PROBE-TOOLS.md            # what each monster-probe-* does (developer-only)
 ```
@@ -311,7 +333,8 @@ this project is *also* Apache-2.0.
 - [`docs/USAGE.md`](docs/USAGE.md) — full interaction walkthrough (preview
   drag, arrow-key nudge + Shift, Ctrl-S persist, Space minimise, Esc quit,
   per-section bitmask math, `--mask-*` vs `--no-*`).
-- [`docs/I18N.md`](docs/I18N.md) — adding a UI string, adding a locale.
+- [`docs/I18N.md`](docs/I18N.md) — runtime EN/CH switch, adding a UI
+  string or a locale, data-name tables.
 - [`docs/PROBE-TOOLS.md`](docs/PROBE-TOOLS.md) — what each `monster-probe-*`
   binary does and when to use which.
 - [`docs/ASSETS.md`](docs/ASSETS.md) — icon/chart/font pipeline and

@@ -7,9 +7,15 @@ class QLabel;
 class QVariantAnimation;
 
 // R4 sub-switch: a row with three slots:
-//   [icon]  <chinese label>          <grey english key>
+//   [icon]  <localized label>        <grey ASCII key>
 // Click anywhere on the row to toggle. On = panel-accent icon (filled)
 // + bright text; off = dim grey icon (hollow) + muted text.
+//
+// i18n: the left label is UI copy (panel_sections.h displayName(), i.e.
+// console.section.*) and is replaceable at runtime via setDisplayText().
+// The right-hand key label (SectionRow::keyText_, e.g. "WEAPON") is a
+// stable identifier — the control console's tests and the mask order key
+// off it — so it is NEVER translated.
 //
 // v0.5 P2: the plain teal/grey dot is replaced by a small per-section
 // geometric glyph (drawn, not an svg/png — matches the all-QPainter
@@ -36,6 +42,12 @@ public:
 
     bool isChecked() const { return on_; }
     void setChecked(bool c);
+
+    // i18n: swap the display label in place (keeps the row, its icon, its
+    // checked state and the animation). Used by
+    // ControlPanel::retranslateUi() so a language switch relabels the
+    // existing switches instead of rebuilding the panel.
+    void setDisplayText(const QString &text);
 
     // Panel accent used for the icon's on-state colour (purple/orange/teal).
     void setAccent(const QColor &c);

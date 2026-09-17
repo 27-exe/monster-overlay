@@ -1,5 +1,7 @@
 #include "string_table.h"
 
+#include <QDebug>
+#include <QDir>
 #include <QFile>
 #include <QIODevice>
 #include <QJsonDocument>
@@ -20,38 +22,52 @@ StringTable& StringTable::instance()
 
 bool StringTable::load(const QString& locale)
 {
-    const QString path = QStringLiteral(":/i18n/%1.json").arg(locale);
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        // Missing locale: caller (main.cpp) logs a warning and the
-        // singleton continues serving empty entries — tr() returns the
-        // key string, so the UI shows the dot-path of the missing key.
+    // Each locale is a directory of domain files (see the header for the
+    // layout). Merge them into one flat table; a missing directory or an
+    // all-malformed directory fails the load and leaves the previous
+    // table untouched — tr() then keeps returning the old locale (or the
+    // key strings when nothing has ever loaded).
+    const QDir dir(QStringLiteral(":/i18n/%1").arg(locale));
+    if (!dir.exists())
         return false;
-    }
-    const QByteArray data = f.readAll();
-    f.close();
+    const QStringList files =
+        dir.entryList(QStringList{QStringLiteral("*.json")}, QDir::Files, QDir::Name);
 
-    QJsonParseError err;
-    const QJsonDocument doc = QJsonDocument::fromJson(data, &err);
-    if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-        return false;
-    }
-
-    // Recursive flatten: any object becomes a dot-path key, any string
-    // becomes a value. _meta and other metadata keys land as regular
-    // entries; that's fine — they're not "ui.*" so no caller looks them up.
     QHash<QString, QString> flat;
-    auto visit = [&](auto&& self, const QJsonObject &obj, const QString &prefix) -> void {
-        for (auto it = obj.begin(); it != obj.end(); ++it) {
-            const QString key = prefix.isEmpty() ? it.key()
-                                                 : prefix + QLatin1Char('.') + it.key();
-            if (it.value().isObject())
-                self(self, it.value().toObject(), key);
-            else if (it.value().isString())
-                flat.insert(key, it.value().toString());
+    int loadedFiles = 0;
+    for (const QString& name : files) {
+        QFile f(dir.filePath(name));
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+        const QByteArray data = f.readAll();
+        f.close();
+
+        QJsonParseError err;
+        const QJsonDocument doc = QJsonDocument::fromJson(data, &err);
+        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+            qWarning("StringTable: %s is not valid JSON (%s); skipped",
+                     qPrintable(f.fileName()), qPrintable(err.errorString()));
+            continue;
         }
-    };
-    visit(visit, doc.object(), QString());
+
+        // Recursive flatten: any object becomes a dot-path key, any string
+        // becomes a value. _meta and other metadata keys land as regular
+        // entries; that's fine — they're not looked up by callers.
+        auto visit = [&](auto&& self, const QJsonObject &obj, const QString &prefix) -> void {
+            for (auto it = obj.begin(); it != obj.end(); ++it) {
+                const QString key = prefix.isEmpty() ? it.key()
+                                                     : prefix + QLatin1Char('.') + it.key();
+                if (it.value().isObject())
+                    self(self, it.value().toObject(), key);
+                else if (it.value().isString())
+                    flat.insert(key, it.value().toString());
+            }
+        };
+        visit(visit, doc.object(), QString());
+        ++loadedFiles;
+    }
+    if (loadedFiles == 0)
+        return false;
 
     entries_ = std::move(flat);
     currentLocale_ = locale;

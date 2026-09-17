@@ -55,9 +55,29 @@ backend;NVIDIA + Wayland 走系统的 `libEGL.so`,不需要 Vulkan、不
 | **任务中** | ![任务中](assets/screenshots/03-in-quest.png) | 三块全部就位 —— 珊瑚高地 ★12,狩猎 Apex 火龙。怪物 HP 4 855 / 43 470、部位 HP、Apex 图标、激怒;**截图瞬间是 3 个在场的猎人**(第 4 个在截图后才进队)。 |
 | **任务结束(捕获 / 转场)** | ![结算](assets/screenshots/04-quest-end.png) | 「発見調査班報告 / Investigation Complete」banner,20 秒后返回据点倒计时。**三块 panel 全部保持显示** —— Player panel、Monster panel(显示任务结算时的 HP —— 因为主机端还没把怪物 struct 清零,比如捕获 / 奖励结算等场景,残留 HP 是正常行为)、完整的 Damage panel(含最终队伍名单)。 |
 
-> 所有 HUD 文案来自 `src/resources/i18n/<locale>.json`。当前 shipping
-> 的 locale 是 `zh-CN`;`en-US` / `ja-JP` 的代码位已留好,但还没翻译。
-> 详见 [`docs/I18N.md`](docs/I18N.md)。
+### 语言(EN / 中文)
+
+界面**内置简体中文与英文**,支持**运行时切换** —— 不需要重启:
+
+- 点控制台顶栏的 **`中文 | EN`** chip:控制台立即切换,悬浮窗约 1 秒
+  内跟随(控制台把 `locale=` 写进
+  `~/.config/monster-overlay/monster-overlay.conf`,悬浮窗轮询该文件 ——
+  无 IPC、无重启、无闪断)。
+- 切换覆盖**全部界面**:面板文案、状态/连接行,以及游戏**数据名** ——
+  怪物名、部位名、区域名、异常状态(含玩家增益/减益)—— World 与
+  Rise 都支持。
+- 启动优先级:`--locale <code>` → conf 存档值 → `zh-CN`;从控制台启动
+  的悬浮窗自动继承控制台当前语言。
+
+![英文界面的控制台](assets/screenshots/05-control-console-en.png)
+
+英文数据名取自 HunterPie 官方 `en-us.xml`;中文一侧保持 i18n 之前的
+冻结值。再生成脚本(`scripts/gen_schema.py`、
+`scripts/extract_rise_monster_names.py`、
+`scripts/generate_rise_part_names.py`、
+`scripts/extract_rise_abnormalities.py`)与键位核对
+(`scripts/i18n_key_parity.py`、`scripts/i18n_check_tr_keys.py`)
+保证两侧不漂移 —— 完整说明见 [`docs/I18N.md`](docs/I18N.md)。
 
 ---
 
@@ -180,7 +200,7 @@ sudo pacman -S qt6-base qt6-declarative qt6-wayland layer-shell-qt cmake ninja
 | Flag | 含义 |
 |------|------|
 | `-m, --map <path>` | HunterPie 风格的地图文件(默认是 bundled) |
-| `--locale <code>`  | UI locale,默认 `zh-CN`(目前只翻译了这一个) |
+| `--locale <code>`  | UI locale:`zh-CN`(默认)或 `en-US`。运行时切换在控制台的 `中文 | EN` chip;选择会持久化到 conf。 |
 | `--edit`           | Edit 模式 —— 不依赖活的游戏,panel 渲染 demo 数据 |
 | `--poll <ms>`      | 轮询间隔,默认 250,范围 30–5000 |
 | `--mask-player <hex32>`  | player panel 的 section 掩码(默认 `0xFFFFFFFF` = 全部开) |
@@ -203,7 +223,7 @@ src/
 ├── core/                     # StringTable + 通用工具
 ├── ui/                       # Player / Monster / Damage panel + 控制台
 ├── memory/                   # /proc/<pid>/mem helpers + HunterPie map loader
-├── resources/i18n/           # UI 文案(目前 zh-CN)
+├── resources/i18n/           # 分 locale 的 UI 文案(zh-CN/ en-US/,按域拆 JSON)
 ├── resources/monsters/       # ailments.json, parts.json(来自 HunterPie)
 └── tests/                    # schema 完整性、mask round-trip 等等
 
@@ -222,7 +242,7 @@ docs/
 ├── ARCHITECTURE.md           # reader 分层、为什么不用注入、ptrace_scope
 ├── ASSETS.md                 # 图标 / 曲线 / 字体怎么加载、怎么加新的
 ├── CONTROL_CONSOLE.md        # monster-control 的架构 + 状态流
-├── I18N.md                   # 加一个新的 locale、加一条 UI 文案
+├── I18N.md                   # 运行时 EN/CH 切换、加 locale/文案、数据名表
 ├── USAGE.md                  # 完整用法指南:按键、拖拽、preview、mask
 └── PROBE-TOOLS.md            # 每个 monster-probe-* 干什么(仅开发者用)
 ```
@@ -294,7 +314,8 @@ Apache-2.0。
 - [`docs/USAGE.md`](docs/USAGE.md) —— 完整交互手册(preview 拖拽、方向键 nudge
   + Shift 加大步、Ctrl-S 持久化、Space 折起、Esc 退出、section bitmask
   数学、`--mask-*` 与 `--no-*` 的分工)。
-- [`docs/I18N.md`](docs/I18N.md) —— 加一条 UI 文案、加一个 locale。
+- [`docs/I18N.md`](docs/I18N.md) —— 运行时 EN/CH 切换、加一条 UI 文案、
+  加一个 locale、数据名表。
 - [`docs/PROBE-TOOLS.md`](docs/PROBE-TOOLS.md) —— 每个 `monster-probe-*`
   干什么,什么场景用哪个。
 - [`docs/ASSETS.md`](docs/ASSETS.md) —— 图标 / 曲线 / 字体的加载流水线。

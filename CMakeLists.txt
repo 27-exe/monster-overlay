@@ -367,6 +367,9 @@ if(BUILD_TESTING)
     add_executable(monster-reader-tests
         tests/reader_tests.cpp
         ${MHW_READER_SOURCES}
+        # qrc: the tests flip StringTable between zh-CN / en-US to assert
+        # both columns of the data-name tables.
+        src/resources/resources.qrc
     )
     target_link_libraries(monster-reader-tests PRIVATE Qt6::Core monster-core)
     target_include_directories(monster-reader-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -454,6 +457,7 @@ if(BUILD_TESTING)
     add_executable(rise-monster-metadata-tests
         tests/rise_monster_metadata_tests.cpp
         src/monster/part_schemas.cpp
+        src/resources/resources.qrc
     )
     target_link_libraries(rise-monster-metadata-tests PRIVATE Qt6::Core)
     target_include_directories(rise-monster-metadata-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -466,6 +470,7 @@ if(BUILD_TESTING)
     add_executable(rise-monster-name-tests
         tests/rise_monster_name_tests.cpp
         src/monster/part_schemas.cpp
+        src/resources/resources.qrc
     )
     target_link_libraries(rise-monster-name-tests PRIVATE Qt6::Core monster-core)
     target_include_directories(rise-monster-name-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -474,6 +479,7 @@ if(BUILD_TESTING)
 
     add_executable(rise-part-names-hp-tests
         tests/rise_part_names_hp_tests.cpp
+        src/resources/resources.qrc
     )
     target_link_libraries(rise-part-names-hp-tests PRIVATE Qt6::Core monster-core)
     target_include_directories(rise-part-names-hp-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -491,9 +497,27 @@ if(BUILD_TESTING)
     target_compile_options(monster-core-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME monster-core-tests COMMAND monster-core-tests)
 
+    # i18n locale plumbing: conf read/write (locale_conf.h), the overlay's
+    # change-detection state machine (locale_sync.h) and the per-locale
+    # multi-file StringTable loader. Compiles the real qrc so the shipped
+    # locale files (zh-CN/ en-US/ directories) are exercised as packaged.
+    add_executable(monster-locale-tests
+        tests/locale_sync_tests.cpp
+        src/core/string_table.cpp
+        src/core/string_table.h
+        src/core/locale_conf.h
+        src/core/locale_sync.h
+        src/resources/resources.qrc
+    )
+    target_link_libraries(monster-locale-tests PRIVATE Qt6::Core)
+    target_include_directories(monster-locale-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(monster-locale-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME monster-locale-tests COMMAND monster-locale-tests)
+
     # Pure Rise stage-name regression: no game process is required.
     add_executable(rise-zone-mapping-tests
         tests/rise_zone_mapping_tests.cpp
+        src/resources/resources.qrc
     )
     target_link_libraries(rise-zone-mapping-tests PRIVATE monster-core)
     target_include_directories(rise-zone-mapping-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -505,6 +529,7 @@ if(BUILD_TESTING)
     # raw/60 conversion, MaxTimer inversion). No game process is required.
     add_executable(rise-abnormality-tests
         tests/rise_abnormality_tests.cpp
+        src/resources/resources.qrc
     )
     target_link_libraries(rise-abnormality-tests PRIVATE Qt6::Core monster-core)
     target_include_directories(rise-abnormality-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

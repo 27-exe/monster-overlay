@@ -67,6 +67,15 @@ public:
     void markDemoPrimed() { demoPrimed_ = true; }
     void resetDemoPrimed() { demoPrimed_ = false; }
 
+    // i18n — runtime locale switch entry point. Called by the overlay's
+    // conf-watch loop (src/main.cpp) right after StringTable::load()
+    // swapped the locale: strings re-read at the draw site in paintPanel()
+    // follow automatically, but everything cached at construction time
+    // (window title, demo seeds) must be re-queried here. Panels with
+    // such cached strings override this; the base version just repaints.
+    // Additive: the console's ControlPanel keeps its own retranslateUi().
+    virtual void retranslateUi() { update(); }
+
     void setVisible(bool visible);
     [[nodiscard]] QSize contentSize() const { return logicalSize_; }
 

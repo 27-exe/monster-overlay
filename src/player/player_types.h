@@ -128,4 +128,18 @@ struct PartyMemberSnapshot {
     int slot{-1};  // party slot 0-3, used for color assignment
 };
 
+// ---------------------------------------------------------------------------
+// v0.9 i18n (WS-A): locale-aware lookups for the World player-abnormality
+// tables in player_reader.cpp. Each entry keeps its frozen pre-i18n zh-CN
+// literal and carries an English column resolved from HunterPie
+// Game/World/Data/AbnormalityData.xml (Offset/DependsOn/WithValue → the
+// ABNORMALITY_* key) + the official en-us.xml Abnormalities table. The lookups
+// key rows exactly like the reader does; 0x6A0 / 0x6B0 / 0x6CC / 0x6D0 appear
+// twice and are told apart by (dependsOn, withValue). An unknown key returns
+// the offset/id as "0xNNN", matching the reader's debug style.
+// ---------------------------------------------------------------------------
+QString playerDebuffName(int offset);
+QString playerSongName(int id);
+QString playerBuffName(int offset, int dependsOn, int withValue);
+
 } // namespace mhw

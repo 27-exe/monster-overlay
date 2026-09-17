@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "mhw_reader.h"
+#include "core/string_table.h"
 #include "monster/target_selector.h"
+#include "player/player_types.h"
 #include "quest/quest_types.h"
 #include "rise/mhr_reader.h"
 #include "rise/mhr_types.h"
+#include "world/world_types.h"
 
 #include <QCoreApplication>
 #include <QTemporaryFile>
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <vector>
@@ -624,6 +628,123 @@ Address OTHER 0xCAFE # inline comment
         120.0F, 300.0F, 60.0F);
     check(missingTemporarySnapshot.timer == 0.0F && missingTemporarySnapshot.maxTimer == 0.0F,
           "Rise wirebug snapshot does not invent a temporary timer without a read");
+
+    // -----------------------------------------------------------------
+    // v0.9 i18n (WS-A): World data-name tables, both columns.
+    //
+    // The English column comes from HunterPie's official en-us.xml
+    // (Monsters/World, Monsters/Shared/Part, Stages/World, Stages/Rise,
+    // Ailments) plus Game/World/Data/MonsterData.xml and AbnormalityData.xml
+    // for the id -> AILMENT_*/ABNORMALITY_* key mapping; the zh column is the
+    // frozen pre-i18n literal for normal entries, and the official zh-cn.xml
+    // name for statePart entries (v0.9 placeholder cleanup). Every expected
+    // string here is a verbatim source value, so silently renaming a zh
+    // entry or drifting from the upstream English table fails this test.
+    // -----------------------------------------------------------------
+    mhw::StringTable &strings = mhw::StringTable::instance();
+    check(strings.load(QStringLiteral("en-US")), "en-US locale loads from the qrc");
+    check(strings.isEnglish(), "isEnglish() reports the English locale");
+
+    check(mhw::monsterDisplayName(QStringLiteral("000")) == QStringLiteral("Anjanath"),
+          "monster 000 reads as Anjanath (en)");
+    check(mhw::monsterDisplayName(QStringLiteral("101")) == QStringLiteral("Fatalis"),
+          "monster 101 reads as Fatalis (en)");
+    check(mhw::monsterDisplayName(QStringLiteral("094")) == QStringLiteral("Zinogre"),
+          "monster 094 reads as Zinogre (en)");
+    check(mhw::monsterDisplayName(QStringLiteral("999")) == QStringLiteral("999"),
+          "unknown monster key stays the raw id key (en)");
+
+    const QVector<mhw::PartSchema> jagras = mhw::kPartSchemas.value(0);
+    check(jagras.size() == 7
+              && mhw::partDisplayName(jagras[0]) == QStringLiteral("Throat")
+              && mhw::partDisplayName(jagras[1]) == QStringLiteral("Tail"),
+          "Great Jagras throat/tail read as Throat/Tail (en)");
+    check(mhw::partDisplayName(jagras[2]) == QStringLiteral("Head")
+              && jagras[2].name == QStringLiteral("头部"),
+          "part label switches column while the frozen zh literal stays in place");
+    const QVector<mhw::PartSchema> zorah = mhw::kPartSchemas.value(4);
+    check(zorah.size() == 16
+              && zorah[0].name == QStringLiteral("击退")
+              && zorah[0].statePart
+              && mhw::partDisplayName(zorah[0]) == QStringLiteral("Repel"),
+          "PART_REPEL resolves to 击退/Repel and stays a statePart entry");
+
+    // v0.9 placeholder cleanup invariant: `statePart` is frozen to the
+    // pre-cleanup `name.startsWith("PART_")` skip set (131 entries across
+    // the table) and no raw PART_* display name may remain anywhere — the
+    // reader skip therefore cannot shift a single normal-table slot index.
+    {
+        int stateParts = 0, rawPlaceholders = 0;
+        for (const QVector<mhw::PartSchema> &parts : mhw::kPartSchemas) {
+            for (const mhw::PartSchema &p : parts) {
+                if (p.statePart)
+                    ++stateParts;
+                if (QString::fromUtf8(p.name).startsWith(QStringLiteral("PART_")))
+                    ++rawPlaceholders;
+            }
+        }
+        check(stateParts == 131 && rawPlaceholders == 0,
+              "statePart keeps the frozen 131-entry skip set; no raw PART_* names remain");
+    }
+
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::AncientForest), "Ancient Forest") == 0,
+          "zone 101 reads as Ancient Forest (en)");
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::SpecialArena), "Special Arena") == 0,
+          "zone 201 reads as Special Arena (en)");
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::RiseLoc1), "Shrine Ruins") == 0,
+          "Rise hunting id 1 reads as Shrine Ruins (en)");
+    check(std::strcmp(mhw::zoneNameLocalized(static_cast<mhw::Zone>(700)), "Village") == 0,
+          "Rise village id 0 reads as Village (en)");
+
+    check(mhw::monsterAilmentDisplayName(1) == QStringLiteral("Poison")
+              && mhw::monsterAilmentDisplayName(23) == QStringLiteral("Claw Flinch"),
+          "World ailments 1/23 read as Poison/Claw Flinch (en)");
+    check(mhw::monsterAilmentDisplayName(12) == QStringLiteral("Dung Bomb"),
+          "ailment id 12 has an official English name even though the zh table omits it");
+    check(mhw::monsterAilmentDisplayName(99) == QStringLiteral("Ailment 99"),
+          "unknown ailment id keeps an explicit English fallback");
+
+    check(mhw::playerDebuffName(0x5DC) == QStringLiteral("Poison")
+              && mhw::playerDebuffName(0x63C) == QStringLiteral("Blastscourge"),
+          "player debuffs 0x5DC/0x63C read as Poison/Blastscourge (en)");
+    check(mhw::playerSongName(0x38) == QStringLiteral("Self-Improvement")
+              && mhw::playerSongName(0x118) == QStringLiteral("Elemental Effectiveness"),
+          "hunting-horn songs read from the official English table (en)");
+    check(mhw::playerBuffName(0x690, 0, 0) == QStringLiteral("Dash Juice")
+              && mhw::playerBuffName(0x764, 0, 0) == QStringLiteral("Fortify"),
+          "consumable/skill buffs read as Dash Juice/Fortify (en)");
+    check(mhw::playerBuffName(0x6A0, 0x6A4, 10) == QStringLiteral("Might Seed")
+              && mhw::playerBuffName(0x6A0, 0x6A4, 25) == QStringLiteral("Might Pill")
+              && mhw::playerBuffName(0x6D0, 0x6D8, 2) == QStringLiteral("Mega Armorskin"),
+          "the duplicate-offset rows are told apart by their WithValue precondition (en)");
+    check(mhw::playerDebuffName(0x999) == QStringLiteral("0x999"),
+          "unknown debuff offset returns a neutral hex label");
+
+    // ---- same lookups again under zh-CN: every value must be the frozen
+    // pre-i18n literal (this is the regression guard for the whole WS-A pass).
+    check(strings.load(QStringLiteral("zh-CN")), "zh-CN locale reloads");
+    check(!strings.isEnglish(), "isEnglish() is false for zh-CN");
+
+    check(mhw::monsterDisplayName(QStringLiteral("000")) == QStringLiteral("蛮颚龙")
+              && mhw::monsterDisplayName(QStringLiteral("101")) == QStringLiteral("黑龙"),
+          "monster 000/101 keep 蛮颚龙/黑龙 (zh)");
+    check(mhw::partDisplayName(jagras[0]) == QStringLiteral("喉咙")
+              && mhw::partDisplayName(jagras[6]) == QStringLiteral("尾巴"),
+          "part labels keep 喉咙/尾巴 (zh)");
+    check(mhw::partDisplayName(zorah[0]) == QStringLiteral("击退"),
+          "the cleaned PART_REPEL entry reads as 击退 (zh)");
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::WildspireWaste), "荒野大陆") == 0
+              && std::strcmp(mhw::zoneNameLocalized(mhw::Zone::RiseLoc14), "塔之秘境") == 0,
+          "zone labels keep 荒野大陆/塔之秘境 (zh)");
+    check(mhw::monsterAilmentDisplayName(1) == QStringLiteral("毒")
+              && mhw::monsterAilmentDisplayName(12) == QStringLiteral("异常12"),
+          "ailments keep 毒 and the 异常N fallback (zh)");
+    check(mhw::playerDebuffName(0x5DC) == QStringLiteral("毒")
+              && mhw::playerDebuffName(0x63C) == QStringLiteral("爆破灾祸"),
+          "player debuffs keep 毒/爆破灾祸 (zh)");
+    check(mhw::playerSongName(0x38) == QStringLiteral("自我强化")
+              && mhw::playerBuffName(0x6A0, 0x6A4, 25) == QStringLiteral("怪力药丸"),
+          "songs/buffs keep 自我强化/怪力药丸 (zh)");
 
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;

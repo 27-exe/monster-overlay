@@ -69,6 +69,12 @@ enum class Zone : int {
 };
 
 const char* zoneName(Zone zone);
+const char* zoneNameEn(Zone zone);
+// v0.9 i18n (WS-A): switch between the pre-i18n zh literals and the English
+// labels using the active StringTable locale (isEnglish()). Same ids, same
+// enum: only the returned literal changes. Callers that already cache the
+// string must re-resolve after a locale reload.
+const char* zoneNameLocalized(Zone zone);
 bool isHuntingZone(Zone zone);
 bool isPeaceZone(Zone zone);
 

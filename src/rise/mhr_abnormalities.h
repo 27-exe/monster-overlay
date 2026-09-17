@@ -12,7 +12,14 @@
 //           Generated table: mhr_abnormalities.cpp.
 //   reader  MHRPlayer.cs:395-405 (cleanup), :862-886 (conditions),
 //           MHRiseUtils.ToAbnormalitySeconds() = raw / 60.
-//   names   zh-cn.xml <Abnormalities>/Abnormality[@Id = schema.Name].
+//   names   zh-cn.xml / en-us.xml
+//           <Abnormalities>/Abnormality[@Id = schema.Name] — both columns are
+//           generated into the table (mhr_abnormalities.cpp) and selected at
+//           run time by mhw::StringTable::instance().isEnglish().
+//   ailments  MonsterData.xml <Ailments> slot ids -> AILMENT_* keys, resolved
+//           against the same two locale files (kRiseAilmentNames in
+//           mhr_abnormalities.cpp, kept in sync with the pre-i18n zh labels
+//           of src/monster/part_schemas.cpp by the generator).
 //
 // Hunting-horn songs are deliberately NOT ported: they carry
 // Category="Songs" (so neither reader list contains them) and HunterPie
@@ -57,8 +64,9 @@ enum class RiseAbnormalityKind {
 //   maxBuildup          MaxBuildup attribute of IsBuildup entries.
 struct RiseAbnormalitySchema {
     const char *id;       // schema.Id, e.g. "Consumables_ABN_DEMONDRUG"
-    const char *nameKey;  // schema.Name — zh-cn localization key
+    const char *nameKey;  // schema.Name — localization key (ABNORMALITY_*)
     const char *name;     // zh-cn display name (never nullptr/empty)
+    const char *nameEn;   // en-us display name (never nullptr/empty)
     const char *group;    // <Consumables>|<Skills>|<Foods>|<Debuffs>
     const char *flagName; // Flag enum member ("" when FlagType is None)
     RiseAbnormalityFlagType flagType;
@@ -180,5 +188,27 @@ inline RiseAbnormalityEvaluation riseEvaluateAbnormality(
 // it lives here so the offline tests can pin the format.
 QString riseAbnormalityTimerText(float timer, bool infinite, bool buildup,
                                  float maxBuildup);
+
+// ---------------------------------------------------------------------------
+// Localized display names (v0.9 i18n, WS-B).
+// ---------------------------------------------------------------------------
+
+// Locale-aware display name of one abnormality schema: the en-us.xml column
+// while mhw::StringTable::instance().isEnglish() is true, the zh-cn.xml column
+// otherwise. An empty locale (before any load()) reads as Chinese, so the
+// pre-i18n behaviour is the default.
+QString riseAbnormalityDisplayName(const RiseAbnormalitySchema &schema);
+
+// English Rise monster-ailment name for a slot id (HunterPie
+// Game/Rise/Data/MonsterData.xml <Ailments> Id 0..16, resolved through the
+// AILMENT_* key against en-us.xml). nullptr when the slot is outside the
+// table — locale-independent; see riseAilmentDisplayName() for the current
+// locale's label.
+const char *riseAilmentNameEn(int slotId);
+
+// Locale-aware Rise monster-ailment name for a slot id. Slots outside the
+// table keep the reader's historical fallback text, translated: "异常N" /
+// "Ailment N".
+QString riseAilmentDisplayName(int slotId);
 
 } // namespace mhw

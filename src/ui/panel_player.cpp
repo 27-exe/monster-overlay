@@ -70,15 +70,23 @@ float staminaDisplayValue(mhw::GameId game, float rawStamina)
 
 // Reader snapshots retain their original Mono-array slot even when `None`
 // entries are omitted from QVector. Never derive this label from vector index.
-QString wirebugSlotLabel(int slot)
+//
+// i18n: the label pair is a parameter (defaults = the historical zh
+// literals) instead of an inline tr(), because this helper lives in the
+// shared block that the Core-only reader-test target compiles without any
+// StringTable behind it. The live panel passes mh::tr("ui.wirebug_slot") /
+// mh::tr("ui.wirebug_slot_n") in at the call site.
+QString wirebugSlotLabel(int slot,
+                         const QString &plain = QStringLiteral("翔虫"),
+                         const QString &numbered = QStringLiteral("翔虫·%1"))
 {
     if (slot == 0)
-        return QStringLiteral("翔虫");
+        return plain;
     if (slot > 0 && slot < mhw::kRiseWirebugSlotCap)
-        return QStringLiteral("翔虫·%1").arg(slot + 1);
+        return numbered.arg(slot + 1);
     // Corrupt slots have no trustworthy identity. Keep the generic label
     // rather than inventing a number or indexing any source-slot storage.
-    return QStringLiteral("翔虫");
+    return plain;
 }
 
 } // namespace
@@ -86,6 +94,14 @@ QString wirebugSlotLabel(int slot)
 #if !defined(MHW_WIREBUG_SLOT_LABEL_TEST)
 
 using mhw::Icon;
+
+// i18n lookup. Defined here (ahead of the anonymous namespace) so the
+// free helpers below — questStateLabel(), zoneLabel(), the accent matchers —
+// can resolve keys exactly like paintPanel() does. Same definition as the
+// other panels; see docs/I18N.md for the "no fallback in code" rule.
+namespace mh {
+inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(key); }
+} // namespace mh
 
 namespace {
 
@@ -151,33 +167,41 @@ QColor stColor(float pct)
 
 QString questStateLabel(int state)
 {
+    // Quest state names (ui.quest_state.*). Re-queried per paint, so a
+    // locale flip shows up on the next tick without any cached state.
     switch (state) {
-    case 0:  return QStringLiteral("空闲");
-    case 1:  return QStringLiteral("接单");
-    case 2:  return QStringLiteral("进行中");
-    case 3:  return QStringLiteral("结束");
-    case 4:  return QStringLiteral("失败");
-    case 5:  return QStringLiteral("已放弃");
-    default: return QStringLiteral("状态%1").arg(state);
+    case 0:  return mh::tr("ui.quest_state.idle");
+    case 1:  return mh::tr("ui.quest_state.booked");
+    case 2:  return mh::tr("ui.quest_state.in_progress");
+    case 3:  return mh::tr("ui.quest_state.complete");
+    case 4:  return mh::tr("ui.quest_state.failed");
+    case 5:  return mh::tr("ui.quest_state.abandoned");
+    default: return mh::tr("ui.quest_state.unknown").arg(state);
     }
 }
 
 QString zoneLabel(mhw::Zone z)
 {
     if (z == mhw::Zone::Unknown)
-        return QStringLiteral("未知区域");
-    const QString name = QString::fromUtf8(mhw::zoneName(z));
+        return mh::tr("ui.zone_unknown_area");
+    // v0.9 i18n: localized table (zh: zoneName(), en: zoneNameEn()) so the
+    // zone row flips with the rest of the UI on a language switch.
+    const QString name = QString::fromUtf8(mhw::zoneNameLocalized(z));
     // v0.8.x: enum-internal ID range for peace zones (village / hub).
     // computeZoneId() returns the raw villageId (0..100) for type==4,
     // which static_cast<Zone>() then maps to integer values that
-    // overlap with no named enum entry. zoneName() returns "未知" for
-    // those, so we provide a friendlier "据点 N" fallback (bug #7 —
-    // "据点显示未知地点").
-    if (name.isEmpty() || name == QStringLiteral("未知")) {
+    // overlap with no named enum entry. zoneNameLocalized() returns
+    // "未知"/"Unknown" for those, so we provide a friendlier "据点 N"
+    // fallback (bug #7 — "据点显示未知地点"). The i18n data-name table
+    // also returns the localized "Unknown" (ui.zone_unknown), so both
+    // spellings count as "no name" — the zh literal stays for the
+    // pre-i18n table.
+    if (name.isEmpty() || name == QStringLiteral("未知")
+        || name == mh::tr("ui.zone_unknown")) {
         const int raw = static_cast<int>(z);
         if (raw >= 0 && raw <= 100)
-            return QStringLiteral("据点%1").arg(raw);
-        return QStringLiteral("区域%1").arg(raw);
+            return mh::tr("ui.zone_outpost").arg(raw);
+        return mh::tr("ui.zone_area").arg(raw);
     }
     return name;
 }
@@ -369,28 +393,47 @@ void drawPill(QPainter &p, const QRectF &box, const QColor &pc,
 //
 //   debuffAccent — default purple, overridden per ailment family.
 //   buffAccent   — default green (songs), overridden per consumable family.
+//
+// i18n: the tested value is the snapshot `name`, which comes from the
+// data-name tables and therefore flips language with the locale. Every rule
+// carries both columns: the original zh needles (unchanged) plus their EN
+// counterparts from the WS-A/B English tables. Matching is
+// case-insensitive so the EN column's capitalisation ("Blastblight",
+// "Paralysis") does not matter; the zh needles contain no ASCII letters, so
+// their matching behaviour is bit-identical to the pre-i18n code.
+bool nameHas(const QString &name, const char *needle)
+{
+    return name.contains(QString::fromUtf8(needle), Qt::CaseInsensitive);
+}
+
 QColor debuffAccent(const QString &name)
 {
     QColor pc(167, 79, 255);     // default purple
-    if (name.contains(QStringLiteral("爆破"))) pc = QColor(255, 87, 34);
-    else if (name.contains(QStringLiteral("火"))) pc = QColor(255, 87, 34);
-    else if (name.contains(QStringLiteral("防御"))) pc = QColor(255, 193, 7);
-    else if (name.contains(QStringLiteral("眠")))   pc = QColor(120, 120, 220);
-    else if (name.contains(QStringLiteral("麻")))   pc = QColor(180, 130, 220);
+    if (nameHas(name, "爆破") || nameHas(name, "blast"))
+        pc = QColor(255, 87, 34);
+    else if (nameHas(name, "火") || nameHas(name, "fire"))
+        pc = QColor(255, 87, 34);
+    else if (nameHas(name, "防御") || nameHas(name, "defen"))
+        pc = QColor(255, 193, 7);
+    else if (nameHas(name, "眠") || nameHas(name, "sleep"))
+        pc = QColor(120, 120, 220);
+    else if (nameHas(name, "麻") || nameHas(name, "paralys"))
+        pc = QColor(180, 130, 220);
     return pc;
 }
 
 QColor buffAccent(const QString &name)
 {
     QColor pc(76, 175, 80);      // default green (songs)
-    if (name.contains(QStringLiteral("鬼人")) || name.contains(QStringLiteral("攻击"))
-        || name.contains(QStringLiteral("怪力")))
+    if (nameHas(name, "鬼人") || nameHas(name, "攻击") || nameHas(name, "怪力")
+        || nameHas(name, "demon") || nameHas(name, "attack") || nameHas(name, "might"))
         pc = QColor(244, 67, 54);   // red — attack buffs
-    else if (name.contains(QStringLiteral("硬化")) || name.contains(QStringLiteral("防御"))
-             || name.contains(QStringLiteral("忍耐")))
+    else if (nameHas(name, "硬化") || nameHas(name, "防御") || nameHas(name, "忍耐")
+             || nameHas(name, "armor") || nameHas(name, "defen") || nameHas(name, "adamant"))
         pc = QColor(33, 150, 243);  // blue — defense buffs
-    else if (name.contains(QStringLiteral("冷饮")) || name.contains(QStringLiteral("热饮"))
-             || name.contains(QStringLiteral("耐")))
+    else if (nameHas(name, "冷饮") || nameHas(name, "热饮") || nameHas(name, "耐")
+             || nameHas(name, "cool drink") || nameHas(name, "hot drink")
+             || nameHas(name, "resist"))
         pc = QColor(0, 188, 212);   // cyan — elemental res
     return pc;
 }
@@ -470,10 +513,6 @@ void drawWirebug(QPainter &p, const QRectF &box, const QString &name,
 
 } // namespace
 
-namespace mh {
-inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(key); }
-} // namespace mh
-
 PlayerPanel::PlayerPanel(QWidget *parent)
     : Panel(QStringLiteral("player"), Corner::TopLeft, parent)
 {
@@ -488,6 +527,22 @@ void PlayerPanel::setGameForDemo(mhw::GameId game)
     // the new game's flavour. setEditMode(true) (which the console already
     // set during construction) causes the next paint to call it.
     resetDemoPrimed();
+    triggerUpdate();
+}
+
+void PlayerPanel::retranslateUi()
+{
+    // Cached strings first: the window title is set once in the ctor, and
+    // status_ is seeded with the demo label in edit mode (live mode
+    // refreshes it from GameSnapshot.status on every poll instead).
+    setWindowTitle(mh::tr("ui.player_title"));
+    if (editMode()) {
+        status_ = mh::tr("ui.demo.status");
+        // Drop the one-shot demo seed so the next paint re-runs
+        // setupDemoData() and rebuilds the demo labels (player name,
+        // ailment names, wirebug capsules) in the new locale.
+        resetDemoPrimed();
+    }
     triggerUpdate();
 }
 
@@ -746,14 +801,14 @@ void PlayerPanel::paintPanel(QPainter &p)
         p.setFont(tFont);
         p.setPen(QColor(255, 255, 255));
         p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("玩家 PLAYER"));
+                   mh::tr("ui.player_panel_header"));
         p.setPen(QColor(110, 110, 110));
         QFont sFont(QStringLiteral("Chakra Petch"), 9);
         sFont.setStyleStrategy(QFont::PreferAntialias);
         p.setFont(sFont);
         p.setPen(QColor(kConnRed, kConnRedG, kConnRedB));
         p.drawText(titleRect, Qt::AlignRight | Qt::AlignVCenter,
-                   QStringLiteral("○ 未连接"));
+                   mh::tr("ui.player_status_offline"));
         return;
     }
 
@@ -897,7 +952,7 @@ void PlayerPanel::paintPanel(QPainter &p)
         p.setPen(QColor(245, 246, 247));
         const QRectF titleRect(innerLeft, y, innerW, kTitleH);
         p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("玩家 PLAYER"));
+                   mh::tr("ui.player_panel_header"));
         p.setPen(QColor(110, 110, 110));
         QFont iFont(QStringLiteral("Chakra Petch"), 9);
         iFont.setStyleStrategy(QFont::PreferAntialias);
@@ -965,12 +1020,12 @@ void PlayerPanel::paintPanel(QPainter &p)
                                        ? QString::number(static_cast<qulonglong>(imageBase_), 16)
                                        : QStringLiteral("--"));
         QString right = partyCount_ > 0
-            ? QStringLiteral("%1人").arg(partyCount_)
+            ? mh::tr("ui.player_party_count").arg(partyCount_)
             : QStringLiteral("--");
         if (quest_.active && quest_.id > 0)
             right += QStringLiteral(" · #%1").arg(quest_.id);
         const QString partyLabel = right;
-        drawQrow(QStringLiteral("已连接 · %1").arg(mem),
+        drawQrow(mh::tr("ui.player_connected").arg(mem),
                      partyLabel,
                      QrowStyle{&qFontSmallL, &qFontSmallR,
                            QColor(120, 122, 124),
@@ -989,7 +1044,7 @@ void PlayerPanel::paintPanel(QPainter &p)
     // HTML v8 .qrow where zone/quest sit on independent lines.
     if (onQuest) {
         const QString zoneTxt = zoneLabel(zone_);
-        drawQrow(QStringLiteral("区域"),
+        drawQrow(mh::tr("ui.player_zone"),
                  zoneTxt,
                  QrowStyle{&qFontL, &qFontL10,
                            QColor(146, 148, 149),           // --t3 label
@@ -1018,8 +1073,8 @@ void PlayerPanel::paintPanel(QPainter &p)
                   .arg(rankPrefix)
                   .arg(starsStr)
                   .arg(questStateLabel(quest_.state))
-            : QStringLiteral("-- · 空闲");
-        drawQrow(QStringLiteral("任务"),
+            : mh::tr("ui.player_quest_idle");
+        drawQrow(mh::tr("ui.player_quest"),
                  questTxt,
                  QrowStyle{&qFontL, &qFontL10,
                            QColor(146, 148, 149),          // --t3 label
@@ -1032,7 +1087,7 @@ void PlayerPanel::paintPanel(QPainter &p)
         const QString timerTxt = quest_.active
             ? fmtMmSs(quest_.timeLeftSeconds)
             : QStringLiteral("--:--");
-        drawQrow(QStringLiteral("剩余"),
+        drawQrow(mh::tr("ui.player_time_left"),
                  timerTxt,
                  QrowStyle{&qFontL, &qFontL12,
                            QColor(146, 148, 149),
@@ -1046,7 +1101,7 @@ void PlayerPanel::paintPanel(QPainter &p)
             ? QStringLiteral("%1 / %2")
                   .arg(quest_.deaths).arg(quest_.maxDeaths)
             : QStringLiteral("0 / 3");
-        drawQrow(QStringLiteral("猫车"),
+        drawQrow(mh::tr("ui.player_carts"),
                  cart,
                  QrowStyle{&qFontL, &qFontL10,
                            QColor(146, 148, 149),
@@ -1275,7 +1330,8 @@ void PlayerPanel::paintPanel(QPainter &p)
             if (w.cooldown <= 0.001F) continue;
             const int cx = innerLeft + col * (slotW + pillGap);
             const QRectF pillRect(cx, y, slotW, kWirebugH);
-            const QString n = wirebugSlotLabel(w.slot);
+            const QString n = wirebugSlotLabel(w.slot, mh::tr("ui.wirebug_slot"),
+                                               mh::tr("ui.wirebug_slot_n"));
             drawWirebug(p, pillRect, n, w.cooldown, w.maxCooldown,
                         w.isTemporary);
             ++col;
@@ -1300,7 +1356,7 @@ void PlayerPanel::paintPanel(QPainter &p)
         p.setPen(QColor(146, 148, 149));
         const QRectF statusLabel(innerLeft, y, innerW, kQrowH);
         p.drawText(statusLabel, Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("状态"));
+                   mh::tr("ui.player_status_section"));
         p.drawText(statusLabel, Qt::AlignRight | Qt::AlignVCenter,
                    QString::number(riseStatusTotal));
         y += kQrowH;
@@ -1351,7 +1407,7 @@ void PlayerPanel::paintPanel(QPainter &p)
             const int cx    = innerLeft + colIdx * (slotW + pillGap);
             const QRectF pillRect(cx, y + rowIdx * (kPillH + 4), slotW, kPillH);
             const auto &d = player_.debuffs[i];
-            const QString n = d.name.isEmpty() ? QStringLiteral("状态") : d.name;
+            const QString n = d.name.isEmpty() ? mh::tr("ui.player_status_section") : d.name;
             const QString t = QStringLiteral("%1s").arg(static_cast<int>(d.timer));
             // Accent colour per ailment family (shared with the Rise block).
             drawPill(p, pillRect, debuffAccent(n), n, t);
@@ -1374,7 +1430,7 @@ void PlayerPanel::paintPanel(QPainter &p)
             const int cx    = innerLeft + colIdx * (slotW + pillGap);
             const QRectF pillRect(cx, y + rowIdx * (kPillH + 4), slotW, kPillH);
             const auto &b = player_.buffs[i];
-            const QString n = b.name.isEmpty() ? QStringLiteral("增益") : b.name;
+            const QString n = b.name.isEmpty() ? mh::tr("ui.player_buff_fallback") : b.name;
             const QString t = QStringLiteral("%1s").arg(static_cast<int>(b.timer));
             // Accent colour per consumable family (shared with the Rise block).
             drawPill(p, pillRect, buffAccent(n), n, t);
@@ -1395,7 +1451,7 @@ void PlayerPanel::setupDemoData()
     // rank, state, category, deaths, maxDeaths, timeLeftSeconds,
     // maxTimerSeconds, elapsedSeconds, active.
     quest_     = {66801, 6, false, 2, 2, 0, 0, 3, 2497.0F, 0.0F, 0.0F, true};
-    status_    = QStringLiteral("示例 Demo");
+    status_    = mh::tr("ui.demo.status");
     // v0.7.1: game_ now reflects the rail selection (set by switchGame
     // → setGameForDemo). Below we seed Rise-flavoured (wirebug) demo
     // state only when game_ == Rise; World stays with the original
@@ -1421,7 +1477,7 @@ void PlayerPanel::setupDemoData()
     }
     weaponId_ = 0;                // Great Sword
     playerMR_ = 247;
-    playerName_ = QStringLiteral("苍蓝星");   // demo local player name
+    playerName_ = mh::tr("ui.demo.player_name");   // demo local player name
     partyCount_ = 4;                         // demo party size
 
     // v0.7.1: demo state branched by game. World seeds mantles
@@ -1504,78 +1560,80 @@ void PlayerPanel::setupDemoData()
             player_.abnormalities.append(a);
         };
         using Kind = mhw::AbnormalityKind;
-        seedRise("ABN_POISON", QStringLiteral("中毒"),
+        // i18n: labels come from ui.demo.abn.* so the preview follows the
+        // active locale; the ids stay the schema-table ids.
+        seedRise("ABN_POISON", mh::tr("ui.demo.abn.poison"),
                  23.0F, 0.0F, Kind::Debuff, false, false);
-        seedRise("ABN_BLAST", QStringLiteral("爆炸异常"),
+        seedRise("ABN_BLAST", mh::tr("ui.demo.abn.blast"),
                  41.0F, 0.0F, Kind::Debuff, false, false);
-        seedRise("ABN_FRENZY_BUILDUP", QStringLiteral("狂龙症（增长中）"),
+        seedRise("ABN_FRENZY_BUILDUP", mh::tr("ui.demo.abn.frenzy"),
                  43.0F, 120.0F, Kind::Debuff, false, true);
-        seedRise("ABN_BLEED", QStringLiteral("裂伤"),
+        seedRise("ABN_BLEED", mh::tr("ui.demo.abn.bleed"),
                  12.0F, 0.0F, Kind::Debuff, false, false);
-        seedRise("ABN_DEMONDRUG", QStringLiteral("鬼人药"),
+        seedRise("ABN_DEMONDRUG", mh::tr("ui.demo.abn.demon_drug"),
                  1.0F, 0.0F, Kind::Buff, true, false);
-        seedRise("ABN_MIGHT_SEED", QStringLiteral("怪力种子"),
+        seedRise("ABN_MIGHT_SEED", mh::tr("ui.demo.abn.might_seed"),
                  142.0F, 0.0F, Kind::Buff, false, false);
-        seedRise("ABN_SPIRIBIRDS_CALL", QStringLiteral("提供"),
+        seedRise("ABN_SPIRIBIRDS_CALL", mh::tr("ui.demo.abn.spiribird_call"),
                  58.0F, 60.0F, Kind::Buff, false, false);
-        seedRise("ABN_BUTTERFLAME", QStringLiteral("炎火蝶"),
+        seedRise("ABN_BUTTERFLAME", mh::tr("ui.demo.abn.butterflame"),
                  95.0F, 0.0F, Kind::Buff, false, false);
-        seedRise("ABN_ARMORSKIN", QStringLiteral("硬化药"),
+        seedRise("ABN_ARMORSKIN", mh::tr("ui.demo.abn.armor_skin"),
                  1.0F, 0.0F, Kind::Buff, true, false);
     } else {
         {
             PlayerAbnormality d1;
-            d1.offset = 0; d1.name = QStringLiteral("毒");
+            d1.offset = 0; d1.name = mh::tr("ui.demo.debuff.poison");
             d1.timer = 12.0F; d1.maxTimer = 60.0F;
             player_.debuffs.append(d1);
         }
         {
             PlayerAbnormality d2;
-            d2.offset = 1; d2.name = QStringLiteral("爆破");
+            d2.offset = 1; d2.name = mh::tr("ui.demo.debuff.blast");
             d2.timer = 41.0F; d2.maxTimer = 60.0F;
             player_.debuffs.append(d2);
         }
         // Extra debuffs to demo the 3-per-row wrap into a second line.
         {
             PlayerAbnormality d3;
-            d3.offset = 2; d3.name = QStringLiteral("麻");
+            d3.offset = 2; d3.name = mh::tr("ui.demo.debuff.paralysis");
             d3.timer = 17.0F; d3.maxTimer = 30.0F;
             player_.debuffs.append(d3);
         }
         {
             PlayerAbnormality d4;
-            d4.offset = 3; d4.name = QStringLiteral("眠");
+            d4.offset = 3; d4.name = mh::tr("ui.demo.debuff.sleep");
             d4.timer = 28.0F; d4.maxTimer = 45.0F;
             player_.debuffs.append(d4);
         }
         {
             PlayerAbnormality d5;
-            d5.offset = 4; d5.name = QStringLiteral("防御DOWN");
+            d5.offset = 4; d5.name = mh::tr("ui.demo.debuff.defense_down");
             d5.timer = 60.0F; d5.maxTimer = 90.0F;
             player_.debuffs.append(d5);
         }
         // Demo buffs
         {
             PlayerAbnormality b1;
-            b1.offset = 0x3C; b1.name = QStringLiteral("攻击强化");
+            b1.offset = 0x3C; b1.name = mh::tr("ui.demo.buff.attack_up");
             b1.timer = 90.0F; b1.maxTimer = 180.0F;
             player_.buffs.append(b1);
         }
         {
             PlayerAbnormality b2;
-            b2.offset = 0x6CC; b2.name = QStringLiteral("鬼人药");
+            b2.offset = 0x6CC; b2.name = mh::tr("ui.demo.buff.demon_drug");
             b2.timer = 300.0F; b2.maxTimer = 300.0F;
             player_.buffs.append(b2);
         }
         {
             PlayerAbnormality b3;
-            b3.offset = 0x6D0; b3.name = QStringLiteral("硬化药");
+            b3.offset = 0x6D0; b3.name = mh::tr("ui.demo.buff.armor_skin");
             b3.timer = 300.0F; b3.maxTimer = 300.0F;
             player_.buffs.append(b3);
         }
         {
             PlayerAbnormality b4;
-            b4.offset = 0x690; b4.name = QStringLiteral("急奔饮料");
+            b4.offset = 0x690; b4.name = mh::tr("ui.demo.buff.dash_juice");
             b4.timer = 45.0F; b4.maxTimer = 180.0F;
             player_.buffs.append(b4);
         }

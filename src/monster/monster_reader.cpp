@@ -1,10 +1,216 @@
 #include "mhw_reader.h"
+#include "core/string_table.h"
 #include <QFile>
 #include <QIODevice>
 #include <QSet>
 #include <cmath>
 
 namespace mhw {
+
+// v0.9 i18n (WS-A): choose the part's display-name column (`name` = zh,
+// `nameEn` = en). `name` holds the frozen pre-i18n zh-CN literal for normal
+// entries and the official zh-cn.xml name for statePart entries (v0.9
+// placeholder cleanup); the skip that keeps state parts out of the snapshot
+// is driven by PartSchema::statePart, not by the name anymore (see
+// readMonsters()). Declared in monster_types.h so the reader tests can
+// assert both columns.
+QString partDisplayName(const PartSchema &ps)
+{
+    if (StringTable::instance().isEnglish() && ps.nameEn && ps.nameEn[0] != '\0')
+        return QString::fromUtf8(ps.nameEn);
+    return QString::fromUtf8(ps.name);
+}
+
+// v0.9 i18n (WS-A): locale-aware label for a World monster-ailment id. zh
+// keeps the historical "异常%1" fallback; English resolves the official name
+// and only falls back to "Ailment %1" for an id outside both tables.
+QString monsterAilmentDisplayName(int id)
+{
+    if (StringTable::instance().isEnglish())
+        return kAilmentNamesEn.value(id, QStringLiteral("Ailment %1").arg(id));
+    return kAilmentNames.value(id, QStringLiteral("异常%1").arg(id));
+}
+
+// v0.9 i18n (WS-A): World monster display name for the zero-padded
+// 3-digit key the reader builds from monster+0x12280 ("000".."101").
+// Both columns share the same 72 keys: the zh table is the frozen
+// pre-i18n column, the en table is HunterPie's official en-us.xml
+// <Monsters><World> column. An unknown key is returned unchanged, exactly
+// as the pre-i18n lookup left the key string in place. Kept at namespace
+// scope so the reader tests can assert both columns without a live game.
+QString monsterDisplayName(const QString &idKey)
+{
+    // HunterPie 421810 zh-cn.xml Id -> name. The 421810 build reads
+    // monster Id at monster+0x12280 and HunterPie's zh-cn.xml maps
+    // it to a Chinese name. Submodule:
+    //   https://github.com/HunterPie/Localization
+    // Note: the Id differs from the em\* string (e.g. em057=雷狼龙
+    // in this build; Id 94=雷狼龙 in this table; in older builds
+    // 76=雷狼龙). em\* is the source of truth, Id is just a
+    // cross-check.
+    static const QHash<QString, QString> kNameTable = {
+        // 72 entries from HunterPie/Localization zh-cn.xml (World section)
+        // Source: https://github.com/HunterPie/Localization
+        {QStringLiteral("000"), QStringLiteral("蛮颚龙")},
+        {QStringLiteral("001"), QStringLiteral("火龙")},
+        {QStringLiteral("004"), QStringLiteral("熔山龙")},
+        {QStringLiteral("007"), QStringLiteral("大贼龙")},
+        {QStringLiteral("009"), QStringLiteral("雌火龙")},
+        {QStringLiteral("010"), QStringLiteral("樱火龙")},
+        {QStringLiteral("011"), QStringLiteral("苍火龙")},
+        {QStringLiteral("012"), QStringLiteral("角龙")},
+        {QStringLiteral("013"), QStringLiteral("黑角龙")},
+        {QStringLiteral("014"), QStringLiteral("麒麟")},
+        {QStringLiteral("015"), QStringLiteral("贝希摩斯")},
+        {QStringLiteral("016"), QStringLiteral("钢龙")},
+        {QStringLiteral("017"), QStringLiteral("炎妃龙")},
+        {QStringLiteral("018"), QStringLiteral("炎王龙")},
+        {QStringLiteral("019"), QStringLiteral("熔岩龙")},
+        {QStringLiteral("020"), QStringLiteral("恐暴龙")},
+        {QStringLiteral("021"), QStringLiteral("土砂龙")},
+        {QStringLiteral("022"), QStringLiteral("爆锤龙")},
+        {QStringLiteral("023"), QStringLiteral("鹿首精")},
+        {QStringLiteral("024"), QStringLiteral("毒妖鸟")},
+        {QStringLiteral("025"), QStringLiteral("灭尽龙")},
+        {QStringLiteral("026"), QStringLiteral("冥灯龙")},
+        {QStringLiteral("027"), QStringLiteral("搔鸟")},
+        {QStringLiteral("028"), QStringLiteral("眩鸟")},
+        {QStringLiteral("029"), QStringLiteral("泥鱼龙")},
+        {QStringLiteral("030"), QStringLiteral("飞雷龙")},
+        {QStringLiteral("031"), QStringLiteral("浮空龙")},
+        {QStringLiteral("032"), QStringLiteral("风漂龙")},
+        {QStringLiteral("033"), QStringLiteral("大痹贼龙")},
+        {QStringLiteral("034"), QStringLiteral("惨爪龙")},
+        {QStringLiteral("035"), QStringLiteral("骨锤龙")},
+        {QStringLiteral("036"), QStringLiteral("尸套龙")},
+        {QStringLiteral("037"), QStringLiteral("岩贼龙")},
+        {QStringLiteral("038"), QStringLiteral("绚辉龙")},
+        {QStringLiteral("039"), QStringLiteral("爆鳞龙")},
+        {QStringLiteral("051"), QStringLiteral("古代鹿首精")},
+        {QStringLiteral("061"), QStringLiteral("轰龙")},
+        {QStringLiteral("062"), QStringLiteral("迅龙")},
+        {QStringLiteral("063"), QStringLiteral("冰牙龙")},
+        {QStringLiteral("064"), QStringLiteral("惶怒恐暴龙")},
+        {QStringLiteral("065"), QStringLiteral("碎龙")},
+        {QStringLiteral("066"), QStringLiteral("斩龙")},
+        {QStringLiteral("067"), QStringLiteral("硫斩龙")},
+        {QStringLiteral("068"), QStringLiteral("雷颚龙")},
+        {QStringLiteral("069"), QStringLiteral("水妖鸟")},
+        {QStringLiteral("070"), QStringLiteral("歼世灭尽龙")},
+        {QStringLiteral("071"), QStringLiteral("痹毒龙")},
+        {QStringLiteral("072"), QStringLiteral("浮眠龙")},
+        {QStringLiteral("073"), QStringLiteral("霜翼风漂龙")},
+        {QStringLiteral("074"), QStringLiteral("凶爪龙")},
+        {QStringLiteral("075"), QStringLiteral("雾瘴尸套龙")},
+        {QStringLiteral("076"), QStringLiteral("红莲爆鳞龙")},
+        {QStringLiteral("077"), QStringLiteral("冰鱼龙")},
+        {QStringLiteral("078"), QStringLiteral("猛牛龙")},
+        {QStringLiteral("079"), QStringLiteral("冰呪龙")},
+        {QStringLiteral("080"), QStringLiteral("溟波龙")},
+        {QStringLiteral("081"), QStringLiteral("天地煌啼龙")},
+        {QStringLiteral("087"), QStringLiteral("煌黑龙")},
+        {QStringLiteral("088"), QStringLiteral("金火龙")},
+        {QStringLiteral("089"), QStringLiteral("银火龙")},
+        {QStringLiteral("090"), QStringLiteral("黑狼鸟")},
+        {QStringLiteral("091"), QStringLiteral("金狮子")},
+        {QStringLiteral("092"), QStringLiteral("激昂金狮子")},
+        {QStringLiteral("093"), QStringLiteral("黑轰龙")},
+        {QStringLiteral("094"), QStringLiteral("雷狼龙")},
+        {QStringLiteral("095"), QStringLiteral("狱狼龙")},
+        {QStringLiteral("096"), QStringLiteral("猛爆碎龙")},
+        {QStringLiteral("097"), QStringLiteral("冥赤龙")},
+        {QStringLiteral("098"), QStringLiteral("木人桩")},
+        {QStringLiteral("099"), QStringLiteral("战痕黑狼鸟")},
+        {QStringLiteral("100"), QStringLiteral("霜刃冰牙龙")},
+        {QStringLiteral("101"), QStringLiteral("黑龙")},
+    };
+
+    // v0.9 i18n (WS-A): English column for the same 72 keys. Source:
+    // HunterPie Localization en-us.xml <Monsters><World><Monster Id=N
+    // String="..."/> (sha256 661d58b5...), key = the zero-padded Id read
+    // at monster+0x12280 — identical to the zh column's key scheme. The
+    // zh table above is untouched; isEnglish() picks the column.
+    static const QHash<QString, QString> kNameTableEn = {
+        {QStringLiteral("000"), QStringLiteral("Anjanath")},
+        {QStringLiteral("001"), QStringLiteral("Rathalos")},
+        {QStringLiteral("004"), QStringLiteral("Zorah Magdaros")},
+        {QStringLiteral("007"), QStringLiteral("Great Jagras")},
+        {QStringLiteral("009"), QStringLiteral("Rathian")},
+        {QStringLiteral("010"), QStringLiteral("Pink Rathian")},
+        {QStringLiteral("011"), QStringLiteral("Azure Rathalos")},
+        {QStringLiteral("012"), QStringLiteral("Diablos")},
+        {QStringLiteral("013"), QStringLiteral("Black Diablos")},
+        {QStringLiteral("014"), QStringLiteral("Kirin")},
+        {QStringLiteral("015"), QStringLiteral("Behemoth")},
+        {QStringLiteral("016"), QStringLiteral("Kushala Daora")},
+        {QStringLiteral("017"), QStringLiteral("Lunastra")},
+        {QStringLiteral("018"), QStringLiteral("Teostra")},
+        {QStringLiteral("019"), QStringLiteral("Lavasioth")},
+        {QStringLiteral("020"), QStringLiteral("Deviljho")},
+        {QStringLiteral("021"), QStringLiteral("Barroth")},
+        {QStringLiteral("022"), QStringLiteral("Uragaan")},
+        {QStringLiteral("023"), QStringLiteral("Leshen")},
+        {QStringLiteral("024"), QStringLiteral("Pukei-Pukei")},
+        {QStringLiteral("025"), QStringLiteral("Nergigante")},
+        {QStringLiteral("026"), QStringLiteral("Xeno'jiiva")},
+        {QStringLiteral("027"), QStringLiteral("Kulu-Ya-Ku")},
+        {QStringLiteral("028"), QStringLiteral("Tzitzi-Ya-Ku")},
+        {QStringLiteral("029"), QStringLiteral("Jyuratodus")},
+        {QStringLiteral("030"), QStringLiteral("Tobi-Kadachi")},
+        {QStringLiteral("031"), QStringLiteral("Paolumu")},
+        {QStringLiteral("032"), QStringLiteral("Legiana")},
+        {QStringLiteral("033"), QStringLiteral("Great Girros")},
+        {QStringLiteral("034"), QStringLiteral("Odogaron")},
+        {QStringLiteral("035"), QStringLiteral("Radobaan")},
+        {QStringLiteral("036"), QStringLiteral("Vaal Hazak")},
+        {QStringLiteral("037"), QStringLiteral("Dodogama")},
+        {QStringLiteral("038"), QStringLiteral("Kulve Taroth")},
+        {QStringLiteral("039"), QStringLiteral("Bazelgeuse")},
+        {QStringLiteral("051"), QStringLiteral("Ancient Leshen")},
+        {QStringLiteral("061"), QStringLiteral("Tigrex")},
+        {QStringLiteral("062"), QStringLiteral("Nargacuga")},
+        {QStringLiteral("063"), QStringLiteral("Barioth")},
+        {QStringLiteral("064"), QStringLiteral("Savage Deviljho")},
+        {QStringLiteral("065"), QStringLiteral("Brachydios")},
+        {QStringLiteral("066"), QStringLiteral("Glavenus")},
+        {QStringLiteral("067"), QStringLiteral("Acidic Glavenus")},
+        {QStringLiteral("068"), QStringLiteral("Fulgur Anjanath")},
+        {QStringLiteral("069"), QStringLiteral("Coral Pukei-Pukei")},
+        {QStringLiteral("070"), QStringLiteral("Ruiner Nergigante")},
+        {QStringLiteral("071"), QStringLiteral("Viper Tobi-Kadachi")},
+        {QStringLiteral("072"), QStringLiteral("Nightshade Paolumu")},
+        {QStringLiteral("073"), QStringLiteral("Shrieking Legiana")},
+        {QStringLiteral("074"), QStringLiteral("Ebony Odogaron")},
+        {QStringLiteral("075"), QStringLiteral("Blackveil Vaal Hazak")},
+        {QStringLiteral("076"), QStringLiteral("Seething Bazelgeuse")},
+        {QStringLiteral("077"), QStringLiteral("Beotodus")},
+        {QStringLiteral("078"), QStringLiteral("Banbaro")},
+        {QStringLiteral("079"), QStringLiteral("Velkhana")},
+        {QStringLiteral("080"), QStringLiteral("Namielle")},
+        {QStringLiteral("081"), QStringLiteral("Shara Ishvalda")},
+        {QStringLiteral("087"), QStringLiteral("Alatreon")},
+        {QStringLiteral("088"), QStringLiteral("Gold Rathian")},
+        {QStringLiteral("089"), QStringLiteral("Silver Rathalos")},
+        {QStringLiteral("090"), QStringLiteral("Yian Garuga")},
+        {QStringLiteral("091"), QStringLiteral("Rajang")},
+        {QStringLiteral("092"), QStringLiteral("Furious Rajang")},
+        {QStringLiteral("093"), QStringLiteral("Brute Tigrex")},
+        {QStringLiteral("094"), QStringLiteral("Zinogre")},
+        {QStringLiteral("095"), QStringLiteral("Stygian Zinogre")},
+        {QStringLiteral("096"), QStringLiteral("Raging Brachydios")},
+        {QStringLiteral("097"), QStringLiteral("Safi'jiiva")},
+        {QStringLiteral("098"), QStringLiteral("Training Dummy")},
+        {QStringLiteral("099"), QStringLiteral("Scarred Yian Garuga")},
+        {QStringLiteral("100"), QStringLiteral("Frostfang Barioth")},
+        {QStringLiteral("101"), QStringLiteral("Fatalis")},
+    };
+
+    const QHash<QString, QString> &table = StringTable::instance().isEnglish()
+        ? kNameTableEn
+        : kNameTable;
+    const auto it = table.find(idKey);
+    return it == table.end() ? idKey : *it;
+}
 
 void MhwReader::readMonsterAilments(MonsterSnapshot &monster)
 {
@@ -62,7 +268,9 @@ void MhwReader::readMonsterAilments(MonsterSnapshot &monster)
 
         MonsterAilmentSnapshot ail;
         ail.id = header.id;
-        ail.name = kAilmentNames.value(header.id, QStringLiteral("异常%1").arg(header.id));
+        // v0.9 i18n (WS-A): the two columns are disjoint tables; the locale
+        // picks one (see monsterAilmentDisplayName in this file).
+        ail.name = monsterAilmentDisplayName(header.id);
         // v0.8.4-r23: HunterPie never gates the timer on the struct's
         // IsActive word — MHWMonsterAilment.Update stores Timer =
         // data.Duration and the UI derives "timer running" from Timer > 0
@@ -437,11 +645,15 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 // transitions (e.g. 煌啼龙 stone-shedding, 煌黑龙 gold
                 // shell, 雪人防冰雪, 冰呪龍冰甲) but are NOT displayed on
                 // the overlay. Also skip "PART_UNKNOWN" sentinels.
-                // Rationale: kPartSchemas is auto-generated from the raw
-                // HunterPie XML which contains these enum-named entries
-                // verbatim. Showing them confuses users — they want to see
-                // "头部/身体/尾巴", not "PART_HEAD_ROCK".
-                if (QString::fromUtf8(ps.name).startsWith(QStringLiteral("PART_"))) {
+                //
+                // v0.9 placeholder cleanup: the skip is now driven by the
+                // generated `statePart` flag instead of the old
+                // name.startsWith("PART_") test — those entries carry real
+                // display names now (击退/胸部/排气管（中）…). The flag is
+                // frozen to the legacy skip set by scripts/gen_schema.py,
+                // so this branch and the normal-table slot indexing below
+                // are byte-identical with the pre-cleanup behaviour.
+                if (ps.statePart) {
                     continue;
                 }
 
@@ -486,7 +698,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                             // Raw Counter is the observed small-flinch count;
                             // major-break count is not yet decoded, so keep the
                             // localized base name free of a false "N/M破" suffix.
-                            const QString pname = QString::fromUtf8(ps.name);
+                            const QString pname = partDisplayName(ps);
                             // pname is static but recomputed every tick to
                             // avoid stale per-part name cache state.
                             p.name = pname.isEmpty()
@@ -553,7 +765,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                     // Raw Counter is the observed small-flinch count;
                     // major-break count is not yet decoded, so do not derive
                     // an "N/M破" suffix from this field.
-                    const QString pname = QString::fromUtf8(ps.name);
+                    const QString pname = partDisplayName(ps);
                     // Always use the localized base name. It is deliberately
                     // not decorated with live Counter-derived text.
                     p.name = pname.isEmpty()
@@ -614,93 +826,7 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 QString displayName = QStringLiteral("%1").arg(hunterId, 3, 10, QLatin1Char('0'));
 
 
-        // HunterPie 421810 zh-cn.xml Id -> name. The 421810 build reads
-        // monster Id at monster+0x12280 and HunterPie's zh-cn.xml maps
-        // it to a Chinese name. Submodule:
-        //   https://github.com/HunterPie/Localization
-        // Note: the Id differs from the em\* string (e.g. em057=雷狼龙
-        // in this build; Id 94=雷狼龙 in this table; in older builds
-        // 76=雷狼龙). em\* is the source of truth, Id is just a
-        // cross-check.
-        static const QHash<QString, QString> kNameTable = {
-            // 72 entries from HunterPie/Localization zh-cn.xml (World section)
-            // Source: https://github.com/HunterPie/Localization
-            {QStringLiteral("000"), QStringLiteral("蛮颚龙")},
-            {QStringLiteral("001"), QStringLiteral("火龙")},
-            {QStringLiteral("004"), QStringLiteral("熔山龙")},
-            {QStringLiteral("007"), QStringLiteral("大贼龙")},
-            {QStringLiteral("009"), QStringLiteral("雌火龙")},
-            {QStringLiteral("010"), QStringLiteral("樱火龙")},
-            {QStringLiteral("011"), QStringLiteral("苍火龙")},
-            {QStringLiteral("012"), QStringLiteral("角龙")},
-            {QStringLiteral("013"), QStringLiteral("黑角龙")},
-            {QStringLiteral("014"), QStringLiteral("麒麟")},
-            {QStringLiteral("015"), QStringLiteral("贝希摩斯")},
-            {QStringLiteral("016"), QStringLiteral("钢龙")},
-            {QStringLiteral("017"), QStringLiteral("炎妃龙")},
-            {QStringLiteral("018"), QStringLiteral("炎王龙")},
-            {QStringLiteral("019"), QStringLiteral("熔岩龙")},
-            {QStringLiteral("020"), QStringLiteral("恐暴龙")},
-            {QStringLiteral("021"), QStringLiteral("土砂龙")},
-            {QStringLiteral("022"), QStringLiteral("爆锤龙")},
-            {QStringLiteral("023"), QStringLiteral("鹿首精")},
-            {QStringLiteral("024"), QStringLiteral("毒妖鸟")},
-            {QStringLiteral("025"), QStringLiteral("灭尽龙")},
-            {QStringLiteral("026"), QStringLiteral("冥灯龙")},
-            {QStringLiteral("027"), QStringLiteral("搔鸟")},
-            {QStringLiteral("028"), QStringLiteral("眩鸟")},
-            {QStringLiteral("029"), QStringLiteral("泥鱼龙")},
-            {QStringLiteral("030"), QStringLiteral("飞雷龙")},
-            {QStringLiteral("031"), QStringLiteral("浮空龙")},
-            {QStringLiteral("032"), QStringLiteral("风漂龙")},
-            {QStringLiteral("033"), QStringLiteral("大痹贼龙")},
-            {QStringLiteral("034"), QStringLiteral("惨爪龙")},
-            {QStringLiteral("035"), QStringLiteral("骨锤龙")},
-            {QStringLiteral("036"), QStringLiteral("尸套龙")},
-            {QStringLiteral("037"), QStringLiteral("岩贼龙")},
-            {QStringLiteral("038"), QStringLiteral("绚辉龙")},
-            {QStringLiteral("039"), QStringLiteral("爆鳞龙")},
-            {QStringLiteral("051"), QStringLiteral("古代鹿首精")},
-            {QStringLiteral("061"), QStringLiteral("轰龙")},
-            {QStringLiteral("062"), QStringLiteral("迅龙")},
-            {QStringLiteral("063"), QStringLiteral("冰牙龙")},
-            {QStringLiteral("064"), QStringLiteral("惶怒恐暴龙")},
-            {QStringLiteral("065"), QStringLiteral("碎龙")},
-            {QStringLiteral("066"), QStringLiteral("斩龙")},
-            {QStringLiteral("067"), QStringLiteral("硫斩龙")},
-            {QStringLiteral("068"), QStringLiteral("雷颚龙")},
-            {QStringLiteral("069"), QStringLiteral("水妖鸟")},
-            {QStringLiteral("070"), QStringLiteral("歼世灭尽龙")},
-            {QStringLiteral("071"), QStringLiteral("痹毒龙")},
-            {QStringLiteral("072"), QStringLiteral("浮眠龙")},
-            {QStringLiteral("073"), QStringLiteral("霜翼风漂龙")},
-            {QStringLiteral("074"), QStringLiteral("凶爪龙")},
-            {QStringLiteral("075"), QStringLiteral("雾瘴尸套龙")},
-            {QStringLiteral("076"), QStringLiteral("红莲爆鳞龙")},
-            {QStringLiteral("077"), QStringLiteral("冰鱼龙")},
-            {QStringLiteral("078"), QStringLiteral("猛牛龙")},
-            {QStringLiteral("079"), QStringLiteral("冰呪龙")},
-            {QStringLiteral("080"), QStringLiteral("溟波龙")},
-            {QStringLiteral("081"), QStringLiteral("天地煌啼龙")},
-            {QStringLiteral("087"), QStringLiteral("煌黑龙")},
-            {QStringLiteral("088"), QStringLiteral("金火龙")},
-            {QStringLiteral("089"), QStringLiteral("银火龙")},
-            {QStringLiteral("090"), QStringLiteral("黑狼鸟")},
-            {QStringLiteral("091"), QStringLiteral("金狮子")},
-            {QStringLiteral("092"), QStringLiteral("激昂金狮子")},
-            {QStringLiteral("093"), QStringLiteral("黑轰龙")},
-            {QStringLiteral("094"), QStringLiteral("雷狼龙")},
-            {QStringLiteral("095"), QStringLiteral("狱狼龙")},
-            {QStringLiteral("096"), QStringLiteral("猛爆碎龙")},
-            {QStringLiteral("097"), QStringLiteral("冥赤龙")},
-            {QStringLiteral("098"), QStringLiteral("木人桩")},
-            {QStringLiteral("099"), QStringLiteral("战痕黑狼鸟")},
-            {QStringLiteral("100"), QStringLiteral("霜刃冰牙龙")},
-            {QStringLiteral("101"), QStringLiteral("黑龙")},
-        };
-        const auto it = kNameTable.find(displayName);
-        if (it != kNameTable.end())
-            displayName = *it;
+        displayName = monsterDisplayName(displayName);
 
 
         MonsterSnapshot m;

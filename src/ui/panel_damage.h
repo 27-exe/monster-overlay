@@ -23,6 +23,10 @@ public:
     // the first valid snapshot switches it over to the normal chart.
     void updateRiseDamage(const mhw::RiseDamageSnapshot &dmg);
 
+    // i18n: window title + demo party labels are cached; the rest of the
+    // panel reads tr() at the draw site. Called after a locale swap.
+    void retranslateUi() override;
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;

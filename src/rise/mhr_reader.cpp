@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Core offsets and structures are derived from HunterPie/HunterPie (Apache-2.0).
 
+#include "core/string_table.h"
 #include "rise/mhr_reader.h"
 #include "rise/mhr_abnormalities.h"
 #include "rise/mhr_monster_names.h"
@@ -18,6 +19,11 @@ namespace mhw {
 
 namespace {
 constexpr std::uintptr_t kPointerSize = sizeof(std::uintptr_t);
+
+// i18n (integration): locale-aware status strings — the snapshot status is
+// rendered verbatim by the player panel, so it must flip with the UI locale.
+// Mirrors mhw_reader.cpp's trMessage pattern.
+inline QString trMessage(const QString &key) { return StringTable::instance().tr(key); }
 
 // v0.8.4-r7 restore-reader: zone translation. The returned int is
 // cast into mhw::Zone in poll(). World zones occupy 1xx/3xx/4xx/5xx
@@ -198,7 +204,7 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
     if (!pid) {
         memory_.detach();
         imageBase_ = 0;
-        snapshot.status = QStringLiteral("等待 MonsterHunterRise.exe");
+        snapshot.status = trMessage(QStringLiteral("ui.reader.rise_waiting"));
         return false;
     }
 
@@ -206,7 +212,8 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
         QString error;
         if (!memory_.attach(*pid, &error)) {
             snapshot.pid = *pid;
-            snapshot.status = QStringLiteral("已发现 PID %1，但无法附加：%2").arg(*pid).arg(error);
+            snapshot.status = trMessage(QStringLiteral("ui.reader.rise_attach_failed"))
+                                  .arg(*pid).arg(error);
             return false;
         }
         imageBase_ = memory_.imageBase(&error, QStringLiteral("monsterhunterrise.exe"));
@@ -220,7 +227,7 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
     snapshot.attached = true;
     snapshot.pid = *pid;
     snapshot.imageBase = imageBase_;
-    snapshot.status = QStringLiteral("MHR 已连接 · PID %1 · BASE 0x%2")
+    snapshot.status = trMessage(QStringLiteral("ui.reader.rise_connected"))
                           .arg(*pid)
                           .arg(static_cast<qulonglong>(imageBase_), 0, 16);
     return true;
@@ -469,7 +476,11 @@ void MhrReader::readMonsterAilments(std::uintptr_t monster, MonsterSnapshot &sna
             continue;
 
         ail.active = ail.timer > 0.0F;
-        ail.name = kRiseAilmentNames.value(i, QStringLiteral("异常%1").arg(i));
+        // v0.9 i18n (WS-B): locale-aware slot label — en-us.xml while the
+        // StringTable is on an English locale, otherwise the pre-i18n zh
+        // label (the table lives in rise/mhr_abnormalities.cpp and is
+        // verified against src/monster/part_schemas.cpp by its generator).
+        ail.name = riseAilmentDisplayName(i);
         snapshot.ailments.push_back(ail);
     }
 }
@@ -562,9 +573,11 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
         // v0.8.4-r19 monster-identity: official localized name. The id read
         // above is the same schema Id HunterPie resolves as
         // `//Strings/Monsters/Rise/Monster[@Id='{Id}']` (MHRMonster.cs:46-48);
-        // the table is generated verbatim from HunterPie's zh-cn.xml. Ids the
-        // localization file has no entry for (the upstream gaps 47..75 /
-        // 99..106) keep the numeric placeholder.
+        // the table is generated verbatim from HunterPie's zh-cn.xml and
+        // en-us.xml, and riseMonsterName() picks the column for the active
+        // locale (v0.9 i18n, WS-B). Ids the localization files have no entry
+        // for (the upstream gaps 47..75 / 99..106) keep the numeric
+        // placeholder.
         if (const char *localizedName = riseMonsterName(*idOpt))
             snapshot.internalName = QString::fromUtf8(localizedName);
         else
@@ -900,7 +913,9 @@ void appendRiseAbnormalities(const ProcessMemory &memory,
 
         PlayerAbnormalitySnapshot entry;
         entry.id = QString::fromUtf8(schema.id);
-        entry.name = QString::fromUtf8(schema.name);
+        // v0.9 i18n (WS-B): locale-aware schema name (zh/en columns of the
+        // generated table).
+        entry.name = riseAbnormalityDisplayName(schema);
         entry.timer = evaluation.timer;
         entry.kind = schema.kind == RiseAbnormalityKind::Debuff
             ? AbnormalityKind::Debuff
@@ -1097,7 +1112,7 @@ GameSnapshot MhrReader::poll()
     snapshot.isMultiplayer = false;
 
     if (!error.isEmpty() && snapshot.monsters.isEmpty())
-        snapshot.status += QStringLiteral(" · 部分读取失败: %1").arg(error);
+        snapshot.status += trMessage(QStringLiteral("ui.reader.partial_read_failed")).arg(error);
     return snapshot;
 }
 

@@ -13,6 +13,8 @@
 // regenerated from a different file, the spot values below stop matching.
 
 #include "monster/monster_types.h"
+#include "core/string_table.h"
+#include "rise/mhr_abnormalities.h"
 #include "rise/mhr_monster_names.h"
 #include "rise/mhr_types.h"
 
@@ -99,6 +101,77 @@ int main(int argc, char **argv)
         check(mhw::riseMonsterName(id) == name, "lookup is stable");
     }
     check(named == 79, "0..115 carries exactly the 79 upstream names");
+
+    // ------------------------------------------------------------------
+    // 1b. Locale-aware columns (v0.9 i18n, WS-B)
+    // ------------------------------------------------------------------
+    // The table now carries the zh-cn.xml and en-us.xml columns;
+    // riseMonsterName() picks by mhw::StringTable::instance().isEnglish()
+    // (empty locale = Chinese, i.e. the pre-i18n behaviour) and
+    // riseMonsterNameEn() is locale-independent, so the en data can be
+    // asserted without touching the process-global locale.
+    mhw::StringTable &strings = mhw::StringTable::instance();
+    check(!strings.isEnglish(), "empty locale reads as Chinese by default");
+
+    check(std::string(mhw::riseMonsterNameEn(0)) == "Rathian",
+          "en column: Rise id 0 = Rathian (en-us.xml)");
+    check(std::string(mhw::riseMonsterNameEn(1)) == "Apex Rathian",
+          "en column: Rise id 1 = Apex Rathian");
+    check(std::string(mhw::riseMonsterNameEn(76)) == "Gold Rathian",
+          "en column: Rise id 76 = Gold Rathian");
+    check(std::string(mhw::riseMonsterNameEn(107)) == "Risen Kushala Daora",
+          "en column: Rise id 107 = Risen Kushala Daora");
+    check(std::string(mhw::riseMonsterNameEn(115)) == "Amatsu",
+          "en column: Rise id 115 = Amatsu");
+    check(mhw::riseMonsterNameEn(47) == nullptr,
+          "en column: the upstream id gap 47 stays a miss");
+
+    // The zh column of the generated Rise ailment table must equal the
+    // pre-i18n kRiseAilmentNames labels owned by src/monster/part_schemas.cpp
+    // (this binary links that table, so the two copies are cross-checked).
+    bool ailmentZhMatchesPartSchemas = true;
+    bool ailmentEnFilled = true;
+    for (int slot = 0; slot <= 16; ++slot) {
+        if (mhw::riseAilmentDisplayName(slot) != mhw::kRiseAilmentNames.value(slot))
+            ailmentZhMatchesPartSchemas = false;
+        if (mhw::riseAilmentNameEn(slot) == nullptr
+            || mhw::riseAilmentNameEn(slot)[0] == '\0')
+            ailmentEnFilled = false;
+    }
+    check(ailmentZhMatchesPartSchemas,
+          "Rise ailment zh column equals kRiseAilmentNames (src/monster/part_schemas.cpp)");
+    check(ailmentEnFilled, "Rise ailment table carries an en label for every slot 0..16");
+
+    // Flip the process-global locale: the lookup must switch to en-US.
+    check(strings.load(QStringLiteral("en-US")), "en-US loads from the bundled qrc");
+    check(strings.isEnglish(), "isEnglish() true after loading en-US");
+    checkName(0, "Rathian", "en-US: id 0 = Rathian");
+    checkName(1, "Apex Rathian", "en-US: id 1 = Apex Rathian");
+    checkName(14, "Barioth", "en-US: id 14 = Barioth");
+    checkName(76, "Gold Rathian", "en-US: id 76 = Gold Rathian");
+    checkName(92, "Seething Bezelgeuse", "en-US: id 92 keeps the verbatim en-us.xml spelling");
+    checkName(94, "Lunagaron", "en-US: id 94 = Lunagaron");
+    checkName(107, "Risen Kushala Daora", "en-US: id 107 = Risen Kushala Daora");
+    checkName(115, "Amatsu", "en-US: id 115 = Amatsu");
+    check(mhw::riseMonsterName(47) == nullptr, "en-US: the upstream id gap stays a miss");
+    check(mhw::riseAilmentDisplayName(0) == QStringLiteral("Paralysis"),
+          "en-US: ailment slot 0 renders Paralysis");
+    check(mhw::riseAilmentDisplayName(16) == QStringLiteral("Steel Fang"),
+          "en-US: ailment slot 16 renders Steel Fang");
+
+    // Restore the default locale and re-assert the original zh values.
+    check(strings.load(QStringLiteral("zh-CN")), "zh-CN loads again");
+    check(!strings.isEnglish(), "isEnglish() false after restoring zh-CN");
+    checkName(0, "雌火龙", "zh-CN restored: id 0 = 雌火龙");
+    checkName(1, "霸主·雌火龙", "zh-CN restored: id 1 = 霸主·雌火龙");
+    checkName(76, "金火龙", "zh-CN restored: id 76 = 金火龙");
+    checkName(92, "红莲爆鳞龙", "zh-CN restored: id 92 = 红莲爆鳞龙");
+    checkName(107, "怪异克服钢龙", "zh-CN restored: id 107 = 怪异克服钢龙");
+    checkName(115, "岚龙", "zh-CN restored: id 115 = 岚龙");
+    check(mhw::riseAilmentDisplayName(0) == QStringLiteral("麻痹")
+              && mhw::riseAilmentDisplayName(3) == QStringLiteral("闪光")
+              && mhw::riseAilmentDisplayName(16) == QStringLiteral("钢龙毒"),
+          "zh-CN restored: ailment slots 0/3/16 unchanged");
 
     // ------------------------------------------------------------------
     // 2. Rise crown ratio (MHRSizeStructure product)

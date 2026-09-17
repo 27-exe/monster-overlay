@@ -1,7 +1,10 @@
 <!DOCTYPE RCC>
 <RCC version="1.0">
     <qresource prefix="/">
-        <file>i18n/zh-CN.json</file>
+        <file>i18n/zh-CN/overlay.json</file>
+        <file>i18n/zh-CN/console.json</file>
+        <file>i18n/en-US/overlay.json</file>
+        <file>i18n/en-US/console.json</file>
         <file>monsters/parts.json</file>
         <file>monsters/ailments.json</file>
     </qresource>

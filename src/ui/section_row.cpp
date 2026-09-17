@@ -53,6 +53,15 @@ void SectionRow::setAccent(const QColor &c)
     update();
 }
 
+void SectionRow::setDisplayText(const QString &text)
+{
+    // i18n: swap the display label in place. The right-hand key label is
+    // intentionally left alone (stable ASCII identifier, see section_row.h).
+    zhText_ = text;
+    if (zh_)
+        zh_->setText(zhText_);
+}
+
 void SectionRow::refreshTheme()
 {
     if (!zh_ || !key_)

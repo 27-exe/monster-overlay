@@ -1,5 +1,7 @@
 #include "core/game_detector.h"
 #include "core/game_snapshot.h"
+#include "core/locale_conf.h"
+#include "core/locale_sync.h"
 #include "core/string_table.h"
 #include "monster/monster_types.h"
 #include "mhw_reader.h"
@@ -13,6 +15,7 @@
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
@@ -215,11 +218,22 @@ int main(int argc, char **argv)
     parser.addOption(outputDamageOption);
     parser.process(app);
 
-    if (!mhw::StringTable::instance().load(
-            parser.isSet(localeOption) ? parser.value(localeOption)
-                                        : QStringLiteral("zh-CN"))) {
-        qWarning() << "Failed to load UI strings; falling back to key names.";
+    // i18n startup locale, priority: --locale > conf(locale= row) > zh-CN.
+    // The console is the sole writer of the conf (core/locale_conf.h);
+    // the overlay only reads it here and in the poll loop below.
+    const QString confPath = mhw::localeConfPath();
+    QString startupLocale = parser.value(localeOption);
+    if (startupLocale.isEmpty())
+        startupLocale = mhw::readLocaleFromConf(confPath);
+    if (startupLocale.isEmpty())
+        startupLocale = QStringLiteral("zh-CN");
+    if (!mhw::StringTable::instance().load(startupLocale)) {
+        qWarning() << "Failed to load UI strings for" << startupLocale
+                   << "; falling back to key names.";
     }
+    // Prime the change detector AFTER the startup decision so the first
+    // poll cannot undo --locale with a pre-existing conf value.
+    mhw::LocaleSyncState localeSync = mhw::localeSyncInit(confPath);
 
     const bool editMode = parser.isSet(editOption);
     const int pollMs = qBound(30, parser.value(pollOption).toInt(), 5000);
@@ -323,7 +337,44 @@ int main(int argc, char **argv)
     std::uintptr_t displayedMonsterAddress = 0;
     QTimer timer;
 
+    // i18n: runtime locale switch. The console is the only writer of the
+    // `locale=` row in monster-overlay.conf; we poll the file from the tick
+    // below, throttled to ~1 Hz (a locale flip is a once-per-session event,
+    // so 1 s of latency is fine — see core/locale_sync.h). On a change:
+    // reload the StringTable, re-set the window titles, let every panel
+    // re-query its cached strings (Panel::retranslateUi), then repaint.
+    // No process restart, no IPC.
+    QElapsedTimer localePollClock;
+    localePollClock.start();
+    auto applyLocale = [&](const QString &next) {
+        if (!mhw::StringTable::instance().load(next)) {
+            qWarning("Locale '%s' failed to load; keeping '%s'",
+                     qPrintable(next),
+                     qPrintable(mhw::StringTable::instance().currentLocale()));
+            return;
+        }
+        qInfo("UI locale -> %s", qPrintable(next));
+        auto &table = mhw::StringTable::instance();
+        playerPanel.setWindowTitle(table.tr(QStringLiteral("ui.player_title")));
+        monsterPanel.setWindowTitle(table.tr(QStringLiteral("ui.monster_title")));
+        damagePanel.setWindowTitle(table.tr(QStringLiteral("ui.damage_title")));
+        playerPanel.retranslateUi();
+        monsterPanel.retranslateUi();
+        damagePanel.retranslateUi();
+    };
+
     QObject::connect(&timer, &QTimer::timeout, [&] {
+        // i18n: conf poll. Cheap no-op in the steady state (one mtime stat),
+        // so it can sit in front of the exception barrier — a locale flip
+        // must still land when the game read path is throwing.
+        if (localePollClock.elapsed() >= 1000) {
+            localePollClock.restart();
+            const QString nextLocale = mhw::localeSyncPoll(
+                localeSync, confPath, mhw::StringTable::instance().currentLocale());
+            if (!nextLocale.isEmpty())
+                applyLocale(nextLocale);
+        }
+
         // C1 (v0.7.5 audit): exception barrier around the entire tick.
         // Any unexpected throw from the read path (bad_alloc in a
         // readArray that slipped past its clamp, std::bad_variant_access

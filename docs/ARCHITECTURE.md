@@ -109,7 +109,12 @@ small price for the bug we no longer have to chase.
 `mhw::StringTable` itself uses `QHash<QString, QString>` keyed by
 dot-path strings (`"ui.zone.astera"`, `"mantle.13"`). The C++ side
 sees a flat namespace; the JSON side sees a nested object that the
-loader flattens on `load()`.
+loader flattens on `load()`. Since v0.9, `load(locale)` reads a
+per-locale **directory** of domain files (`:<locale>/overlay.json` +
+`:<locale>/console.json`, merged into one flat table), reloads in
+place for the runtime language switch, and `isEnglish()` is the
+switch the data-name tables (monsters / parts / zones / abnormalities,
+see `docs/I18N.md`) read at lookup time.
 
 ## Data flow on every tick (1 Hz)
 

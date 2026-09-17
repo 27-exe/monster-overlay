@@ -3,6 +3,8 @@
 
 #include "mhw_reader.h"
 
+#include "core/string_table.h"
+
 #include <QDir>
 #include <QFile>
 #include <QHash>
@@ -24,6 +26,11 @@
 
 namespace mhw {
 namespace {
+
+// i18n status strings. diagnostics are read through the StringTable at the
+// point of production (not cached), so a locale flip shows up in the next
+// snapshot the overlay pulls — see core/string_table.h / docs/I18N.md.
+inline QString trMessage(const QString &key) { return StringTable::instance().tr(key); }
 
 constexpr std::size_t kPointerSize = sizeof(std::uintptr_t);
 
@@ -60,7 +67,7 @@ bool AddressMap::load(const QString &path, QString *error)
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         if (error)
-            *error = QStringLiteral("无法打开地址表 %1: %2").arg(path, file.errorString());
+            *error = trMessage("ui.reader.address_table_open_failed").arg(path, file.errorString());
         return false;
     }
 
@@ -88,7 +95,7 @@ bool AddressMap::load(const QString &path, QString *error)
             const qulonglong value = tokens[2].toULongLong(&ok, 0);
             if (!ok) {
                 if (error)
-                    *error = QStringLiteral("地址表第 %1 行不是合法地址").arg(lineNumber);
+                    *error = trMessage("ui.reader.address_table_bad_address").arg(lineNumber);
                 return false;
             }
             addresses_[key] = static_cast<std::uintptr_t>(value);
@@ -100,7 +107,7 @@ bool AddressMap::load(const QString &path, QString *error)
                 const qulonglong value = part.trimmed().toULongLong(&ok, 0);
                 if (!ok) {
                     if (error)
-                        *error = QStringLiteral("地址表第 %1 行不是合法偏移链").arg(lineNumber);
+                        *error = trMessage("ui.reader.address_table_bad_chain").arg(lineNumber);
                     return false;
                 }
                 values.push_back(static_cast<std::uintptr_t>(value));
@@ -111,7 +118,7 @@ bool AddressMap::load(const QString &path, QString *error)
 
     if (addresses_.empty()) {
         if (error)
-            *error = QStringLiteral("地址表中没有 Address 项");
+            *error = trMessage("ui.reader.address_table_no_address");
         return false;
     }
     return true;
@@ -187,7 +194,7 @@ std::uintptr_t ProcessMemory::imageBase(QString *error, const QString &exeName) 
     QFile maps(QStringLiteral("/proc/%1/maps").arg(pid_));
     if (!maps.open(QIODevice::ReadOnly)) {
         if (error)
-            *error = QStringLiteral("无法读取 maps: %1").arg(maps.errorString());
+            *error = trMessage("ui.reader.maps_read_failed").arg(maps.errorString());
         return 0;
     }
 
@@ -217,7 +224,7 @@ std::uintptr_t ProcessMemory::imageBase(QString *error, const QString &exeName) 
     }
 
     if (fallback == 0 && error)
-        *error = QStringLiteral("maps 中没有 %1 映射").arg(exeName);
+        *error = trMessage("ui.reader.maps_no_mapping").arg(exeName);
     return fallback;
 }
 
@@ -225,7 +232,7 @@ bool ProcessMemory::readBytes(std::uintptr_t address, void *destination, std::si
 {
     if (!attached() || !isSanePointer(address) || destination == nullptr || size == 0) {
         if (error)
-            *error = QStringLiteral("无效内存读取请求: 0x%1, %2 bytes")
+            *error = trMessage("ui.reader.invalid_read_request")
                          .arg(static_cast<qulonglong>(address), 0, 16)
                          .arg(size);
         return false;
@@ -361,7 +368,7 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
     if (!pid) {
         memory_.detach();
         imageBase_ = 0;
-        snapshot.status = QStringLiteral("等待 %1").arg(exeName_);
+        snapshot.status = trMessage("ui.reader.waiting_exe").arg(exeName_);
         return false;
     }
 
@@ -369,7 +376,7 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
         QString error;
         if (!memory_.attach(*pid, &error)) {
             snapshot.pid = *pid;
-            snapshot.status = QStringLiteral("已发现 PID %1，但 /proc/%1/mem 拒绝读取：%2。ptrace_scope=1 + 同用户非子进程 → 失败，需要 launcher/ptrace_proxy 关系。")
+            snapshot.status = trMessage("ui.reader.ptrace_denied")
                                   .arg(*pid)
                                   .arg(error);
             return false;
@@ -385,7 +392,7 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
     snapshot.attached = true;
     snapshot.pid = *pid;
     snapshot.imageBase = imageBase_;
-    snapshot.status = QStringLiteral("MHW 已连接 · PID %1 · BASE 0x%2")
+    snapshot.status = trMessage("ui.reader.world_connected")
                           .arg(*pid)
                           .arg(static_cast<qulonglong>(imageBase_), 0, 16);
     return true;
@@ -461,7 +468,7 @@ GameSnapshot MhwReader::poll()
                                                    : QVector<PartyMemberSnapshot>{};
     snapshot.isMultiplayer = (snapshot.party.size() > 1);
     if (!error.isEmpty() && snapshot.monsters.isEmpty())
-        snapshot.status += QStringLiteral(" · 部分读取失败: %1").arg(error);
+        snapshot.status += trMessage("ui.reader.partial_read_failed").arg(error);
     return snapshot;
 }
 

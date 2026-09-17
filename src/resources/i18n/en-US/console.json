@@ -1,0 +1,142 @@
+{
+  "_meta": {
+    "locale": "en-US",
+    "domain": "console",
+    "note": "Control console UI strings (monster-control). Key namespace console.* mirrors zh-CN/console.json exactly (ws-d/check_key_parity.py validates key parity)."
+  },
+  "console": {
+    "windowTitle": "MHW Overlay Control",
+    "brand": "MHW  OVERLAY",
+    "brandSub": "CONTROL CONSOLE  ·  0.5",
+    "status": {
+      "ready": "●   OVERLAY READY",
+      "plainReady": "READY",
+      "runningSince": "RUNNING pid %1 since %2",
+      "runningPid": "●   RUNNING pid %1",
+      "switching": "●   SWITCHING TO %1…"
+    },
+    "rail": {
+      "hideStage": "⌄   HIDE STAGE",
+      "showStage": "⌃   SHOW STAGE",
+      "hudObjects": "HUD OBJECTS",
+      "workspace": "WORKSPACE",
+      "layoutMode": "◇   LAYOUT MODE",
+      "presets": "▱   PRESETS",
+      "startOverlay": "▶   START OVERLAY",
+      "stopOverlay": "■   STOP OVERLAY",
+      "hint": "ESC BACK · 1/2/3 SELECT",
+      "game": "GAME",
+      "detected": "DETECTED",
+      "none": "--"
+    },
+    "game": {
+      "world": "WORLD",
+      "rise": "RISE"
+    },
+    "nav": {
+      "player": "PLAYER",
+      "monster": "MONSTER",
+      "damage": "DAMAGE",
+      "playerSummary": "Player status",
+      "monsterSummary": "Monster HP",
+      "damageSummary": "DPS / share"
+    },
+    "panel": {
+      "player": "PLAYER",
+      "monster": "MONSTER",
+      "damage": "DAMAGE",
+      "disabled": "PANEL DISABLED"
+    },
+    "inspector": {
+      "selectedObject": "SELECTED OBJECT  /  0%1",
+      "content": "CONTENT",
+      "appearance": "APPEARANCE",
+      "scale": "SCALE",
+      "opacity": "OPACITY",
+      "bgAlpha": "BG ALPHA",
+      "screen": "SCREEN",
+      "primary": "<PRIMARY>",
+      "primaryTag": "  (primary)",
+      "reset": "↶  RESET %1",
+      "autoSaved": "AUTO-SAVED  ●",
+      "count": "%1 OF %2 SECTIONS VISIBLE",
+      "sections": "%1 / %2 SECTIONS",
+      "sub": {
+        "player": "Player status panel",
+        "monster": "Monster status panel",
+        "damage": "Team damage panel"
+      }
+    },
+    "edit": {
+      "title": "EDIT MODE",
+      "hint": "All three panels are forced visible; arrow keys move them",
+      "start": "START",
+      "enter": "ENTER EDIT"
+    },
+    "detect": {
+      "none": "● NO GAME RUNNING",
+      "startupNone": "AUTO-DETECT: NONE — start MHW or MHR",
+      "startupRunning": "AUTO-DETECT: %1 RUNNING (pid %2)",
+      "startupSwitch": "AUTO-DETECT: %1 RUNNING — click %1 to switch",
+      "badge": "● DETECTED %1 · pid %2 · switch →",
+      "short": "%1 (pid %2)"
+    },
+    "theme": {
+      "light": "☀  LIGHT",
+      "dark": "☾  DARK"
+    },
+    "locale": {
+      "tooltip": "Switch UI language: 中文 / English",
+      "zh": "中文",
+      "en": "EN"
+    },
+    "canvas": {
+      "header": "LIVE HUD CANVAS  ·  %1 × %2 PHYS  ·  %3 × %4 LOGICAL  ·  DPR ×%5  ·  %6",
+      "disabled": "%1 · DISABLED",
+      "selectedTag": "SELECTED · %1  ·  %2 PX",
+      "footer": "SELECTED: %1  ·  ANCHORED: %2  ·  ←→↑↓ MOVE",
+      "footerRight": "SCREEN %1  ·  ZOOM ×%2  ·  DEMO DATA",
+      "zoom": "ZOOM ×%1",
+      "primary": "primary"
+    },
+    "stage": {
+      "safeArea": "SAFE AREA",
+      "grid": "GRID"
+    },
+    "corner": {
+      "topLeft": "TOP LEFT",
+      "topRight": "TOP RIGHT",
+      "bottomLeft": "BOTTOM LEFT",
+      "bottomRight": "BOTTOM RIGHT",
+      "unknown": "UNKNOWN"
+    },
+    "pos": {
+      "label": "POSITION: %1  ·  L%2 T%3 R%4 B%5"
+    },
+    "section": {
+      "player": {
+        "conn": "Connection",
+        "quest": "Quest block",
+        "weapon": "Weapon + sharpness",
+        "bars": "HP / ST",
+        "mantles": "Mantles",
+        "debuff": "Debuffs",
+        "buff": "Buffs",
+        "wirebug": "Wirebugs"
+      },
+      "monster": {
+        "info": "Portrait",
+        "hp": "HP bar",
+        "enrage": "Enrage",
+        "ail": "Ailments",
+        "parts": "Parts",
+        "tenderize": "Tenderize"
+      },
+      "damage": {
+        "rows": "Player rows",
+        "share": "Share bars",
+        "chart": "Chart"
+      }
+    }
+  }
+}

@@ -155,6 +155,17 @@ DamagePanel::DamagePanel(QWidget *parent)
     setWindowTitle(mh::tr("ui.damage_title"));
 }
 
+void DamagePanel::retranslateUi()
+{
+    // Cached strings only: title (ctor) + the demo party names seeded by
+    // setupDemoData(). Live rows come from the snapshot, whose names are
+    // re-read from the reader every poll.
+    setWindowTitle(mh::tr("ui.damage_title"));
+    if (editMode())
+        resetDemoPrimed();
+    triggerUpdate();
+}
+
 void DamagePanel::updateRiseDamage(const mhw::RiseDamageSnapshot &dmg)
 {
     if (!dmg.valid || dmg.players.isEmpty()) {
@@ -538,7 +549,7 @@ void DamagePanel::paintPanel(QPainter &p)
         p.setFont(hdrFont);
         const QRectF titleRect(kMargin, kMargin, kPanelW - 2 * kMargin, 14);
         p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("伤害统计 DAMAGE"));
+                   mh::tr("ui.damage_header"));
 
         p.setPen(QColor(150, 150, 150));
         QFont msgFont(QStringLiteral("Chakra Petch"), 9);
@@ -547,7 +558,7 @@ void DamagePanel::paintPanel(QPainter &p)
         const QRectF msgRect(kMargin, kMargin + 14 + 9,
                              kPanelW - 2 * kMargin, kPlaceholderH);
         p.drawText(msgRect, Qt::AlignCenter,
-                   QStringLiteral("Rise 不支持实时伤害追踪"));
+                   mh::tr("ui.damage_rise_unsupported"));
         return;
     }
 
@@ -583,7 +594,7 @@ void DamagePanel::paintPanel(QPainter &p)
     p.setFont(hdrFont);
     const QRectF titleRect(kMargin, kMargin, kPanelW - 2 * kMargin, 14);
     p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("伤害统计 DAMAGE"));
+               mh::tr("ui.damage_header"));
     // Right-aligned quest timer (HTML spec: <i>任务计时 06:41</i>)
     if (lastElapsedSeconds_ > 0.0F) {
         const int mm = static_cast<int>(lastElapsedSeconds_ / 60);
@@ -591,7 +602,7 @@ void DamagePanel::paintPanel(QPainter &p)
         p.setFont(QFont(QStringLiteral("Chakra Petch"), 8));
         p.setPen(QColor(150, 150, 150));
         p.drawText(titleRect, Qt::AlignRight | Qt::AlignVCenter,
-                   QStringLiteral("任务计时 %1:%2")
+                   mh::tr("ui.damage_quest_timer")
                        .arg(mm, 2, 10, QChar('0'))
                        .arg(ss, 2, 10, QChar('0')));
     }
@@ -806,7 +817,7 @@ void DamagePanel::drawChart(QPainter &p, const QRectF &chartRect)
     if (history_.size() < 2 || n == 0) {
         p.setPen(QColor(150, 150, 150));
         p.setFont(QFont(QStringLiteral("Chakra Petch"), 8));
-        p.drawText(chartRect, Qt::AlignCenter, QStringLiteral("等待数据..."));
+        p.drawText(chartRect, Qt::AlignCenter, mh::tr("ui.damage_chart_waiting"));
         return;
     }
 
@@ -930,11 +941,14 @@ void DamagePanel::setupDemoData()
     // visible curves and DPS to be non-zero. Sets private fields
     // directly to avoid the per-tick work of update().
     constexpr int kDemoPlayers = 4;
-    static const struct { QString name; QString ellipsisName; int weaponId; int masterRank; int slot; } kDemoParty[kDemoPlayers] = {
+    // NOT static: the demo labels are localized, so the table must be
+    // rebuilt on every seed (a function-local static would freeze the first
+    // locale for the process lifetime — see DamagePanel::retranslateUi).
+    const struct { QString name; QString ellipsisName; int weaponId; int masterRank; int slot; } kDemoParty[kDemoPlayers] = {
         {QStringLiteral("A27exe"),        QStringLiteral("A27exe"),  0,  247, 0},
-        {QStringLiteral("队友A"),         QStringLiteral("队友A"),   1,  500, 1},
-        {QStringLiteral("队友B_长昵称测试"), QStringLiteral("队友B…"), 12, 300, 2},
-        {QStringLiteral("队友C"),         QStringLiteral("队友C"),   4,  250, 3},
+        {mh::tr("ui.demo.party.a"), mh::tr("ui.demo.party.a"),      1,  500, 1},
+        {mh::tr("ui.demo.party.b"), mh::tr("ui.demo.party.b_short"), 12, 300, 2},
+        {mh::tr("ui.demo.party.c"), mh::tr("ui.demo.party.c"),      4,  250, 3},
     };
     // MHW realistic: 总伤害 ≤999,999 (6 位+逗号), DPS ≤999.
     const int kFinalDmg[kDemoPlayers] = {184220, 96240, 71030, 40510};

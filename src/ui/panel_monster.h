@@ -21,6 +21,10 @@ public:
     void update(const mhw::MonsterSnapshot &m);
     void setMultiplayer(bool on) { multiplayer_ = on; }
 
+    // i18n: window title / demo labels are cached; everything else is read
+    // from tr() at the draw site. Called after a locale swap (see panel.h).
+    void retranslateUi() override;
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;

@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFile>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QString>
 #include <QTextStream>
 #include <QVector>
@@ -16,6 +17,8 @@
 #include "ui/control_panel.h"
 #include "ui/section_row.h"
 #include "ui/toggle_chip.h"
+#include "core/locale_conf.h"
+#include "core/string_table.h"
 
 namespace {
 // The path MUST match ControlPanel::maskConfigPath() in
@@ -124,6 +127,131 @@ int main(int argc, char *argv[])
             fprintf(stderr, "FAIL: monster parts section should be OFF after load\n");
             return 7;
         }
+    }
+
+    // ------------------------------------------------------------------
+    // v0.9 i18n: the conf gained a 4th `locale=` row (the console -> overlay
+    // handshake). The three legacy mask rows must survive verbatim
+    // (lowercase hex, same order) — the overlay's locale_sync.h polls the
+    // file and older readers must keep working.
+    // ------------------------------------------------------------------
+    {
+        const QString text = readBack();
+        const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        if (lines.size() != 4
+            || lines[0] != QStringLiteral("player=fb")
+            || lines[1] != QStringLiteral("monster=2f")
+            || lines[2] != QStringLiteral("damage=7")
+            || lines[3] != QStringLiteral("locale=zh-CN")) {
+            fprintf(stderr, "FAIL: i18n conf layout wrong (%d lines):\n%s",
+                    int(lines.size()), qPrintable(text));
+            return 8;
+        }
+        fprintf(stderr, "i18n conf layout OK:\n%s", qPrintable(text));
+    }
+
+    // ------------------------------------------------------------------
+    // v0.9 i18n: clicking the EN/CH chip must (1) retranslate the live UI
+    // without a restart and (2) rewrite ONLY the locale row of the conf.
+    // The chip is a frame with two mouse-transparent segment labels, so the
+    // release is delivered to the frame and handled by
+    // ControlPanel::eventFilter. This asserts both clicks (zh -> en -> zh).
+    // ------------------------------------------------------------------
+    {
+        ControlPanel cp3;
+        cp3.show();
+        app.processEvents();
+
+        QWidget *chip = cp3.findChild<QWidget *>(QStringLiteral("localeChip"));
+        QLabel *brandSub = cp3.findChild<QLabel *>(QStringLiteral("railBrandSub"));
+        if (!chip || !brandSub) {
+            fprintf(stderr, "FAIL: locale chip / railBrandSub missing\n");
+            return 9;
+        }
+        if (brandSub->text() != QStringLiteral("控制台  ·  0.5")) {
+            fprintf(stderr, "FAIL: expected zh copy before the switch, got '%s'\n",
+                    qPrintable(brandSub->text()));
+            return 10;
+        }
+
+        auto clickChip = [&]{
+            const QPoint p = chip->rect().center();
+            const QPointF pf(p);
+            QMouseEvent press(QEvent::MouseButtonPress, pf, pf,
+                              chip->mapToGlobal(p), Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QMouseEvent release(QEvent::MouseButtonRelease, pf, pf,
+                                chip->mapToGlobal(p), Qt::LeftButton,
+                                Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(chip, &press);
+            QApplication::sendEvent(chip, &release);
+            app.processEvents();
+        };
+
+        clickChip();   // zh-CN -> en-US
+        if (brandSub->text() != QStringLiteral("CONTROL CONSOLE  ·  0.5")) {
+            fprintf(stderr, "FAIL: chip click did not retranslate ('%s')\n",
+                    qPrintable(brandSub->text()));
+            return 11;
+        }
+        const QString afterEn = readBack();
+        if (!afterEn.contains(QStringLiteral("locale=en-US"))
+            || !afterEn.contains(QStringLiteral("player=fb"))
+            || !afterEn.contains(QStringLiteral("monster=2f"))
+            || !afterEn.contains(QStringLiteral("damage=7"))) {
+            fprintf(stderr, "FAIL: mask rows must survive the locale write:\n%s",
+                    qPrintable(afterEn));
+            return 12;
+        }
+        fprintf(stderr, "after EN click:\n%s", qPrintable(afterEn));
+        // Evidence hook: keep a copy of the conf exactly as the EN click left
+        // it (used by ws-d/ evidence capture; no effect when unset).
+        const QByteArray dump = qgetenv("WS_D_CONF_DUMP");
+        if (!dump.isEmpty()) {
+            QFile out(QString::fromLocal8Bit(dump));
+            if (out.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                out.write(afterEn.toUtf8());
+        }
+
+        clickChip();   // en-US -> zh-CN
+        if (brandSub->text() != QStringLiteral("控制台  ·  0.5")) {
+            fprintf(stderr, "FAIL: second click did not restore zh copy ('%s')\n",
+                    qPrintable(brandSub->text()));
+            return 13;
+        }
+        if (!readBack().contains(QStringLiteral("locale=zh-CN"))) {
+            fprintf(stderr, "FAIL: second click did not write locale=zh-CN\n");
+            return 14;
+        }
+        fprintf(stderr, "locale chip: zh -> en -> zh verified\n");
+    }
+
+    // ------------------------------------------------------------------
+    // v0.9 i18n integration regression: a stale `locale=` row in the conf
+    // must NOT override the process's explicitly loaded locale. At app
+    // startup main_control.cpp loads the CLI locale (`--locale en-US`)
+    // BEFORE constructing the panel while the conf may still say zh-CN;
+    // the constructor must not silently re-apply the disk value (the old
+    // loadMaskFromDisk() applyLocale() did, producing a split-language UI).
+    // ------------------------------------------------------------------
+    {
+        mhw::writeLocaleToConf(QStringLiteral("en-US"), configPath());
+        mhw::StringTable::instance().load(QStringLiteral("zh-CN"));
+        ControlPanel cp4;
+        cp4.show();
+        app.processEvents();
+        if (mhw::StringTable::instance().currentLocale() != QStringLiteral("zh-CN")) {
+            fprintf(stderr, "FAIL: stale conf locale overrode the explicit table locale ('%s')\n",
+                    qPrintable(mhw::StringTable::instance().currentLocale()));
+            return 15;
+        }
+        QLabel *brandSub = cp4.findChild<QLabel *>(QStringLiteral("railBrandSub"));
+        if (!brandSub || brandSub->text() != QStringLiteral("控制台  ·  0.5")) {
+            fprintf(stderr, "FAIL: console chrome did not stay on the explicit locale ('%s')\n",
+                    brandSub ? qPrintable(brandSub->text()) : "railBrandSub missing");
+            return 16;
+        }
+        fprintf(stderr, "explicit-locale dominance over stale conf: OK\n");
     }
 
     QFile::remove(configPath());

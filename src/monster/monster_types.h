@@ -123,7 +123,29 @@ struct MonsterSnapshot {
 struct PartSchema {
     int id;
     bool isSeverable;
-    const char* name;
+    const char* name;      // zh display name: frozen pre-i18n literal for
+                           // normal entry, official zh-cn.xml name for
+                           // statePart entries (v0.9 placeholder cleanup)
+    // v0.9 i18n (WS-A): English display name, resolved from HunterPie's
+    // en-us.xml `Monsters/Shared/Part` table via the part's String key in
+    // Game/World/Data/MonsterData.xml. A null/empty nameEn falls back to
+    // `name`.
+    //
+    // v0.9 placeholder cleanup: true marks the entries readMonsters() must
+    // NOT map into the part tables — state-transition variants, PART_UNKNOWN
+    // sentinels, exotic enum entries. scripts/gen_schema.py freezes it as
+    // the pre-cleanup `name.startsWith("PART_")` skip set, so the runtime
+    // skip set and the normal-table slot mapping stay byte-identical even
+    // though those names are real display strings now.
+    //
+    // Both fields sit BEFORE `thresholds` (not appended last) on purpose: a
+    // 7-field aggregate whose nested std::array initializer sits before the
+    // final member is not brace-elided by gcc-15 ("could not convert
+    // '<brace-enclosed initializer list>'"), which breaks every
+    // QList<PartSchema> literal in part_schemas.cpp. The default initializer
+    // keeps pre-existing aggregate initializers valid.
+    const char* nameEn = nullptr;
+    bool statePart = false;
     const char* thresholds;
     std::array<std::uint32_t, 4> tenderizeIds{};   // HunterPie XML TenderizeIds
     std::uint32_t tenderizeCount{0};              // # of valid entries in tenderizeIds
@@ -132,8 +154,40 @@ struct PartSchema {
 // Generated from data/MonsterHunterWorld.421810.map / MonsterData.xml.
 extern const QHash<int, QVector<PartSchema>> kPartSchemas;
 
+// v0.9 i18n (WS-A): locale-aware lookups for the World data-name tables.
+// Each keeps the pre-i18n zh literal as its default and picks the English
+// column only when mhw::StringTable::isEnglish() is true, so an unloaded
+// StringTable (tests, pre-load frames) behaves exactly like the old code.
+// Defined in monster_reader.cpp — declared here so the reader tests (and any
+// panel that wants a locale-aware label) can call them without duplicating
+// the selection rule.
+//
+// Localized part label: `nameEn` when English and present, else `name`
+// (zh). The reader-level statePart skip is separate — see PartSchema.
+QString partDisplayName(const PartSchema &ps);
+
+// Localized World monster name for the "000".."101" id key; unknown keys are
+// returned unchanged.
+QString monsterDisplayName(const QString &idKey);
+
+// Localized World monster-ailment label; unknown ids keep the historical
+// "异常%1" (zh) / "Ailment %1" (en) fallback.
+QString monsterAilmentDisplayName(int id);
+
 // Generated from HunterPie/Localization zh-cn.xml (AilmentData).
+// v0.9 i18n (WS-A): frozen pre-i18n zh-CN column; kAilmentNamesEn below is
+// the English column, selected at the call site via StringTable::isEnglish().
 extern const QHash<int, QString> kAilmentNames;
+
+// v0.9 i18n (WS-A): World monster-ailment English names. Ids are HunterPie
+// Game/World/Data/MonsterData.xml <Ailments> ids; the strings come from
+// en-us.xml <Ailments><Rise><Ailment Id="AILMENT_*"> (the AILMENT_* keys are
+// shared between the games' ailment enums, World's MonsterData.xml names the
+// same keys). Ids 12/19/21/24 are absent from the zh table (they fall back to
+// "异常%1" there) and are supplied here so the English path shows the real
+// official name instead of "Ailment N". The Rise slot table
+// (kRiseAilmentNames) is untouched by WS-A.
+extern const QHash<int, QString> kAilmentNamesEn;
 
 // Generated from HunterPie Game/World/Data/MonsterData.xml <Crowns>.
 // Per-monster crown size thresholds: {Mini, Silver, Gold}.

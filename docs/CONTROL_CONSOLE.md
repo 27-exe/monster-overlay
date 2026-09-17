@@ -85,6 +85,14 @@ ControlPanel (QMainWindow)
   preview frame and the live overlay both bind the panel to its own
   output (r23: the preview used the wrong output's rectangle for
   panels assigned to a non-primary screen).
+- **Language chip (v0.9 i18n)** — the `中文 | EN` chip in the stage bar
+  (left of the theme toggle) switches the UI language at runtime.
+  Clicking it reloads the shared `StringTable`, re-translates every
+  registered widget, and writes `locale=` into the conf file; a running
+  overlay picks the change up from its conf poll within ~1 s. The
+  console resolves its startup locale as `--locale` → conf → `zh-CN`
+  (`--print-locale` prints the resolution without opening a GUI), and
+  every overlay it spawns gets an explicit `--locale=<current>`.
 - **Switch semantics (r23)** — the monster panel's **parts** section
   works for both games (RISE used to be masked out by a cross-panel
   bit collision); **TENDERIZE** gates the per-part tenderize strip
@@ -100,10 +108,13 @@ ControlPanel (QMainWindow)
 player=3f
 monster=1f
 damage=7
+locale=zh-CN
 ```
 
-Three lines, each `key=<hex32>`. Malformed lines are silently
-ignored on load; the file is rewritten atomically on save.
+The three mask lines are each `key=<hex32>`; the optional fourth
+`locale=` row is the console → overlay language handshake (v0.9) and is
+written both by the chip and by every mask save. Malformed lines are
+silently ignored on load; the file is rewritten atomically on save.
 
 ## Smoke test
 
@@ -114,6 +125,11 @@ ignored on load; the file is rewritten atomically on save.
    `monster sub 4` off via `findChildren<SectionRow*>()`.
 3. Lets the dtor save to disk.
 4. Re-opens a `ControlPanel` and verifies the row states match.
+5. Simulates clicks on the language chip (zh → en → zh) and asserts the
+   conf keeps its four-row layout across the flips.
+6. Seeds the conf with the *other* locale, loads a locale explicitly,
+   constructs a fresh panel and asserts the stale conf value does NOT
+   override the explicit locale (the v0.9 startup-precedence guard).
 
 Run: `QT_QPA_PLATFORM=offscreen ./build/monster-control-l2-smoke`.
 Expected output ends with `PASS`.

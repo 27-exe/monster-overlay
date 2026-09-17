@@ -1,0 +1,142 @@
+{
+  "_meta": {
+    "locale": "zh-CN",
+    "domain": "console",
+    "note": "控制台 UI 文案 (monster-control)。键空间 console.*；由 control_panel 等通过 mh::tr() 读取。en-US/console.json 的键集合必须与本文档完全一致（ws-d/check_key_parity.py 校验）。"
+  },
+  "console": {
+    "windowTitle": "MHW Overlay Control",
+    "brand": "MHW  OVERLAY",
+    "brandSub": "控制台  ·  0.5",
+    "status": {
+      "ready": "●   悬浮窗就绪",
+      "plainReady": "就绪",
+      "runningSince": "运行中 pid %1 起始 %2",
+      "runningPid": "●   运行中 pid %1",
+      "switching": "●   正在切换到 %1…"
+    },
+    "rail": {
+      "hideStage": "⌄   收起舞台",
+      "showStage": "⌃   展开舞台",
+      "hudObjects": "HUD 对象",
+      "workspace": "工作区",
+      "layoutMode": "◇   布局模式",
+      "presets": "▱   预设",
+      "startOverlay": "▶   启动悬浮窗",
+      "stopOverlay": "■   停止悬浮窗",
+      "hint": "ESC 返回 · 1/2/3 选择",
+      "game": "游戏",
+      "detected": "检测到",
+      "none": "--"
+    },
+    "game": {
+      "world": "世界",
+      "rise": "崛起"
+    },
+    "nav": {
+      "player": "玩家",
+      "monster": "怪物",
+      "damage": "伤害",
+      "playerSummary": "玩家状态",
+      "monsterSummary": "怪物 HP",
+      "damageSummary": "DPS / 占比"
+    },
+    "panel": {
+      "player": "玩家",
+      "monster": "怪物",
+      "damage": "伤害",
+      "disabled": "面板已禁用"
+    },
+    "inspector": {
+      "selectedObject": "当前对象  /  0%1",
+      "content": "内容",
+      "appearance": "外观",
+      "scale": "缩放",
+      "opacity": "不透明度",
+      "bgAlpha": "背景透明度",
+      "screen": "屏幕",
+      "primary": "<主屏>",
+      "primaryTag": "  (主屏)",
+      "reset": "↶  重置 %1",
+      "autoSaved": "自动保存  ●",
+      "count": "可见分区 %1 / %2",
+      "sections": "%1 / %2 分区",
+      "sub": {
+        "player": "玩家状态面板",
+        "monster": "怪物状态面板",
+        "damage": "队伍伤害面板"
+      }
+    },
+    "edit": {
+      "title": "编辑模式",
+      "hint": "进入后三个面板强制显示，方向键移动",
+      "start": "启动",
+      "enter": "进入编辑"
+    },
+    "detect": {
+      "none": "● 未检测到游戏",
+      "startupNone": "自动检测：无 — 请启动 MHW 或 MHR",
+      "startupRunning": "自动检测：%1 运行中 (pid %2)",
+      "startupSwitch": "自动检测：%1 运行中 — 点击 %1 切换",
+      "badge": "● 检测到 %1 · pid %2 · 切换 →",
+      "short": "%1 (pid %2)"
+    },
+    "theme": {
+      "light": "☀  浅色",
+      "dark": "☾  深色"
+    },
+    "locale": {
+      "tooltip": "切换界面语言：中文 / English",
+      "zh": "中文",
+      "en": "EN"
+    },
+    "canvas": {
+      "header": "LIVE HUD 画布  ·  %1 × %2 物理  ·  %3 × %4 逻辑  ·  DPR ×%5  ·  %6",
+      "disabled": "%1 · 已禁用",
+      "selectedTag": "选中 · %1  ·  %2 PX",
+      "footer": "选中: %1  ·  锚点: %2  ·  ←→↑↓ 移动",
+      "footerRight": "屏幕 %1  ·  缩放 ×%2  ·  演示数据",
+      "zoom": "缩放 ×%1",
+      "primary": "主屏"
+    },
+    "stage": {
+      "safeArea": "安全区",
+      "grid": "网格"
+    },
+    "corner": {
+      "topLeft": "左上",
+      "topRight": "右上",
+      "bottomLeft": "左下",
+      "bottomRight": "右下",
+      "unknown": "未知"
+    },
+    "pos": {
+      "label": "位置: %1  ·  L%2 T%3 R%4 B%5"
+    },
+    "section": {
+      "player": {
+        "conn": "连接状态",
+        "quest": "任务块",
+        "weapon": "武器 + 锋利度",
+        "bars": "HP / ST",
+        "mantles": "衣装",
+        "debuff": "异常状态",
+        "buff": "正面状态",
+        "wirebug": "翔虫"
+      },
+      "monster": {
+        "info": "六角肖像",
+        "hp": "HP 条",
+        "enrage": "怒气",
+        "ail": "异常",
+        "parts": "部位",
+        "tenderize": "软化"
+      },
+      "damage": {
+        "rows": "玩家行",
+        "share": "占比条",
+        "chart": "折线图"
+      }
+    }
+  }
+}

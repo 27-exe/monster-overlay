@@ -1,4 +1,7 @@
 build/
+# Per-workstream build directories (parallel i18n workstreams)
+build-ws-*/
+build-i18n/
 .codewhale/
 .scratch/
 # local backups created during schema migrations
@@ -24,3 +27,7 @@ Testing/
 
 # patch-tool leftovers
 *.orig
+
+# python bytecode from the generation/audit scripts
+__pycache__/
+*.pyc

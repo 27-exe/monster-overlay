@@ -498,6 +498,18 @@ MonsterPanel::MonsterPanel(QWidget *parent)
     connect(&pulseTimer_, &QTimer::timeout, this, &MonsterPanel::onEnragePulseTick);
 }
 
+void MonsterPanel::retranslateUi()
+{
+    // Only cached strings need re-querying: the title (ctor) and the demo
+    // seed labels (monster name / ailments / part names), rebuilt on the
+    // next paint via resetDemoPrimed(). Live data is untouched — the
+    // reader refreshes it, and paint-time tr() follows the locale.
+    setWindowTitle(mh::tr("ui.monster_title"));
+    if (editMode())
+        resetDemoPrimed();
+    triggerUpdate();
+}
+
 void MonsterPanel::update(const mhw::MonsterSnapshot &m)
 {
     monster_ = m;
@@ -560,7 +572,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         const QRectF titleRect(kPanelPad, kPanelPad,
                                kPanelWidth - 2 * kPanelPad, kTitleH);
         p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("怪物 MONSTER"));
+                   mh::tr("ui.monster_header"));
 
         // Centered message in logical coordinates. canvas()->rect()
         // returns DEVICE pixels and the scaled painter (paintEvent
@@ -574,7 +586,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         const QRectF msgRect(kPanelPad, kPanelPad + kTitleH + kRowGap,
                              kPanelWidth - 2 * kPanelPad, kPlaceholderH);
         p.drawText(msgRect, Qt::AlignCenter,
-                   QStringLiteral("等待进入任务 · 怪物将自动加载"));
+                   mh::tr("ui.monster_waiting_quest"));
         return;
     }
 
@@ -803,7 +815,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         p.setPen(QColor(245, 246, 247));
         const QRectF titleRect(innerLeft, y, innerW, kTitleH);
         p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("怪物 MONSTER"));
+                   mh::tr("ui.monster_header"));
         // right <i> 8px --t3
         QFont iFont(QStringLiteral("Chakra Petch"), 8);
         iFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
@@ -907,7 +919,7 @@ void MonsterPanel::paintPanel(QPainter &p)
     if (monster_.enraged && monster_.enrageSeconds > 0.0F) {
         const int elapsed = static_cast<int>(
             monster_.enrageMaxSeconds - monster_.enrageSeconds);
-        const QString enTxt = QStringLiteral("激怒 %1s").arg(elapsed);
+        const QString enTxt = mh::tr("ui.monster_enraged_secs").arg(elapsed);
         QFont eFont(QStringLiteral("Chakra Petch"), 9, QFont::Bold);
         eFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
         eFont.setStyleStrategy(QFont::PreferAntialias);
@@ -927,7 +939,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         const float pct = std::clamp(
             monster_.enrageBuildup / monster_.enrageMaxBuildup,
             0.0F, 1.0F);
-        const QString enTxt = QStringLiteral("激怒 %1%")
+        const QString enTxt = mh::tr("ui.monster_enrage_pct")
             .arg(static_cast<int>(pct * 100));
         QFont eFont(QStringLiteral("Chakra Petch"), 9, QFont::Bold);
         eFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
@@ -990,7 +1002,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         p.setPen(QColor(245, 246, 247));
         p.drawText(stRect.adjusted(8, 0, 0, 0),
                    Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("体力"));
+                   mh::tr("ui.monster_stamina"));
         p.setPen(QColor(245, 246, 247));
         p.drawText(stRect.adjusted(0, 0, -8, 0),
                    Qt::AlignRight | Qt::AlignVCenter,
@@ -1083,17 +1095,17 @@ void MonsterPanel::paintPanel(QPainter &p)
     for (const auto &p : shownParts) {
         PcEntry e;
         e.name = p.name.isEmpty()
-            ? QStringLiteral("部位 %1").arg(p.index)
+            ? mh::tr("ui.monster_part_fallback").arg(p.index)
             : p.name;
         e.counter = p.counter;
         e.broken = p.isBroken;
         switch (p.partType) {
         case mhw::PartType::Severable:
-            e.tag = QStringLiteral("斩");
+            e.tag = mh::tr("ui.monster_tag_sever");
             e.tagKind = QStringLiteral("sev");
             break;
         case mhw::PartType::Breakable:
-            e.tag = QStringLiteral("破");
+            e.tag = mh::tr("ui.monster_tag_break");
             e.tagKind = QStringLiteral("brk");
             break;
         case mhw::PartType::Flinch:
@@ -1222,7 +1234,7 @@ void MonsterPanel::setupDemoData()
     MonsterSnapshot m;
     m.address = 0xDEADBEEFULL;
     m.id = 1;                                 // 火龙
-    m.internalName = QStringLiteral("火龙");
+    m.internalName = mh::tr("ui.demo.monster_name");
     m.size = 1.25F;                           // Gold
     m.maxHealth = 25800.0F;
     m.health = 18420.0F;                      // 71%
@@ -1242,18 +1254,21 @@ void MonsterPanel::setupDemoData()
     //                 Both interpretations are valid; the timer path matches
     //                 HunterPie's live data.
     //   - 毒:          not active, but has 30% build-up and 2 prior triggers.
-    struct Ail { int id; const char *name; float timer; float maxT;
+    // i18n: demo labels come from ui.demo.ail.* / ui.demo.part.* so the
+    // edit-mode preview follows the locale (docs/I18N.md: the demo is the
+    // regression baseline and now tracks the loaded locale too).
+    struct Ail { int id; QString name; float timer; float maxT;
                 float bu; float maxB; int cnt; bool active; };
-    Ail demoAil[] = {
-        { 2, "\u9ebb\u75f9",   12.0F, 20.0F,   0.0F,   0.0F, 1, true },
-        {14, "\u9ebb\u75f9\u9677\u9631",  8.0F,  8.0F,   0.0F,   0.0F, 0, true },
-        {15, "\u843d\u7a74",  60.0F, 60.0F,   0.0F,   0.0F, 0, true },
-        { 1, "\u6bd2",         0.0F,  0.0F,  30.0F, 100.0F, 2, false},
+    const Ail demoAil[] = {
+        { 2, mh::tr("ui.demo.ail.paralysis"), 12.0F, 20.0F,  0.0F,   0.0F, 1, true },
+        {14, mh::tr("ui.demo.ail.shock_trap"), 8.0F,  8.0F,  0.0F,   0.0F, 0, true },
+        {15, mh::tr("ui.demo.ail.pitfall"),   60.0F, 60.0F,  0.0F,   0.0F, 0, true },
+        { 1, mh::tr("ui.demo.ail.poison"),     0.0F,  0.0F, 30.0F, 100.0F, 2, false},
     };
     for (const auto &a : demoAil) {
         MonsterAilmentSnapshot ail;
         ail.id = a.id;
-        ail.name = QString::fromUtf8(a.name);
+        ail.name = a.name;
         ail.active = a.active;
         ail.timer = a.timer;
         ail.maxTimer = a.maxT;
@@ -1264,21 +1279,22 @@ void MonsterPanel::setupDemoData()
     }
 
     // Demo parts — head/左右翼/尾巴/左右脚, mirrors HTML v8 .pgrid.
-    struct DPart { int idx; const char *name;
+    // Names go through ui.demo.part.* (same locale rule as the ailments).
+    struct DPart { int idx; QString name;
                    float hp; float maxHp;
                    int counter; bool breakable; bool severable; };
     const DPart dparts[] = {
-        { 0, "头",   80.0F, 100.0F, 0, true,  false},
-        { 1, "左翼", 45.0F, 100.0F, 1, true,  true },
-        { 2, "右翼", 20.0F, 100.0F, 2, true,  true },
-        { 3, "尾巴", 90.0F, 100.0F, 0, false, true },
-        { 4, "左脚", 60.0F, 100.0F, 0, false, false},
-        { 5, "右脚", 35.0F, 100.0F, 0, false, false},
+        { 0, mh::tr("ui.demo.part.head"),  80.0F, 100.0F, 0, true,  false},
+        { 1, mh::tr("ui.demo.part.l_wing"), 45.0F, 100.0F, 1, true,  true },
+        { 2, mh::tr("ui.demo.part.r_wing"), 20.0F, 100.0F, 2, true,  true },
+        { 3, mh::tr("ui.demo.part.tail"),  90.0F, 100.0F, 0, false, true },
+        { 4, mh::tr("ui.demo.part.l_leg"), 60.0F, 100.0F, 0, false, false},
+        { 5, mh::tr("ui.demo.part.r_leg"), 35.0F, 100.0F, 0, false, false},
     };
     for (const auto &dp : dparts) {
         PartSnapshot ps;
         ps.index = dp.idx;
-        ps.name = QString::fromUtf8(dp.name);
+        ps.name = dp.name;
         ps.health = dp.hp;
         ps.maxHealth = dp.maxHp;
         ps.flinch = dp.hp;            // mirror for flinch bar pre-PR C

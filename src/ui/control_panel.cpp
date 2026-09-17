@@ -13,7 +13,15 @@
 #include "ui/screen_query.h"
 #include "ui/ui_theme.h"
 #include "core/game_detector.h"
+#include "core/locale_conf.h"
 #include "core/string_table.h"
+
+namespace mh {
+// v0.9 i18n: local alias for the shared StringTable. Identical definition to
+// panel_player.cpp / panel_monster.cpp / panel_damage.cpp (inline → ODR-safe),
+// so the console and the overlay panels resolve their copy through one path.
+inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(key); }
+} // namespace mh
 
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -199,6 +207,17 @@ QString qssBase()
         "QLabel#stageToggleLabel{color:%6;font-family:'Chakra Petch';font-size:11px;letter-spacing:1px;}"
         "QPushButton#themeToggle{background:transparent;color:%6;border:1px solid %8;border-radius:3px;padding:7px 16px;font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;}"
         "QPushButton#themeToggle:hover{border-color:%8;color:%2;}"
+        // v0.9 i18n: EN/CH chip — same chip family as #themeToggle, but a
+        // frame with two segment labels so the ACTIVE language can be
+        // highlighted on its own (property-driven, repolished by
+        // ControlPanel::updateLocaleChip()).
+        "QFrame#localeChip{background:transparent;border:1px solid %8;border-radius:3px;}"
+        "QFrame#localeChip:hover{border-color:%11;}"
+        "QLabel#localeSeg{background:transparent;border:none;color:%6;"
+        " font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;}"
+        "QLabel#localeSeg[active=\"true\"]{color:%10;font-weight:700;}"
+        "QLabel#localeSep{background:transparent;border:none;color:%8;"
+        " font-family:'Chakra Petch';font-size:12px;}"
         // v0.6 Phase 4: World/Rise game selector. selected="true" highlights
         // the active game in the teal accent so the choice reads at a glance.
         "QPushButton#gameBtn{background:transparent;color:%6;border:1px solid %8;border-radius:3px;"
@@ -270,14 +289,53 @@ QColor panelAccent(int panel)
     return t.accentTeal;
 }
 
+// ---- v0.9 i18n helpers ---------------------------------------------------
+// Game display name (WORLD/RISE). One resolver so the auto-detect badge,
+// the GAME column and the switching status line can never drift apart.
+// Falls back to the ASCII name when the key is missing (StringTable::tr()
+// returns the key itself for unknown keys).
+QString gameName(mhw::GameId id)
+{
+    const bool rise = (id == mhw::GameId::Rise);
+    const QString key = rise ? QStringLiteral("console.game.rise")
+                             : QStringLiteral("console.game.world");
+    const QString val = mhw::StringTable::instance().tr(key);
+    if (val != key)
+        return val;
+    return rise ? QStringLiteral("RISE") : QStringLiteral("WORLD");
+}
+
+// Section-switch display label for (panel, bit index) — delegates to the
+// now-dynamic panel_sections.h table (console.section.*).
+QString sectionLabel(int panel, int index)
+{
+    if (panel == 0) return mhw::PlayerSection::displayName(index);
+    if (panel == 1) return mhw::MonsterSection::displayName(index);
+    return mhw::DamageSection::displayName(index);
+}
+
 } // namespace
 
 ControlPanel::ControlPanel(QWidget *parent)
     : QMainWindow(parent)
 {
+    // v0.9 i18n: guarantee a loaded StringTable before any widget text is
+    // built. main_control.cpp resolves --locale > conf > zh-CN before
+    // constructing us (and every string below is read through it); this is
+    // the safety net for embedders — e.g. tests/control_l2_smoke.cpp
+    // constructs a bare ControlPanel with no startup resolution.
+    if (mhw::StringTable::instance().currentLocale().isEmpty()) {
+        const QString fromConf = mhw::readLocaleFromConf();
+        if (fromConf.isEmpty()
+            || !mhw::StringTable::instance().load(fromConf))
+            mhw::StringTable::instance().load(QStringLiteral("zh-CN"));
+    }
+
     setObjectName("monster-control-panel");
     setStyleSheet(qssBase());
-    setWindowTitle(QStringLiteral("MHW Overlay Control"));
+    // i18n: the window title is not a widget text property, so it has its
+    // own replay hook.
+    trWindowTitle(QStringLiteral("console.windowTitle"));
     // v0.5.6: top row consumes rail+inspector height (~600-700px);
     // stage must keep at least canvas's 360px minimum + stagebar padding.
     // Bump default height so the canvas is usable on first open.
@@ -359,15 +417,18 @@ ControlPanel::ControlPanel(QWidget *parent)
     railLayout->setSpacing(8);
 
     // v0.5.6: brand + READY pinned at top (always visible, identity).
-    auto *brand = new QLabel(QStringLiteral("MHW  OVERLAY"));
+    auto *brand = new QLabel();
+    trSet(brand, QStringLiteral("console.brand"));
     brand->setObjectName("railBrand");
-    auto *brandSub = new QLabel(QStringLiteral("CONTROL CONSOLE  ·  0.5"));
+    auto *brandSub = new QLabel();
+    trSet(brandSub, QStringLiteral("console.brandSub"));
     brandSub->setObjectName("railBrandSub");
     railLayout->addWidget(brand);
     railLayout->addWidget(brandSub);
     railLayout->addSpacing(22);
 
-    auto *ready = new QLabel(QStringLiteral("●   OVERLAY READY"));
+    auto *ready = new QLabel();
+    trSet(ready, QStringLiteral("console.status.ready"));
     ready->setObjectName("statusBadge");
     statusBadge_ = ready;
     railLayout->addWidget(ready);
@@ -377,7 +438,8 @@ ControlPanel::ControlPanel(QWidget *parent)
     // toggles the bottom canvas area. Pinned in the top block (always
     // visible) so the user never has to find the canvas to dismiss it.
     // The ⌄/⌃ icon hints at the direction the stage moves on click.
-    stageToggleBtn_ = new QPushButton(QStringLiteral("⌄   HIDE STAGE"));
+    stageToggleBtn_ = new QPushButton();
+    updateStageToggleText();   // i18n: copy depends on the checked state
     stageToggleBtn_->setObjectName("railAction");
     stageToggleBtn_->setCheckable(true);
     stageToggleBtn_->setChecked(true);
@@ -403,7 +465,8 @@ ControlPanel::ControlPanel(QWidget *parent)
     // own narrow column on the left edge of the window). The auto-
     // detect badge stays in the rail as a status line — clicking it
     // still hot-swaps to the detected game, the same way it did in v0.6.
-    autoDetectBadge_ = new QLabel(QStringLiteral("● NO GAME RUNNING"));
+    autoDetectBadge_ = new QLabel();
+    trSet(autoDetectBadge_, QStringLiteral("console.detect.none"));
     autoDetectBadge_->setObjectName("autoDetect");
     autoDetectBadge_->setProperty("state", "gray");
     autoDetectBadge_->setWordWrap(true);
@@ -411,25 +474,34 @@ ControlPanel::ControlPanel(QWidget *parent)
     scrollLayout->addWidget(autoDetectBadge_);
     scrollLayout->addSpacing(20);
 
-    auto *objectsTitle = new QLabel(QStringLiteral("HUD OBJECTS"));
+    auto *objectsTitle = new QLabel();
+    trSet(objectsTitle, QStringLiteral("console.rail.hudObjects"));
     objectsTitle->setObjectName("sectionCap");
     scrollLayout->addWidget(objectsTitle);
-    scrollLayout->addWidget(buildObjectButton(QStringLiteral("P"), QStringLiteral("PLAYER"),
-                                             QStringLiteral("玩家状态"), 0));
-    scrollLayout->addWidget(buildObjectButton(QStringLiteral("M"), QStringLiteral("MONSTER"),
-                                             QStringLiteral("怪物 HP"), 1));
-    scrollLayout->addWidget(buildObjectButton(QStringLiteral("D"), QStringLiteral("DAMAGE"),
-                                             QStringLiteral("DPS / 占比"), 2));
+    // i18n: the factory takes translation KEYS (not pre-translated text) so
+    // retranslateUi() can re-query them on a language switch.
+    scrollLayout->addWidget(buildObjectButton(QStringLiteral("P"),
+                                              QStringLiteral("console.nav.player"),
+                                              QStringLiteral("console.nav.playerSummary"), 0));
+    scrollLayout->addWidget(buildObjectButton(QStringLiteral("M"),
+                                              QStringLiteral("console.nav.monster"),
+                                              QStringLiteral("console.nav.monsterSummary"), 1));
+    scrollLayout->addWidget(buildObjectButton(QStringLiteral("D"),
+                                              QStringLiteral("console.nav.damage"),
+                                              QStringLiteral("console.nav.damageSummary"), 2));
     scrollLayout->addSpacing(20);
 
-    auto *workspaceTitle = new QLabel(QStringLiteral("WORKSPACE"));
+    auto *workspaceTitle = new QLabel();
+    trSet(workspaceTitle, QStringLiteral("console.rail.workspace"));
     workspaceTitle->setObjectName("sectionCap");
     scrollLayout->addWidget(workspaceTitle);
-    editBtn_ = new QPushButton(QStringLiteral("◇   LAYOUT MODE"));
+    editBtn_ = new QPushButton();
+    trSet(editBtn_, QStringLiteral("console.rail.layoutMode"));
     editBtn_->setObjectName("railAction");
     editBtn_->setCursor(Qt::PointingHandCursor);
     scrollLayout->addWidget(editBtn_);
-    auto *presets = new QPushButton(QStringLiteral("▱   PRESETS"));
+    auto *presets = new QPushButton();
+    trSet(presets, QStringLiteral("console.rail.presets"));
     presets->setObjectName("railAction");
     presets->setEnabled(false); // visual placeholder; no preset API yet
     scrollLayout->addWidget(presets);
@@ -440,11 +512,16 @@ ControlPanel::ControlPanel(QWidget *parent)
     railLayout->addSpacing(18);
 
     // v0.5.6: START + ESC hint pinned at bottom (always visible, CTA).
-    startBtn_ = new QPushButton(QStringLiteral("▶   START OVERLAY"));
+    // NOTE (pre-existing quirk, preserved): buildEditModeBlock() later
+    // re-points startBtn_ at the EDIT-MODE block's START button, so this
+    // rail button is display-only. It still registers for retranslation.
+    startBtn_ = new QPushButton();
+    trSet(startBtn_, QStringLiteral("console.rail.startOverlay"));
     startBtn_->setObjectName("startBtn");
     startBtn_->setCursor(Qt::PointingHandCursor);
     railLayout->addWidget(startBtn_);
-    auto *hint = new QLabel(QStringLiteral("ESC 返回 · 1/2/3 选择"));
+    auto *hint = new QLabel();
+    trSet(hint, QStringLiteral("console.rail.hint"));
     hint->setObjectName("railHint");
     hint->setAlignment(Qt::AlignCenter);
     railLayout->addWidget(hint);
@@ -479,14 +556,14 @@ ControlPanel::ControlPanel(QWidget *parent)
     inspectorLayout->setContentsMargins(0, 0, 0, 0);
     inspectorStack_ = new QStackedWidget();
     inspectorStack_->setObjectName("inspectorStack");
-    inspectorStack_->addWidget(buildInspector(QStringLiteral("PLAYER"),
-                                               QStringLiteral("玩家状态面板"),
+    inspectorStack_->addWidget(buildInspector(QStringLiteral("console.nav.player"),
+                                               QStringLiteral("console.inspector.sub.player"),
                                                mhw::PlayerSection::displayNames(), 0));
-    inspectorStack_->addWidget(buildInspector(QStringLiteral("MONSTER"),
-                                               QStringLiteral("怪物状态面板"),
+    inspectorStack_->addWidget(buildInspector(QStringLiteral("console.nav.monster"),
+                                               QStringLiteral("console.inspector.sub.monster"),
                                                mhw::MonsterSection::displayNames(), 1));
-    inspectorStack_->addWidget(buildInspector(QStringLiteral("DAMAGE"),
-                                               QStringLiteral("队伍伤害面板"),
+    inspectorStack_->addWidget(buildInspector(QStringLiteral("console.nav.damage"),
+                                               QStringLiteral("console.inspector.sub.damage"),
                                                mhw::DamageSection::displayNames(), 2));
     inspectorLayout->addWidget(inspectorStack_);
     topRow->addWidget(inspectorHost);
@@ -507,7 +584,8 @@ ControlPanel::ControlPanel(QWidget *parent)
     stagebar->setContentsMargins(22, 8, 22, 0);
     stagebar->setSpacing(8);
     stagebar->addStretch(1);
-    safeAreaBtn_ = new QPushButton(QStringLiteral("SAFE AREA"));
+    safeAreaBtn_ = new QPushButton();
+    trSet(safeAreaBtn_, QStringLiteral("console.stage.safeArea"));
     safeAreaBtn_->setObjectName("stageToggle");
     safeAreaBtn_->setCheckable(true);
     safeAreaBtn_->setChecked(true);
@@ -524,24 +602,27 @@ ControlPanel::ControlPanel(QWidget *parent)
     zoomInBtn_->setObjectName("stageToggle");
     zoomInBtn_->setFixedSize(26, 26);
     zoomInBtn_->setCursor(Qt::PointingHandCursor);
-    zoomLabel_ = new QLabel(QStringLiteral("ZOOM ×1.0"));
+    zoomLabel_ = new QLabel();
+    trHook([this]{ updateZoomLabel(); });
     zoomLabel_->setObjectName("stageToggleLabel");
     stagebar->addWidget(zoomOutBtn_);
     stagebar->addWidget(zoomLabel_);
     stagebar->addWidget(zoomInBtn_);
     stagebar->addWidget(safeAreaBtn_);
-    gridBtn_ = new QPushButton(QStringLiteral("GRID"));
+    gridBtn_ = new QPushButton();
+    trSet(gridBtn_, QStringLiteral("console.stage.grid"));
     gridBtn_->setObjectName("stageToggle");
     gridBtn_->setCheckable(true);
     gridBtn_->setChecked(true);
     gridBtn_->setCursor(Qt::PointingHandCursor);
     stagebar->addWidget(gridBtn_);
-    themeBtn_ = new QPushButton(isDarkTheme() ? QStringLiteral("☀  LIGHT") : QStringLiteral("☾  DARK"));
+    themeBtn_ = new QPushButton();
+    updateThemeChipText();   // i18n: copy names the theme, so it follows the locale
     themeBtn_->setObjectName("themeToggle");
     themeBtn_->setCursor(Qt::PointingHandCursor);
     connect(themeBtn_, &QPushButton::clicked, this, [this]() {
         setUiTheme(!isDarkTheme());
-        themeBtn_->setText(isDarkTheme() ? QStringLiteral("☀  LIGHT") : QStringLiteral("☾  DARK"));
+        updateThemeChipText();
         // Clear the old application stylesheet first. Qt 6.11 keeps
         // cached selector colours on existing QPushButtons if a new QSS
         // is assigned directly; clearing makes the following assignment
@@ -556,7 +637,40 @@ ControlPanel::ControlPanel(QWidget *parent)
                 row->refreshTheme();
         repolishAllWidgets();
     });
+    // ---- v0.9 i18n: EN / CH language chip ------------------------------
+    // Two segments — "中文" | "EN" — with the ACTIVE language highlighted
+    // through the `active` dynamic property (QSS: QLabel#localeSeg). The
+    // chip is a single click target sitting left of the theme chip: the
+    // labels are mouse-transparent, so the frame receives the release and
+    // routes it through ControlPanel::eventFilter → switchLocale().
+    // The segment texts are language ENDONYMS (中文 / EN) — never translated.
+    localeChip_ = new QFrame();
+    localeChip_->setObjectName(QStringLiteral("localeChip"));
+    localeChip_->setCursor(Qt::PointingHandCursor);
+    trTip(localeChip_, QStringLiteral("console.locale.tooltip"));
+    localeChip_->installEventFilter(this);
+    {
+        auto *hl = new QHBoxLayout(localeChip_);
+        hl->setContentsMargins(10, 4, 10, 4);
+        hl->setSpacing(6);
+        localeZhLabel_ = new QLabel(mh::tr(QStringLiteral("console.locale.zh")));
+        localeZhLabel_->setObjectName(QStringLiteral("localeSeg"));
+        localeZhLabel_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        auto *localeSep = new QLabel(QStringLiteral("|"));
+        localeSep->setObjectName(QStringLiteral("localeSep"));
+        localeSep->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        localeEnLabel_ = new QLabel(mh::tr(QStringLiteral("console.locale.en")));
+        localeEnLabel_->setObjectName(QStringLiteral("localeSeg"));
+        localeEnLabel_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        hl->addWidget(localeZhLabel_);
+        hl->addWidget(localeSep);
+        hl->addWidget(localeEnLabel_);
+    }
+    updateLocaleChip();
+    stagebar->addWidget(localeChip_);
     stagebar->addWidget(themeBtn_);
+    // i18n: replay the theme chip copy together with the language chip.
+    trHook([this]{ updateThemeChipText(); });
     stageLayout->addLayout(stagebar);
 
     canvas_ = new HudCanvas();
@@ -608,15 +722,14 @@ ControlPanel::ControlPanel(QWidget *parent)
     connect(zoomOutBtn_, &QPushButton::clicked, this, [this]{
         if (canvas_) canvas_->setZoom(canvas_->zoom() - 0.5);
     });
-    connect(canvas_, &HudCanvas::zoomChanged, this, [this](qreal z){
-        if (zoomLabel_)
-            zoomLabel_->setText(QStringLiteral("ZOOM ×%1").arg(z, 0, 'f', 1));
+    connect(canvas_, &HudCanvas::zoomChanged, this, [this](qreal){
+        updateZoomLabel();   // i18n: the format lives in one place
     });
     {
         QSettings s;
         const qreal savedZoom = s.value(QStringLiteral("ui/zoom"), 2.0).toDouble();
         canvas_->setZoom(savedZoom);
-        zoomLabel_->setText(QStringLiteral("ZOOM ×%1").arg(savedZoom, 0, 'f', 1));
+        updateZoomLabel();
     }
     canvas_->bindPanel(0, new PanelSourceAdapter(static_cast<Panel*>(player_)));
     canvas_->bindPanel(1, new PanelSourceAdapter(static_cast<Panel*>(monster_)));
@@ -726,8 +839,7 @@ ControlPanel::ControlPanel(QWidget *parent)
         }
     });
     connect(stageToggleBtn_, &QPushButton::toggled, this, [this](bool checked){
-        stageToggleBtn_->setText(checked ? QStringLiteral("⌄   HIDE STAGE")
-                                         : QStringLiteral("⌃   SHOW STAGE"));
+        updateStageToggleText();   // i18n: ⌄/⌃ copy lives in one helper
         animStageTo(checked);
     });
 
@@ -800,20 +912,18 @@ ControlPanel::ControlPanel(QWidget *parent)
         if (autoDetectBadge_) {
             if (!detected) {
                 autoDetectBadge_->setText(
-                    QStringLiteral("AUTO-DETECT: NONE — start MHW or MHR"));
+                    mh::tr(QStringLiteral("console.detect.startupNone")));
                 autoDetectBadge_->setProperty("state", "gray");
             } else {
-                const QString name = detected->game == mhw::GameId::Rise
-                                         ? QStringLiteral("RISE") : QStringLiteral("WORLD");
+                const QString name = gameName(detected->game);
                 if (detected->game == currentGame_) {
                     autoDetectBadge_->setText(
-                        QStringLiteral("AUTO-DETECT: %1 RUNNING (pid %2)")
+                        mh::tr(QStringLiteral("console.detect.startupRunning"))
                             .arg(name).arg(detected->pid));
                     autoDetectBadge_->setProperty("state", "cyan");
                 } else {
                     autoDetectBadge_->setText(
-                        QStringLiteral("AUTO-DETECT: %1 RUNNING — click %1 to switch")
-                            .arg(name));
+                        mh::tr(QStringLiteral("console.detect.startupSwitch")).arg(name));
                     autoDetectBadge_->setProperty("state", "amber");
                 }
             }
@@ -844,6 +954,163 @@ ControlPanel::~ControlPanel()
     if (player_)  { player_->setVisible(false);  delete player_;  player_  = nullptr; }
     if (monster_) { monster_->setVisible(false); delete monster_; monster_ = nullptr; }
     if (damage_)  { damage_->setVisible(false);  delete damage_;  damage_  = nullptr; }
+}
+
+// ---- v0.9 i18n: registration + replay -----------------------------------
+//
+// Design: a language switch must not rebuild the window (the console
+// owns three live panel instances, a splitter layout and a scroll state
+// that would all be lost). Instead every localized string is registered
+// ONCE at construction with the key it came from; retranslateUi() replays
+// the registry and then re-runs the ordinary refresh paths for anything
+// that is formatted from live state.
+//
+// Registration applies the string immediately, so construction-time UI is
+// localized without a second pass.
+void ControlPanel::trSet(QWidget *widget, const QString &key)
+{
+    if (!widget)
+        return;
+    trPairs_.append({QPointer<QWidget>(widget), key});
+    const QString text = mh::tr(key);
+    if (auto *label = qobject_cast<QLabel *>(widget))
+        label->setText(text);
+    else if (auto *button = qobject_cast<QAbstractButton *>(widget))
+        button->setText(text);
+}
+
+void ControlPanel::trTip(QWidget *widget, const QString &key)
+{
+    if (!widget)
+        return;
+    trTips_.append({QPointer<QWidget>(widget), key});
+    widget->setToolTip(mh::tr(key));
+}
+
+void ControlPanel::trHook(std::function<void()> fn)
+{
+    trHooks_.append(fn);
+    fn();   // localize immediately, replay later
+}
+
+void ControlPanel::trWindowTitle(const QString &key)
+{
+    setWindowTitle(mh::tr(key));
+    trHooks_.append([this, key]{ setWindowTitle(mh::tr(key)); });
+}
+
+void ControlPanel::retranslateUi()
+{
+    // Phase 1 — replay the build-time registry (static copy + hooks).
+    for (const auto &pair : trPairs_) {
+        QWidget *widget = pair.first.data();
+        if (!widget)
+            continue;
+        const QString text = mh::tr(pair.second);
+        if (auto *label = qobject_cast<QLabel *>(widget))
+            label->setText(text);
+        else if (auto *button = qobject_cast<QAbstractButton *>(widget))
+            button->setText(text);
+    }
+    for (const auto &pair : trTips_) {
+        if (QWidget *widget = pair.first.data())
+            widget->setToolTip(mh::tr(pair.second));
+    }
+    for (const auto &fn : trHooks_)
+        fn();
+
+    // Phase 2 — dynamic elements. Re-running the existing refresh paths
+    // (instead of duplicating their format strings here) is what keeps a
+    // language flip consistent with what the live timers write 5s later.
+    setOverlayRunning(overlayPid_ != 0);          // rail START/STOP + badge
+    for (int i = 0; i < 3; ++i)
+        updatePanelSummary(i);                    // counts + nav summaries
+    for (int i = 0; i < 3; ++i)
+        updatePosLabel(i);                        // corner + margin readout
+    refreshAutoDetect();                          // badge + GAME column
+    // Preview tiles carry PAINTED chrome (e.g. the disabled placeholder)
+    // and the canvas paints its header/footer — repaint both.
+    for (int i = 0; i < 3; ++i)
+        rebuildAndRender(i);
+    if (canvas_)
+        canvas_->update();
+}
+
+// Load `locale` into the shared StringTable and relabel the console.
+// Returns silently when the locale directory is missing (the previous
+// table stays active — StringTable::load() guarantees that).
+void ControlPanel::applyLocale(const QString &locale)
+{
+    if (locale.isEmpty())
+        return;
+    auto &table = mhw::StringTable::instance();
+    if (locale == table.currentLocale()) {
+        updateLocaleChip();
+        return;
+    }
+    if (!table.load(locale)) {
+        qWarning("monster-control: locale '%s' unavailable; keeping '%s'",
+                 qPrintable(locale), qPrintable(table.currentLocale()));
+        updateLocaleChip();
+        return;
+    }
+    retranslateUi();
+    updateLocaleChip();
+}
+
+// User-facing switch (the EN/CH chip): apply + persist. The conf's
+// `locale=` row is the console -> overlay handshake — the overlay polls
+// it (~1 s) and reloads itself, so no restart is needed. The console is
+// the ONLY writer of that file (mask rows + locale row).
+void ControlPanel::switchLocale(const QString &locale)
+{
+    const QString before = mhw::StringTable::instance().currentLocale();
+    applyLocale(locale);
+    if (mhw::StringTable::instance().currentLocale() == before)
+        return;   // load failed — do not advertise a language we do not have
+    if (!mhw::writeLocaleToConf(locale))
+        qWarning("monster-control: cannot write locale to %s",
+                 qPrintable(mhw::localeConfPath()));
+}
+
+void ControlPanel::updateLocaleChip()
+{
+    const bool en = mhw::StringTable::instance().isEnglish();
+    for (QLabel *seg : {localeZhLabel_, localeEnLabel_}) {
+        if (!seg)
+            continue;
+        const bool active = (seg == localeZhLabel_) ? !en : en;
+        seg->setProperty("active", active);
+        // Dynamic-property selectors need an explicit repolish.
+        seg->style()->unpolish(seg);
+        seg->style()->polish(seg);
+    }
+}
+
+void ControlPanel::updateThemeChipText()
+{
+    if (!themeBtn_)
+        return;
+    themeBtn_->setText(isDarkTheme() ? mh::tr(QStringLiteral("console.theme.light"))
+                                     : mh::tr(QStringLiteral("console.theme.dark")));
+}
+
+void ControlPanel::updateStageToggleText()
+{
+    if (!stageToggleBtn_)
+        return;
+    stageToggleBtn_->setText(
+        stageToggleBtn_->isChecked()
+            ? mh::tr(QStringLiteral("console.rail.hideStage"))
+            : mh::tr(QStringLiteral("console.rail.showStage")));
+}
+
+void ControlPanel::updateZoomLabel()
+{
+    if (!zoomLabel_)
+        return;
+    zoomLabel_->setText(mh::tr(QStringLiteral("console.canvas.zoom"))
+                            .arg(canvas_ ? canvas_->zoom() : 1.0, 0, 'f', 1));
 }
 
 void ControlPanel::closeEvent(QCloseEvent *e)
@@ -944,6 +1211,16 @@ bool ControlPanel::eventFilter(QObject *watched, QEvent *event)
         }
     }
     if (event->type() == QEvent::MouseButtonRelease) {
+        // v0.9 i18n: the EN/CH chip flips the console language. The
+        // segment labels are WA_TransparentForMouseEvents, so the frame
+        // is what receives this release. The active locale comes from
+        // the shared table (single source of truth), not from a member.
+        if (watched == localeChip_) {
+            switchLocale(mhw::StringTable::instance().isEnglish()
+                             ? QStringLiteral("zh-CN")
+                             : QStringLiteral("en-US"));
+            return true;
+        }
         // v0.6 Phase 5: clicking the auto-detect chip switches to the
         // detected game (hot-swaps when the overlay is running).
         if (watched == autoDetectBadge_) {
@@ -999,18 +1276,22 @@ void ControlPanel::updatePanelSummary(int idx)
         if (row->isChecked()) ++on;
     const int total = ctl_[idx].subs.size();
     if (ctl_[idx].countLabel)
-        ctl_[idx].countLabel->setText(QStringLiteral("%1 OF %2 SECTIONS VISIBLE").arg(on).arg(total));
+        ctl_[idx].countLabel->setText(
+            mh::tr(QStringLiteral("console.inspector.count")).arg(on).arg(total));
     if (ctl_[idx].countBar)
         ctl_[idx].countBar->setRatio(total > 0 ? qreal(on) / total : 1.0);
     if (ctl_[idx].navSummary)
         ctl_[idx].navSummary->setText(ctl_[idx].master->isChecked()
-            ? QStringLiteral("%1 / %2 SECTIONS").arg(on).arg(total)
-            : QStringLiteral("PANEL DISABLED"));
+            ? mh::tr(QStringLiteral("console.inspector.sections")).arg(on).arg(total)
+            : mh::tr(QStringLiteral("console.panel.disabled")));
 }
 
+// i18n: `titleKey` / `summaryKey` are StringTable keys (console.nav.*), not
+// pre-translated copy — the labels register through trSet() so a later
+// language switch re-queries them instead of replaying frozen text.
 QWidget *ControlPanel::buildObjectButton(const QString &letter,
-                                         const QString &title,
-                                         const QString &summary, int idx)
+                                         const QString &titleKey,
+                                         const QString &summaryKey, int idx)
 {
     auto *box = new QFrame();
     box->setObjectName(idx == 0 ? "navPlayer"
@@ -1046,9 +1327,11 @@ QWidget *ControlPanel::buildObjectButton(const QString &letter,
 
     auto *texts = new QVBoxLayout();
     texts->setSpacing(2);
-    auto *titleLabel = new QLabel(title);
+    auto *titleLabel = new QLabel();
+    trSet(titleLabel, titleKey);
     titleLabel->setObjectName("navTitle");
-    auto *summaryLabel = new QLabel(summary);
+    auto *summaryLabel = new QLabel();
+    trSet(summaryLabel, summaryKey);
     summaryLabel->setObjectName("navSummary");
     texts->addWidget(titleLabel);
     texts->addWidget(summaryLabel);
@@ -1062,7 +1345,7 @@ QWidget *ControlPanel::buildObjectButton(const QString &letter,
     return box;
 }
 
-QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
+QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &subKey,
                                       const QStringList &labels, int idx)
 {
     auto *host = new QWidget();
@@ -1078,15 +1361,23 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     vl->setContentsMargins(24, 24, 24, 24);
     vl->setSpacing(10);
 
-    auto *eyebrow = new QLabel(QStringLiteral("SELECTED OBJECT  /  0%1").arg(idx + 1));
+    // The eyebrow embeds the 1-based panel index — a formatting hook, not a
+    // plain (widget, key) pair.
+    auto *eyebrow = new QLabel();
+    trHook([eyebrow, idx]{
+        eyebrow->setText(mh::tr(QStringLiteral("console.inspector.selectedObject"))
+                             .arg(idx + 1));
+    });
     eyebrow->setObjectName("sectionCap");
     vl->addWidget(eyebrow);
 
     auto *head = new QHBoxLayout();
     auto *titles = new QVBoxLayout();
-    auto *titleLabel = new QLabel(title);
+    auto *titleLabel = new QLabel();
+    trSet(titleLabel, titleKey);
     titleLabel->setObjectName("inspectorTitle");
-    auto *subLabel = new QLabel(sub);
+    auto *subLabel = new QLabel();
+    trSet(subLabel, subKey);
     subLabel->setObjectName("inspectorSub");
     titles->addWidget(titleLabel);
     titles->addWidget(subLabel);
@@ -1111,7 +1402,8 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     ctl_[idx].countBar = bar;
     vl->addWidget(bar);
     vl->addSpacing(10);
-    auto *contentCap = new QLabel(QStringLiteral("CONTENT"));
+    auto *contentCap = new QLabel();
+    trSet(contentCap, QStringLiteral("console.inspector.content"));
     contentCap->setObjectName("sectionCap");
     vl->addWidget(contentCap);
 
@@ -1121,6 +1413,10 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     for (int b = 0; b < labels.size(); ++b) {
         auto *row = new SectionRow(labels[b], b < keys.size() ? keys[b] : QString(), iconKind(idx, b));
         row->setAccent(panelAccent(idx));
+        // i18n: the row's bit index is `keys[b]` (a stable ASCII id); the
+        // display label is re-resolved from panel_sections displayName()
+        // on every language switch instead of freezing Chinese at build.
+        trHook([row, idx, b]{ row->setDisplayText(sectionLabel(idx, b)); });
         // v0.7.1: World/Rise row visibility is set in switchGame() after
         // construction so all rows are created equal. See ControlPanel
         // constructor → switchGame() for the source of truth.
@@ -1131,13 +1427,15 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     vl->addSpacing(12);
 
     // v0.5 UI-link: APPEARANCE sliders (scale + opacity), live preview.
-    auto *appCap = new QLabel(QStringLiteral("APPEARANCE"));
+    auto *appCap = new QLabel();
+    trSet(appCap, QStringLiteral("console.inspector.appearance"));
     appCap->setObjectName("sectionCap");
     vl->addWidget(appCap);
 
     auto *scaleRow = new QHBoxLayout();
     scaleRow->setSpacing(8);
-    auto *scaleLab = new QLabel(QStringLiteral("SCALE"));
+    auto *scaleLab = new QLabel();
+    trSet(scaleLab, QStringLiteral("console.inspector.scale"));
     scaleLab->setObjectName("sliderLabel");
     auto *scaleVal = new QLabel();
     scaleVal->setObjectName("sliderValue");
@@ -1166,7 +1464,8 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
 
     auto *opacRow = new QHBoxLayout();
     opacRow->setSpacing(8);
-    auto *opacLab = new QLabel(QStringLiteral("OPACITY"));
+    auto *opacLab = new QLabel();
+    trSet(opacLab, QStringLiteral("console.inspector.opacity"));
     opacLab->setObjectName("sliderLabel");
     auto *opacVal = new QLabel();
     opacVal->setObjectName("sliderValue");
@@ -1199,7 +1498,8 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     // the game scene shows through the panel body.
     auto *bgRow = new QHBoxLayout();
     bgRow->setSpacing(8);
-    auto *bgLab = new QLabel(QStringLiteral("BG ALPHA"));
+    auto *bgLab = new QLabel();
+    trSet(bgLab, QStringLiteral("console.inspector.bgAlpha"));
     bgLab->setObjectName("sliderLabel");
     auto *bgVal = new QLabel();
     bgVal->setObjectName("sliderValue");
@@ -1233,17 +1533,24 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     {
         auto *screenRow = new QHBoxLayout();
         screenRow->setSpacing(8);
-        auto *screenLab = new QLabel(QStringLiteral("SCREEN"));
+        auto *screenLab = new QLabel();
+        trSet(screenLab, QStringLiteral("console.inspector.screen"));
         screenLab->setObjectName(QStringLiteral("sliderLabel"));
         auto *combo = new QComboBox();
         combo->setCursor(Qt::PointingHandCursor);
         // First entry: explicit "follow primary" — empty userData so
         // Panel::setOutputName("") clears the override.
-        combo->addItem(QStringLiteral("<PRIMARY>"), QString());
+        combo->addItem(mh::tr(QStringLiteral("console.inspector.primary")), QString());
+        // Item 0 is UI copy ("<PRIMARY>") — re-localize it in place. The
+        // remaining items are screen names + geometry and must not move.
+        trHook([combo]{
+            combo->setItemText(0, mh::tr(QStringLiteral("console.inspector.primary")));
+        });
         const auto outs = screen_query::listOutputs();
         for (const auto &o : outs) {
             QString label = o.name;
-            if (o.primary) label += QStringLiteral("  (primary)");
+            if (o.primary)
+                label += mh::tr(QStringLiteral("console.inspector.primaryTag"));
             // Append the geometry so the user can tell two same-named
             // outputs apart (rare on Niri, common on X11 multi-GPU).
             label += QStringLiteral("  ·  %1×%2 @%3,%4")
@@ -1303,13 +1610,19 @@ QWidget *ControlPanel::buildInspector(const QString &title, const QString &sub,
     vl->addWidget(posLabel);
     vl->addStretch(1);
     auto *foot = new QHBoxLayout();
-    auto *reset = new QPushButton(QStringLiteral("↶  RESET %1").arg(title));
+    // The reset copy embeds the panel name → formatting hook.
+    auto *reset = new QPushButton();
+    trHook([reset, titleKey]{
+        reset->setText(mh::tr(QStringLiteral("console.inspector.reset"))
+                           .arg(mh::tr(titleKey)));
+    });
     reset->setObjectName("resetButton");
     reset->setCursor(Qt::PointingHandCursor);
     connect(reset, &QPushButton::clicked, this, [this, idx]{ resetPanel(idx); });
     foot->addWidget(reset);
     foot->addStretch(1);
-    auto *modified = new QLabel(QStringLiteral("AUTO-SAVED  ●"));
+    auto *modified = new QLabel();
+    trSet(modified, QStringLiteral("console.inspector.autoSaved"));
     modified->setObjectName("modified");
     foot->addWidget(modified);
     vl->addLayout(foot);
@@ -1353,14 +1666,17 @@ QWidget *ControlPanel::buildGameColumn()
     vl->setContentsMargins(10, 22, 10, 18);
     vl->setSpacing(10);
 
-    auto *title = new QLabel(QStringLiteral("GAME"));
+    auto *title = new QLabel();
+    trSet(title, QStringLiteral("console.rail.game"));
     title->setObjectName("sectionCap");
     vl->addWidget(title);
 
-    gameWorldBtn_ = new QPushButton(QStringLiteral("WORLD"));
+    gameWorldBtn_ = new QPushButton();
+    trSet(gameWorldBtn_, QStringLiteral("console.game.world"));
     gameWorldBtn_->setObjectName("gameBtn");
     gameWorldBtn_->setCursor(Qt::PointingHandCursor);
-    gameRiseBtn_ = new QPushButton(QStringLiteral("RISE"));
+    gameRiseBtn_ = new QPushButton();
+    trSet(gameRiseBtn_, QStringLiteral("console.game.rise"));
     gameRiseBtn_->setObjectName("gameBtn");
     gameRiseBtn_->setCursor(Qt::PointingHandCursor);
     connect(gameWorldBtn_, &QPushButton::clicked, this, [this]{ switchGame(mhw::GameId::World); });
@@ -1373,13 +1689,15 @@ QWidget *ControlPanel::buildGameColumn()
     sep->setObjectName("gameColumnRule");
     vl->addWidget(sep);
 
-    auto *detectedCap = new QLabel(QStringLiteral("DETECTED"));
+    auto *detectedCap = new QLabel();
+    trSet(detectedCap, QStringLiteral("console.rail.detected"));
     detectedCap->setObjectName("sectionCap");
     vl->addWidget(detectedCap);
     // v0.7.1: read-only caption showing which game the auto-detector
     // last saw. Updated alongside the rail badge so the user has the
     // information in both columns.
-    auto *detectedValue = new QLabel(QStringLiteral("--"));
+    auto *detectedValue = new QLabel();
+    trSet(detectedValue, QStringLiteral("console.rail.none"));
     detectedValue->setObjectName("gameColumnDetected");
     detectedValue->setWordWrap(true);
     detectedValue->setAlignment(Qt::AlignLeft | Qt::AlignTop);
@@ -1410,22 +1728,25 @@ QWidget *ControlPanel::buildEditModeBlock()
 
     auto *titleRow = new QHBoxLayout();
     titleRow->setSpacing(10);
-    auto *titleLab = new QLabel(QStringLiteral("EDIT MODE"));
+    auto *titleLab = new QLabel();
+    trSet(titleLab, QStringLiteral("console.edit.title"));
     titleLab->setObjectName("groupTitle");
     titleRow->addWidget(titleLab, 1);
     vl->addLayout(titleRow);
 
     auto *row = new QHBoxLayout();
     row->setSpacing(10);
-    auto *cap = new QLabel(QStringLiteral(
-        "进入后三个面板强制显示，方向键移动"));
+    auto *cap = new QLabel();
+    trSet(cap, QStringLiteral("console.edit.hint"));
     cap->setObjectName("editCap");
     cap->setWordWrap(true);
     row->addWidget(cap, 1);
-    auto *startBtn = new QPushButton(QStringLiteral("START"));
+    auto *startBtn = new QPushButton();
+    trSet(startBtn, QStringLiteral("console.edit.start"));
     startBtn->setObjectName("startBtn");
     startBtn->setCursor(Qt::PointingHandCursor);
-    auto *editBtn = new QPushButton(QStringLiteral("ENTER EDIT"));
+    auto *editBtn = new QPushButton();
+    trSet(editBtn, QStringLiteral("console.edit.enter"));
     editBtn->setObjectName("enterEdit");
     editBtn->setCursor(Qt::PointingHandCursor);
     row->addWidget(startBtn, 0);
@@ -1521,8 +1842,10 @@ void ControlPanel::switchGame(mhw::GameId game)
     if (changed && overlayPid_ != 0) {
         pendingRestart_ = true;
         if (statusBadge_) {
-            statusBadge_->setText(QStringLiteral("●   SWITCHING TO %1…")
-                .arg(isRise ? QStringLiteral("RISE") : QStringLiteral("WORLD")));
+            statusBadge_->setText(
+                mh::tr(QStringLiteral("console.status.switching"))
+                    .arg(gameName(isRise ? mhw::GameId::Rise
+                                         : mhw::GameId::World)));
         }
         stopOverlay();
         // stopOverlay() pauses the poll timer; the hot-swap needs it
@@ -1590,6 +1913,18 @@ void ControlPanel::launchOverlay(bool editMode)
         args << QStringLiteral("--no-damage");
     if (editMode) args << QStringLiteral("--edit");
 
+    // v0.9 i18n: start the overlay in the console's active language.
+    // The overlay resolves --locale > conf (src/main.cpp), so passing it
+    // explicitly means a freshly spawned overlay never flips language on
+    // its first conf poll. The locale= row written by saveMaskToDisk()
+    // below covers the manually-started case; WS-C's poll (locale_sync.h)
+    // remains the runtime path once the user flips the chip.
+    {
+        const QString loc = mhw::StringTable::instance().currentLocale();
+        if (!loc.isEmpty())
+            args << QStringLiteral("--locale=%1").arg(loc);
+    }
+
     // Target game selected in the rail (switchGame persists it). The
     // overlay would otherwise auto-detect, which can pick the wrong
     // process when both World and Rise are installed/running.
@@ -1634,7 +1969,7 @@ void ControlPanel::launchOverlay(bool editMode)
     if (statusBadge_) {
         const QString stamp = QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
         statusBadge_->setText(
-            QStringLiteral("RUNNING pid %1 since %2")
+            mh::tr(QStringLiteral("console.status.runningSince"))
                 .arg(overlayPid_).arg(stamp));
     }
 
@@ -1671,7 +2006,8 @@ void ControlPanel::onOverlayExited()
     }
     if (startBtn_) startBtn_->setEnabled(true);
     if (editBtn_)  editBtn_->setEnabled(true);
-    if (statusBadge_) statusBadge_->setText(QStringLiteral("READY"));
+    if (statusBadge_)
+        statusBadge_->setText(mh::tr(QStringLiteral("console.status.plainReady")));
     setOverlayRunning(false);
     // v0.6 Phase 5: hot-swap — the user switched game while running, so
     // relaunch with the freshly-updated currentGame_. If the launch
@@ -1713,20 +2049,19 @@ void ControlPanel::refreshAutoDetect()
         s.setValue(QStringLiteral("detectedGame"),
                    detected->game == mhw::GameId::Rise ? QStringLiteral("rise")
                                                        : QStringLiteral("world"));
-        const QString name = detected->game == mhw::GameId::Rise
-                                 ? QStringLiteral("RISE") : QStringLiteral("WORLD");
+        const QString name = gameName(detected->game);
         const bool match = (detected->game == currentGame_);
-        detectedShort = QStringLiteral("%1 (pid %2)")
+        detectedShort = mh::tr(QStringLiteral("console.detect.short"))
                             .arg(name).arg(detected->pid);
         autoDetectBadge_->setText(
-            QStringLiteral("● DETECTED %1 · pid %2 · switch →")
+            mh::tr(QStringLiteral("console.detect.badge"))
                 .arg(name).arg(detected->pid));
         autoDetectBadge_->setProperty("state", match ? "cyan" : "amber");
         autoDetectBadge_->setCursor(match ? Qt::ArrowCursor
                                           : Qt::PointingHandCursor);
     } else {
-        detectedShort = QStringLiteral("--");
-        autoDetectBadge_->setText(QStringLiteral("● NO GAME RUNNING"));
+        detectedShort = mh::tr(QStringLiteral("console.rail.none"));
+        autoDetectBadge_->setText(mh::tr(QStringLiteral("console.detect.none")));
         autoDetectBadge_->setProperty("state", "gray");
         autoDetectBadge_->setCursor(Qt::ArrowCursor);
     }
@@ -1789,6 +2124,17 @@ void ControlPanel::loadMaskFromDisk()
             damageMask = line.mid(7).toInt(0, 16);
     }
 
+    // v0.9 i18n (integration fix): the conf's 4th `locale=` row is the
+    // console->overlay handshake (core/locale_conf.h). It is resolved at
+    // startup by main_control.cpp (--locale > conf > zh-CN) and by the
+    // ctor guard above; it must NOT be re-applied here. Doing so silently
+    // overrode an explicit `--locale` with a stale conf value and produced
+    // a split-language UI (already-registered chrome flipped to the conf
+    // locale via applyLocale()'s replay while widgets built before/after
+    // the apply kept the CLI locale). Runtime switches go through
+    // switchLocale() (the EN/CH chip); cross-process sync is the overlay's
+    // conf poll (locale_sync.h).
+
     auto applyTo = [](int m, PanelCtl &c) {
         if (m < 0) return;
         // master stays ON if any bit is set; otherwise treat as fully
@@ -1825,9 +2171,15 @@ void ControlPanel::saveMaskToDisk() const
         return;
     }
     QTextStream out(&f);
+    // Line order is part of the contract: the three legacy mask rows first
+    // (lowercase hex — tests/control_l2_smoke.cpp reads back "fb"/"2f"/"7"),
+    // then the v0.9 `locale=` row polled by the overlay (locale_sync.h).
     out << "player="  << QString::number(mp, 16) << '\n'
         << "monster=" << QString::number(mm, 16) << '\n'
         << "damage="  << QString::number(md, 16) << '\n';
+    const QString locale = mhw::StringTable::instance().currentLocale();
+    if (!locale.isEmpty())
+        out << "locale=" << locale << '\n';
 }
 
 void ControlPanel::rebuildAndRender(int idx)
@@ -1850,7 +2202,8 @@ void ControlPanel::rebuildAndRender(int idx)
         QFont f("Chakra Petch", 11, QFont::Bold);
         f.setLetterSpacing(QFont::AbsoluteSpacing, 2);
         p.setFont(f);
-        p.drawText(ph.rect(), Qt::AlignCenter, QStringLiteral("PANEL DISABLED"));
+        p.drawText(ph.rect(), Qt::AlignCenter,
+                   mh::tr(QStringLiteral("console.panel.disabled")));
         p.end();
         if (lab) lab->setPixmap(ph);
         return;
@@ -1920,19 +2273,19 @@ void ControlPanel::setOverlayRunning(bool running)
 {
     if (!startBtn_) return;
     if (running) {
-        startBtn_->setText(QStringLiteral("■   STOP OVERLAY"));
+        startBtn_->setText(mh::tr(QStringLiteral("console.rail.stopOverlay")));
         startBtn_->setObjectName(QStringLiteral("stopBtn"));
         if (statusBadge_) {
             statusBadge_->setText(
-                QStringLiteral("●   RUNNING pid %1")
+                mh::tr(QStringLiteral("console.status.runningPid"))
                     .arg(overlayPid_));
             statusBadge_->setProperty("state", "running");
         }
     } else {
-        startBtn_->setText(QStringLiteral("▶   START OVERLAY"));
+        startBtn_->setText(mh::tr(QStringLiteral("console.rail.startOverlay")));
         startBtn_->setObjectName(QStringLiteral("startBtn"));
         if (statusBadge_) {
-            statusBadge_->setText(QStringLiteral("●   OVERLAY READY"));
+            statusBadge_->setText(mh::tr(QStringLiteral("console.status.ready")));
             statusBadge_->setProperty("state", "ready");
         }
     }
@@ -2025,10 +2378,13 @@ void ControlPanel::updatePosLabel(int idx)
     const QPoint center(x + content.width() / 2, y + content.height() / 2);
     const bool left = center.x() < g.center().x();
     const bool top = center.y() < g.center().y();
-    const QString corner = top ? (left ? QStringLiteral("TOP LEFT") : QStringLiteral("TOP RIGHT"))
-                               : (left ? QStringLiteral("BOTTOM LEFT") : QStringLiteral("BOTTOM RIGHT"));
+    const QString corner = top
+        ? (left ? mh::tr(QStringLiteral("console.corner.topLeft"))
+                : mh::tr(QStringLiteral("console.corner.topRight")))
+        : (left ? mh::tr(QStringLiteral("console.corner.bottomLeft"))
+                : mh::tr(QStringLiteral("console.corner.bottomRight")));
     ctl_[idx].posLabel->setText(
-        QStringLiteral("POSITION: %1  ·  L%2 T%3 R%4 B%5")
+        mh::tr(QStringLiteral("console.pos.label"))
             .arg(corner).arg(m.left()).arg(m.top())
             .arg(m.right()).arg(m.bottom()));
 }

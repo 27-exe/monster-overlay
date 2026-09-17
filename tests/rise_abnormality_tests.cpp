@@ -20,9 +20,18 @@
 //
 // No QCoreApplication: everything here is QString-free except the timer text
 // helper, which needs only QtCore's QString.
+//
+// v0.9 i18n (WS-B) extends this file with the en-us.xml columns: the table now
+// carries name + nameEn per row and the two display helpers pick by
+// mhw::StringTable::instance().isEnglish(). StringTable::load() reads Qt
+// resources, so the binary now starts a QCoreApplication (needed for the
+// resource system) and links the shipped qrc — the CMake target already does.
 
 #include "rise/mhr_abnormalities.h"
 
+#include "core/string_table.h"
+
+#include <QCoreApplication>
 #include <QString>
 
 #include <array>
@@ -57,8 +66,10 @@ const mhw::RiseAbnormalitySchema *find(const char *id)
 
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+    QCoreApplication app(argc, argv);
+
     std::size_t consumableCount = 0;
     std::size_t debuffCount = 0;
     const mhw::RiseAbnormalitySchema *consumables =
@@ -86,6 +97,7 @@ int main()
             const mhw::RiseAbnormalitySchema &s = rows[i];
             if (s.id == nullptr || s.id[0] == '\0' || s.nameKey == nullptr
                 || s.nameKey[0] == '\0' || s.name == nullptr || s.name[0] == '\0'
+                || s.nameEn == nullptr || s.nameEn[0] == '\0'
                 || s.group == nullptr || s.group[0] == '\0')
                 allNamesResolved = false;
             if (s.offset != 0 && (s.offset < 0 || s.offset % 4 != 0))
@@ -313,6 +325,78 @@ int main()
     check(mhw::riseAbnormalityTimerText(11.9F, false, false, 0.0F)
               == QStringLiteral("11s"),
           "countdowns render as integer seconds");
+
+    // ---- 6. Locale-aware names (v0.9 i18n, WS-B) -------------------------
+    // Every row carries the en-us.xml column; the two display helpers pick by
+    // mhw::StringTable::instance().isEnglish(), with an empty locale reading
+    // as Chinese (the pre-i18n behaviour).
+    mhw::StringTable &strings = mhw::StringTable::instance();
+    check(!strings.isEnglish(), "empty locale reads as Chinese by default");
+
+    check(demonDrug && std::strcmp(demonDrug->nameEn, "Demondrug") == 0,
+          "en column: ABNORMALITY_DEMONDRUG = Demondrug (en-us.xml)");
+    check(megaDrug && std::strcmp(megaDrug->nameEn, "Mega Demondrug") == 0,
+          "en column: ABNORMALITY_MEGA_DEMONDRUG = Mega Demondrug");
+    check(mightSeed && std::strcmp(mightSeed->nameEn, "Might Seed") == 0,
+          "en column: ABNORMALITY_MIGHT_SEED = Might Seed");
+    check(poison && std::strcmp(poison->nameEn, "Poison") == 0,
+          "en column: ABNORMALITY_POISON = Poison");
+    check(frostcraft && std::strcmp(frostcraft->nameEn, "Frostcraft") == 0,
+          "en column: ABNORMALITY_FROSTCRAFT_RISE = Frostcraft");
+    check(unknownConsumable && std::strcmp(unknownConsumable->nameEn, "Unknown") == 0,
+          "en column: the nameless-entry fallback is Unknown in en-us.xml too");
+
+    check(mhw::riseAbnormalityDisplayName(*demonDrug) == QStringLiteral("鬼人药"),
+          "zh locale: riseAbnormalityDisplayName returns the zh column");
+    check(mhw::riseAilmentDisplayName(0) == QStringLiteral("麻痹")
+              && mhw::riseAilmentDisplayName(16) == QStringLiteral("钢龙毒"),
+          "zh locale: ailment slots 0/16 keep the pre-i18n labels");
+    check(mhw::riseAilmentDisplayName(99) == QStringLiteral("异常99"),
+          "zh locale: an unknown ailment slot keeps the historical fallback");
+
+    check(strings.load(QStringLiteral("en-US")),
+          "en-US loads from the bundled qrc");
+    check(strings.isEnglish(), "isEnglish() true after loading en-US");
+    check(mhw::riseAbnormalityDisplayName(*demonDrug) == QStringLiteral("Demondrug"),
+          "en-US: riseAbnormalityDisplayName returns the en column");
+    check(mhw::riseAbnormalityDisplayName(*poison) == QStringLiteral("Poison"),
+          "en-US: ABN_POISON renders Poison");
+    check(mhw::riseAbnormalityDisplayName(*windMantle) == QStringLiteral("Wind Mantle"),
+          "en-US: ABN_WINDMANTLE renders Wind Mantle");
+    check(mhw::riseAbnormalityDisplayName(*leeched) == QStringLiteral("Leeched"),
+          "en-US: ABN_LEECHED renders Leeched");
+    check(mhw::riseAilmentNameEn(0) != nullptr
+              && std::strcmp(mhw::riseAilmentNameEn(0), "Paralysis") == 0,
+          "en column: ailment slot 0 = Paralysis (MonsterData.xml AILMENT_PARALYSIS)");
+    check(mhw::riseAilmentNameEn(4) != nullptr
+              && std::strcmp(mhw::riseAilmentNameEn(4), "Poison") == 0,
+          "en column: ailment slot 4 = Poison");
+    check(mhw::riseAilmentNameEn(7) != nullptr
+              && std::strcmp(mhw::riseAilmentNameEn(7), "Ride") == 0,
+          "en column: ailment slot 7 = Ride (AILMENT_RIDE, not AILMENT_MOUNT)");
+    check(mhw::riseAilmentNameEn(16) != nullptr
+              && std::strcmp(mhw::riseAilmentNameEn(16), "Steel Fang") == 0,
+          "en column: ailment slot 16 = Steel Fang (AILMENT_STEELFANG)");
+    check(mhw::riseAilmentNameEn(17) == nullptr,
+          "en column: slot 17 is outside the table");
+    check(mhw::riseAilmentDisplayName(0) == QStringLiteral("Paralysis"),
+          "en-US: ailment slot 0 renders Paralysis");
+    check(mhw::riseAilmentDisplayName(12) == QStringLiteral("Pitfall Trap"),
+          "en-US: ailment slot 12 renders Pitfall Trap");
+    check(mhw::riseAilmentDisplayName(99) == QStringLiteral("Ailment 99"),
+          "en-US: an unknown ailment slot renders the translated fallback");
+
+    // Restore the default and re-assert the original zh values.
+    check(strings.load(QStringLiteral("zh-CN")), "zh-CN loads again");
+    check(!strings.isEnglish(), "isEnglish() false after restoring zh-CN");
+    check(mhw::riseAbnormalityDisplayName(*demonDrug) == QStringLiteral("鬼人药")
+              && mhw::riseAbnormalityDisplayName(*frostcraft) == QStringLiteral("寒气炼成"),
+          "zh-CN restored: en-column switch is fully reversible");
+    check(mhw::riseAilmentDisplayName(0) == QStringLiteral("麻痹")
+              && mhw::riseAilmentDisplayName(3) == QStringLiteral("闪光")
+              && mhw::riseAilmentDisplayName(7) == QStringLiteral("乘骑")
+              && mhw::riseAilmentDisplayName(14) == QStringLiteral("捕获"),
+          "zh-CN restored: ailment slots 0/3/7/14 are unchanged");
 
     if (failures == 0) {
         std::printf("rise-abnormality-tests: ALL PASSED\n");

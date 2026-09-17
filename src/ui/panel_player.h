@@ -29,6 +29,12 @@ public:
     // demo state with the new game's flavour (mantle vs wirebug row).
     void setGameForDemo(mhw::GameId game);
 
+    // i18n: re-query everything this panel cached at construction / demo
+    // time (window title, demo seed labels) and schedule a repaint. Called
+    // by the overlay's locale-watch loop after StringTable::load() swapped
+    // the locale; paint-time tr() lookups follow on their own.
+    void retranslateUi() override;
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;

@@ -3,11 +3,13 @@
 #include "core/game_snapshot.h"
 
 #include <QMainWindow>
+#include <QPointer>
 #include <QSlider>
 #include <QStringList>
 #include <QTimer>
 #include <QVector>
 #include <array>
+#include <functional>
 #include <QtGlobal>
 
 class QSplitter;
@@ -90,10 +92,10 @@ private:
         QComboBox *outputCombo = nullptr;
     };
 
-    QWidget *buildInspector(const QString &title, const QString &sub,
+    QWidget *buildInspector(const QString &titleKey, const QString &subKey,
                             const QStringList &labels, int idx);
-    QWidget *buildObjectButton(const QString &letter, const QString &title,
-                               const QString &summary, int idx);
+    QWidget *buildObjectButton(const QString &letter, const QString &titleKey,
+                               const QString &summaryKey, int idx);
     QWidget *buildRule();
     QWidget *buildEditModeBlock();
     // v0.7.1: dedicated narrow column for the World/Rise game selector.
@@ -121,6 +123,42 @@ private:
     // lets the top row (rail + inspector) fill the whole window.
     void animStageTo(bool visible);
 
+    // ---- v0.9 i18n (EN/CH switch) -----------------------------------
+    // Every user-visible string in the console is registered here at
+    // construction time and replayed by retranslateUi():
+    //
+    //   trSet(widget, key)   static copy (QLabel / QAbstractButton text)
+    //   trTip(widget, key)   tooltips
+    //   trHook(lambda)       anything that needs formatting, a state
+    //                        check or a non-Text property (combo item
+    //                        text, state-dependent captions, SectionRow
+    //                        relabelling, window title, …)
+    //
+    // Registration applies the string IMMEDIATELY (so construction-time
+    // text is localized too) and remembers it for the next replay.
+    void trSet(QWidget *widget, const QString &key);
+    void trTip(QWidget *widget, const QString &key);
+    void trHook(std::function<void()> fn);
+    void trWindowTitle(const QString &key);
+
+    // Replay every registered string, then refresh the dynamic elements
+    // (badges, counts, summaries, position readout, preview pixmaps) by
+    // re-running their normal refresh paths — no duplicated format
+    // strings. Called after a successful locale load.
+    void retranslateUi();
+
+    // StringTable::load() + retranslateUi() (no persistence).
+    void applyLocale(const QString &locale);
+    // applyLocale() + write the conf `locale=` row for the overlay's poll
+    // (the console is the only writer — see core/locale_conf.h).
+    void switchLocale(const QString &locale);
+
+    void updateLocaleChip();
+    void updateThemeChipText();
+    void updateStageToggleText();
+    void updateZoomLabel();
+
+
     PlayerPanel *player_ = nullptr;
     MonsterPanel *monster_ = nullptr;
     DamagePanel *damage_ = nullptr;
@@ -142,6 +180,19 @@ private:
     QPushButton *gridBtn_ = nullptr;
     QPushButton *themeBtn_ = nullptr;
     QPushButton *stageToggleBtn_ = nullptr;
+    // v0.9 i18n: EN/CH language chip (stage bar, left of the theme chip).
+    // localeChip_ is the click target; the two segment labels are
+    // mouse-transparent and highlighted through the `active` property.
+    QFrame *localeChip_    = nullptr;
+    QLabel *localeZhLabel_ = nullptr;
+    QLabel *localeEnLabel_ = nullptr;
+    // i18n replay registries — filled during construction (see trSet /
+    // trTip / trHook), replayed by retranslateUi(). QPointer so a widget
+    // deleted early (none today, but the panels own children too) can't
+    // turn a replay into a dangling-pointer crash.
+    QVector<QPair<QPointer<QWidget>, QString>> trPairs_;
+    QVector<QPair<QPointer<QWidget>, QString>> trTips_;
+    QVector<std::function<void()>>             trHooks_;
     // v0.7.5: visible zoom controls on the stage bar (the canvas always
     // supported Ctrl+wheel; the buttons make it discoverable in the
     // preview console).

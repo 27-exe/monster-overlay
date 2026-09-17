@@ -72,6 +72,7 @@ when the stage is expanded, side-by-side when collapsed:
 | Right column | `SCREEN` dropdown (per panel) | Bind the panel to a specific monitor on multi-monitor setups (empty = primary). Persisted with the layout; handed to the overlay as `--output-*`. |
 | Right column | `ZOOM ×1.0` display | Read-only; click the preview canvas, scroll wheel to change. Range 0.5× – 2.0×. |
 | Right column | `SAFE AREA` / `GRID` / `LIGHT` (preview chrome) | Decoration toggles inside the preview canvas. |
+| Stage bar | `中文 | EN` chip | Switch the UI language at runtime (v0.9). The console flips instantly; a running overlay follows within ~1 s via the shared conf file. Persisted as the `locale=` row. |
 | Footer hint | `←→↑↓ MOVE` | Drag the selected panel with the keyboard (10 px per press, **Shift = 50 px**). |
 
 ### 3.2 The preview canvas
@@ -225,7 +226,7 @@ from there.
 
 | File | Written by | Read by |
 |------|------------|---------|
-| `~/.config/monster-overlay/monster-overlay.conf` | `monster-control` on mask change + on quit | `monster-overlay` on startup |
+| `~/.config/monster-overlay/monster-overlay.conf` | `monster-control` on mask/language change + on quit | `monster-overlay` on startup **and on every tick** (the `locale=` row is the language handshake — the overlay re-reads it ~1×/s, so a chip click hot-swaps a running overlay) |
 | `~/.config/monster-overlay/panels.ini` | `monster-overlay` on Ctrl-S / on quit | `monster-overlay` on startup (panel positions + scales) |
 | `~/.cache/monster-overlay/` | `monster-reader` (snapshot dump for bug reports) | you, when filing an issue |
 

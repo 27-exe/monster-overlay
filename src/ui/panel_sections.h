@@ -16,10 +16,19 @@
 // "Master" visibility (whether the whole panel may appear at all) is a
 // separate boolean on Panel (panelEnabled()), not a mask bit — it gates
 // setVisible() in the main loop rather than individual paint blocks.
+//
+// i18n: displayNames()/displayName() resolve through mhw::StringTable on
+// EVERY call (key namespace console.section.*). They used to return a
+// `static const QStringList` — that cache would freeze whichever language
+// was active at first use, so a runtime language switch could never
+// relabel the existing switches (see ControlPanel::retranslateUi()).
+// A missing key falls back to the pre-i18n Chinese literal below.
 
 #include <QString>
 #include <QStringList>
 #include <cstdint>
+
+#include "core/string_table.h"
 
 namespace mhw {
 
@@ -53,9 +62,22 @@ inline const QStringList &names()
     return n;
 }
 
-inline const QStringList &displayNames()
+constexpr int kCount = 8;
+
+inline QString displayName(int index)
 {
-    static const QStringList n = {
+    // Key order matches `names()` (and therefore the bit index).
+    static const char *const kKeys[kCount] = {
+        "console.section.player.conn",
+        "console.section.player.quest",
+        "console.section.player.weapon",
+        "console.section.player.bars",
+        "console.section.player.mantles",
+        "console.section.player.debuff",
+        "console.section.player.buff",
+        "console.section.player.wirebug",
+    };
+    static const QStringList kFallback = {
         QStringLiteral("连接状态"),
         QStringLiteral("任务块"),
         QStringLiteral("武器 + 锋利度"),
@@ -65,6 +87,19 @@ inline const QStringList &displayNames()
         QStringLiteral("正面状态"),
         QStringLiteral("翔虫"),
     };
+    if (index < 0 || index >= kCount)
+        return {};
+    const QString key = QString::fromLatin1(kKeys[index]);
+    const QString val = StringTable::instance().tr(key);
+    return val == key ? kFallback.value(index) : val;
+}
+
+inline QStringList displayNames()
+{
+    QStringList n;
+    n.reserve(kCount);
+    for (int i = 0; i < kCount; ++i)
+        n << displayName(i);
     return n;
 }
 } // namespace PlayerSection
@@ -94,9 +129,19 @@ inline const QStringList &names()
     return n;
 }
 
-inline const QStringList &displayNames()
+constexpr int kCount = 6;
+
+inline QString displayName(int index)
 {
-    static const QStringList n = {
+    static const char *const kKeys[kCount] = {
+        "console.section.monster.info",
+        "console.section.monster.hp",
+        "console.section.monster.enrage",
+        "console.section.monster.ail",
+        "console.section.monster.parts",
+        "console.section.monster.tenderize",
+    };
+    static const QStringList kFallback = {
         QStringLiteral("六角肖像"),
         QStringLiteral("HP 条"),
         QStringLiteral("怒气"),
@@ -104,6 +149,19 @@ inline const QStringList &displayNames()
         QStringLiteral("部位"),
         QStringLiteral("软化"),
     };
+    if (index < 0 || index >= kCount)
+        return {};
+    const QString key = QString::fromLatin1(kKeys[index]);
+    const QString val = StringTable::instance().tr(key);
+    return val == key ? kFallback.value(index) : val;
+}
+
+inline QStringList displayNames()
+{
+    QStringList n;
+    n.reserve(kCount);
+    for (int i = 0; i < kCount; ++i)
+        n << displayName(i);
     return n;
 }
 } // namespace MonsterSection
@@ -127,13 +185,33 @@ inline const QStringList &names()
     return n;
 }
 
-inline const QStringList &displayNames()
+constexpr int kCount = 3;
+
+inline QString displayName(int index)
 {
-    static const QStringList n = {
+    static const char *const kKeys[kCount] = {
+        "console.section.damage.rows",
+        "console.section.damage.share",
+        "console.section.damage.chart",
+    };
+    static const QStringList kFallback = {
         QStringLiteral("玩家行"),
         QStringLiteral("占比条"),
         QStringLiteral("折线图"),
     };
+    if (index < 0 || index >= kCount)
+        return {};
+    const QString key = QString::fromLatin1(kKeys[index]);
+    const QString val = StringTable::instance().tr(key);
+    return val == key ? kFallback.value(index) : val;
+}
+
+inline QStringList displayNames()
+{
+    QStringList n;
+    n.reserve(kCount);
+    for (int i = 0; i < kCount; ++i)
+        n << displayName(i);
     return n;
 }
 } // namespace DamageSection

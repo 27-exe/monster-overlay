@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Offline regression coverage for Rise official part names and part HP display.
 
+#include "core/string_table.h"
 #include "rise/mhr_part_names.h"
 
 #include <QCoreApplication>
@@ -26,6 +27,12 @@ void check(bool condition, const char *message)
 void checkName(int monsterId, int partIndex, const char *expected, const char *message)
 {
     const char *actual = mhw::risePartName(monsterId, partIndex);
+    check(actual != nullptr && std::strcmp(actual, expected) == 0, message);
+}
+
+void checkNameEn(int monsterId, int partIndex, const char *expected, const char *message)
+{
+    const char *actual = mhw::risePartNameEn(monsterId, partIndex);
     check(actual != nullptr && std::strcmp(actual, expected) == 0, message);
 }
 
@@ -67,6 +74,53 @@ int main(int argc, char *argv[])
           "known monster out-of-range part falls back to 部位 N");
     check(mhw::risePartDisplayName(999, 0) == QStringLiteral("部位 0"),
           "unknown monster falls back to 部位 N");
+
+    // ------------------------------------------------------------------
+    // v0.9 i18n (WS-B): the en-us.xml Shared/Part column behind the same
+    // MonsterData.xml join. risePartNameEn() is locale-independent, the
+    // locale-aware risePartName()/risePartDisplayName() switch on
+    // mhw::StringTable::instance().isEnglish().
+    // ------------------------------------------------------------------
+    mhw::StringTable &strings = mhw::StringTable::instance();
+    check(!strings.isEnglish(), "empty locale reads as Chinese by default");
+
+    checkNameEn(0, 0, "Head", "en column: id 0 part 0 = Head (PART_HEAD)");
+    checkNameEn(1, 3, "Right Wing", "en column: id 1 part 3 = Right Wing (PART_R_WING)");
+    checkNameEn(10, 2, "Left Foreleg", "en column: id 10 part 2 = Left Foreleg");
+    checkNameEn(15, 8, "Arms (Mud)", "en column: id 15 part 8 = Arms (Mud) (PART_ARMS_MUD)");
+    checkNameEn(92, 3, "Left Wing", "en column: id 92 part 3 = Left Wing");
+    checkNameEn(94, 4, "Hind Legs", "en column: id 94 part 4 = Hind Legs (PART_H_LEGS)");
+    checkNameEn(94, 7, "Back", "en column: id 94 part 7 = Back");
+    check(mhw::risePartNameEn(14, 7) == nullptr,
+          "en column: out-of-range part index is a table miss");
+    check(mhw::risePartNameEn(114, 6) == nullptr,
+          "en column: PART_TO_BE_MAPPED stays suppressed (both columns say Unknown)");
+
+    check(strings.load(QStringLiteral("en-US")),
+          "en-US loads from the bundled qrc");
+    check(strings.isEnglish(), "isEnglish() true after loading en-US");
+    checkName(0, 0, "Head", "en-US: id 0 head = Head");
+    checkName(1, 3, "Right Wing", "en-US: id 1 part 3 = Right Wing");
+    checkName(14, 0, "Head", "en-US: id 14 head = Head");
+    checkName(14, 2, "Left Foreleg", "en-US: id 14 part 2 = Left Foreleg");
+    checkName(94, 4, "Hind Legs", "en-US: id 94 part 4 = Hind Legs");
+    checkName(94, 7, "Back", "en-US: id 94 part 7 = Back");
+    check(mhw::risePartName(114, 6) == nullptr,
+          "en-US: PART_TO_BE_MAPPED stays a miss");
+    check(mhw::risePartDisplayName(114, 6) == QStringLiteral("Part 6"),
+          "en-US: upstream PART_TO_BE_MAPPED falls back to Part N");
+    check(mhw::risePartDisplayName(999, 0) == QStringLiteral("Part 0"),
+          "en-US: unknown monster falls back to Part N");
+
+    // Restore the default and re-assert the original zh values.
+    check(strings.load(QStringLiteral("zh-CN")), "zh-CN loads again");
+    check(!strings.isEnglish(), "isEnglish() false after restoring zh-CN");
+    checkName(0, 0, "头部", "zh-CN restored: id 0 head = 头部");
+    checkName(1, 3, "右翼", "zh-CN restored: id 1 part 3 = 右翼");
+    checkName(14, 2, "左前肢", "zh-CN restored: id 14 part 2 = 左前肢");
+    checkName(94, 4, "后腿", "zh-CN restored: id 94 part 4 = 后腿");
+    check(mhw::risePartDisplayName(114, 6) == QStringLiteral("部位 6"),
+          "zh-CN restored: fallback is 部位 N again");
 
     check(mhw::compactPartHealth(34000.0F, 57000.0F) == QStringLiteral("34k/57k"),
           "whole-k part HP is compact");

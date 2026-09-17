@@ -7,16 +7,39 @@
 // live overlay uses, with mock data seeded by setEditMode(true).
 //
 // No connection to a running monster-overlay process yet — pure preview.
+//
+// v0.9 i18n: this file owns the console's startup LOCALE RESOLUTION
+// (--locale > conf locale= row > zh-CN, mirroring src/main.cpp so the
+// overlay and its console always agree) and forwards the resolved value
+// to every overlay it spawns (see ControlPanel::launchOverlay()).
 
 #include "ui/control_panel.h"
 #include "ui/screen_query.h"
 #include "ui/ui_theme.h"
+#include "core/locale_conf.h"
 #include "core/string_table.h"
 
 #include <QApplication>
 #include <QDebug>
 #include <QString>
 #include <cstdio>
+
+namespace {
+
+// Accepts both `--flag value` and `--flag=value`; returns the value and
+// advances `i` when the value was passed as a separate argument.
+QString takeValue(int argc, char *argv[], int &i, const QString &flag)
+{
+    const QString a = QString::fromLocal8Bit(argv[i]);
+    const QString prefix = flag + QLatin1Char('=');
+    if (a.startsWith(prefix))
+        return a.mid(prefix.size());
+    if (a == flag && i + 1 < argc)
+        return QString::fromLocal8Bit(argv[++i]);
+    return {};
+}
+
+} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -35,38 +58,80 @@ int main(int argc, char *argv[])
     // console's main window means "no visible windows" → quit.
     app.setQuitOnLastWindowClosed(true);
 
-    if (!::mhw::StringTable::instance().load(QStringLiteral("zh-CN")))
-        qWarning("failed to load zh-CN strings; falling back to keys");
-
+    // ---- one arg scan -----------------------------------------------------
+    // --print-screen-info / --print-locale short-circuit below;
+    // --light / --locale / --snap are applied once the scan is done.
+    bool printScreenInfo = false;
+    bool printLocale     = false;
+    bool lightTheme      = false;
+    QString snapPath;
+    QString cliLocale;
     for (int i = 1; i < argc; ++i) {
         const QString a = QString::fromLocal8Bit(argv[i]);
-        // Debug: print screen detection result and exit. Use this to
-        // verify what Qt + xrandr/kscreen-doctor/wlr-randr report
-        // before launching the GUI.
         if (a == QStringLiteral("--print-screen-info")) {
-            const screen_query::Result r = screen_query::detect();
-            // qInfo is suppressed by Qt 6's default log filter, so
-            // print to stdout directly. The agent greps for "physical="
-            // and "source=" to confirm the dispatch landed where
-            // expected.
-            printf("physical=%dx%d logical=%dx%d dpr=%.3f source=%s\n",
-                   r.physical.width(), r.physical.height(),
-                   r.logical.width(),  r.logical.height(),
-                   r.dpr,
-                   qPrintable(screen_query::sourceLabel(r.source)));
-            fflush(stdout);
-            return 0;
+            printScreenInfo = true;
+        } else if (a == QStringLiteral("--print-locale")) {
+            printLocale = true;
+        } else if (a == QStringLiteral("--light")) {
+            lightTheme = true;
+        } else if (a == QStringLiteral("--snap")) {
+            snapPath = takeValue(argc, argv, i, QStringLiteral("--snap"));
+        } else if (a == QStringLiteral("--locale")
+                   || a.startsWith(QStringLiteral("--locale="))) {
+            cliLocale = takeValue(argc, argv, i, QStringLiteral("--locale"));
         }
+    }
+
+    // ---- locale: --locale > conf locale= > zh-CN --------------------------
+    // The console is the sole writer of the conf file, but it also READS it:
+    // the locale row is how a previous session's EN/CH choice survives a
+    // restart. Resolution order matches the overlay's so the two never
+    // disagree at launch.
+    QString locale = cliLocale;
+    const char *localeSource = "cli";
+    if (locale.isEmpty()) {
+        locale = mhw::readLocaleFromConf();
+        localeSource = "conf";
+        if (locale.isEmpty()) {
+            locale = QStringLiteral("zh-CN");
+            localeSource = "default";
+        }
+    }
+    if (!mhw::StringTable::instance().load(locale)) {
+        qWarning("failed to load %s strings; falling back to zh-CN",
+                 qPrintable(locale));
+        locale = QStringLiteral("zh-CN");
+        localeSource = "fallback (locale dir missing)";
+        if (!mhw::StringTable::instance().load(locale))
+            qWarning("failed to load zh-CN strings; falling back to keys");
+    }
+
+    if (printLocale) {
+        // Evidence hook: asserts the resolution order without opening a GUI.
+        printf("locale=%s source=%s\n", qPrintable(locale), localeSource);
+        fflush(stdout);
+        return 0;
+    }
+
+    if (printScreenInfo) {
+        const screen_query::Result r = screen_query::detect();
+        // qInfo is suppressed by Qt 6's default log filter, so
+        // print to stdout directly. The agent greps for "physical="
+        // and "source=" to confirm the dispatch landed where
+        // expected.
+        printf("physical=%dx%d logical=%dx%d dpr=%.3f source=%s\n",
+               r.physical.width(), r.physical.height(),
+               r.logical.width(),  r.logical.height(),
+               r.dpr,
+               qPrintable(screen_query::sourceLabel(r.source)));
+        fflush(stdout);
+        return 0;
     }
 
     // Optional: start in light theme (default is dark "light-grey deep").
     // Useful for testing and for users who prefer the 浅灰 palette.
-    for (int i = 1; i < argc; ++i) {
-        if (QString::fromLocal8Bit(argv[i]) == QStringLiteral("--light")) {
-            setUiTheme(false);
-            break;
-        }
-    }
+    if (lightTheme)
+        setUiTheme(false);
 
     ControlPanel cp;
     cp.show();
@@ -75,19 +140,19 @@ int main(int argc, char *argv[])
     // Self-test mode: --snap <path> renders the whole window to a PNG and
     // exits. Lets the agent verify the layout without a real compositor
     // (run with QT_QPA_PLATFORM=offscreen) and without stealing the user's
-    // desktop focus.
-    for (int i = 1; i < argc; ++i) {
-        if (QString::fromLocal8Bit(argv[i]) == QStringLiteral("--snap") && i + 1 < argc) {
-            const QString path = QString::fromLocal8Bit(argv[i + 1]);
-            const QPixmap grab = cp.grab();
-            if (!grab.save(path)) {
-                qCritical("snap save failed: %s", path.toLocal8Bit().constData());
-                return 3;
-            }
-            qInfo("snapped %s (%dx%d)", path.toLocal8Bit().constData(),
-                  grab.width(), grab.height());
-            return 0;
+    // desktop focus. Prints the locale it rendered with so the i18n
+    // screenshots are self-labelling evidence.
+    if (!snapPath.isEmpty()) {
+        printf("snap locale=%s source=%s\n", qPrintable(locale), localeSource);
+        fflush(stdout);
+        const QPixmap grab = cp.grab();
+        if (!grab.save(snapPath)) {
+            qCritical("snap save failed: %s", snapPath.toLocal8Bit().constData());
+            return 3;
         }
+        qInfo("snapped %s (%dx%d)", snapPath.toLocal8Bit().constData(),
+              grab.width(), grab.height());
+        return 0;
     }
     return app.exec();
 }

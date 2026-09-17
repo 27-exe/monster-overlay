@@ -1,5 +1,7 @@
 #include "world_types.h"
 
+#include "core/string_table.h"
+
 namespace mhw {
 
 const char *zoneName(Zone zone)
@@ -117,6 +119,110 @@ const char *zoneName(Zone zone)
     case Zone::Unknown: return "未知";
     }
     return "未知";
+}
+
+const char *zoneNameEn(Zone zone)
+{
+    // v0.9 i18n (WS-A). English labels for the exact same Zone values,
+    // sourced from HunterPie's official en-us.xml (Strings/Stages/World and
+    // Strings/Stages/Rise), sha256
+    // 661d58b54bd1214ae0e9eff92fb4167b8aab54df0452eea238cb9574300030ea.
+    // Only the *labels* are new — the enum, the id mapping and every zh
+    // string returned by zoneName() are untouched.
+    //
+    // Notes on the upstream table's own quirks (kept verbatim, no invented
+    // distinctions):
+    //   * Stages/World has 106 = 107 = "Great Ravine" and 101 = 406 =
+    //     "Ancient Forest" (203 = 411, 412 = 413, 415 = 416 likewise). The
+    //     zh table decorates the second variant with "·深层"; English has no
+    //     such suffix upstream, so the duplicate official string is used.
+    //   * Rise villages are Stages/Rise ids 0..11 (the same table that gives
+    //     StageId = HuntingId + 200 for the maps).
+    //   * StageId 200/206/208/216 (RiseLoc0/6/8/16, en route to a hunt) have
+    //     no upstream entry: both columns keep a placeholder, ours here.
+    {
+        const int raw = static_cast<int>(zone);
+        if (raw >= 700 && raw <= 799) {
+            switch (raw - 700) {
+            case 0: return "Village";
+            case 1: return "Room";
+            case 2: return "Buddy Plaza";
+            case 3: return "Gathering Hub";
+            case 4: return "Hub Prep Plaza";
+            case 5: return "Training Area";
+            case 6: return "Elgado";
+            case 7: return "Elgado's Room";
+            case 11: return "Elgado's Command Post";
+            default: break;
+            }
+            return "Unknown";
+        }
+    }
+    switch (zone) {
+    case Zone::MainMenu: return "Main Menu";
+    case Zone::AncientForest: return "Ancient Forest";
+    case Zone::WildspireWaste: return "Wildspire Waste";
+    case Zone::CoralHighlands: return "Coral Highlands";
+    case Zone::RottenVale: return "Rotten Vale";
+    case Zone::EldersRecess: return "Elder's Recess";
+    case Zone::GreatRavine: return "Great Ravine";
+    case Zone::GreatRavine2: return "Great Ravine";
+    case Zone::HoarfrostReach: return "Hoarfrost Reach";
+    case Zone::GuidingLands: return "The Guiding Lands";
+    case Zone::SpecialArena: return "Special Arena";
+    case Zone::Arena: return "Arena";
+    case Zone::SelianaSupplyCache: return "Seliana Supply Cache";
+    case Zone::Astera: return "Astera";
+    case Zone::AsteraGatheringHub: return "Astera Gathering Hub";
+    case Zone::ResearchBase: return "Research Base";
+    case Zone::Seliana: return "Seliana";
+    case Zone::SelianaGatheringHub: return "Seliana Gathering Hub";
+    case Zone::Introduction: return "Introduction";
+    case Zone::Everstream: return "Everstream";
+    case Zone::ConfluenceOfFates: return "Confluence of Fates";
+    case Zone::AncientForest2: return "Ancient Forest";
+    case Zone::CavernsOfElDorado: return "Caverns of El Dorado";
+    case Zone::SelianaSupplyCache2: return "Seliana Supply Cache";
+    case Zone::OriginIsle: return "Origin Isle";
+    case Zone::OriginIsle2: return "Origin Isle";
+    case Zone::SecludedValley: return "Secluded Valley";
+    case Zone::SecludedValley2: return "Secluded Valley";
+    case Zone::CastleSchrade: return "Castle Schrade";
+    case Zone::LivingQuarters: return "Living Quarters";
+    case Zone::PrivateQuarters: return "Private Quarters";
+    case Zone::PrivateSuite: return "Private Suite";
+    case Zone::TrainingArea: return "Training Area";
+    case Zone::ChamberOfFive: return "Chamber of Five";
+    case Zone::SelianaRoom: return "Seliana Room";
+    case Zone::RiseTrainingRoom: return "Training Area";
+    case Zone::RiseLoc0:  return "Unknown Hunting Zone"; // StageId 200: no entry upstream
+    case Zone::RiseLoc1:  return "Shrine Ruins";
+    case Zone::RiseLoc2:  return "Sandy Plains";
+    case Zone::RiseLoc3:  return "Flooded Forest";
+    case Zone::RiseLoc4:  return "Frost Islands";
+    case Zone::RiseLoc5:  return "Lava Caverns";
+    case Zone::RiseLoc6:  return "Unknown Hunting Zone"; // StageId 206: no entry upstream
+    case Zone::RiseLoc7:  return "Red Stronghold";
+    case Zone::RiseLoc8:  return "Unknown Hunting Zone"; // StageId 208: no entry upstream
+    case Zone::RiseLoc9:  return "Infernal Springs";
+    case Zone::RiseLoc10: return "Arena";
+    case Zone::RiseLoc11: return "Coral Palace";
+    case Zone::RiseLoc12: return "Jungle";
+    case Zone::RiseLoc13: return "Citadel";
+    case Zone::RiseLoc14: return "Forlorn Arena";
+    case Zone::RiseLoc15: return "Yawning Abyss";
+    case Zone::RiseLoc16: return "Unknown Hunting Zone"; // StageId 216: no entry upstream
+    case Zone::Unknown: return "Unknown";
+    }
+    return "Unknown";
+}
+
+const char *zoneNameLocalized(Zone zone)
+{
+    // The single locale switch for zone labels. An unloaded / non-English
+    // StringTable (tests, first frames) reads as Chinese, which keeps the
+    // pre-i18n behaviour.
+    return StringTable::instance().isEnglish() ? zoneNameEn(zone) : zoneName(zone);
 }
 
 bool isHuntingZone(Zone zone)
