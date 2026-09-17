@@ -1,4 +1,4 @@
-# MHW Linux Overlay(中文说明)
+# Monster Overlay(中文说明)
 
 一个原生 Linux 的 **怪物猎人** 系列悬浮窗 / DPS 面板工具,运行在
 Steam + GE-Proton 之上。它通过 `/proc/<pid>/mem` 直接读取游戏进程

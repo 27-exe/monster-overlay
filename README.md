@@ -1,4 +1,4 @@
-# MHW Linux Overlay
+# Monster Overlay
 
 A native-Linux HUD overlay for the **Monster Hunter** series running
 under Steam + GE-Proton. Reads the game's process memory directly via
