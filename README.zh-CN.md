@@ -8,7 +8,7 @@ Steam + GE-Proton 之上。它通过 `/proc/<pid>/mem` 直接读取游戏进程
 本工程**不注入 DLL** —— overlay 是独立的进程,附加到你正在运行的
 MHW 上,通过读进程内存画出 HUD。
 
-**最新稳定版:** `v0.7.5`(commit `ac60017`)。
+**最新稳定版:** `main` 分支(最近发布 tag:`v0.7.5` @ `ac60017`)。
 
 [English documentation](README.md)
 
@@ -65,12 +65,12 @@ backend;NVIDIA + Wayland 走系统的 `libEGL.so`,不需要 Vulkan、不
 
 | 游戏 | 状态 | 内存地图 | 说明 |
 |------|:----:|---------|------|
-| **Monster Hunter: World**(Steam ID 582010) | ✅ 稳定 | `data/MonsterHunterWorld.421810.map`(Steam build 421810) | 全部功能上线,v0.7.5 日常使用中。 |
-| **Monster Hunter: Rise**(Steam ID 1446780) | ⚠️ 适配,**未测试** | `data/MonsterHunterRise.16.0.2.0.map` | offsets 从 HunterPie v2 移植;binary 上结构校验通过,但维护者没实际玩 Rise,没法跑活体验证。若 Capcom 在 HunterPie 2.14.0.461 之后改过结构体布局,可能有字段漂移。 |
+| **Monster Hunter: World**(Steam ID 582010) | ✅ 稳定 | `data/MonsterHunterWorld.421810.map`(Steam build 421810) | 全部功能上线,维护者日常使用中。 |
+| **Monster Hunter: Rise**(Steam ID 1446780) | ✅ 支持 | `data/MonsterHunterRise.16.0.2.0.map` | Player / Monster 面板已实机验证(16.0.2.0)。**伤害面板暂不支持:崛起的伤害追踪没有原生实现**,伤害统计目前仅限世界。 |
 | **Monster Hunter: Wilds** | ⏳ 暂缓(等 Capcom) | — | Wilds 现在在 Linux 上还跑不动,维护者不打算现在买,等 Capcom 出一个稳定版再说。HunterPie v2 已经有 Wilds offsets(比如 `MonsterHunterWilds.1.1.1.0.map`),移植本身只是把 .map 拷进 `data/`、reader 里加几行 wire-up,纯工程活——所以瓶颈不是代码,是上游 Linux / Proton 的可玩性 |
 
-控制台里现在选 `RISE` 是能加载 map 的,但 reader 极有可能拉出空快照,
-直到偏移表有 live 验证。在那之前请只用 `WORLD`。
+控制台里直接选 `RISE` 即可 —— Player / Monster 面板与 World 表现一致;
+**伤害面板在 Rise 上按设计关闭**(暂无原生伤害数据源)。
 
 ---
 
@@ -93,7 +93,7 @@ sudo pacman -S --needed qt6-base qt6-declarative qt6-wayland layer-shell-qt
 
 在控制台里:
 
-1. 选 `WORLD`(或你自己验证过的 `RISE`)。
+1. 选 `WORLD` 或 `RISE`(两边均完整支持;伤害追踪仅限世界)。
 2. 切换每块 panel 下你想要的 section。
 3. 点 **START OVERLAY**。控制台窗口隐藏,overlay 进程在游戏上方弹出。
 4. 退出游戏(或在 overlay 上按 `Esc`)—— 控制台重新出现。
@@ -209,7 +209,7 @@ src/
 
 data/
 ├── MonsterHunterWorld.421810.map   # Steam MHW build 的 offsets
-└── MonsterHunterRise.16.0.2.0.map  # Rise offsets(未活体验证)
+└── MonsterHunterRise.16.0.2.0.map  # Rise offsets(已实机验证)
 
 assets/
 ├── icons/                    # 来自 MHW 的 SVG 图标(OthelloRhin MIT + HunterPie Apache-2.0)
@@ -270,9 +270,8 @@ Capcom 自有的资产。完整的第三方 attribution 在
 - **Bug report** —— 请带上 `~/.config/monster-overlay/monster-overlay.conf`、
   reader snapshot(`~/.cache/monster-overlay/`)以及游戏 build ID(游戏内
   `Options → Game Options → Game Version`)。
-- **Rise 实测** —— 如果你有怪猎崛起并且愿意跑一遍 overlay,目前
-  从 HunterPie 2.14.0.461 移植过来的 offsets 需要跟你活体任务里
-  的实际值做个 diff,然后 `RISE` 按钮才能名正言顺。
+- **Rise 伤害追踪** —— Rise 侧最后一块拼图:伤害面板目前仅限世界,
+  因为崛起暂时没有可用的原生只读伤害数据源。如果你找到了,欢迎贡献。
 - **Wilds offsets** —— 取决于 HunterPie 自己先放出 Wilds 偏移。在这
   之前本工程没有 Wilds 支持。
 

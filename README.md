@@ -10,7 +10,7 @@ This is a **Linux port of [HunterPie v2](https://github.com/HunterPie/HunterPie)
 process that attaches to the running MHW process and reads what it
 needs to render.
 
-**Current stable:** `v0.7.5` (commit `ac60017`).
+**Current stable:** the `main` branch (last tagged release: `v0.7.5`, `ac60017`).
 
 ### Environment support
 
@@ -65,13 +65,13 @@ in each game state — this is observed behavior, not aspirational:
 
 | Game | Status | Memory map | Notes |
 |------|:------:|------------|-------|
-| **Monster Hunter: World** | ✅ Stable | `data/MonsterHunterWorld.421810.map` (Steam build 421810) | Full feature set, v0.7.5 in daily use. |
-| **Monster Hunter: Rise** | ⚠️ Adapted, **not tested** | `data/MonsterHunterRise.16.0.2.0.map` | Offsets ported from HunterPie v2; structurally verified against the binary but no live-game run by the maintainer. Expect schema drift if Capcom shifted struct layouts since HunterPie 2.14.0.461. |
+| **Monster Hunter: World** | ✅ Stable | `data/MonsterHunterWorld.421810.map` (Steam build 421810) | Full feature set; in daily use on the maintainer's machine. |
+| **Monster Hunter: Rise** | ✅ Supported | `data/MonsterHunterRise.16.0.2.0.map` | Player and Monster panels live-validated against 16.0.2.0. **The Damage panel is not supported for Rise** — its damage tracker has no native implementation, so damage stays World-only for now. |
 | **Monster Hunter: Wilds** | ⏳ Parked (waiting on Capcom) | — | Wilds is unplayable on Linux in its current state, so the maintainer is holding off until Capcom ships a stable build worth buying. HunterPie v2 already publishes Wilds offsets (e.g. `MonsterHunterWilds.1.1.1.0.map`), and the port would be mechanical — drop the map into `data/` + a few wire-up lines in the reader. So the bottleneck isn't engineering; it's the upstream Linux / Proton story. |
 
-Selecting `RISE` in the console today will load the map, but the
-reader will most likely produce empty snapshots until the offsets are
-re-validated against a live session.
+Pick `RISE` in the console like any other game — the player and
+monster panels behave exactly as on World. The **damage panel is
+disabled for Rise** by design (no native Rise damage source yet).
 
 ---
 
@@ -95,7 +95,7 @@ sudo pacman -S --needed qt6-base qt6-declarative qt6-wayland layer-shell-qt
 
 In the console:
 
-1. Pick `WORLD` (or `RISE` if you have validated it for your build).
+1. Pick `WORLD` or `RISE` (both fully supported; damage tracking is World-only).
 2. Toggle the sections you want on each panel.
 3. Click **START OVERLAY**. The console window hides and the overlay
    spawns on top of the game.
@@ -217,7 +217,7 @@ src/
 
 data/
 ├── MonsterHunterWorld.421810.map   # Steam MH:W build offsets
-└── MonsterHunterRise.16.0.2.0.map  # MHRise offsets (untested)
+└── MonsterHunterRise.16.0.2.0.map  # MHRise offsets (live-validated)
 
 assets/
 ├── icons/                    # MHW-derived SVG icons (OthelloRhin MIT + HunterPie Apache-2.0)
@@ -286,10 +286,9 @@ text we ship.
   `~/.config/monster-overlay/monster-overlay.conf`, the reader snapshot
   (`~/.cache/monster-overlay/`), and the game build ID (in-game:
   `Options → Game Options → Game Version`).
-- **Rise validation** — if you own MHRise and can run the overlay
-  against it, the offsets ported from HunterPie 2.14.0.461 need a
-  fresh diff against a live session before the `RISE` button is
-  honest.
+- **Rise damage tracking** — the last Rise gap: the damage panel is
+  World-only because Rise exposes no native read-only damage source
+  so far. Contributions welcome if you find one.
 - **Wilds offsets** — depends on HunterPie publishing them first.
   Until then, this project has no Wilds support.
 

@@ -16,3 +16,9 @@ docs/plans/
 # uploaded to GitHub Releases, never committed back into the repo:
 release-*/
 *.tar.gz
+
+# ctest droppings when run from the repo root
+Testing/
+
+# patch-tool leftovers
+*.orig
