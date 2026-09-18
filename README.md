@@ -147,6 +147,25 @@ sudo setcap cap_sys_ptrace+ep ./monster-overlay
 `install.sh` does **not** set capabilities on its own. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full write-up.
 
+### Something is wrong? Run `monster-doctor`
+
+If the overlay stays empty or shows 未连接 (not connected), run the diagnostic
+tool that ships next to the binaries:
+
+```bash
+./monster-doctor                 # writes monster-doctor-<timestamp>.txt
+```
+
+Using the overlay's own code paths, it records where the address maps were
+found, whether a game process is visible (and at which image base), what the
+reader's verdict is — including the exact errno when a read is denied — which
+Proton build the running game uses, and what the overlay prints on stderr.
+Attach that file to your report.
+
+It is read-only, needs no privileges, and collects nothing private: paths
+under your home print as `~`, and no environment variables, Steam account
+data, game memory contents or other processes' command lines are included.
+
 ### Requirements
 
 - **Steam + GE-Proton 10-34** (or Proton 9+)

@@ -559,6 +559,11 @@ if(BUILD_TESTING)
     target_compile_options(map-path-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME map-path-tests COMMAND map-path-tests)
 
+    # monster-doctor must run offline (no game, no display) and exit 0.
+    add_test(NAME monster-doctor-smoke
+             COMMAND monster-doctor --no-overlay-run --out
+                     ${CMAKE_CURRENT_BINARY_DIR}/doctor-smoke.txt)
+
     # Pure Rise stage-name regression: no game process is required.
     add_executable(rise-zone-mapping-tests
         tests/rise_zone_mapping_tests.cpp
@@ -598,6 +603,30 @@ endif()
 #   cmake --build <builddir> --target rise-probe
 #   <builddir>/rise-probe [--map <path>]
 # ---------------------------------------------------------------------------
+# monster-doctor: one-shot, read-only diagnostic bundle that ships with the
+# release so a user can produce a complete report in one command. It links the
+# product's own resolver/reader, so its verdict cannot disagree with the
+# overlay's. Default target on purpose: the packaging step must find it built.
+add_executable(monster-doctor
+    tests/monster_doctor.cpp
+    # Same reader sources as rise-probe: MhwReader spans per-domain .cpp files
+    # and monster-core only ships the Rise reader.
+    src/mhw_reader.cpp
+    src/mhw_reader.h
+    src/monster/part_schemas.cpp
+    src/monster/monster_reader.cpp
+    src/monster/target_selector.cpp
+    src/player/player_reader.cpp
+    src/quest/quest_reader.cpp
+    src/world/world_reader.cpp
+)
+target_link_libraries(monster-doctor PRIVATE Qt6::Core monster-core)
+target_include_directories(monster-doctor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(monster-doctor PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(monster-doctor PRIVATE
+    MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
+    MHR_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterRise.16.0.2.0.map")
+
 add_executable(rise-probe EXCLUDE_FROM_ALL
     tests/rise_probe.cpp
     # MhwReader is defined across per-domain .cpp files (see

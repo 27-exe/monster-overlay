@@ -248,7 +248,34 @@ Delete any of these to start fresh — there's no schema-version check.
   anchors may overlap; bump the screen height to ≥1080 (or scale each
   panel down via the console wheel).
 - **Re-attaching to a saved PID** — Steam sometimes keeps the old PID
-  alive in `~/.local/share/Steam/userdata/`. The reader scans
-  `/proc/<pid>/comm` to confirm it's actually `MonsterHunterWorld.exe`
-  before attaching; if you see `--` in the rail badge forever, the
-  pid file is stale and a Steam re-launch fixes it.
+  alive in `~/.local/share/Steam/userdata/`. Before attaching, the reader
+  scans `/proc/*/maps` for a mapping whose basename is
+  `MonsterHunterWorld.exe` (never `/proc/<pid>/comm`, which a Wine launcher
+  can match too); if you see `--` in the rail badge forever, the pid file is
+  stale and a Steam re-launch fixes it.
+
+## 9. When it does not work: `monster-doctor`
+
+`monster-doctor` is the one-command bug-report tool: it writes a single text
+file and touches nothing else.
+
+```bash
+./monster-doctor                   # -> ./monster-doctor-<timestamp>.txt
+./monster-doctor --no-overlay-run  # offline machine (skips the 6 s status run)
+./monster-doctor --out /tmp/x.txt  # explicit path
+```
+
+| section | answers |
+|---|---|
+| `host` | distro/kernel, session type (Wayland/X11), desktop, locale, `ptrace_scope`, own capabilities |
+| `binaries` | sha256 + version + `getcap` of every shipped binary |
+| `address maps` | the exact search order the overlay uses, which directory won, file hash, and whether the map parses |
+| `game processes` | every process mapping a `MonsterHunter*.exe` image: pid, comm, image base, path, uid, and which pid the reader would pick |
+| `read verdict` | the reader's own attach → image base → 8-byte read chain with the errno, `/proc/<pid>/mem` as a second opinion, namespace + `uid_map` |
+| `game runtime` | container root, the Proton build on the parent chain, `compatdata` version, forced compat tool, launch options |
+| `overlay run` | a 6 s headless run (panels disabled, no window) with the `reader status:` lines the product itself prints |
+| `privacy` | what is deliberately *not* collected |
+
+Attach the file to a GitHub issue or discussion. Paths under `$HOME` print as
+`~`; environment variables, Steam account data, memory contents and other
+processes' command lines are not collected at all.

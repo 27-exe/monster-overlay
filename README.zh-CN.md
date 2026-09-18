@@ -140,6 +140,22 @@ sudo setcap cap_sys_ptrace+ep ./monster-overlay
 `install.sh` **不会**自动设 capability。详细说明见
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
+### 出问题了?跑 `monster-doctor`
+
+如果覆盖层一直空白或显示「未连接」,运行与二进制放在一起的诊断工具:
+
+```bash
+./monster-doctor                 # 生成 monster-doctor-<时间戳>.txt
+```
+
+它用的是覆盖层自己的代码路径,会记录:地址表从哪里找到、能否看到游戏进程
+(以及它的镜像基址)、reader 的判定结果(读取被拒时连同具体 errno)、当前游戏
+使用的 Proton 版本,以及覆盖层自身在 stderr 上打印的状态行。把这个文件附在
+反馈里即可。
+
+它只读、不需要任何权限,也不收集隐私:home 目录下的路径显示为 `~`,不包含
+环境变量、Steam 账号信息、游戏内存内容或其他进程的命令行。
+
 ### 运行环境要求
 
 - **Steam + GE-Proton 10-34**(或 Proton 9+)
