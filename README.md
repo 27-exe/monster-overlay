@@ -9,6 +9,19 @@ process from the outside — no DLL injection, no game files touched.
 ![In quest](assets/screenshots/03-in-quest.png)
 ![Control console](assets/screenshots/05-control-console-en.png)
 
+## Known limitations
+
+- **Monster part damage (World and Rise)** is still rough around the edges —
+  the data structure is fiddly enough that we want to spend a proper chunk of
+  time on it before claiming a fix.
+- **No DPS panel for Rise.** Rise does not surface live damage inside the game
+  process, so the overlay cannot compute a DPS stat for it. We are looking
+  for a low-intrusion, stable read path before promising anything here.
+- **No Monster Hunter Wilds — yet.** This repo does not carry a Wilds fork
+  today: Wilds' current reception has not given us a reason to buy it, and
+  without the game in hand there is nothing to adapt. If a future DLC makes
+  the game worth picking up, we may revisit this from this code base.
+
 ## Requirements
 
 - x86_64 Linux, Wayland session with a layer-shell compositor (KDE Plasma,
