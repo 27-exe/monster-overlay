@@ -190,8 +190,14 @@ Arch 上编译依赖:
 sudo pacman -S qt6-base qt6-declarative qt6-wayland layer-shell-qt cmake ninja
 ```
 
-`MonsterHunterWorld.421810.map` 会由 CMake 自动通过 `MHW_DEFAULT_MAP`
-环境变量解析;不传 `--map` 时默认用它。
+不传 `--map` 时,地图在**运行时**按以下顺序解析:
+
+1. `<appdir>/data/` —— 发布 tarball 的布局;
+2. `$XDG_DATA_HOME/monster-overlay/data/` —— `install.sh` 的安装位置;
+3. 每个 `$XDG_DATA_DIRS` 条目 + `/monster-overlay/data/`;
+4. 编译期默认值(仅开发与 CTest 使用)。
+
+发布版二进制因此不再依赖构建机的源码树。
 
 ---
 
@@ -199,7 +205,7 @@ sudo pacman -S qt6-base qt6-declarative qt6-wayland layer-shell-qt cmake ninja
 
 | Flag | 含义 |
 |------|------|
-| `-m, --map <path>` | HunterPie 风格的地图文件(默认是 bundled) |
+| `-m, --map <path>` | 显式指定地图文件,覆盖上面的运行时搜索;World / Rise 通用 |
 | `--locale <code>`  | UI locale:`zh-CN`(默认)或 `en-US`。运行时切换在控制台的 `中文 | EN` chip;选择会持久化到 conf。 |
 | `--edit`           | Edit 模式 —— 不依赖活的游戏,panel 渲染 demo 数据 |
 | `--poll <ms>`      | 轮询间隔,默认 250,范围 30–5000 |

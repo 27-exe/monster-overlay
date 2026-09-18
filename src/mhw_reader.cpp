@@ -34,11 +34,11 @@ inline QString trMessage(const QString &key) { return StringTable::instance().tr
 
 constexpr std::size_t kPointerSize = sizeof(std::uintptr_t);
 
-QString errnoMessage(const QString &operation)
+QString errnoMessage(const QString &operation, int errorCode)
 {
     return QStringLiteral("%1: %2 (%3)")
-        .arg(operation, QString::fromLocal8Bit(std::strerror(errno)))
-        .arg(errno);
+        .arg(operation, QString::fromLocal8Bit(std::strerror(errorCode)))
+        .arg(errorCode);
 }
 
 #pragma pack(push, 1)
@@ -241,13 +241,23 @@ bool ProcessMemory::readBytes(std::uintptr_t address, void *destination, std::si
     iovec local{destination, size};
     iovec remote{reinterpret_cast<void *>(address), size};
     const ssize_t result = ::process_vm_readv(static_cast<pid_t>(pid_), &local, 1, &remote, 1, 0);
+    // Save errno before any formatting: tr()/QString work can clobber it,
+    // and a partial read reports fewer bytes than requested *without*
+    // setting errno at all (v0.9.1 audit).
+    const int savedErrno = errno;
     if (result == static_cast<ssize_t>(size))
         return true;
 
-    if (error)
-        *error = errnoMessage(QStringLiteral("process_vm_readv PID %1 @ 0x%2")
+    if (error) {
+        const QString what = QStringLiteral("process_vm_readv PID %1 @ 0x%2")
                                  .arg(pid_)
-                                 .arg(static_cast<qulonglong>(address), 0, 16));
+                                 .arg(static_cast<qulonglong>(address), 0, 16);
+        if (result > 0)
+            *error = what + trMessage(QStringLiteral("ui.reader.partial_read_failed"))
+                                 .arg(static_cast<qlonglong>(result));
+        else
+            *error = errnoMessage(what, savedErrno);
+    }
     return false;
 }
 
@@ -385,6 +395,23 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
         if (imageBase_ == 0) {
             memory_.detach();
             snapshot.status = error;
+            return false;
+        }
+
+        // P1 (v0.9.1): prove the read path works before claiming to be
+        // attached. Attaching resolves only the PID and the image base, so
+        // a denied read (yama ptrace_scope=1 + same-user non-descendant,
+        // no CAP_SYS_PTRACE) used to surface as a silently empty HUD with
+        // no reason shown anywhere. Eight bytes of the PE header are always
+        // mapped (r--p) and reading them has no side effects.
+        std::uint8_t headerProbe[8] = {};
+        if (!memory_.readBytes(imageBase_, headerProbe, sizeof(headerProbe), &error)) {
+            memory_.detach();
+            imageBase_ = 0;
+            snapshot.pid = *pid;
+            snapshot.status = trMessage(QStringLiteral("ui.reader.ptrace_denied"))
+                                  .arg(*pid)
+                                  .arg(error);
             return false;
         }
     }

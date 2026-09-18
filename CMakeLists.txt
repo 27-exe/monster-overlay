@@ -18,6 +18,8 @@ add_library(monster-core STATIC
     src/core/string_table.cpp
     src/core/game_detector.h
     src/core/game_detector.cpp
+    src/core/map_paths.h
+    src/core/map_paths.cpp
     src/rise/mhr_types.h
     src/rise/mhr_reader.h
     src/rise/mhr_reader.cpp
@@ -352,6 +354,38 @@ if(BUILD_TESTING)
     target_include_directories(snap-empty-state PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(snap-empty-state PRIVATE -Wall -Wextra -Wpedantic)
 
+    # Diagnostic snapshot tool for the PlayerPanel no-data states (v0.9.1 P1):
+    # waiting-for-exe / read-denied / map-missing / attached-but-empty, all of
+    # which used to paint the same unexplained empty panel. Not a CTest — it
+    # is a visual aid and needs a QPA platform.
+    add_executable(snap-player-offline EXCLUDE_FROM_ALL
+        tests/snap_player_offline.cpp
+        src/mhw_reader.cpp
+        src/mhw_reader.h
+        src/player/player_reader.cpp
+        src/quest/quest_reader.cpp
+        src/world/world_reader.cpp
+        src/monster/monster_reader.cpp
+        src/monster/part_schemas.cpp
+        src/monster/target_selector.cpp
+        src/ui/formatters.cpp
+        src/ui/icon.cpp
+        src/ui/panel.cpp
+        src/ui/panel_player.cpp
+        src/ui/panel_damage.cpp
+        src/ui/panel_monster.cpp
+        src/world/world_types.cpp
+        src/resources/resources.qrc
+        assets/icons.qrc
+    )
+    target_link_libraries(snap-player-offline PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+        LayerShellQt::Interface
+        monster-core
+    )
+    target_include_directories(snap-player-offline PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(snap-player-offline PRIVATE -Wall -Wextra -Wpedantic)
+
     # All reader-dependent targets need these sources since MhwReader member
     # functions are defined across multiple .cpp files (one per domain).
     set(MHW_READER_SOURCES
@@ -513,6 +547,17 @@ if(BUILD_TESTING)
     target_include_directories(monster-locale-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-locale-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME monster-locale-tests COMMAND monster-locale-tests)
+
+    # P0 release-path regression: the runtime data-file lookup must not
+    # depend on the build machine's source tree. Every case builds its own
+    # temporary tree, so this runs cleanly under a relocated release.
+    add_executable(map-path-tests
+        tests/map_paths_tests.cpp
+    )
+    target_link_libraries(map-path-tests PRIVATE Qt6::Core monster-core)
+    target_include_directories(map-path-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(map-path-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME map-path-tests COMMAND map-path-tests)
 
     # Pure Rise stage-name regression: no game process is required.
     add_executable(rise-zone-mapping-tests

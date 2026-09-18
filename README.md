@@ -200,8 +200,14 @@ Build dependencies on Arch:
 sudo pacman -S qt6-base qt6-declarative qt6-wayland layer-shell-qt cmake ninja
 ```
 
-`MonsterHunterWorld.421810.map` is resolved automatically from
-`MHW_DEFAULT_MAP` (set by CMake) if `--map` is omitted.
+If `--map` is omitted the map is resolved at **runtime**, in this order:
+
+1. `<appdir>/data/` — how the release tarball ships,
+2. `$XDG_DATA_HOME/monster-overlay/data/` — where `install.sh` puts it,
+3. each `$XDG_DATA_DIRS` entry + `/monster-overlay/data/`,
+4. the compile-time default (development and CTest only).
+
+A released binary therefore never needs the build machine's source tree.
 
 ---
 
@@ -209,7 +215,7 @@ sudo pacman -S qt6-base qt6-declarative qt6-wayland layer-shell-qt cmake ninja
 
 | Flag | Meaning |
 |------|---------|
-| `-m, --map <path>` | HunterPie legacy map file (default: bundled) |
+| `-m, --map <path>` | Explicit map file; overrides the runtime search above. Applies to both games. |
 | `--locale <code>`  | UI locale: `zh-CN` (default) or `en-US`. Runtime switching lives in the console's `中文 | EN` chip; the choice persists to the conf file. |
 | `--edit`           | Edit mode — no game required, demo data on the panels |
 | `--poll <ms>`      | Polling interval, default 250, range 30–5000 |

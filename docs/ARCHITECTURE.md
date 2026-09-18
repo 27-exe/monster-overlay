@@ -129,9 +129,16 @@ see `docs/I18N.md`) read at lookup time.
 
 ## Memory reading rules
 
-- **Only `process_vm_readv`**, never `open("/proc/<pid>/mem")`. The
-  former works across `ptrace_scope=1` between the overlay process
-  and the proton-wrapped MHW; the latter returns `EPERM`.
+- **Only `process_vm_readv`**, never `open("/proc/<pid>/mem")`. Both
+  reach the kernel through `ptrace_may_access()` with an ATTACH mode,
+  so under `ptrace_scope=1` both are denied for a same-UID process
+  that is not our descendant **unless** we hold `CAP_SYS_PTRACE` in
+  the target's user namespace. Reading works in practice because the
+  game runs inside a namespace owned by the current user (the owner
+  rule grants the capability there) or because that Wine build
+  registers a Yama exception (see below). `readv` is still the only
+  call we make: a single syscall per field read, no fd to leak, and
+  no `/proc/<pid>/mem` seek semantics to get wrong.
 - **`sane()` pointer filter** on every `read<T>(address)`: reject
   addresses outside `[0x10000, 0x8000_0000_0000)`. A bad pointer
   here is almost always a 4 GiB pread that we'd otherwise see as
@@ -148,17 +155,60 @@ see `docs/I18N.md`) read at lookup time.
 
 ## The Yama `ptrace_scope` caveat
 
-`kernel.yama.ptrace_scope` is a per-system sysctl. On Arch defaults
-to `1` ("only a parent process can ptrace"). Under this mode:
+`kernel.yama.ptrace_scope` is a per-system sysctl. On Arch it defaults
+to `1` ("only a parent process can ptrace"). Corrected in v0.9.1 — the
+earlier note here claimed `process_vm_readv` bypassed Yama because it
+"only goes through `mm_access`"; that is wrong, `mm_access()` calls
+`ptrace_may_access(task, PTRACE_MODE_ATTACH_REALCREDS)` itself:
 
-| API                          | Same UID, same session? | Same UID, different session? |
-|------------------------------|--------------------------|--------------------------------|
-| `open("/proc/<pid>/mem")`    | OK                       | EPERM (Yama)                    |
-| `process_vm_readv(...)`      | OK                       | **OK** (mm_access only)        |
+| API | Same UID, not our descendant, `ptrace_scope=1`, no capability | Allowed: descendant, or capability held |
+|-----|---------------------------------------------------------------|------------------------------------------|
+| `open("/proc/<pid>/mem")` | EPERM (Yama ATTACH) | OK |
+| `process_vm_readv(...)`   | EPERM (Yama ATTACH — the same gate) | OK |
+| `open("/proc/<pid>/maps")`| OK (`PTRACE_MODE_READ` carries no ATTACH bit) | OK |
 
-We run as a desktop process reading a Proton-wrapped game in a
-different session. We use `process_vm_readv` and never `open(mem)`.
-The monster-probe tools follow the same rule.
+That asymmetry is what makes an unreadable game look like a visible one:
+`maps` still lists the process, so the console's detection badge and the
+reader's PID lookup both succeed while every memory read fails.
+
+Three ways to make reads work, in order of preference:
+
+1. Run the game in a namespace this user owns (Steam + Proton normally
+   do this) — the owner rule inside that namespace grants
+   `CAP_SYS_PTRACE` and both gates open.
+2. `sudo setcap cap_sys_ptrace+ep <path-to-monster-overlay>` — scoped to
+   one binary, but lost whenever that file is replaced (re-unpacked,
+   re-downloaded, rebuilt) and ignored entirely on `nosuid` mounts such
+   as `/tmp`.
+3. `sudo sysctl kernel.yama.ptrace_scope=0` — system-wide and resets on
+   reboot.
+
+Wine generations differ here: GE-Proton 10's `ntdll` registers
+`prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY)` on its normal path, so the
+exception makes reads succeed without a capability, while Wine 11 builds
+(Valve Proton 11.0 / Experimental / Hotfix, proton-cachyos) pass the
+wineserver PID instead. Never validate the read path on a single Proton
+generation.
+
+Measured 2026-09-18, `ptrace_scope=1`, no capability on either side:
+
+| Target | GE-Proton 10-34 | proton-cachyos 11.0 |
+|--------|-----------------|---------------------|
+| bare `wine` (no container) | OK (the `PTRACER_ANY` exception) | EPERM (narrow exception, no owner rule applies) |
+| game launched by Steam (SLR / pressure-vessel) | OK | OK |
+
+The second row is what users actually run: Steam starts the game inside a
+*child* user namespace owned by the same user (`/proc/<pid>/ns/user`
+differs from the desktop's, `uid_map` = `1000 1000 1`), and the owner rule
+in `cap_capable()` grants that user `CAP_SYS_PTRACE` inside it — so reads
+work without `setcap` on either Proton generation. Do **not** extrapolate
+bare-wine permission results to Steam-launched games; check
+`/proc/<pid>/ns/user` against your own and `/proc/<pid>/uid_map` first.
+
+Since v0.9.1 the reader proves the read path before reporting itself
+attached: eight bytes of the PE header are read right after the image
+base resolves, and a failure becomes `ui.reader.ptrace_denied` in the
+snapshot status (with the errno) instead of a silently empty HUD.
 
 ## What goes where (v0.2 split plan)
 

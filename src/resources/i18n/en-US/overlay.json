@@ -91,6 +91,7 @@
 
     "player_panel_header": "PLAYER",
     "player_status_offline": "○ DISCONNECTED",
+    "player_status_no_data": "○ NO DATA",
     "player_connected": "Connected · %1",
     "player_party_count": "%1P",
     "player_zone": "Zone",
@@ -138,10 +139,10 @@
       "maps_no_mapping": "maps has no %1 mapping",
       "invalid_read_request": "Invalid memory read request: 0x%1, %2 bytes",
       "waiting_exe": "Waiting for %1",
-      "ptrace_denied": "Found PID %1 but /proc/%1/mem refused the read: %2. ptrace_scope=1 + same-user non-child → denied; needs a launcher/ptrace_proxy relationship.",
+      "ptrace_denied": "Found PID %1 but reading its memory was denied: %2. With ptrace_scope=1 a same-user non-descendant needs CAP_SYS_PTRACE: sudo setcap cap_sys_ptrace+ep <overlay path>, or temporarily sudo sysctl kernel.yama.ptrace_scope=0.",
       "world_connected": "MHW connected · PID %1 · BASE 0x%2",
       "rise_waiting": "Waiting for MonsterHunterRise.exe",
-      "rise_attach_failed": "Found PID %1 but cannot attach: %2",
+      "rise_attach_failed": "Found PID %1 but reading its memory failed: %2. With ptrace_scope=1 a same-user non-descendant needs CAP_SYS_PTRACE: sudo setcap cap_sys_ptrace+ep <overlay path>, or temporarily sudo sysctl kernel.yama.ptrace_scope=0.",
       "rise_connected": "MHR connected · PID %1 · BASE 0x%2",
       "partial_read_failed": " · partial read failed: %1"
     },

@@ -222,6 +222,19 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
             snapshot.status = error;
             return false;
         }
+
+        // P1 (v0.9.1): same read-path probe as the World reader — see
+        // MhwReader::ensureAttached for the rationale.
+        std::uint8_t headerProbe[8] = {};
+        if (!memory_.readBytes(imageBase_, headerProbe, sizeof(headerProbe), &error)) {
+            memory_.detach();
+            imageBase_ = 0;
+            snapshot.pid = *pid;
+            snapshot.status = trMessage(QStringLiteral("ui.reader.rise_attach_failed"))
+                                  .arg(*pid)
+                                  .arg(error);
+            return false;
+        }
     }
 
     snapshot.attached = true;

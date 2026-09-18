@@ -2,6 +2,7 @@
 #include "core/game_snapshot.h"
 #include "core/locale_conf.h"
 #include "core/locale_sync.h"
+#include "core/map_paths.h"
 #include "core/string_table.h"
 #include "monster/monster_types.h"
 #include "mhw_reader.h"
@@ -317,15 +318,35 @@ int main(int argc, char **argv)
     damagePanel.show();
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
-    // loop below stays game-agnostic. World keeps the existing map path
-    // (HunterPie legacy map); Rise auto-selects the map matching the
-    // running game version from the data directory, falling back to the
-    // compile-time default when nothing validates.
-    mhw::MhwReader worldReader(parser.value(mapOption));
-    QString riseMapPath = mhw::MhrReader::findBestMap(
-        QFileInfo(QString::fromUtf8(MHR_DEFAULT_MAP)).absolutePath());
-    if (riseMapPath.isEmpty())
-        riseMapPath = QString::fromUtf8(MHR_DEFAULT_MAP);
+    // loop below stays game-agnostic.
+    //
+    // P0 (v0.9.1) release-path fix: the maps are resolved at RUNTIME.
+    // Priority: explicit --map > <appdir>/data > $XDG_DATA_HOME and
+    // $XDG_DATA_DIRS (+ /monster-overlay/data) > the compile-time default,
+    // which now only serves development and CTest. Before this, a released
+    // binary used the build machine's absolute source path and every other
+    // machine failed to open a map (empty HUD, no data).
+    const QString explicitMap =
+        parser.isSet(mapOption) ? parser.value(mapOption) : QString();
+    const QStringList dataDirs = mhw::defaultDataSearchDirs();
+    const QString worldMapPath = mhw::resolveDataFile(
+        explicitMap, QFileInfo(QString::fromUtf8(MHW_DEFAULT_MAP)).fileName(),
+        dataDirs, QString::fromUtf8(MHW_DEFAULT_MAP));
+    mhw::MhwReader worldReader(worldMapPath);
+    // Rise: honour an explicit --map too (it used to be World-only), else
+    // pick the highest version in the first data dir that has one.
+    QString riseMapPath;
+    if (!explicitMap.isEmpty()) {
+        riseMapPath = explicitMap;
+    } else {
+        const QString riseDir = mhw::firstDataDirContaining(
+            dataDirs, QStringLiteral("MonsterHunterRise.*.map"),
+            QString::fromUtf8(MHR_DEFAULT_MAP));
+        if (!riseDir.isEmpty())
+            riseMapPath = mhw::MhrReader::findBestMap(riseDir);
+        if (riseMapPath.isEmpty())
+            riseMapPath = QString::fromUtf8(MHR_DEFAULT_MAP);
+    }
     mhw::MhrReader riseReader(riseMapPath);
     // Rise party damage comes from the REFramework Lua script writing
     // /tmp/mhr_damage.json (RiseDamageReader's default path). Only the
@@ -335,6 +356,11 @@ int main(int argc, char **argv)
         isRise ? std::function<mhw::GameSnapshot()>([&riseReader] { return riseReader.poll(); })
                : std::function<mhw::GameSnapshot()>([&worldReader] { return worldReader.poll(); });
     std::uintptr_t displayedMonsterAddress = 0;
+    // P1 (v0.9.1): the reader's status string is the only explanation for
+    // an empty panel (map missing/invalid, no game process, denied read).
+    // Mirror changes to stderr so `--poll` runs and pasted logs carry the
+    // reason instead of an unexplained "not connected".
+    QString lastReaderStatus;
     QTimer timer;
 
     // i18n: runtime locale switch. The console is the only writer of the
@@ -390,6 +416,10 @@ int main(int argc, char **argv)
         } catch (...) {
             qWarning("poll tick skipped (unknown exception)");
             return;
+        }
+        if (snap.status != lastReaderStatus) {
+            qInfo("reader status: %s", qPrintable(snap.status));
+            lastReaderStatus = snap.status;
         }
         const bool showAll = editMode;
 

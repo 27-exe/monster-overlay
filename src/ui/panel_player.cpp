@@ -144,6 +144,10 @@ constexpr int kStOrange   = 255; constexpr int kStOrangeG = 152; constexpr int k
 
 constexpr int kConnGreen  = 76;  constexpr int kConnGreenG = 175; constexpr int kConnGreenB = 80;
 constexpr int kConnRed    = 244; constexpr int kConnRedG   = 67;  constexpr int kConnRedB   = 54;
+// P1 (v0.9.1): "connected, but nothing resolved yet" — distinct from the
+// hard-red disconnected label so a denied read is not mistaken for a
+// missing game process.
+constexpr int kConnAmber  = 232; constexpr int kConnAmberG = 176; constexpr int kConnAmberB = 80;
 
 // Mantle state borders.
 constexpr int kMbActiveR = 76;   constexpr int kMbActiveG  = 175; constexpr int kMbActiveB  = 80;
@@ -788,11 +792,20 @@ void PlayerPanel::paintPanel(QPainter &p)
 {
     drawV03Chrome(p, Panel::Accent::Player);
 
-    // Disconnected placeholder (HTML v8 keeps the chrome + a small
-    // status block; no data rows render).
-    if (!attached_) {
-        const int totalH = kMargin + kTitleH + kQrowH + kMargin;
+    // No-data placeholder: disconnected (never attached) and connected but
+    // empty (attached, yet not a single field resolved) share the chrome and
+    // a small status block; no data rows render.
+    //
+    // P1 (v0.9.1): the reader's own status string is drawn here. Before,
+    // "cannot open the address map", "waiting for MonsterHunterWorld.exe"
+    // and "read denied (EPERM)" all rendered as the same unexplained empty
+    // panel — which is exactly what made the CachyOS reports unreadable.
+    if (!attached_ || !hasData_) {
+        const bool connected = attached_;
+        const int rows = status_.isEmpty() ? 1 : 2;
+        const int totalH = kMargin + kTitleH + rows * kQrowH + kMargin;
         setContentSize(kPanelW, totalH);
+
         const QRectF titleRect(kMargin, kMargin,
                                kPanelW - 2 * kMargin, kTitleH);
         QFont tFont(QStringLiteral("Chakra Petch"), 9, QFont::Medium);
@@ -802,18 +815,29 @@ void PlayerPanel::paintPanel(QPainter &p)
         p.setPen(QColor(255, 255, 255));
         p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
                    mh::tr("ui.player_panel_header"));
-        p.setPen(QColor(110, 110, 110));
+
         QFont sFont(QStringLiteral("Chakra Petch"), 9);
         sFont.setStyleStrategy(QFont::PreferAntialias);
         p.setFont(sFont);
-        p.setPen(QColor(kConnRed, kConnRedG, kConnRedB));
+        p.setPen(connected ? QColor(kConnAmber, kConnAmberG, kConnAmberB)
+                           : QColor(kConnRed, kConnRedG, kConnRedB));
         p.drawText(titleRect, Qt::AlignRight | Qt::AlignVCenter,
-                   mh::tr("ui.player_status_offline"));
+                   mh::tr(connected ? QStringLiteral("ui.player_status_no_data")
+                                    : QStringLiteral("ui.player_status_offline")));
+
+        if (!status_.isEmpty()) {
+            const QRectF statusRect(kMargin, kMargin + kTitleH,
+                                    kPanelW - 2 * kMargin, kQrowH);
+            QFont dFont(QStringLiteral("Chakra Petch"), 8);
+            dFont.setStyleStrategy(QFont::PreferAntialias);
+            p.setFont(dFont);
+            p.setPen(QColor(150, 150, 150));
+            const QFontMetricsF fm(dFont);
+            p.drawText(statusRect, Qt::AlignLeft | Qt::AlignVCenter,
+                       fm.elidedText(status_, Qt::ElideRight, statusRect.width()));
+        }
         return;
     }
-
-    if (!hasData_)
-        return;
 
     const int mantleCount = (player_.mantleSlot0Id >= 0 ? 1 : 0)
                           + (player_.mantleSlot1Id >= 0 ? 1 : 0);
