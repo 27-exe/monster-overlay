@@ -113,7 +113,6 @@ int main(int argc, char *argv[])
 
     // Find the live monster with HP > 0 (skip stubs / dead).
     std::uintptr_t monsterAddr = 0;
-    int foundIdx = -1;
     for (int i = 0; i < 128; ++i) {
         const std::uintptr_t comp = comps[i];
         if (comp < 0x10000 || comp >= 0x0000800000000000ULL) continue;
@@ -133,7 +132,6 @@ int main(int argc, char *argv[])
             std::printf("live monster slot[%d] inner=0x%" PRIxPTR " em=\"%s\" hp=%.1f/%.1f\n",
                         i, m, name, hp[1], hp[0]);
             monsterAddr = m;
-            foundIdx = i;
             break;
         }
     }

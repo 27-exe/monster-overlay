@@ -39,22 +39,6 @@ constexpr std::uintptr_t kHealthPtr = 0x7670;
 constexpr std::uintptr_t kHealthSlot = 0x60;
 constexpr std::uintptr_t kInnerPtr = 0x138;
 
-bool isBigMonsterName(const char *name)
-{
-    // "em\em*" is the big-monster family; "em\ems*" is small monsters / palico
-    // handlers that HunterPie explicitly filters out of the big-monster list.
-    return std::strstr(name, "em\\em") != nullptr
-        && std::strstr(name, "em\\ems") == nullptr;
-}
-
-bool containsEmEm(const mhw::ProcessMemory &memory, std::uintptr_t candidate, QString *err)
-{
-    char buf[16] = {0};
-    if (!memory.readBytes(candidate + kNameOffset, buf, sizeof(buf) - 1, err))
-        return false;
-    return isBigMonsterName(buf);
-}
-
 } // namespace
 
 int main(int argc, char *argv[])
