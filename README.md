@@ -10,7 +10,7 @@ This is a **Linux port of [HunterPie v2](https://github.com/HunterPie/HunterPie)
 process that attaches to the running MHW process and reads what it
 needs to render.
 
-**Current stable:** the `main` branch (last tagged release: `v0.9.0`).
+**Current stable:** the `main` branch (last tagged release: `v0.9.1`).
 
 ### Environment support
 
@@ -104,8 +104,8 @@ build step, no system install needed.
 
 ```bash
 # 1. extract
-tar -xzf monster-overlay-v0.9.0-linux-x86_64.tar.gz
-cd monster-overlay-v0.9.0
+tar -xzf monster-overlay-v0.9.1-linux-x86_64.tar.gz
+cd monster-overlay-v0.9.1
 
 # 2. install runtime dependencies (Arch Linux)
 sudo pacman -S --needed qt6-base qt6-declarative qt6-wayland layer-shell-qt

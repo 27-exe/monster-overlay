@@ -8,7 +8,7 @@ Steam + GE-Proton 之上。它通过 `/proc/<pid>/mem` 直接读取游戏进程
 本工程**不注入 DLL** —— overlay 是独立的进程,附加到你正在运行的
 MHW 上,通过读进程内存画出 HUD。
 
-**最新稳定版:** `main` 分支(最近发布 tag:`v0.9.0`)。
+**最新稳定版:** `main` 分支(最近发布 tag:`v0.9.1`)。
 
 [English documentation](README.md)
 
@@ -101,8 +101,8 @@ backend;NVIDIA + Wayland 走系统的 `libEGL.so`,不需要 Vulkan、不
 
 ```bash
 # 1. 解包
-tar -xzf monster-overlay-v0.9.0-linux-x86_64.tar.gz
-cd monster-overlay-v0.9.0
+tar -xzf monster-overlay-v0.9.1-linux-x86_64.tar.gz
+cd monster-overlay-v0.9.1
 
 # 2. 安装运行时依赖(Arch Linux)
 sudo pacman -S --needed qt6-base qt6-declarative qt6-wayland layer-shell-qt
