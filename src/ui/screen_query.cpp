@@ -181,13 +181,9 @@ QSize tryDrmSysfsImpl()
     return {};
 }
 
-// Forward decls so the dispatch table in detect() (which lives in
-// the parent screen_query namespace) can call helpers defined in
-// the anonymous namespace below. C++17 lets us write them in the
-// enclosing namespace explicitly so the names resolve cleanly.
-namespace screen_query {
-namespace { QSize tryXrandr(); QSize tryKscreen(); QSize tryWlrRandr(); QSize tryDrmSysfs(); }
-}
+// No forward declarations: these helpers are defined here, before the
+// dispatch table in detect() uses them (the old anonymous-namespace decls
+// were dead code and warned under -Wunused-function).
 
 QSize tryXrandr()      { return runCommand("xrandr", {"--current"}, parseXrandrOutput); }
 QSize tryKscreen()     { return runCommand("kscreen-doctor", {"-j"}, parseKscreenJson); }
@@ -259,22 +255,25 @@ Result detect(const QScreen *screen)
         shell = sz; shellSource = s; return true;
     };
 
+    // First successful probe wins: `||` keeps the original evaluation order
+    // and short-circuits exactly like the if/else-if chain did; `shell` and
+    // `shellSource` (set inside takeShell) carry the result.
     if (isWayland) {
-        if (takeShell(Source::KScreen,   tryKscreen()))  ;
-        else if (takeShell(Source::WlrRandr, tryWlrRandr())) ;
-        // X11 tools often also work via XWayland as a last resort.
-        else if (takeShell(Source::XRandr, tryXrandr()))   ;
+        static_cast<void>(takeShell(Source::KScreen, tryKscreen())
+                          || takeShell(Source::WlrRandr, tryWlrRandr())
+                          // X11 tools often also work via XWayland as a last resort.
+                          || takeShell(Source::XRandr, tryXrandr()));
     } else if (isX11) {
-        if (takeShell(Source::XRandr,    tryXrandr()))   ;
-        // KDE users on X11 still benefit from KScreen if installed.
-        else if (takeShell(Source::KScreen, tryKscreen()))  ;
-        else if (takeShell(Source::WlrRandr, tryWlrRandr())) ;
+        static_cast<void>(takeShell(Source::XRandr, tryXrandr())
+                          // KDE users on X11 still benefit from KScreen if installed.
+                          || takeShell(Source::KScreen, tryKscreen())
+                          || takeShell(Source::WlrRandr, tryWlrRandr()));
     } else {
         // No session env (tty / offscreen / CI). Try everything in
         // order of likelihood.
-        if      (takeShell(Source::XRandr,    tryXrandr()))   ;
-        else if (takeShell(Source::KScreen,   tryKscreen()))  ;
-        else if (takeShell(Source::WlrRandr,  tryWlrRandr())) ;
+        static_cast<void>(takeShell(Source::XRandr, tryXrandr())
+                          || takeShell(Source::KScreen, tryKscreen())
+                          || takeShell(Source::WlrRandr, tryWlrRandr()));
     }
 
     // Last-resort: kernel sysfs. Works on any Linux machine with a
