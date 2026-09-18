@@ -9,7 +9,7 @@
 // No connection to a running monster-overlay process yet — pure preview.
 //
 // v0.9 i18n: this file owns the console's startup LOCALE RESOLUTION
-// (--locale > conf locale= row > zh-CN, mirroring src/main.cpp so the
+// (--locale > conf locale= row > detected system locale, mirroring src/main.cpp so the
 // overlay and its console always agree) and forwards the resolved value
 // to every overlay it spawns (see ControlPanel::launchOverlay()).
 
@@ -87,16 +87,11 @@ int main(int argc, char *argv[])
     // the locale row is how a previous session's EN/CH choice survives a
     // restart. Resolution order matches the overlay's so the two never
     // disagree at launch.
-    QString locale = cliLocale;
-    const char *localeSource = "cli";
-    if (locale.isEmpty()) {
-        locale = mhw::readLocaleFromConf();
-        localeSource = "conf";
-        if (locale.isEmpty()) {
-            locale = QStringLiteral("zh-CN");
-            localeSource = "default";
-        }
-    }
+    const QString confLocale = mhw::readLocaleFromConf();
+    QString locale = mhw::resolveStartupLocale(cliLocale, confLocale, mhw::systemLocale());
+    const char *localeSource = !cliLocale.isEmpty()    ? "cli"
+                               : !confLocale.isEmpty() ? "conf"
+                                                       : "system";
     if (!mhw::StringTable::instance().load(locale)) {
         qWarning("failed to load %s strings; falling back to zh-CN",
                  qPrintable(locale));

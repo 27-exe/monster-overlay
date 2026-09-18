@@ -219,15 +219,14 @@ int main(int argc, char **argv)
     parser.addOption(outputDamageOption);
     parser.process(app);
 
-    // i18n startup locale, priority: --locale > conf(locale= row) > zh-CN.
-    // The console is the sole writer of the conf (core/locale_conf.h);
-    // the overlay only reads it here and in the poll loop below.
+    // i18n startup locale, priority: --locale > conf(locale= row) > system
+    // locale (v0.9.2: zh* -> zh-CN, everything else -> en-US, so a first run
+    // follows the desktop instead of always opening in zh-CN). The conf row
+    // exists only for an explicit choice — the console's EN/CH chip or its
+    // own --locale (core/locale_conf.h); the overlay only reads it here and
+    // in the poll loop below.
     const QString confPath = mhw::localeConfPath();
-    QString startupLocale = parser.value(localeOption);
-    if (startupLocale.isEmpty())
-        startupLocale = mhw::readLocaleFromConf(confPath);
-    if (startupLocale.isEmpty())
-        startupLocale = QStringLiteral("zh-CN");
+    const QString startupLocale = mhw::resolveStartupLocale(parser.value(localeOption), confPath);
     if (!mhw::StringTable::instance().load(startupLocale)) {
         qWarning() << "Failed to load UI strings for" << startupLocale
                    << "; falling back to key names.";

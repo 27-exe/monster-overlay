@@ -75,6 +75,10 @@ QString readBack()
 int main(int argc, char *argv[])
 {
     qputenv("XDG_CONFIG_HOME", "/tmp/monster-control-smoke");
+    // v0.9.2: the constructor's locale safety net falls back to the detected
+    // system locale, so pin the environment for a deterministic expectation
+    // (a zh desktop -> zh-CN console chrome).
+    qputenv("LC_ALL", "zh_CN.UTF-8");
     // XDG_CONFIG_HOME (read by QStandardPaths::GenericConfigLocation) is
     // picked up immediately on first writableLocation() call.
     QFile::remove(configPath());
@@ -130,24 +134,32 @@ int main(int argc, char *argv[])
     }
 
     // ------------------------------------------------------------------
-    // v0.9 i18n: the conf gained a 4th `locale=` row (the console -> overlay
-    // handshake). The three legacy mask rows must survive verbatim
-    // (lowercase hex, same order) — the overlay's locale_sync.h polls the
-    // file and older readers must keep working.
+    // Mask rows: three lowercase-hex lines, same order — the overlay's
+    // locale_sync.h polls the file and older readers must keep working.
+    //
+    // v0.9.2 semantics: the optional 4th `locale=` row records an EXPLICIT
+    // language choice (--locale or the EN/CH chip). A mask save must neither
+    // invent nor drop it, otherwise a detected language would silently
+    // become a pinned one; the chip block below asserts it appears on a
+    // click and survives the next mask write.
     // ------------------------------------------------------------------
     {
         const QString text = readBack();
         const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-        if (lines.size() != 4
+        if (lines.size() != 3
             || lines[0] != QStringLiteral("player=fb")
             || lines[1] != QStringLiteral("monster=2f")
-            || lines[2] != QStringLiteral("damage=7")
-            || lines[3] != QStringLiteral("locale=zh-CN")) {
-            fprintf(stderr, "FAIL: i18n conf layout wrong (%d lines):\n%s",
+            || lines[2] != QStringLiteral("damage=7")) {
+            fprintf(stderr, "FAIL: mask conf layout wrong (%d lines):\n%s",
                     int(lines.size()), qPrintable(text));
             return 8;
         }
-        fprintf(stderr, "i18n conf layout OK:\n%s", qPrintable(text));
+        if (text.contains(QStringLiteral("locale="))) {
+            fprintf(stderr, "FAIL: a mask save pinned a locale row:\n%s", qPrintable(text));
+            return 19;
+        }
+        fprintf(stderr, "mask conf layout OK (no locale row before a choice):\n%s",
+                qPrintable(text));
     }
 
     // ------------------------------------------------------------------

@@ -68,8 +68,13 @@ runtime** — no restart:
 - The switch covers **everything**: panel chrome, status/connection
   lines, and the game **data names** — monster names, part names, zones
   and ailments/abnormalities — for both World and Rise.
-- Startup precedence: `--locale <code>` → conf value → `zh-CN`, so a
-  freshly spawned overlay inherits the console's language.
+- **A first run follows your desktop.** With no saved choice the UI starts
+  in English, or in Chinese when the system locale is `zh*` (`LC_ALL` /
+  `LC_MESSAGES` / `LANG`, then `LANGUAGE`; `C`/`POSIX`/unset → English).
+- Startup precedence: `--locale <code>` → saved `locale=` value → system
+  locale. The saved value is written **only** by an explicit choice (the
+  chip, or the console's own `--locale`), so an untouched install keeps
+  following the desktop instead of pinning today's default.
 
 ![Control console in English](assets/screenshots/05-control-console-en.png)
 

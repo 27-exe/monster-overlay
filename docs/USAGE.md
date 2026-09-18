@@ -284,3 +284,24 @@ itself stays clean), so a run never looks like a hang.
 Attach the file to a GitHub issue or discussion. Paths under `$HOME` print as
 `~`; environment variables, Steam account data, memory contents and other
 processes' command lines are not collected at all.
+
+## 10. Language behaviour (EN / 中文)
+
+The UI language is resolved at startup in this order:
+
+| priority | source | who writes it |
+|---|---|---|
+| 1 | `--locale <code>` | you, on the command line (per launch) |
+| 2 | the `locale=` row in `~/.config/monster-overlay/monster-overlay.conf` | the `中文 \| EN` chip, or the console's own `--locale` — i.e. an explicit choice only |
+| 3 | the detected system locale | `LC_ALL` → `LC_MESSAGES` → `LANG` → `LANGUAGE`; `zh*` selects Chinese, everything else (including `C`, `POSIX`, unset) selects English |
+
+Consequences worth knowing:
+
+- A machine that never made a choice **keeps following the desktop**: change
+  your system language and the next launch follows it.
+- Saving panel switches does **not** pin the language: the mask save preserves
+  an existing `locale=` row verbatim and never invents one.
+- The chip is the only way to pin it; after that the saved value wins over
+  detection until you change it again.
+- The console hands its current language to the overlay it spawns
+  (`--locale=…`), so a spawned overlay never flips language under you.

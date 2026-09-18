@@ -320,15 +320,17 @@ ControlPanel::ControlPanel(QWidget *parent)
     : QMainWindow(parent)
 {
     // v0.9 i18n: guarantee a loaded StringTable before any widget text is
-    // built. main_control.cpp resolves --locale > conf > zh-CN before
+    // built. main_control.cpp resolves --locale > conf > system locale before
     // constructing us (and every string below is read through it); this is
     // the safety net for embedders — e.g. tests/control_l2_smoke.cpp
     // constructs a bare ControlPanel with no startup resolution.
     if (mhw::StringTable::instance().currentLocale().isEmpty()) {
+        // Mirrors the startup policy in main_control.cpp; the last resort is
+        // the detected system locale, not a hardcoded zh-CN (v0.9.2).
         const QString fromConf = mhw::readLocaleFromConf();
-        if (fromConf.isEmpty()
-            || !mhw::StringTable::instance().load(fromConf))
-            mhw::StringTable::instance().load(QStringLiteral("zh-CN"));
+        const QString fallback = mhw::systemLocale();
+        if (fromConf.isEmpty() || !mhw::StringTable::instance().load(fromConf))
+            mhw::StringTable::instance().load(fallback);
     }
 
     setObjectName("monster-control-panel");
@@ -2126,7 +2128,7 @@ void ControlPanel::loadMaskFromDisk()
 
     // v0.9 i18n (integration fix): the conf's 4th `locale=` row is the
     // console->overlay handshake (core/locale_conf.h). It is resolved at
-    // startup by main_control.cpp (--locale > conf > zh-CN) and by the
+    // startup by main_control.cpp (--locale > conf > system locale) and by the
     // ctor guard above; it must NOT be re-applied here. Doing so silently
     // overrode an explicit `--locale` with a stale conf value and produced
     // a split-language UI (already-registered chrome flipped to the conf
@@ -2165,6 +2167,13 @@ void ControlPanel::saveMaskToDisk() const
     const uint32_t mm = maskFor(ctl_[1]);
     const uint32_t md = maskFor(ctl_[2]);
 
+    // v0.9.2: the `locale=` row means "the user chose this language"
+    // (--locale or the EN/CH chip). A mask save must not turn whatever we
+    // happen to be running into a pinned choice, otherwise a detected
+    // language would stop following the desktop. Preserve the existing row
+    // verbatim; stay silent when there is none.
+    const QString chosenLocale = mhw::readLocaleFromConf(path);
+
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
         qWarning("monster-control: cannot write %s", qPrintable(path));
@@ -2173,13 +2182,13 @@ void ControlPanel::saveMaskToDisk() const
     QTextStream out(&f);
     // Line order is part of the contract: the three legacy mask rows first
     // (lowercase hex — tests/control_l2_smoke.cpp reads back "fb"/"2f"/"7"),
-    // then the v0.9 `locale=` row polled by the overlay (locale_sync.h).
+    // then, only when the user has chosen a language, the `locale=` row
+    // polled by the overlay (locale_sync.h).
     out << "player="  << QString::number(mp, 16) << '\n'
         << "monster=" << QString::number(mm, 16) << '\n'
         << "damage="  << QString::number(md, 16) << '\n';
-    const QString locale = mhw::StringTable::instance().currentLocale();
-    if (!locale.isEmpty())
-        out << "locale=" << locale << '\n';
+    if (!chosenLocale.isEmpty())
+        out << "locale=" << chosenLocale << '\n';
 }
 
 void ControlPanel::rebuildAndRender(int idx)

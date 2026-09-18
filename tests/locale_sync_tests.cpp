@@ -136,6 +136,57 @@ int main(int argc, char **argv)
     check(mhw::localeSyncPoll(st2, conf2, QStringLiteral("en-US")).isEmpty(),
           "pre-existing conf value does not override --locale startup");
 
+    // --------------------------------------- locale detection (v0.9.2 policy)
+    // --locale > conf row > detected system locale. Detection answers zh-CN
+    // only for a zh* environment; C/POSIX/unset and any unshipped language
+    // fall back to the shipping default, en-US.
+    check(mhw::normalizeLocaleCode(QStringLiteral("zh_CN.UTF-8")) == QStringLiteral("zh-cn"),
+          "normalize: zh_CN.UTF-8 -> zh-cn");
+    check(mhw::normalizeLocaleCode(QStringLiteral("en_US.UTF-8@euro")) == QStringLiteral("en-us"),
+          "normalize: strips .codeset and @modifier");
+    check(mhw::normalizeLocaleCode(QStringLiteral("C")).isEmpty(), "normalize: C is not a language");
+    check(mhw::normalizeLocaleCode(QStringLiteral("POSIX")).isEmpty(),
+          "normalize: POSIX is not a language");
+
+    check(mhw::detectLocaleFromEnv(QString(), QString(), QStringLiteral("zh_CN.UTF-8"))
+              == QStringLiteral("zh-CN"),
+          "detect: LANG zh_CN -> zh-CN");
+    check(mhw::detectLocaleFromEnv(QString(), QString(), QStringLiteral("zh_TW.UTF-8"))
+              == QStringLiteral("zh-CN"),
+          "detect: zh_TW maps to zh-CN (only two tables ship)");
+    check(mhw::detectLocaleFromEnv(QString(), QString(), QStringLiteral("en_US.UTF-8"))
+              == QStringLiteral("en-US"),
+          "detect: en_US -> en-US");
+    check(mhw::detectLocaleFromEnv(QString(), QString(), QStringLiteral("de_DE.UTF-8"))
+              == QStringLiteral("en-US"),
+          "detect: unshipped language -> en-US");
+    check(mhw::detectLocaleFromEnv(QString(), QString(), QStringLiteral("C")) == QStringLiteral("en-US"),
+          "detect: LANG=C -> en-US, never zh-CN");
+    check(mhw::detectLocaleFromEnv(QString(), QString(), QString()) == QStringLiteral("en-US"),
+          "detect: empty environment -> en-US");
+    check(mhw::detectLocaleFromEnv(QStringLiteral("en_US.UTF-8"), QString(),
+                                   QStringLiteral("zh_CN.UTF-8")) == QStringLiteral("en-US"),
+          "detect: LC_ALL wins over LANG");
+    check(mhw::detectLocaleFromEnv(QString(), QStringLiteral("zh_CN.UTF-8"),
+                                   QStringLiteral("en_US.UTF-8")) == QStringLiteral("zh-CN"),
+          "detect: LC_MESSAGES wins over LANG");
+    check(mhw::detectLocaleFromEnv(QString(), QString(), QString(),
+                                   QStringLiteral("zh_CN:en_US")) == QStringLiteral("zh-CN"),
+          "detect: LANGUAGE list is the last resort");
+
+    check(mhw::resolveStartupLocale(QStringLiteral("en-US"), QStringLiteral("zh-CN"),
+                                    QStringLiteral("zh-CN")) == QStringLiteral("en-US"),
+          "policy: --locale beats conf and detection");
+    check(mhw::resolveStartupLocale(QString(), QStringLiteral("en-US"), QStringLiteral("zh-CN"))
+              == QStringLiteral("en-US"),
+          "policy: the conf row is sticky (manual choice survives)");
+    check(mhw::resolveStartupLocale(QString(), QString(), QStringLiteral("zh-CN"))
+              == QStringLiteral("zh-CN"),
+          "policy: no choice follows the detected locale");
+    check(mhw::systemLocale().startsWith(QLatin1String("zh"))
+              || mhw::systemLocale() == QStringLiteral("en-US"),
+          "policy: systemLocale() always yields a shipping locale id");
+
     // --------------------------------------------------------- string table
     auto &t = mhw::StringTable::instance();
     check(t.load(QStringLiteral("zh-CN")), "load zh-CN (directory of files)");

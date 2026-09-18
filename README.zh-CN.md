@@ -66,8 +66,12 @@ backend;NVIDIA + Wayland 走系统的 `libEGL.so`,不需要 Vulkan、不
 - 切换覆盖**全部界面**:面板文案、状态/连接行,以及游戏**数据名** ——
   怪物名、部位名、区域名、异常状态(含玩家增益/减益)—— World 与
   Rise 都支持。
-- 启动优先级:`--locale <code>` → conf 存档值 → `zh-CN`;从控制台启动
-  的悬浮窗自动继承控制台当前语言。
+- **首次运行跟随桌面语言**:没有任何已保存的选择时,界面默认英文;
+  系统 locale 为 `zh*` 时用中文(依次看 `LC_ALL` / `LC_MESSAGES` /
+  `LANG`,最后看 `LANGUAGE`;`C`/`POSIX`/未设置 → 英文)。
+- 启动优先级:`--locale <code>` → conf 里的存档值 → 检测到的系统语言。
+  存档值**只**由显式选择写入(chip,或控制台自己的 `--locale`),因此
+  从未手动选过的机器会一直跟随桌面,而不会被"钉"在某个默认值上。
 
 ![英文界面的控制台](assets/screenshots/05-control-console-en.png)
 
