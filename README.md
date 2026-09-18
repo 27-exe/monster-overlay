@@ -1,5 +1,7 @@
 # Monster Overlay
 
+**English** · [简体中文](README.zh-CN.md)
+
 A Wayland HUD overlay for **Monster Hunter: World** and **Monster Hunter Rise**.
 It draws player, monster and damage panels over the game by reading the running
 process from the outside — no DLL injection, no game files touched.
