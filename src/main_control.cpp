@@ -64,6 +64,8 @@ int main(int argc, char *argv[])
     // --light / --locale / --snap are applied once the scan is done.
     bool printScreenInfo = false;
     bool printLocale     = false;
+    bool showVersion     = false;
+    bool showHelp        = false;
     bool lightTheme      = false;
     QString snapPath;
     QString cliLocale;
@@ -80,10 +82,38 @@ int main(int argc, char *argv[])
         } else if (a == QStringLiteral("--locale")
                    || a.startsWith(QStringLiteral("--locale="))) {
             cliLocale = takeValue(argc, argv, i, QStringLiteral("--locale"));
+        } else if (a == QStringLiteral("--version") || a == QStringLiteral("-v")) {
+            showVersion = true;
+        } else if (a == QStringLiteral("--help") || a == QStringLiteral("-h")) {
+            showHelp = true;
         }
     }
 
-    // ---- locale: --locale > conf locale= > zh-CN --------------------------
+    // --version / --help print and exit BEFORE anything is constructed: an
+    // unhandled flag used to fall through to the GUI, which then sat there
+    // forever (it hung a release verification, because --version was simply
+    // not parsed).
+    if (showVersion) {
+        std::printf("monster-control %s\n", MONSTER_VERSION);
+        return 0;
+    }
+    if (showHelp) {
+        std::printf(
+            "Monster Overlay control console\n"
+            "\n"
+            "Usage: monster-control [options]\n"
+            "\n"
+            "  --locale <code>       UI locale for this run (zh-CN, en-US)\n"
+            "  --light               light console theme\n"
+            "  --snap <file>         render the console to a PNG and exit\n"
+            "  --print-locale        print the resolved locale and exit\n"
+            "  --print-screen-info   print the detected outputs and exit\n"
+            "  --version, -v         print the version and exit\n"
+            "  --help, -h            print this help and exit\n");
+        return 0;
+    }
+
+    // ---- locale: --locale > conf locale= > system locale ------------------
     // The console is the sole writer of the conf file, but it also READS it:
     // the locale row is how a previous session's EN/CH choice survives a
     // restart. Resolution order matches the overlay's so the two never

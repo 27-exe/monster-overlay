@@ -561,6 +561,14 @@ if(BUILD_TESTING)
     target_compile_options(map-path-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME map-path-tests COMMAND map-path-tests)
 
+    # An unhandled flag used to fall through to the GUI and never exit;
+    # --version/--help must return. TIMEOUT turns such a regression into a
+    # 10 s failure instead of a hung suite.
+    add_test(NAME monster-control-version COMMAND monster-control --version)
+    set_tests_properties(monster-control-version PROPERTIES
+        TIMEOUT 10
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # monster-doctor must run offline (no game, no display) and exit 0.
     add_test(NAME monster-doctor-smoke
              COMMAND monster-doctor --no-overlay-run --out

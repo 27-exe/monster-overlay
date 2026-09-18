@@ -81,6 +81,7 @@ console. The console spawns `monster-overlay` with the current switch state as
 | `--snap <file>` | render the console to a PNG and exit |
 | `--print-locale` | print the resolved locale and source, then exit |
 | `--print-screen-info` | print the detected outputs, then exit |
+| `--version` / `--help` | print the version / usage and exit (no window) |
 
 ### `monster-doctor`
 
