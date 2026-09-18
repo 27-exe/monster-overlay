@@ -31,7 +31,7 @@ class SectionRow;
 class SectionCountBar;
 class HudCanvas;
 
-// Standalone control console for the MHW overlay. NOT a layer-shell
+// Standalone control console for Monster Overlay. NOT a layer-shell
 // surface — a plain QMainWindow the user can move, focus and close like
 // any app. It owns three real overlay panel instances rendered off-screen
 // (WA_DontShowOnScreen) so toggling a switch re-paints the matching
@@ -62,7 +62,7 @@ protected:
     void keyPressEvent(QKeyEvent *e) override;
 
 private:
-    // L2: persistent mask state lives at ~/.config/MHW Overlay/monster-overlay.conf
+    // L2: persistent mask state lives at ~/.config/monster-overlay/monster-overlay.conf
     // so the user's last toggle choices survive across console restarts. The
     // console writes on exit (and any time we explicitly call saveMask());
     // reads happen once at construction so the checkboxes open with the

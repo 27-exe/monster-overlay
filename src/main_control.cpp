@@ -1,4 +1,4 @@
-// Standalone launcher for the MHW overlay control console.
+// Standalone launcher for the Monster Overlay control console.
 //
 // Plain Qt window (NOT layer-shell), so it's safe to focus and use
 // alongside the live overlay without stealing keyboard or mapping an

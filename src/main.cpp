@@ -53,7 +53,7 @@ int main(int argc, char **argv)
     // Overlay is pure QPainter-drawn, so no visual change from losing Kvantum.
     app.setStyle(QStringLiteral("Fusion"));
     QApplication::setApplicationName(QStringLiteral("monster-overlay"));
-    QApplication::setApplicationDisplayName(QStringLiteral("MHW Linux Overlay"));
+    QApplication::setApplicationDisplayName(QStringLiteral("Monster Overlay"));
     QApplication::setApplicationVersion(QStringLiteral(MONSTER_VERSION));
     QApplication::setOrganizationName(QStringLiteral("a27exe"));
     app.setQuitOnLastWindowClosed(true);
@@ -124,13 +124,13 @@ int main(int argc, char **argv)
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
-        QStringLiteral("Monster Hunter: World native Linux overlay (v0.2 panel UI)"));
+        QStringLiteral("Monster Overlay \u2014 Linux HUD overlay for Monster Hunter: World and Rise"));
     parser.addHelpOption();
     parser.addVersionOption();
 
     QCommandLineOption mapOption(
         {QStringLiteral("m"), QStringLiteral("map")},
-        QStringLiteral("HunterPie legacy map path"),
+        QStringLiteral("Address-map file; overrides the runtime search order"),
         QStringLiteral("path"),
         QString::fromUtf8(MHW_DEFAULT_MAP));
     QCommandLineOption localeOption(
@@ -272,10 +272,10 @@ int main(int argc, char **argv)
         }
     }
     const bool isRise = (gameId == mhw::GameId::Rise);
-    // Window/app title reflects the active game: "MHW Overlay" vs
-    // "MHR Overlay".
+    // Window/app title names the product and the game it is reading.
     QApplication::setApplicationDisplayName(
-        isRise ? QStringLiteral("MHR Overlay") : QStringLiteral("MHW Overlay"));
+        isRise ? QStringLiteral("Monster Overlay \u00b7 Rise")
+               : QStringLiteral("Monster Overlay \u00b7 World"));
 
     PlayerPanel playerPanel;
     MonsterPanel monsterPanel;

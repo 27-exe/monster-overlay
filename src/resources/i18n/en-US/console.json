@@ -5,8 +5,8 @@
     "note": "Control console UI strings (monster-control). Key namespace console.* mirrors zh-CN/console.json exactly (ws-d/check_key_parity.py validates key parity)."
   },
   "console": {
-    "windowTitle": "MHW Overlay Control",
-    "brand": "MHW  OVERLAY",
+    "windowTitle": "Monster Overlay Control",
+    "brand": "MONSTER  OVERLAY",
     "brandSub": "CONTROL CONSOLE  ·  %1",
     "status": {
       "ready": "●   OVERLAY READY",

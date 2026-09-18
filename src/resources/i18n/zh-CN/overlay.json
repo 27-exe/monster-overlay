@@ -6,10 +6,10 @@
     "ws_c": "悬浮窗面板键 (ui.player_* / ui.monster_* / ui.damage_* / ui.reader.* / ui.demo.* / ui.quest_state.* / ui.wirebug_*) 由 WS-C 追加: 既有键与 zh 值一字未改, 详见 ws-c/REPORT.md."
   },
   "ui": {
-    "app_title": "MHW Linux Overlay",
+    "app_title": "Monster Overlay",
     "object_scope": "monster-overlay",
     "font_family": "Noto Sans CJK SC",
-    "status_default": "MHW Linux Overlay",
+    "status_default": "Monster Overlay",
     "context_disconnected": "未连接",
     "context_disconnected_long": "只读原型 · 当前未连接游戏",
     "context_main_menu": "主菜单",

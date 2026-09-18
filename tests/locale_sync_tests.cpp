@@ -192,7 +192,7 @@ int main(int argc, char **argv)
     check(t.load(QStringLiteral("zh-CN")), "load zh-CN (directory of files)");
     check(t.currentLocale() == QStringLiteral("zh-CN"), "currentLocale zh-CN");
     check(!t.isEnglish(), "zh-CN is not english");
-    check(t.tr(QStringLiteral("ui.app_title")) == QStringLiteral("MHW Linux Overlay"),
+    check(t.tr(QStringLiteral("ui.app_title")) == QStringLiteral("Monster Overlay"),
           "zh ui.app_title value preserved");
     check(t.tr(QStringLiteral("ui.context_hunting")) == QStringLiteral("狩猎 · %1"),
           "zh context_hunting value preserved");
@@ -211,7 +211,7 @@ int main(int argc, char **argv)
 
     check(t.load(QStringLiteral("zh-CN")), "reload back to zh-CN");
     check(!t.isEnglish(), "back to chinese");
-    check(t.tr(QStringLiteral("ui.app_title")) == QStringLiteral("MHW Linux Overlay"),
+    check(t.tr(QStringLiteral("ui.app_title")) == QStringLiteral("Monster Overlay"),
           "zh value intact after round-trip");
 
     if (failures == 0)

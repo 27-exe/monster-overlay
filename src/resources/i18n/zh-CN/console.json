@@ -5,8 +5,8 @@
     "note": "控制台 UI 文案 (monster-control)。键空间 console.*；由 control_panel 等通过 mh::tr() 读取。en-US/console.json 的键集合必须与本文档完全一致（ws-d/check_key_parity.py 校验）。"
   },
   "console": {
-    "windowTitle": "MHW Overlay Control",
-    "brand": "MHW  OVERLAY",
+    "windowTitle": "Monster Overlay Control",
+    "brand": "MONSTER  OVERLAY",
     "brandSub": "控制台  ·  %1",
     "status": {
       "ready": "●   悬浮窗就绪",

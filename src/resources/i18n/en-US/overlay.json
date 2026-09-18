@@ -5,10 +5,10 @@
     "note": "Overlay panel chrome strings (monster-overlay). Key namespace ui.* mirrors zh-CN/overlay.json 1:1 (no _meta in comparisons). Data-name tables (monsters/parts/zones/abnormalities) are generated C++, not in this file. mantle.* / abnormality.* translate the zh community naming semantically, never re-derived from the HunterPie enum."
   },
   "ui": {
-    "app_title": "MHW Linux Overlay",
+    "app_title": "Monster Overlay",
     "object_scope": "monster-overlay",
     "font_family": "Noto Sans CJK SC",
-    "status_default": "MHW Linux Overlay",
+    "status_default": "Monster Overlay",
     "context_disconnected": "Disconnected",
     "context_disconnected_long": "Read-only prototype · not connected to the game",
     "context_main_menu": "Main menu",
