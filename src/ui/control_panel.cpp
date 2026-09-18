@@ -423,8 +423,13 @@ ControlPanel::ControlPanel(QWidget *parent)
     trSet(brand, QStringLiteral("console.brand"));
     brand->setObjectName("railBrand");
     auto *brandSub = new QLabel();
-    trSet(brandSub, QStringLiteral("console.brandSub"));
     brandSub->setObjectName("railBrandSub");
+    // The version is substituted at runtime: writing it into the translation
+    // string is how the console shipped "控制台 · 0.5" for four releases.
+    trHook([brandSub] {
+        brandSub->setText(mh::tr(QStringLiteral("console.brandSub"))
+                              .arg(QCoreApplication::applicationVersion()));
+    });
     railLayout->addWidget(brand);
     railLayout->addWidget(brandSub);
     railLayout->addSpacing(22);

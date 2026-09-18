@@ -7,7 +7,7 @@
   "console": {
     "windowTitle": "MHW Overlay Control",
     "brand": "MHW  OVERLAY",
-    "brandSub": "控制台  ·  0.5",
+    "brandSub": "控制台  ·  %1",
     "status": {
       "ready": "●   悬浮窗就绪",
       "plainReady": "就绪",

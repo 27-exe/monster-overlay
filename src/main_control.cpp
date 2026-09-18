@@ -44,6 +44,7 @@ QString takeValue(int argc, char *argv[], int &i, const QString &flag)
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    QApplication::setApplicationVersion(QStringLiteral(MONSTER_VERSION));
     // Same Kvantum blur opt-out as monster-overlay (see src/main.cpp): the
     // Kvantum style plugin auto-requests KWin blur-behind for translucent
     // top-levels via BlurHelper::update(). Fusion skips the plugin so the

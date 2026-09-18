@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(mhw_linux_overlay VERSION 0.1.0 LANGUAGES CXX)
+project(mhw_linux_overlay VERSION 0.9.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -68,6 +68,7 @@ target_link_libraries(monster-overlay PRIVATE
 )
 
 target_compile_definitions(monster-overlay PRIVATE
+    MONSTER_VERSION="${PROJECT_VERSION}"
     MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
     MHR_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterRise.16.0.2.0.map"
 )
@@ -210,6 +211,7 @@ target_include_directories(monster-control PRIVATE
     ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
 )
 target_compile_definitions(monster-control PRIVATE
+    MONSTER_VERSION="${PROJECT_VERSION}"
     MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
 )
 target_compile_options(monster-control PRIVATE -Wall -Wextra -Wpedantic)
@@ -624,6 +626,7 @@ target_link_libraries(monster-doctor PRIVATE Qt6::Core monster-core)
 target_include_directories(monster-doctor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(monster-doctor PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(monster-doctor PRIVATE
+    MONSTER_VERSION="${PROJECT_VERSION}"
     MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
     MHR_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterRise.16.0.2.0.map")
 

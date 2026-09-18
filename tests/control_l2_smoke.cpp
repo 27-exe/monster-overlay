@@ -84,6 +84,10 @@ int main(int argc, char *argv[])
     QFile::remove(configPath());
 
     QApplication app(argc, argv);
+    // v0.9.1 regression: the console's brand line must substitute the RUNTIME
+    // version (it used to be a hardcoded "0.5" inside the translation string).
+    // A synthetic value proves the substitution without pinning the release.
+    QApplication::setApplicationVersion(QStringLiteral("9.9.9-test"));
 
     QString written;
     {
@@ -180,7 +184,7 @@ int main(int argc, char *argv[])
             fprintf(stderr, "FAIL: locale chip / railBrandSub missing\n");
             return 9;
         }
-        if (brandSub->text() != QStringLiteral("控制台  ·  0.5")) {
+        if (brandSub->text() != QStringLiteral("控制台  ·  %1").arg(QApplication::applicationVersion())) {
             fprintf(stderr, "FAIL: expected zh copy before the switch, got '%s'\n",
                     qPrintable(brandSub->text()));
             return 10;
@@ -201,7 +205,7 @@ int main(int argc, char *argv[])
         };
 
         clickChip();   // zh-CN -> en-US
-        if (brandSub->text() != QStringLiteral("CONTROL CONSOLE  ·  0.5")) {
+        if (brandSub->text() != QStringLiteral("CONTROL CONSOLE  ·  %1").arg(QApplication::applicationVersion())) {
             fprintf(stderr, "FAIL: chip click did not retranslate ('%s')\n",
                     qPrintable(brandSub->text()));
             return 11;
@@ -226,7 +230,7 @@ int main(int argc, char *argv[])
         }
 
         clickChip();   // en-US -> zh-CN
-        if (brandSub->text() != QStringLiteral("控制台  ·  0.5")) {
+        if (brandSub->text() != QStringLiteral("控制台  ·  %1").arg(QApplication::applicationVersion())) {
             fprintf(stderr, "FAIL: second click did not restore zh copy ('%s')\n",
                     qPrintable(brandSub->text()));
             return 13;
@@ -258,7 +262,7 @@ int main(int argc, char *argv[])
             return 15;
         }
         QLabel *brandSub = cp4.findChild<QLabel *>(QStringLiteral("railBrandSub"));
-        if (!brandSub || brandSub->text() != QStringLiteral("控制台  ·  0.5")) {
+        if (!brandSub || brandSub->text() != QStringLiteral("控制台  ·  %1").arg(QApplication::applicationVersion())) {
             fprintf(stderr, "FAIL: console chrome did not stay on the explicit locale ('%s')\n",
                     brandSub ? qPrintable(brandSub->text()) : "railBrandSub missing");
             return 16;
