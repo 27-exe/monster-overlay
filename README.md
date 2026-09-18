@@ -39,6 +39,21 @@ sudo ./install-deps.sh      # one-time: Qt 6 + layer-shell-qt
 The panels appear over the game. The console is where panels and their sections
 are switched on/off, positioned, and assigned to a display.
 
+### Keyboard shortcuts (overlay)
+
+When the console spawns the overlay, it hides itself and the panels become the
+focused window. From there:
+
+| Key | Action |
+|---|---|
+| `Esc` | quit the overlay and return focus to the console |
+| `Space` | temporarily collapse the overlay to a small block — press again to restore |
+| arrow keys | in edit mode, nudge the focused panel 10 px (`Shift`+arrow keys = 50 px) |
+
+The arrow-key nudge is the layout mode (`./monster-overlay --edit`, also entered
+from the console). The full edit-mode cheatsheet — click-to-focus, mouse-wheel
+scale, `Ctrl+S` to persist — lives in [docs/USAGE.md §4](docs/USAGE.md).
+
 ## Panels
 
 | Panel | Shows |

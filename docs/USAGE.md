@@ -29,7 +29,7 @@ console. The console spawns `monster-overlay` with the current switch state as
 |---|---|
 | panel cards (player / monster / damage) | master switch plus per-section switches; the preview updates as you toggle |
 | `START` / `STOP` | starts / stops `monster-overlay` |
-| preview canvas | click a panel to focus it; drag to move; arrow keys nudge |
+| preview canvas | click a panel to focus it; drag to move; arrow keys nudge 10 px (`Shift` = 50 px) |
 | display selector | which output the panels are placed on |
 | `中文 | EN` chip | switches the UI language; the overlay follows within ~1 s |
 | theme chip / `--light` | light or dark console theme |
@@ -43,11 +43,17 @@ console. The console spawns `monster-overlay` with the current switch state as
 | Input | Action |
 |---|---|
 | click a panel | focus it |
-| `←` `↑` `↓` `→` | nudge 10 px (`Shift` = 50 px) |
-| mouse wheel | scale 0.5× – 2× |
-| `Ctrl+S` | persist to `~/.config/monster-overlay/panels.ini` |
-| `Space` | collapse the panel to a small block |
-| `Esc` | quit |
+| `←` `↑` `↓` `→` | nudge 10 px (`Shift` = 50 px) — edit mode only |
+| mouse wheel | scale 0.5× – 2× — edit mode only |
+| `Ctrl+S` | persist to `~/.config/monster-overlay/panels.ini` — edit mode only |
+| `Space` | collapse the panel to a small block — works in edit **and** live mode |
+| `Esc` | quit the overlay and return focus to the console — works in edit **and** live mode |
+
+`Space` and `Esc` are reachable from the running overlay too: when the console
+spawns the overlay it hides itself, so the panels become the focused window and
+`Space` / `Esc` work without entering `--edit`. Arrow keys and the wheel only
+take effect in edit mode — the live overlay ignores them so it cannot drift
+while you hunt.
 
 ## 5. Panel contents
 
