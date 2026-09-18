@@ -154,22 +154,15 @@ sudo setcap cap_sys_ptrace+ep ./monster-overlay
 
 ### Something is wrong? Run `monster-doctor`
 
-If the overlay stays empty or shows 未连接 (not connected), run the diagnostic
-tool that ships next to the binaries:
-
 ```bash
 ./monster-doctor                 # writes monster-doctor-<timestamp>.txt
 ```
 
-Using the overlay's own code paths, it records where the address maps were
-found, whether a game process is visible (and at which image base), what the
-reader's verdict is — including the exact errno when a read is denied — which
-Proton build the running game uses, and what the overlay prints on stderr.
-Attach that file to your report.
-
-It is read-only, needs no privileges, and collects nothing private: paths
-under your home print as `~`, and no environment variables, Steam account
-data, game memory contents or other processes' command lines are included.
+Read-only, no privileges, ~15 s. It records where the maps were found, whether
+a game process is visible (and at which image base), the reader's verdict with
+the exact errno, the Proton build in use, and the overlay's own stderr status.
+Attach the file to your report. Paths under `~` print as `~`; no environment
+variables, Steam account data or game memory are collected.
 
 ### Requirements
 

@@ -433,17 +433,13 @@ void sectionBinaries()
             break;
         }
     }
-    say(QStringLiteral("note          : capabilities vanish whenever the file is replaced"));
-    say(QStringLiteral("                (re-extracted / re-downloaded / rebuilt) and are ignored on"));
-    say(QStringLiteral("                nosuid mounts such as /tmp."));
+    say(QStringLiteral("note          : caps are lost when the file is replaced; ignored on nosuid mounts"));
 }
 
 void sectionDataFiles()
 {
     head(QStringLiteral("address maps"));
-    say(QStringLiteral("A .map file is the address table for one game build (structure name ->"));
-    say(QStringLiteral("RVA/offsets). Without it the reader cannot compute a single address."));
-    say();
+    say(QStringLiteral("# .map = address table for one game build (name -> RVA/offset)"));
     const QStringList dirs = mhw::defaultDataSearchDirs();
     say(QStringLiteral("this tool's dir : %1").arg(QCoreApplication::applicationDirPath()));
     say(QStringLiteral("search order (the overlay uses this exact list, in this order):"));
@@ -599,9 +595,8 @@ void sectionGames(const std::vector<GameTarget> &targets)
         g_summary << QStringLiteral("%1 process: pid %2, base %3").arg(target.title).arg(pid).arg(base);
     }
     if (!any) {
-        say(QStringLiteral("no Monster Hunter process is running right now."));
-        say(QStringLiteral("Start the game (past the main menu) and run this tool again — the read"));
-        say(QStringLiteral("verdict and the Proton fingerprint need a live process."));
+        say(QStringLiteral("no Monster Hunter process running"));
+        say(QStringLiteral("(start the game and rerun for the read verdict + Proton fingerprint)"));
         g_summary << QStringLiteral("no game process running");
     }
 }
@@ -731,7 +726,7 @@ void sectionRuntime(const std::vector<GameTarget> &targets)
     const QString configVdf = QStringLiteral("%1/.steam/root/config/config.vdf").arg(g_home);
     const QString vdf = readText(configVdf);
     say();
-    say(QStringLiteral("forced compat tool (config.vdf, only these two rows are read):"));
+    say(QStringLiteral("forced compat tool (config.vdf):"));
     for (const QString &appId : {QStringLiteral("582010"), QStringLiteral("1446780")}) {
         if (!g_onlyGame.isEmpty()
             && (appId == QLatin1String("582010")) == (g_onlyGame == QLatin1String("rise")))
@@ -745,8 +740,7 @@ void sectionRuntime(const std::vector<GameTarget> &targets)
     say(QStringLiteral("steam client  : %1")
             .arg(processNamed(QStringLiteral("steam")) ? QStringLiteral("running")
                                                       : QStringLiteral("not running")));
-    say(QStringLiteral("launch options (read from <account>/config/localconfig.vdf; only these"));
-    say(QStringLiteral("two rows are read, the account directory is never printed):"));
+    say(QStringLiteral("launch options (only these rows are read; the account dir is never printed):"));
     for (const QString &appId : {QStringLiteral("582010"), QStringLiteral("1446780")}) {
         const QString game = appId == QLatin1String("582010") ? QStringLiteral("World")
                                                               : QStringLiteral("Rise");
@@ -824,13 +818,9 @@ void sectionOverlayRun(const std::vector<GameTarget> &targets, int seconds, bool
 void sectionPrivacy()
 {
     head(QStringLiteral("privacy"));
-    say(QStringLiteral("NOT collected: environment variables, Steam account name or SteamID,"));
-    say(QStringLiteral("game memory contents, other processes' command lines, your files."));
-    say(QStringLiteral("Collapsed   : paths under your home directory print as ~."));
-    say(QStringLiteral("Read-only   : nothing was attached to, written to, or changed."));
-    say(QStringLiteral("Contains    : OS/kernel/session facts, map file paths + hashes, process"));
-    say(QStringLiteral("              metadata of the game and overlay, reader verdicts with errno,"));
-    say(QStringLiteral("              and the two compatible-tool rows for appid 582010/1446780."));
+    say(QStringLiteral("read-only: nothing was attached to, written to or changed"));
+    say(QStringLiteral("not collected: env vars, Steam account/ID, game memory, other cmdlines, your files"));
+    say(QStringLiteral("paths under ~ print as ~"));
 }
 
 int parseSeconds(const QStringList &args, int fallback)
@@ -866,14 +856,13 @@ int main(int argc, char *argv[])
 
     if (args.contains(QStringLiteral("--help")) || args.contains(QStringLiteral("-h"))) {
         QTextStream out(stdout);
-        out << "monster-doctor — collect a diagnostic report for \"the overlay shows nothing\"\n\n"
-            << "Usage: monster-doctor [--out FILE] [--seconds N] [--no-overlay-run]\n\n"
-            << "  --world            only inspect Monster Hunter: World\n"
-            << "  --rise             only inspect Monster Hunter Rise\n"
-            << "  --out FILE         report path (default: ./monster-doctor-<timestamp>.txt)\n"
-            << "  --seconds N        how long to run the overlay for its status line (default 6)\n"
-            << "  --no-overlay-run   skip that step (offline machines)\n\n"
-            << "Read-only, no privileges needed. Attach the report file to your bug report.\n";
+        out << "monster-doctor — diagnostic report for \"the overlay shows nothing\"\n\n"
+            << "Usage: monster-doctor [--world|--rise] [--out FILE] [--seconds N] [--no-overlay-run]\n\n"
+            << "  --world|--rise     only inspect one game\n"
+            << "  --out FILE         report path (default ./monster-doctor-<timestamp>.txt)\n"
+            << "  --seconds N        overlay status run length (default 6)\n"
+            << "  --no-overlay-run   skip that step (offline)\n\n"
+            << "Read-only, no privileges. Attach the report file to your bug report.\n";
         return 0;
     }
     if (args.contains(QStringLiteral("--version"))) {
@@ -951,7 +940,6 @@ int main(int argc, char *argv[])
 
     QTextStream out(stdout);
     out << "report written to: " << outPath << '\n'
-        << "Attach that file to your report — it contains everything needed to diagnose\n"
-        << "the problem and nothing private (see the privacy section).\n";
+        << "Attach that file to your report (read-only, nothing private).\n";
     return 0;
 }
