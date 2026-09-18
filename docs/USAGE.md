@@ -261,9 +261,14 @@ file and touches nothing else.
 
 ```bash
 ./monster-doctor                   # -> ./monster-doctor-<timestamp>.txt
+./monster-doctor --world           # only inspect Monster Hunter: World
+./monster-doctor --rise            # only inspect Monster Hunter Rise
 ./monster-doctor --no-overlay-run  # offline machine (skips the 6 s status run)
 ./monster-doctor --out /tmp/x.txt  # explicit path
 ```
+
+It prints a `[n/8] section … done` line per step on the terminal (the report
+itself stays clean), so a run never looks like a hang.
 
 | section | answers |
 |---|---|

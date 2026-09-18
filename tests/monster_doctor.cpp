@@ -47,6 +47,8 @@
 namespace {
 
 QString g_home;
+// --world / --rise: restrict every section to one title (empty = both).
+QString g_onlyGame;
 QStringList g_report;
 QStringList g_summary;
 
@@ -62,6 +64,23 @@ QString redact(const QString &text)
 void say(const QString &line = QString())
 {
     g_report << redact(line);
+}
+
+// Terminal progress: the report file only appears at the end, so a silent
+// 15 s run looks like a hang. Each section announces itself on stdout as it
+// starts (the report file itself stays clean).
+void progress(const QString &label, int index, int total)
+{
+    QTextStream out(stdout);
+    out << QStringLiteral("[%1/%2] %3 … ").arg(index).arg(total).arg(label);
+    out.flush();
+}
+
+void progressDone(const QString &detail = QStringLiteral("done"))
+{
+    QTextStream out(stdout);
+    out << detail << '\n';
+    out.flush();
 }
 
 void head(const QString &title)
@@ -200,31 +219,77 @@ bool processNamed(const QString &name)
     return false;
 }
 
+// Extract `"key" { ... }` with brace-depth tracking. Steam's app blocks nest
+// sub-blocks ("cloud", "MountedConfig"), so a brace-free regex matches
+// nothing — and a real `PROTON_ENABLE_WAYLAND=1 %command%` silently degrades
+// to "<none>", which is exactly how this tool shipped its first version.
+QString vdfBlock(const QString &text, const QString &key)
+{
+    const QRegularExpression keyRe(
+        QStringLiteral("\"%1\"\\s*[{]").arg(QRegularExpression::escape(key)));
+    const auto match = keyRe.match(text);
+    if (!match.hasMatch())
+        return {};
+    const int start = static_cast<int>(match.capturedEnd()) - 1;   // at '{'
+    int depth = 0;
+    bool inString = false;
+    bool escaped = false;
+    for (int i = start; i < text.size(); ++i) {
+        const QChar c = text.at(i);
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == u'\\') {
+                escaped = true;
+            } else if (c == u'"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (c == u'"') {
+            inString = true;
+        } else if (c == u'{') {
+            ++depth;
+        } else if (c == u'}') {
+            if (--depth == 0)
+                return text.mid(start, i - start + 1);
+        }
+    }
+    return {};
+}
+
 // Launch options are the third party in "overlay cannot read the game"
 // reports (gamescope / dll overrides change the process tree and the
 // container). Only the two app rows are read; the account directory name
 // never reaches the report.
-QString launchOptionsFor(const QString &appId)
+struct LaunchOptions {
+    QString value;        // the option, "<none>", or empty when unknown
+    int accountIndex = 0; // 1-based position of the account dir (never the ID)
+    QString note;
+};
+
+LaunchOptions launchOptionsFor(const QString &appId)
 {
     const QString userdata = QStringLiteral("%1/.steam/root/userdata").arg(g_home);
     const QStringList accounts = QDir(userdata).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-    for (const QString &account : accounts) {
-        const QString vdf = readText(QStringLiteral("%1/%2/config/localconfig.vdf").arg(userdata, account));
+    if (accounts.isEmpty())
+        return {QString(), 0, QStringLiteral("<no Steam userdata>")};
+    for (int index = 0; index < accounts.size(); ++index) {
+        const QString vdf = readText(QStringLiteral("%1/%2/config/localconfig.vdf")
+                                         .arg(userdata, accounts.at(index)));
         if (vdf.isEmpty())
             continue;
-        const QRegularExpression appBlock(
-            QStringLiteral("\"%1\"\\s*[{]([^{}]*)[}]").arg(appId));
-        const auto block = appBlock.match(vdf);
-        if (!block.hasMatch())
-            continue;
+        const QString block = vdfBlock(vdf, appId);
+        if (block.isEmpty())
+            continue;   // this account never launched the app
         const auto option = QRegularExpression(QStringLiteral("\"LaunchOptions\"\\s*\"([^\"]*)\""))
-                                .match(block.captured(1));
-        if (option.hasMatch() && !option.captured(1).trimmed().isEmpty())
-            return option.captured(1).trimmed();
-        return QStringLiteral("<none>");
+                                .match(block);
+        const QString value = option.hasMatch() ? option.captured(1).trimmed() : QString();
+        return {value.isEmpty() ? QStringLiteral("<none>") : value, index + 1, QString()};
     }
-    return QStringLiteral("<no localconfig.vdf>");
+    return {QStringLiteral("<no entry for this appid>"), 0, QString()};
 }
+
 
 bool isAncestorOf(qint64 pid)
 {
@@ -376,8 +441,12 @@ void sectionBinaries()
 void sectionDataFiles()
 {
     head(QStringLiteral("address maps"));
+    say(QStringLiteral("A .map file is the address table for one game build (structure name ->"));
+    say(QStringLiteral("RVA/offsets). Without it the reader cannot compute a single address."));
+    say();
     const QStringList dirs = mhw::defaultDataSearchDirs();
-    say(QStringLiteral("search order (the overlay uses this exact list):"));
+    say(QStringLiteral("this tool's dir : %1").arg(QCoreApplication::applicationDirPath()));
+    say(QStringLiteral("search order (the overlay uses this exact list, in this order):"));
     for (int i = 0; i < dirs.size(); ++i) {
         const QDir dir(dirs.at(i));
         const bool exists = dir.exists();
@@ -385,12 +454,15 @@ void sectionDataFiles()
                                                     QDir::Files).isEmpty();
         const bool rise = exists && !dir.entryList({QStringLiteral("MonsterHunterRise.*.map")},
                                                    QDir::Files).isEmpty();
-        say(QStringLiteral("  %1. %2  [dir=%3 world=%4 rise=%5]")
+        say(QStringLiteral("  %1. %2  [dir=%3 world=%4 rise=%5]%6")
                 .arg(i + 1)
                 .arg(dirs.at(i), exists ? QStringLiteral("yes") : QStringLiteral("no"),
                      world ? QStringLiteral("yes") : QStringLiteral("no"),
-                     rise ? QStringLiteral("yes") : QStringLiteral("no")));
+                     rise ? QStringLiteral("yes") : QStringLiteral("no"),
+                     i == 0 ? QStringLiteral("  <- next to this binary (how the release ships)")
+                            : QString()));
     }
+
     say(QStringLiteral("compile-time  : world=%1 rise=%2 (development fallback only)")
             .arg(QString::fromUtf8(MHW_DEFAULT_MAP), QString::fromUtf8(MHR_DEFAULT_MAP)));
 
@@ -404,11 +476,26 @@ void sectionDataFiles()
         {"rise", "MonsterHunterRise.16.0.2.0.map", MHR_DEFAULT_MAP, "STAGE_ADDRESS"},
     };
     for (const auto &entry : maps) {
+        if (!g_onlyGame.isEmpty() && QString::fromUtf8(entry.title) != g_onlyGame)
+            continue;
         const QString resolved = mhw::resolveDataFile(QString(), QString::fromUtf8(entry.file),
                                                       dirs, QString::fromUtf8(entry.fallback));
         const QFileInfo info(resolved);
+        QString source = QStringLiteral("not found in any search dir");
+        if (!resolved.isEmpty()) {
+            for (int i = 0; i < dirs.size(); ++i) {
+                if (resolved.startsWith(dirs.at(i) + u'/')) {
+                    source = (i == 0 ? QStringLiteral("search dir 1 (next to this binary)")
+                                     : QStringLiteral("search dir %1").arg(i + 1));
+                    break;
+                }
+            }
+            if (resolved == QString::fromUtf8(entry.fallback))
+                source = QStringLiteral("compile-time fallback (build machine / CTest only)");
+        }
         say();
         say(QStringLiteral("%1 map       : %2").arg(QString::fromUtf8(entry.title), resolved));
+        say(QStringLiteral("  source      : %1").arg(source));
         say(QStringLiteral("  exists      : %1").arg(info.exists() ? QStringLiteral("yes")
                                                                    : QStringLiteral("NO")));
         if (!info.exists())
@@ -646,6 +733,9 @@ void sectionRuntime(const std::vector<GameTarget> &targets)
     say();
     say(QStringLiteral("forced compat tool (config.vdf, only these two rows are read):"));
     for (const QString &appId : {QStringLiteral("582010"), QStringLiteral("1446780")}) {
+        if (!g_onlyGame.isEmpty()
+            && (appId == QLatin1String("582010")) == (g_onlyGame == QLatin1String("rise")))
+            continue;   // --world / --rise narrows this list too
         const QRegularExpression re(
             QStringLiteral("\"%1\"\\s*\\{[^}]*?\"name\"\\s*\"([^\"]*)\"").arg(appId));
         const auto match = re.match(vdf);
@@ -655,12 +745,20 @@ void sectionRuntime(const std::vector<GameTarget> &targets)
     say(QStringLiteral("steam client  : %1")
             .arg(processNamed(QStringLiteral("steam")) ? QStringLiteral("running")
                                                       : QStringLiteral("not running")));
-    say(QStringLiteral("launch options (read from <account>/config/localconfig.vdf; the account"));
-    say(QStringLiteral("directory is never printed):"));
+    say(QStringLiteral("launch options (read from <account>/config/localconfig.vdf; only these"));
+    say(QStringLiteral("two rows are read, the account directory is never printed):"));
     for (const QString &appId : {QStringLiteral("582010"), QStringLiteral("1446780")}) {
         const QString game = appId == QLatin1String("582010") ? QStringLiteral("World")
                                                               : QStringLiteral("Rise");
-        say(QStringLiteral("  %1 (%2) : %3").arg(appId, game, launchOptionsFor(appId)));
+        if (!g_onlyGame.isEmpty() && game.toLower() != g_onlyGame)
+            continue;
+        const LaunchOptions option = launchOptionsFor(appId);
+        QString suffix = option.note;
+        if (suffix.isEmpty() && option.accountIndex > 0)
+            suffix = QStringLiteral("   [account #%1]").arg(option.accountIndex);
+        say(QStringLiteral("  %1 (%2) : %3%4")
+                .arg(appId, game,
+                     option.value.isEmpty() ? QStringLiteral("<unknown>") : option.value, suffix));
     }
     const QDir toolsDir(QStringLiteral("%1/.steam/root/compatibilitytools.d").arg(g_home));
     const QStringList tools = toolsDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
@@ -686,7 +784,7 @@ void sectionOverlayRun(const std::vector<GameTarget> &targets, int seconds, bool
             games << target.title;
     }
     if (games.isEmpty())
-        games << QStringLiteral("auto");
+        games << (g_onlyGame.isEmpty() ? QStringLiteral("auto") : g_onlyGame);
     for (const QString &game : games) {
         say();
         say(QStringLiteral("[%1] running %2 for %3s …").arg(game, overlay).arg(seconds));
@@ -770,6 +868,8 @@ int main(int argc, char *argv[])
         QTextStream out(stdout);
         out << "monster-doctor — collect a diagnostic report for \"the overlay shows nothing\"\n\n"
             << "Usage: monster-doctor [--out FILE] [--seconds N] [--no-overlay-run]\n\n"
+            << "  --world            only inspect Monster Hunter: World\n"
+            << "  --rise             only inspect Monster Hunter Rise\n"
             << "  --out FILE         report path (default: ./monster-doctor-<timestamp>.txt)\n"
             << "  --seconds N        how long to run the overlay for its status line (default 6)\n"
             << "  --no-overlay-run   skip that step (offline machines)\n\n"
@@ -782,20 +882,56 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    // --world / --rise narrow every section to one title (useful when only one
+    // game is installed, or when comparing two Proton configurations).
+    if (args.contains(QStringLiteral("--world")) && !args.contains(QStringLiteral("--rise")))
+        g_onlyGame = QStringLiteral("world");
+    else if (args.contains(QStringLiteral("--rise")) && !args.contains(QStringLiteral("--world")))
+        g_onlyGame = QStringLiteral("rise");
+
     g_home = QDir::homePath();
     const int seconds = parseSeconds(args, 6);
     const bool overlayRun = !args.contains(QStringLiteral("--no-overlay-run"));
     const QString outPath = parseOut(args);
 
+    QTextStream(stdout) << "monster-doctor " << QCoreApplication::applicationVersion()
+                        << " — collecting a diagnostic report (read-only, no window, ~15 s)\n";
+
+    int step = 0;
+    const int kSteps = 8;
+    progress(QStringLiteral("host facts"), ++step, kSteps);
     sectionToolAndHost();
+    progressDone();
+    progress(QStringLiteral("shipped binaries (hashing)"), ++step, kSteps);
     sectionBinaries();
+    progressDone();
+    progress(QStringLiteral("address maps"), ++step, kSteps);
     sectionDataFiles();
-    const std::vector<GameTarget> targets = detectTargets();
+    progressDone();
+    progress(QStringLiteral("game processes"), ++step, kSteps);
+    std::vector<GameTarget> targets = detectTargets();
+    if (!g_onlyGame.isEmpty()) {
+        std::vector<GameTarget> keep;
+        for (const GameTarget &target : targets) {
+            if (target.title == g_onlyGame)
+                keep.push_back(target);
+        }
+        targets = keep;
+    }
     sectionGames(targets);
+    progressDone();
+    progress(QStringLiteral("read verdict"), ++step, kSteps);
     sectionReadVerdict(targets);
+    progressDone();
+    progress(QStringLiteral("game runtime / Proton"), ++step, kSteps);
     sectionRuntime(targets);
+    progressDone();
+    progress(QStringLiteral("overlay run"), ++step, kSteps);
     sectionOverlayRun(targets, seconds, overlayRun);
+    progressDone(overlayRun ? QStringLiteral("done") : QStringLiteral("skipped"));
+    progress(QStringLiteral("privacy notes"), ++step, kSteps);
     sectionPrivacy();
+    progressDone();
 
     head(QStringLiteral("summary"));
     for (const QString &line : g_summary)
