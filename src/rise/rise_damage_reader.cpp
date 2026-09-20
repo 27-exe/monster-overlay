@@ -4,14 +4,21 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
 
 #include <cmath>
+#include <cerrno>
+#include <cstring>
 #include <limits>
 #include <utility>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace mhw {
 namespace {
@@ -312,13 +319,6 @@ bool parseV1(const QJsonObject &root, RiseDamageSnapshot *snapshot)
     return true;
 }
 
-bool isFresh(qint64 timestampMs)
-{
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    return timestampMs >= now - kFreshnessWindowMs
-        && timestampMs <= now + kFreshnessWindowMs;
-}
-
 } // namespace
 
 RiseDamageReader::RiseDamageReader(QString path)
@@ -326,33 +326,165 @@ RiseDamageReader::RiseDamageReader(QString path)
 {
 }
 
+bool RiseDamageReader::fail(Error error, QString text)
+{
+    lastError_ = error;
+    lastErrorText_ = std::move(text);
+    return false;
+}
+
 bool RiseDamageReader::update()
 {
     snapshot_ = {};
 
-    QFile file(path_);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
-        return false;
+    const QFileInfo info(path_);
+    if (info.isSymbolicLink()) {
+        return fail(Error::Symlink,
+                    QStringLiteral("Rise damage feed must not be a symbolic link: %1")
+                        .arg(path_));
+    }
+    if (!info.exists()) {
+        return fail(Error::Missing,
+                    QStringLiteral("Rise damage feed is missing: %1").arg(path_));
+    }
+    if (!info.isFile()) {
+        return fail(Error::OpenDeniedOrFailed,
+                    QStringLiteral("Rise damage feed is not a readable regular file: %1")
+                        .arg(path_));
+    }
+    if (info.size() > kMaximumFeedBytes) {
+        return fail(Error::TooLarge,
+                    QStringLiteral("Rise damage feed is too large: %1 (%2 bytes; limit %3 bytes)")
+                        .arg(path_)
+                        .arg(info.size())
+                        .arg(kMaximumFeedBytes));
+    }
+
+    const QByteArray nativePath = QFile::encodeName(path_);
+    const int fd = ::open(nativePath.constData(),
+                          O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) {
+        const int openError = errno;
+        if (openError == ENOENT) {
+            return fail(Error::Missing,
+                        QStringLiteral("Rise damage feed is missing: %1").arg(path_));
+        }
+        if (openError == ELOOP) {
+            return fail(Error::Symlink,
+                        QStringLiteral("Rise damage feed must not be a symbolic link: %1")
+                            .arg(path_));
+        }
+        return fail(Error::OpenDeniedOrFailed,
+                    QStringLiteral("Could not open Rise damage feed for reading: %1 (%2)")
+                        .arg(path_, QString::fromLocal8Bit(std::strerror(openError))));
+    }
+
+    struct stat openedStat {};
+    if (::fstat(fd, &openedStat) != 0) {
+        const int statError = errno;
+        ::close(fd);
+        return fail(Error::OpenDeniedOrFailed,
+                    QStringLiteral("Could not inspect the opened Rise damage feed: %1 (%2)")
+                        .arg(path_, QString::fromLocal8Bit(std::strerror(statError))));
+    }
+    if (!S_ISREG(openedStat.st_mode)) {
+        ::close(fd);
+        return fail(Error::OpenDeniedOrFailed,
+                    QStringLiteral("Rise damage feed is not a readable regular file: %1")
+                        .arg(path_));
+    }
+    if (openedStat.st_size > kMaximumFeedBytes) {
+        const qint64 openedSize = static_cast<qint64>(openedStat.st_size);
+        ::close(fd);
+        return fail(Error::TooLarge,
+                    QStringLiteral("Rise damage feed is too large: %1 (%2 bytes; limit %3 bytes)")
+                        .arg(path_)
+                        .arg(openedSize)
+                        .arg(kMaximumFeedBytes));
+    }
+
+    QFile file;
+    if (!file.open(fd, QIODevice::ReadOnly | QIODevice::Text,
+                   QFileDevice::AutoCloseHandle)) {
+        ::close(fd);
+        return fail(Error::OpenDeniedOrFailed,
+                    QStringLiteral("Could not read the opened Rise damage feed: %1")
+                        .arg(path_));
+    }
+
+    const QByteArray contents = file.read(kMaximumFeedBytes + 1);
+    if (contents.size() > kMaximumFeedBytes) {
+        return fail(Error::TooLarge,
+                    QStringLiteral("Rise damage feed grew beyond the %1-byte limit while reading: %2")
+                        .arg(kMaximumFeedBytes)
+                        .arg(path_));
+    }
+    if (file.error() != QFileDevice::NoError) {
+        return fail(Error::OpenDeniedOrFailed,
+                    QStringLiteral("Could not read Rise damage feed; check permissions: %1")
+                        .arg(path_));
+    }
 
     QJsonParseError error{};
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isObject())
-        return false;
+    const QJsonDocument document = QJsonDocument::fromJson(contents, &error);
+    if (error.error != QJsonParseError::NoError) {
+        return fail(Error::Parse,
+                    QStringLiteral("Could not parse Rise damage feed JSON: %1 (byte %2: %3)")
+                        .arg(path_)
+                        .arg(error.offset)
+                        .arg(error.errorString()));
+    }
+    if (!document.isObject()) {
+        return fail(Error::Parse,
+                    QStringLiteral("Rise damage feed root must be a JSON object: %1")
+                        .arg(path_));
+    }
 
     const QJsonObject root = document.object();
     int version = 0;
-    if (!parseInt(root, QStringLiteral("version"), true, &version))
-        return false;
+    if (!parseInt(root, QStringLiteral("version"), true, &version)) {
+        return fail(Error::Parse,
+                    QStringLiteral("Rise damage feed has no valid protocol version: %1")
+                        .arg(path_));
+    }
+
+    if (version != 1 && version != 2) {
+        return fail(Error::UnsupportedVersion,
+                    QStringLiteral("Rise damage feed uses unsupported protocol version %1: %2")
+                        .arg(version)
+                        .arg(path_));
+    }
 
     RiseDamageSnapshot parsed;
-    const bool supported = version == 1 ? parseV1(root, &parsed)
-                         : version == 2 ? parseV2(root, &parsed)
-                                        : false;
-    if (!supported || !isFresh(parsed.timestampMs))
-        return false;
+    const bool parsedSchema = version == 1 ? parseV1(root, &parsed)
+                                           : parseV2(root, &parsed);
+    if (!parsedSchema) {
+        return fail(Error::Parse,
+                    QStringLiteral("Rise damage feed does not match protocol v%1: %2")
+                        .arg(version)
+                        .arg(path_));
+    }
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (parsed.timestampMs < now - kFreshnessWindowMs) {
+        return fail(Error::Stale,
+                    QStringLiteral("Rise damage feed is stale: %1 (age %2 ms; limit %3 ms)")
+                        .arg(path_)
+                        .arg(now - parsed.timestampMs)
+                        .arg(kFreshnessWindowMs));
+    }
+    if (parsed.timestampMs > now + kFreshnessWindowMs) {
+        return fail(Error::Stale,
+                    QStringLiteral("Rise damage feed timestamp is %1 ms ahead (clock skew; limit %2 ms): %3")
+                        .arg(parsed.timestampMs - now)
+                        .arg(kFreshnessWindowMs)
+                        .arg(path_));
+    }
 
     parsed.valid = true;
     snapshot_ = std::move(parsed);
+    lastError_ = Error::None;
+    lastErrorText_.clear();
     return true;
 }
 

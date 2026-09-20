@@ -145,6 +145,19 @@ void HudCanvas::setPanelPixmap(int index, const QPixmap &pixmap, bool enabled)
     update();
 }
 
+void HudCanvas::setPanelPresent(int index, bool present)
+{
+    if (!mhw::isPanelIndex(index)) return;
+    if (slots_[index].present == present) return;
+    slots_[index].present = present;
+    update();
+}
+
+bool HudCanvas::panelPresent(int index) const
+{
+    return mhw::isPanelIndex(index) && slots_[index].present;
+}
+
 void HudCanvas::setShowSafeArea(bool on)
 {
     if (showSafeArea_ == on) return;
@@ -423,7 +436,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
     };
 
     for (int i = 0; i < mhw::kPanelCount; ++i) {
-        if (!slots_[i].bound) continue;
+        if (!slots_[i].bound || !slots_[i].present) continue;
         const Slot &s = slots_[i];
         const qreal z = std::max(0.1, s.src->scale());
         const QSize cs = s.src->contentSize();

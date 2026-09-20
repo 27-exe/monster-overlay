@@ -25,6 +25,7 @@
 
 #include "core/map_paths.h"
 #include "mhw_reader.h"
+#include "rise/mhr_reader.h"
 
 #include <QByteArray>
 #include <QCoreApplication>
@@ -54,11 +55,7 @@ QStringList g_summary;
 
 QString redact(const QString &text)
 {
-    if (g_home.isEmpty())
-        return text;
-    QString out = text;
-    out.replace(g_home, QStringLiteral("~"));
-    return out;
+    return mhw::redactHomePath(text, g_home);
 }
 
 void say(const QString &line = QString())
@@ -156,6 +153,12 @@ QString sha256(const QString &path)
 QString errnoText(int code)
 {
     return QStringLiteral("%1 (%2)").arg(QString::fromLocal8Bit(std::strerror(code))).arg(code);
+}
+
+QString devFallbackLabel(const QString &path)
+{
+    const QString name = QFileInfo(path).fileName();
+    return name.isEmpty() ? QStringLiteral("<none>") : name;
 }
 
 QString symlinkTarget(const QString &path)
@@ -459,35 +462,51 @@ void sectionDataFiles()
                             : QString()));
     }
 
-    say(QStringLiteral("compile-time  : world=%1 rise=%2 (development fallback only)")
-            .arg(QString::fromUtf8(MHW_DEFAULT_MAP), QString::fromUtf8(MHR_DEFAULT_MAP)));
+    const QString worldDev =
+        mhw::developmentMapFallback(QStringLiteral("MonsterHunterWorld.421810.map"));
+    const QString riseDev =
+        mhw::developmentMapFallback(QStringLiteral("MonsterHunterRise.16.0.2.0.map"));
+    say(QStringLiteral("dev fallback  : world=%1 rise=%2 (build tree / CTest only; release payloads use search dir 1)")
+            .arg(devFallbackLabel(worldDev), devFallbackLabel(riseDev)));
 
     const struct {
         const char *title;
         const char *file;
-        const char *fallback;
+        QString fallback;
         const char *key;
     } maps[] = {
-        {"world", "MonsterHunterWorld.421810.map", MHW_DEFAULT_MAP, "PLAYER_ADDRESS"},
-        {"rise", "MonsterHunterRise.16.0.2.0.map", MHR_DEFAULT_MAP, "STAGE_ADDRESS"},
+        {"world", "MonsterHunterWorld.421810.map", worldDev, "PLAYER_ADDRESS"},
+        {"rise", nullptr, riseDev, "STAGE_ADDRESS"},
     };
     for (const auto &entry : maps) {
         if (!g_onlyGame.isEmpty() && QString::fromUtf8(entry.title) != g_onlyGame)
             continue;
-        const QString resolved = mhw::resolveDataFile(QString(), QString::fromUtf8(entry.file),
-                                                      dirs, QString::fromUtf8(entry.fallback));
+        const QString fallback = entry.fallback;
+        const bool isRise = qstrcmp(entry.title, "rise") == 0;
+        const QStringList candidates = isRise
+            ? mhw::riseMapCandidates(QString(), dirs, fallback)
+            : mhw::worldMapCandidates(QString(), QString::fromUtf8(entry.file), dirs,
+                                      fallback);
+        const QString resolved = isRise
+            ? mhw::MhrReader::findBestMap(candidates)
+            : mhw::MhwReader::selectLoadableMap(candidates);
         const QFileInfo info(resolved);
-        QString source = QStringLiteral("not found in any search dir");
-        if (!resolved.isEmpty()) {
+        QString source;
+        if (!info.exists()) {
+            source = QStringLiteral(
+                "not found in any search dir; candidate shown for error reporting");
+        } else {
             for (int i = 0; i < dirs.size(); ++i) {
-                if (resolved.startsWith(dirs.at(i) + u'/')) {
+                if (info.absolutePath() == QDir(dirs.at(i)).absolutePath()) {
                     source = (i == 0 ? QStringLiteral("search dir 1 (next to this binary)")
                                      : QStringLiteral("search dir %1").arg(i + 1));
                     break;
                 }
             }
-            if (resolved == QString::fromUtf8(entry.fallback))
-                source = QStringLiteral("compile-time fallback (build machine / CTest only)");
+            if (resolved == fallback)
+                source = QStringLiteral("development fallback (build tree / CTest only)");
+            if (source.isEmpty())
+                source = QStringLiteral("loadable candidate outside the search dirs");
         }
         say();
         say(QStringLiteral("%1 map       : %2").arg(QString::fromUtf8(entry.title), resolved));

@@ -95,6 +95,26 @@
       "zh": "中文",
       "en": "EN"
     },
+    "reframework": {
+      "title": "崛起 · REFRAMEWORK",
+      "subtitle": "仅用于《怪物猎人：崛起》的 REFramework 管理",
+      "notFound": "STEAM 库中未找到《崛起》安装",
+      "gameFound": "STEAM 安装目录：%1",
+      "gameInvalid": "《崛起》安装目录无效：%1",
+      "luaMissing": "伤害统计不可用：悬浮窗 Lua producer 尚未安装",
+      "gameRunning": "请先关闭游戏，再修改 REFRAMEWORK 文件",
+      "pending": "操作进行中…",
+      "success": "成功：%1",
+      "failure": "失败：%1",
+      "noWorker": "没有连接 REFramework 工作器。",
+      "install": "安装 REFRAMEWORK + LUA",
+      "removeLua": "卸载 LUA",
+      "removeReframework": "卸载 REFRAMEWORK + LUA",
+      "confirmTitle": "确认 REFramework 操作",
+      "confirmInstall": "要将 REFramework 和悬浮窗 Lua 安装到：\n%1？",
+      "confirmRemoveLua": "要从以下目录移除受管理的悬浮窗 Lua 吗？\n%1？",
+      "confirmRemoveReframework": "要从以下目录移除悬浮窗 Lua 与受管理的 REFramework 文件吗？\n%1？"
+    },
     "canvas": {
       "header": "LIVE HUD 画布  ·  %1 × %2 物理  ·  %3 × %4 逻辑  ·  DPR ×%5  ·  %6",
       "disabled": "%1 · 已禁用",

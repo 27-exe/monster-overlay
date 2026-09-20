@@ -4,8 +4,8 @@
 // but in a single-shot QImage render so the result can be diffed
 // without bringing the layer-shell live overlay onto the screen —
 // layer-shell would steal keyboard focus and lock the user out of
-// the desktop. See ~/.hermes/memory: "KDE/overlay 测试: layer-shell
-// 接管屏幕会锁死他".
+// the desktop. A live layer-shell takeover steals keyboard focus and
+// can lock the user out of the desktop session.
 //
 // i18n: `--locale <code>` renders the same demo under another locale
 // (default zh-CN keeps the pre-i18n behaviour byte-identical), which is

@@ -14,6 +14,8 @@
 #include "ui/screen_query.h"
 #include "ui/ui_theme.h"
 #include "core/game_detector.h"
+#include "core/rise_reframework_manager.h"
+#include "core/steam_game_locator.h"
 #include "core/locale_conf.h"
 #include "core/string_table.h"
 
@@ -26,6 +28,7 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QCoreApplication>
 #include <QComboBox>
 #include <QEvent>
 #include <QKeyEvent>
@@ -37,6 +40,7 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 #include <QGuiApplication>
 #include <QScreen>
 #include <QPushButton>
+#include <QMessageBox>
 #include <QGroupBox>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -57,6 +61,7 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QProcess>
 #include <QTextStream>
 #include <QTime>
@@ -279,6 +284,25 @@ QString qssBase()
         "QFrame#gameColumnRule{background:%8;border:none;max-height:1px;min-height:1px;}"
         "QLabel#gameColumnDetected{font-family:'Chakra Petch';font-size:11px;"
         " letter-spacing:1px;color:%5;background:transparent;border:none;}"
+        "QFrame#riseReframeworkCard{background:%3;border:1px solid %8;border-radius:3px;}"
+        "QLabel#riseReframeworkTitle{font-family:'Chakra Petch';font-size:15px;"
+        "font-weight:700;letter-spacing:1px;color:%2;background:transparent;}"
+        "QLabel#riseReframeworkSubtitle{font-family:'Noto Sans SC';font-size:12px;"
+        "color:%6;background:transparent;}"
+        "QLabel#riseReframeworkStatus{font-family:'Noto Sans SC';font-size:12px;"
+        "color:%2;background:transparent;}"
+        "QPushButton#installRiseReframeworkButton,"
+        "QPushButton#removeRiseLuaButton,"
+        "QPushButton#removeRiseReframeworkButton{background:transparent;color:%6;"
+        "border:1px solid %8;border-radius:3px;padding:8px 10px;"
+        "font-family:'Chakra Petch';font-size:11px;letter-spacing:0.5px;"
+        "text-align:left;}"
+        "QPushButton#installRiseReframeworkButton:hover,"
+        "QPushButton#removeRiseLuaButton:hover,"
+        "QPushButton#removeRiseReframeworkButton:hover{background:%1;color:%2;}"
+        "QPushButton#installRiseReframeworkButton:disabled,"
+        "QPushButton#removeRiseLuaButton:disabled,"
+        "QPushButton#removeRiseReframeworkButton:disabled{color:%6;background:%4;}"
     );
     // Replace longest placeholders first. QString::arg historically treats
     // %1 as a prefix of %10/%11 in chained substitutions, which produced
@@ -1001,6 +1025,16 @@ ControlPanel::ControlPanel(QWidget *parent)
                 this, [this]{ refreshAutoDetect(); });
         autoDetectTimer->start(5000);
     }
+
+    // REFramework status is cheap file inspection, but the timer is kept
+    // deliberately coarse. Archive download/extraction never runs here; the
+    // request signals below are the only install/removal entry points.
+    riseReframeworkRefreshTimer_ = new QTimer(this);
+    riseReframeworkRefreshTimer_->setInterval(1500);
+    connect(riseReframeworkRefreshTimer_, &QTimer::timeout,
+            this, [this]{ refreshRiseReframeworkStatus(); });
+    riseReframeworkRefreshTimer_->start();
+    refreshRiseReframeworkStatus();
 }
 
 ControlPanel::~ControlPanel()
@@ -1095,6 +1129,7 @@ void ControlPanel::retranslateUi()
     for (int i = 0; i < mhw::kPanelCount; ++i)
         updatePosLabel(i);                        // corner + margin readout
     refreshAutoDetect();                          // badge + GAME column
+    refreshRiseReframeworkStatus();               // Rise-only management card
     for (int i = 0; i < mhw::kPanelCount; ++i)
         if (Panel *panel = panelAt(i))
             panel->retranslateUi();               // cached preview-panel copy
@@ -1315,6 +1350,9 @@ bool ControlPanel::eventFilter(QObject *watched, QEvent *event)
 void ControlPanel::selectPanel(int idx)
 {
     if (!mhw::isPanelIndex(idx)) return;
+    // v0.10.1: the pets inspector is Rise-only; it cannot be reached while
+    // World is selected (the rail card is hidden; hot-keys land here).
+    if (idx == 3 && currentGame_ == mhw::GameId::World) return;
     selectedPanel_ = idx;
     syncAppearance(idx);
     updatePosLabel(idx);
@@ -1505,6 +1543,69 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     }
 
     vl->addSpacing(12);
+
+    if (idx == 2) {
+        auto *card = new QFrame(content);
+        card->setObjectName(QStringLiteral("riseReframeworkCard"));
+        auto *cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(14, 12, 14, 12);
+        cardLayout->setSpacing(7);
+
+        auto *cardTitle = new QLabel();
+        trSet(cardTitle, QStringLiteral("console.reframework.title"));
+        cardTitle->setObjectName(QStringLiteral("riseReframeworkTitle"));
+        cardLayout->addWidget(cardTitle);
+
+        auto *cardSubtitle = new QLabel();
+        trSet(cardSubtitle, QStringLiteral("console.reframework.subtitle"));
+        cardSubtitle->setObjectName(QStringLiteral("riseReframeworkSubtitle"));
+        cardSubtitle->setWordWrap(true);
+        cardLayout->addWidget(cardSubtitle);
+
+        auto *status = new QLabel();
+        trSet(status, QStringLiteral("console.reframework.notFound"));
+        status->setObjectName(QStringLiteral("riseReframeworkStatus"));
+        status->setWordWrap(true);
+        riseReframeworkStatus_ = status;
+        cardLayout->addWidget(status);
+
+        auto *actions = new QVBoxLayout();
+        actions->setSpacing(5);
+        auto *install = new QPushButton();
+        trSet(install, QStringLiteral("console.reframework.install"));
+        install->setObjectName(QStringLiteral("installRiseReframeworkButton"));
+        install->setCursor(Qt::PointingHandCursor);
+        connect(install, &QPushButton::clicked, this,
+                [this]{ requestRiseReframeworkInstall(); });
+        actions->addWidget(install);
+        installRiseReframeworkButton_ = install;
+
+        auto *removeLua = new QPushButton();
+        trSet(removeLua, QStringLiteral("console.reframework.removeLua"));
+        removeLua->setObjectName(QStringLiteral("removeRiseLuaButton"));
+        removeLua->setCursor(Qt::PointingHandCursor);
+        connect(removeLua, &QPushButton::clicked, this,
+                [this]{ requestRiseLuaRemoval(); });
+        actions->addWidget(removeLua);
+        removeRiseLuaButton_ = removeLua;
+
+        auto *removeReframework = new QPushButton();
+        trSet(removeReframework,
+              QStringLiteral("console.reframework.removeReframework"));
+        removeReframework->setObjectName(
+            QStringLiteral("removeRiseReframeworkButton"));
+        removeReframework->setCursor(Qt::PointingHandCursor);
+        connect(removeReframework, &QPushButton::clicked, this,
+                [this]{ requestRiseReframeworkRemoval(); });
+        actions->addWidget(removeReframework);
+        removeRiseReframeworkButton_ = removeReframework;
+
+        cardLayout->addLayout(actions);
+        riseReframeworkCard_ = card;
+        riseReframeworkCard_->setVisible(currentGame_ == mhw::GameId::Rise);
+        vl->addWidget(riseReframeworkCard_);
+        vl->addSpacing(12);
+    }
 
     // v0.5 UI-link: APPEARANCE sliders (scale + opacity), live preview.
     auto *appCap = new QLabel();
@@ -1845,6 +1946,18 @@ void ControlPanel::switchGame(mhw::GameId game)
     const bool changed = (game != currentGame_);
     currentGame_ = game;
     const bool isRise = (game == mhw::GameId::Rise);
+    refreshRiseReframeworkStatus();
+
+    // v0.10.1: companion surfaces are Rise-only. Selecting World removes the
+    // pets rail card, its inspector page and the stage preview tile
+    // entirely — there is no World data source for them.
+    const bool petsAvailable = (game == mhw::GameId::Rise);
+    if (ctl_[3].navButton)
+        ctl_[3].navButton->setVisible(petsAvailable);
+    if (canvas_)
+        canvas_->setPanelPresent(3, petsAvailable);
+    if (!petsAvailable && selectedPanel_ == 3)
+        selectPanel(2);
 
     if (gameWorldBtn_) {
         gameWorldBtn_->setProperty("selected", !isRise);
@@ -1919,6 +2032,169 @@ void ControlPanel::switchGame(mhw::GameId game)
     }
 }
 
+void ControlPanel::refreshRiseReframeworkStatus()
+{
+    if (!riseReframeworkCard_)
+        return;
+
+    const bool riseSelected = currentGame_ == mhw::GameId::Rise;
+    riseReframeworkCard_->setVisible(riseSelected);
+    if (!riseSelected)
+        return;
+
+    // The locator is the single source of truth for the Steam install. The
+    // manager is still queried for an empty path so every refresh exercises
+    // the same validation/status path; no mutation happens in this method.
+    riseGameDir_ = mhw::findRiseInstallDir();
+    const mhw::RiseReFrameworkManager manager(QCoreApplication::applicationDirPath());
+    const mhw::RiseReFrameworkManager::Status status = manager.status(riseGameDir_);
+    const bool gameRunning = mhw::detectGame().has_value();
+
+    QStringList lines;
+    if (riseGameDir_.isEmpty()) {
+        lines.append(mh::tr(QStringLiteral("console.reframework.notFound")));
+        if (!status.detail.isEmpty())
+            lines.append(status.detail);
+    } else {
+        lines.append(status.gameDirValid
+                         ? mh::tr(QStringLiteral("console.reframework.gameFound"))
+                               .arg(riseGameDir_)
+                         : mh::tr(QStringLiteral("console.reframework.gameInvalid"))
+                               .arg(riseGameDir_));
+        if (!status.detail.isEmpty())
+            lines.append(status.detail);
+        if (status.lua == mhw::RiseReFrameworkManager::LuaState::Missing)
+            lines.append(mh::tr(QStringLiteral("console.reframework.luaMissing")));
+    }
+    if (gameRunning)
+        lines.append(mh::tr(QStringLiteral("console.reframework.gameRunning")));
+    if (riseReframeworkOperationPending_)
+        lines.append(mh::tr(QStringLiteral("console.reframework.pending")));
+    if (riseReframeworkHasResult_) {
+        lines.append(mh::tr(riseReframeworkResultOk_
+                                ? QStringLiteral("console.reframework.success")
+                                : QStringLiteral("console.reframework.failure"))
+                         .arg(riseReframeworkResultDetail_));
+    }
+    riseReframeworkStatus_->setText(lines.join(QLatin1Char('\n')));
+
+    // A missing/invalid locator result is not actionable. A running game or
+    // an in-flight worker is also a hard safety gate. Destructive actions are
+    // enabled only when there is actually something owned to remove.
+    const bool canChange = status.gameDirValid && !gameRunning
+                           && !riseReframeworkOperationPending_;
+    const bool usableCore =
+        status.core == mhw::RiseReFrameworkManager::CoreState::Managed
+        || status.core == mhw::RiseReFrameworkManager::CoreState::External;
+    const bool ready = usableCore
+                       && status.lua == mhw::RiseReFrameworkManager::LuaState::Current
+                       && status.manifest == mhw::RiseReFrameworkManager::ManifestState::Valid;
+    const bool installSafe = status.core != mhw::RiseReFrameworkManager::CoreState::Conflict
+                             && status.manifest
+                                    != mhw::RiseReFrameworkManager::ManifestState::Invalid;
+    installRiseReframeworkButton_->setEnabled(canChange && installSafe && !ready);
+    removeRiseLuaButton_->setEnabled(
+        canChange && status.lua != mhw::RiseReFrameworkManager::LuaState::Missing);
+    removeRiseReframeworkButton_->setEnabled(
+        canChange
+        && (status.manifest == mhw::RiseReFrameworkManager::ManifestState::Valid
+            || status.lua != mhw::RiseReFrameworkManager::LuaState::Missing));
+}
+
+void ControlPanel::requestRiseReframeworkInstall()
+{
+    if (currentGame_ != mhw::GameId::Rise || riseGameDir_.isEmpty()
+        || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
+        refreshRiseReframeworkStatus();
+        return;
+    }
+    const auto answer = QMessageBox::question(
+        this,
+        mh::tr(QStringLiteral("console.reframework.confirmTitle")),
+        mh::tr(QStringLiteral("console.reframework.confirmInstall")).arg(riseGameDir_),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+        return;
+
+    riseReframeworkOperationPending_ = true;
+    riseReframeworkHasResult_ = false;
+    riseReframeworkResultDetail_.clear();
+    refreshRiseReframeworkStatus();
+    if (receivers(SIGNAL(installRiseReframeworkRequested(QString))) == 0) {
+        finishRiseReframeworkOperation(
+            false, mh::tr(QStringLiteral("console.reframework.noWorker")));
+        return;
+    }
+    emit installRiseReframeworkRequested(riseGameDir_);
+}
+
+void ControlPanel::requestRiseLuaRemoval()
+{
+    if (currentGame_ != mhw::GameId::Rise || riseGameDir_.isEmpty()
+        || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
+        refreshRiseReframeworkStatus();
+        return;
+    }
+    const auto answer = QMessageBox::question(
+        this,
+        mh::tr(QStringLiteral("console.reframework.confirmTitle")),
+        mh::tr(QStringLiteral("console.reframework.confirmRemoveLua")).arg(riseGameDir_),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+        return;
+
+    riseReframeworkOperationPending_ = true;
+    riseReframeworkHasResult_ = false;
+    riseReframeworkResultDetail_.clear();
+    refreshRiseReframeworkStatus();
+    if (receivers(SIGNAL(removeRiseLuaRequested(QString))) == 0) {
+        finishRiseReframeworkOperation(
+            false, mh::tr(QStringLiteral("console.reframework.noWorker")));
+        return;
+    }
+    emit removeRiseLuaRequested(riseGameDir_);
+}
+
+void ControlPanel::requestRiseReframeworkRemoval()
+{
+    if (currentGame_ != mhw::GameId::Rise || riseGameDir_.isEmpty()
+        || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
+        refreshRiseReframeworkStatus();
+        return;
+    }
+    const auto answer = QMessageBox::question(
+        this,
+        mh::tr(QStringLiteral("console.reframework.confirmTitle")),
+        mh::tr(QStringLiteral("console.reframework.confirmRemoveReframework"))
+            .arg(riseGameDir_),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+        return;
+
+    riseReframeworkOperationPending_ = true;
+    riseReframeworkHasResult_ = false;
+    riseReframeworkResultDetail_.clear();
+    refreshRiseReframeworkStatus();
+    if (receivers(SIGNAL(removeRiseReframeworkRequested(QString))) == 0) {
+        finishRiseReframeworkOperation(
+            false, mh::tr(QStringLiteral("console.reframework.noWorker")));
+        return;
+    }
+    emit removeRiseReframeworkRequested(riseGameDir_);
+}
+
+void ControlPanel::finishRiseReframeworkOperation(bool ok, const QString &detail)
+{
+    riseReframeworkOperationPending_ = false;
+    riseReframeworkHasResult_ = true;
+    riseReframeworkResultOk_ = ok;
+    riseReframeworkResultDetail_ = detail;
+    refreshRiseReframeworkStatus();
+}
+
 // L3: spawn monster-overlay as a detached subprocess, hide the console while
 // it runs, then show the console again when the overlay exits.
 //
@@ -1962,11 +2238,15 @@ void ControlPanel::launchOverlay(bool editMode)
     const uint32_t md = maskFor(ctl_[2]);
     const uint32_t mt = maskFor(ctl_[3]);
 
+    // v0.10.1: the companion (pets) surface is Rise-only — in World its mask
+    // is not passed and the panel is force-disabled below.
+    const bool petsAvailable = (currentGame_ == mhw::GameId::Rise);
     QStringList args;
     args << QStringLiteral("--mask-player=%1").arg(mp, 0, 16)
          << QStringLiteral("--mask-monster=%1").arg(mm, 0, 16)
-         << QStringLiteral("--mask-damage=%1").arg(md, 0, 16)
-         << QStringLiteral("--mask-pets=%1").arg(mt, 0, 16);
+         << QStringLiteral("--mask-damage=%1").arg(md, 0, 16);
+    if (petsAvailable)
+        args << QStringLiteral("--mask-pets=%1").arg(mt, 0, 16);
     // Master toggle maps to a separate --no-* flag per panel. The
     // mask controls which sub-blocks render inside an enabled panel;
     // --no-* unmounts the layer-shell surface entirely so the user
@@ -1978,7 +2258,7 @@ void ControlPanel::launchOverlay(bool editMode)
         args << QStringLiteral("--no-monster");
     if (!ctl_[2].master->isChecked())
         args << QStringLiteral("--no-damage");
-    if (!ctl_[3].master->isChecked())
+    if (!petsAvailable || !ctl_[3].master->isChecked())
         args << QStringLiteral("--no-pets");
     if (editMode) args << QStringLiteral("--edit");
 
@@ -2146,28 +2426,9 @@ void ControlPanel::refreshAutoDetect()
     }
 }
 
-namespace {
-// L2: resolve the persistence path.
-//
-//   * AppConfigLocation = ~/.config/<OrgName>/<AppName> (Linux). Doesn't
-//     honour XDG_CONFIG_HOME, but it's the canonical user-config root.
-//   * We append "/monster-overlay.conf" so the same directory can later
-//     carry other keys (locale, map path) without inventing new files.
-//
-// For tests we override via the env-var honoured by GenericConfigLocation
-// (XDG_CONFIG_HOME) — see tests/control_l2_smoke.cpp.
-QString maskConfigPath()
-{
-    const QString dir = QStandardPaths::writableLocation(
-        QStandardPaths::GenericConfigLocation)
-        + QStringLiteral("/monster-overlay");
-    return dir + QStringLiteral("/monster-overlay.conf");
-}
-} // namespace
-
 void ControlPanel::loadMaskFromDisk()
 {
-    const QString path = maskConfigPath();
+    const QString path = mhw::localeConfPath();
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
         // No file = first run, keep the all-on default the buildGroup()
@@ -2250,8 +2511,7 @@ void ControlPanel::loadMaskFromDisk()
 
 void ControlPanel::saveMaskToDisk() const
 {
-    const QString path = maskConfigPath();
-    QDir().mkpath(QFileInfo(path).absolutePath());
+    const QString path = mhw::localeConfPath();
 
     auto maskFor = [](const PanelCtl &c) -> uint32_t {
         if (!c.master->isChecked()) return 0u;
@@ -2266,29 +2526,62 @@ void ControlPanel::saveMaskToDisk() const
     const uint32_t md = maskFor(ctl_[2]);
     const uint32_t mt = maskFor(ctl_[3]);
 
-    // v0.9.2: the `locale=` row means "the user chose this language"
-    // (--locale or the EN/CH chip). A mask save must not turn whatever we
-    // happen to be running into a pinned choice, otherwise a detected
-    // language would stop following the desktop. Preserve the existing row
-    // verbatim; stay silent when there is none.
-    const QString chosenLocale = mhw::readLocaleFromConf(path);
+    // The mask writer owns exactly these four rows. Preserve locale, comments
+    // and unknown/future keys in their original relative order, while removing
+    // every old copy of a canonical mask row so duplicates converge.
+    QStringList preserved;
+    if (QFileInfo::exists(path)) {
+        QFile existing(path);
+        if (!existing.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            qWarning("monster-control: cannot read %s before saving: %s",
+                     qPrintable(path), qPrintable(existing.errorString()));
+            return;
+        }
+        QTextStream in(&existing);
+        in.setEncoding(QStringConverter::Utf8);
+        while (!in.atEnd()) {
+            const QString line = in.readLine();
+            const QString trimmed = line.trimmed();
+            const bool canonical = trimmed.startsWith(QLatin1String("player="))
+                                   || trimmed.startsWith(QLatin1String("monster="))
+                                   || trimmed.startsWith(QLatin1String("damage="))
+                                   || trimmed.startsWith(QLatin1String("pets="));
+            if (!canonical)
+                preserved.append(line);
+        }
+    }
 
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-        qWarning("monster-control: cannot write %s", qPrintable(path));
+    QByteArray data;
+    data += "player="  + QString::number(mp, 16).toUtf8() + '\n';
+    data += "monster=" + QString::number(mm, 16).toUtf8() + '\n';
+    data += "damage="  + QString::number(md, 16).toUtf8() + '\n';
+    data += "pets="    + QString::number(mt, 16).toUtf8() + '\n';
+    for (const QString &line : preserved)
+        data += line.toUtf8() + '\n';
+
+    const QString parent = QFileInfo(path).absolutePath();
+    if (!QDir().mkpath(parent)) {
+        qWarning("monster-control: cannot create config directory %s",
+                 qPrintable(parent));
         return;
     }
-    QTextStream out(&f);
-    // Line order is part of the contract: the three legacy mask rows first,
-    // followed by pets (all lowercase hex), then, only when the user has
-    // chosen a language, the `locale=` row polled by the overlay
-    // (locale_sync.h).
-    out << "player="  << QString::number(mp, 16) << '\n'
-        << "monster=" << QString::number(mm, 16) << '\n'
-        << "damage="  << QString::number(md, 16) << '\n'
-        << "pets="    << QString::number(mt, 16) << '\n';
-    if (!chosenLocale.isEmpty())
-        out << "locale=" << chosenLocale << '\n';
+
+    QSaveFile out(path);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qWarning("monster-control: cannot atomically open %s: %s",
+                 qPrintable(path), qPrintable(out.errorString()));
+        return;
+    }
+    if (out.write(data) != data.size()) {
+        qWarning("monster-control: cannot atomically write %s: %s",
+                 qPrintable(path), qPrintable(out.errorString()));
+        out.cancelWriting();
+        return;
+    }
+    if (!out.commit()) {
+        qWarning("monster-control: cannot atomically commit %s: %s",
+                 qPrintable(path), qPrintable(out.errorString()));
+    }
 }
 
 void ControlPanel::rebuildAndRender(int idx)

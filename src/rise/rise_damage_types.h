@@ -24,6 +24,8 @@ struct RiseDamageActor {
     int displaySlot{-1};
     int ownerEntityIndex{-1};
     int sourceTypeRaw{-1};
+    int weaponId{-1};
+    int masterRank{0};
 
     QString name;
     QString ownerName;

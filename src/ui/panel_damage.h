@@ -17,7 +17,7 @@ public:
 
     void update(const mhw::GameSnapshot &snap);
 
-    // Rise damage feed (via /tmp/mhr_damage.json). Converts the
+    // Rise damage feed (via REFramework's sandboxed data directory). Converts the
     // REFramework snapshot into the internal chart history. While no
     // valid data has arrived the panel keeps the riseMode_ placeholder;
     // the first valid snapshot switches it over to the normal chart.

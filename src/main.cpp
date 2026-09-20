@@ -3,6 +3,7 @@
 #include "core/locale_conf.h"
 #include "core/locale_sync.h"
 #include "core/map_paths.h"
+#include "core/steam_game_locator.h"
 #include "core/string_table.h"
 #include "monster/monster_types.h"
 #include "mhw_reader.h"
@@ -19,13 +20,14 @@
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
-#include <QFileInfo>
 #include <QFontDatabase>
 #include <QResource>
 #include <QTimer>
 #include <functional>
+#include <array>
 
 #include <cstdio>
 
@@ -71,7 +73,9 @@ int main(int argc, char **argv)
     QApplication::setApplicationName(QStringLiteral("monster-overlay"));
     QApplication::setApplicationDisplayName(QStringLiteral("Monster Overlay"));
     QApplication::setApplicationVersion(QStringLiteral(MONSTER_VERSION));
-    QApplication::setOrganizationName(QStringLiteral("a27exe"));
+    // Match the console's identity so both applications share one settings
+    // tree and no user-specific name leaks into the shipped binaries.
+    QApplication::setOrganizationName(QStringLiteral("monster-overlay"));
     app.setQuitOnLastWindowClosed(true);
 
     // Register font families.
@@ -147,8 +151,7 @@ int main(int argc, char **argv)
     QCommandLineOption mapOption(
         {QStringLiteral("m"), QStringLiteral("map")},
         QStringLiteral("Address-map file; overrides the runtime search order"),
-        QStringLiteral("path"),
-        QString::fromUtf8(MHW_DEFAULT_MAP));
+        QStringLiteral("path"));
     QCommandLineOption localeOption(
         QStringLiteral("locale"),
         QStringLiteral("UI locale (e.g. zh-CN)"),
@@ -342,7 +345,10 @@ int main(int argc, char **argv)
     playerPanel.setPanelEnabled(!parser.isSet(noPlayerOption));
     monsterPanel.setPanelEnabled(!parser.isSet(noMonsterOption));
     damagePanel.setPanelEnabled(!parser.isSet(noDamageOption));
-    petDamagePanel.setPanelEnabled(!parser.isSet(noPetsOption));
+    // v0.10.1: the pet damage surface is Rise-only. World never mounts it,
+    // regardless of --mask-pets / --no-pets; the console hides the matching
+    // controls in World mode for the same reason.
+    petDamagePanel.setPanelEnabled(isRise && !parser.isSet(noPetsOption));
 
 
     // v0.8: CLI --output-* overrides whatever the persisted panels.ini
@@ -371,36 +377,49 @@ int main(int argc, char **argv)
     //
     // P0 (v0.9.1) release-path fix: the maps are resolved at RUNTIME.
     // Priority: explicit --map > <appdir>/data > $XDG_DATA_HOME and
-    // $XDG_DATA_DIRS (+ /monster-overlay/data) > the compile-time default,
-    // which now only serves development and CTest. Before this, a released
-    // binary used the build machine's absolute source path and every other
-    // machine failed to open a map (empty HUD, no data).
+    // $XDG_DATA_DIRS (+ /monster-overlay/data) > the development build-tree
+    // fallback, which only resolves inside a checkout and is computed at
+    // runtime — no machine-specific path is compiled into the binary.
+    // Before this, a released binary used the build machine's absolute
+    // source path and every other machine failed to open a map (empty HUD,
+    // no data).
     const QString explicitMap =
         parser.isSet(mapOption) ? parser.value(mapOption) : QString();
     const QStringList dataDirs = mhw::defaultDataSearchDirs();
-    const QString worldMapPath = mhw::resolveDataFile(
-        explicitMap, QFileInfo(QString::fromUtf8(MHW_DEFAULT_MAP)).fileName(),
-        dataDirs, QString::fromUtf8(MHW_DEFAULT_MAP));
+    const QStringList worldCandidates = mhw::worldMapCandidates(
+        explicitMap, QStringLiteral("MonsterHunterWorld.421810.map"), dataDirs,
+        mhw::developmentMapFallback(
+            QStringLiteral("MonsterHunterWorld.421810.map")));
+    const QString worldMapPath = mhw::MhwReader::selectLoadableMap(worldCandidates);
     mhw::MhwReader worldReader(worldMapPath);
-    // Rise: honour an explicit --map too (it used to be World-only), else
-    // pick the highest version in the first data dir that has one.
-    QString riseMapPath;
-    if (!explicitMap.isEmpty()) {
-        riseMapPath = explicitMap;
-    } else {
-        const QString riseDir = mhw::firstDataDirContaining(
-            dataDirs, QStringLiteral("MonsterHunterRise.*.map"),
-            QString::fromUtf8(MHR_DEFAULT_MAP));
-        if (!riseDir.isEmpty())
-            riseMapPath = mhw::MhrReader::findBestMap(riseDir);
-        if (riseMapPath.isEmpty())
-            riseMapPath = QString::fromUtf8(MHR_DEFAULT_MAP);
-    }
+    // Rise uses the same complete candidate list as monster-doctor. A running
+    // game keeps the live compatibility probe; offline selection takes the
+    // first map whose content loads rather than stopping at the first glob.
+    const QStringList riseCandidates = mhw::riseMapCandidates(
+        explicitMap, dataDirs,
+        mhw::developmentMapFallback(
+            QStringLiteral("MonsterHunterRise.16.0.2.0.map")));
+    const QString riseMapPath = mhw::MhrReader::findBestMap(riseCandidates);
     mhw::MhrReader riseReader(riseMapPath);
-    // Rise party damage comes from the REFramework Lua script writing
-    // /tmp/mhr_damage.json (RiseDamageReader's default path). Only the
-    // Rise branch below ever polls it; World ignores it entirely.
-    mhw::RiseDamageReader riseDamageReader;
+    // REFramework 1.5.9.1 sandboxes Lua files under reframework/data and has
+    // no rename primitive. The producer alternates two slots; read both and
+    // select the greatest valid sequence. Keep /tmp as the compatibility
+    // fallback for older producer builds.
+    const QString riseInstallDir = mhw::findRiseInstallDir();
+    const QString riseDataDir = riseInstallDir.isEmpty()
+        ? QString()
+        : QDir(riseInstallDir).filePath(QStringLiteral("reframework/data"));
+    std::array<mhw::RiseDamageReader, 3> riseDamageReaders{
+        mhw::RiseDamageReader(riseDataDir.isEmpty()
+                                  ? QStringLiteral("/tmp/mhr_damage_a.json")
+                                  : QDir(riseDataDir).filePath(
+                                        QStringLiteral("mhr_damage_a.json"))),
+        mhw::RiseDamageReader(riseDataDir.isEmpty()
+                                  ? QStringLiteral("/tmp/mhr_damage_b.json")
+                                  : QDir(riseDataDir).filePath(
+                                        QStringLiteral("mhr_damage_b.json"))),
+        mhw::RiseDamageReader(QStringLiteral("/tmp/mhr_damage.json")),
+    };
     std::function<mhw::GameSnapshot()> pollGame =
         isRise ? std::function<mhw::GameSnapshot()>([&riseReader] { return riseReader.poll(); })
                : std::function<mhw::GameSnapshot()>([&worldReader] { return worldReader.poll(); });
@@ -410,6 +429,8 @@ int main(int argc, char **argv)
     // Mirror changes to stderr so `--poll` runs and pasted logs carry the
     // reason instead of an unexplained "not connected".
     QString lastReaderStatus;
+    mhw::RiseDamageReader::Error lastRiseDamageFeedError =
+        mhw::RiseDamageReader::Error::None;
     QTimer timer;
 
     // i18n: runtime locale switch. The console is the only writer of the
@@ -522,14 +543,58 @@ int main(int argc, char **argv)
             const bool keepDamageDemo = skipUpdate(damagePanel);
             const bool keepPetDemo = skipUpdate(petDamagePanel);
             if (!keepDamageDemo || !keepPetDemo) {
-                if (riseDamageReader.update()) {
-                    auto damageSnapshot = riseDamageReader.snapshot();
+                const mhw::RiseDamageReader *newestReader = nullptr;
+                const mhw::RiseDamageReader *diagnosticReader =
+                    &riseDamageReaders.front();
+                for (auto &reader : riseDamageReaders) {
+                    if (reader.update()) {
+                        if (!newestReader
+                            || reader.snapshot().sequence
+                                   > newestReader->snapshot().sequence
+                            || (reader.snapshot().sequence
+                                    == newestReader->snapshot().sequence
+                                && reader.snapshot().timestampMs
+                                       > newestReader->snapshot().timestampMs)) {
+                            newestReader = &reader;
+                        }
+                    } else if (diagnosticReader->lastError()
+                                   == mhw::RiseDamageReader::Error::Missing
+                               && reader.lastError()
+                                      != mhw::RiseDamageReader::Error::Missing) {
+                        diagnosticReader = &reader;
+                    }
+                }
+
+                if (newestReader) {
+                    if (lastRiseDamageFeedError !=
+                        mhw::RiseDamageReader::Error::None) {
+                        qInfo("rise damage feed: available (%s)",
+                              qPrintable(newestReader->path()));
+                    }
+                    lastRiseDamageFeedError =
+                        mhw::RiseDamageReader::Error::None;
+                    auto damageSnapshot = newestReader->snapshot();
                     mhw::enrichRiseDamageSnapshot(damageSnapshot, snap);
                     if (!keepDamageDemo)
                         damagePanel.updateRiseDamage(damageSnapshot);
                     if (!keepPetDemo)
                         petDamagePanel.updateRiseDamage(damageSnapshot);
                 } else {
+                    const auto feedError = diagnosticReader->lastError();
+                    if (feedError != lastRiseDamageFeedError) {
+                        const char *prefix =
+                            feedError == mhw::RiseDamageReader::Error::Missing
+                                ? "rise damage feed"
+                                : "rise damage feed warning";
+                        if (feedError == mhw::RiseDamageReader::Error::Missing) {
+                            qInfo("%s: %s", prefix,
+                                  qPrintable(diagnosticReader->lastErrorText()));
+                        } else {
+                            qWarning("%s: %s", prefix,
+                                     qPrintable(diagnosticReader->lastErrorText()));
+                        }
+                        lastRiseDamageFeedError = feedError;
+                    }
                     // Missing, malformed, or stale (>5 s) feed is an explicit
                     // lifecycle event. Deliver an invalid snapshot so live
                     // panels clear old quest data instead of keeping it forever.
@@ -542,9 +607,11 @@ int main(int argc, char **argv)
             }
             damagePanel.setVisible(true);
             damagePanel.triggerUpdate();
-            petDamagePanel.setVisible(
-                petDamagePanel.panelEnabled()
-                && (petDamagePanel.hasVisibleContent() || showAll));
+            // Rise owns the companion surface. Keep it mounted whenever the
+            // user enabled it so missing-feed / waiting-for-first-hit states
+            // are visible instead of looking like a broken window. World
+            // still force-disables it at construction and in its branch.
+            petDamagePanel.setVisible(petDamagePanel.panelEnabled());
             petDamagePanel.triggerUpdate();
         } else if (skipUpdate(damagePanel)) {
             petDamagePanel.setVisible(false);

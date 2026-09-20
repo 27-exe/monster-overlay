@@ -456,12 +456,11 @@ public:
 
     static std::optional<qint64> findRisePid();
 
-    // Scan dataDir for MonsterHunterRise.X.Y.Z.W.map files, newest first,
-    // and return the first one whose Mono monster list resolves a readable id
-    // and finite health (max > 0, current >= 0). Falls back to the newest map
-    // when the game isn't running or no candidate validates. Empty if dataDir
-    // has no maps.
-    [[nodiscard]] static QString findBestMap(const QString &dataDir);
+    // In candidate order, return the first map whose Mono monster list
+    // resolves a readable id and finite health (max > 0, current >= 0).
+    // Without a running game, or when no live probe validates, return the
+    // first loadable map. If none loads, retain the first path for diagnostics.
+    [[nodiscard]] static QString findBestMap(const QStringList &candidates);
 
 private:
     struct StageInfo {

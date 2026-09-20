@@ -36,6 +36,7 @@
 // MonsterHunterRise.16.0.2.0 address map; see src/rise/mhr_reader.cpp.
 
 #include "core/game_snapshot.h"
+#include "core/map_paths.h"
 #include "mhw_reader.h"
 #include "rise/mhr_abnormalities.h"
 #include "rise/mhr_reader.h"
@@ -60,10 +61,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-#ifndef MHR_DEFAULT_MAP
-#define MHR_DEFAULT_MAP ""
-#endif
 
 namespace {
 
@@ -1746,8 +1743,10 @@ int main(int argc, char *argv[])
     parser.addVersionOption();
     QCommandLineOption mapOption(
         {QStringLiteral("m"), QStringLiteral("map")},
-        QStringLiteral("地址表 .map 路径（默认编译期内置的 Rise 16.0.2.0 地址表）"),
-        QStringLiteral("path"), QString::fromLatin1(MHR_DEFAULT_MAP));
+        QStringLiteral("地址表 .map 路径（默认为构建树 data/ 下的 Rise 16.0.2.0 地址表）"),
+        QStringLiteral("path"),
+        mhw::developmentMapFallback(
+            QStringLiteral("MonsterHunterRise.16.0.2.0.map")));
     parser.addOption(mapOption);
     parser.process(app);
 

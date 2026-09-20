@@ -272,6 +272,16 @@ const QString &MhwReader::mapPath() const
     return mapPath_;
 }
 
+QString MhwReader::selectLoadableMap(const QStringList &candidates)
+{
+    for (const QString &candidate : candidates) {
+        AddressMap map;
+        if (map.load(candidate))
+            return candidate;
+    }
+    return candidates.isEmpty() ? QString() : candidates.first();
+}
+
 std::optional<qint64> MhwReader::findGamePid(const QString &exeName)
 {
     static qint64 cachedPid = -1;

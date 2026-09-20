@@ -7,10 +7,12 @@
 
 #include "core/map_paths.h"
 
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QtGlobal>
 
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +33,14 @@ void touch(const QString &dir, const QString &name)
     QFile f(dir + QLatin1Char('/') + name);
     if (f.open(QIODevice::WriteOnly))
         f.write("Address X 0x1\n");
+}
+
+void restoreEnvironment(const char *name, bool wasSet, const QByteArray &value)
+{
+    if (wasSet)
+        qputenv(name, value);
+    else
+        qunsetenv(name);
 }
 
 } // namespace
@@ -60,6 +70,13 @@ int main(int argc, char **argv)
               dirs.indexOf(xdgSys2 + QStringLiteral("/monster-overlay/data")),
           "XDG_DATA_DIRS order is preserved");
 
+    // The development fallback is computed from the running binary, so it is
+    // always <appdir>/../data/<name> — never a machine-specific absolute path.
+    check(mhw::developmentMapFallback(worldName) ==
+              QDir(QCoreApplication::applicationDirPath())
+                  .filePath(QStringLiteral("../data/") + worldName),
+          "development fallback is appdir-relative");
+
     // 1. explicit --map wins and is returned verbatim even when missing.
     check(mhw::resolveDataFile(tmp + QStringLiteral("/nope.map"), worldName, dirs, fallback)
               == tmp + QStringLiteral("/nope.map"),
@@ -73,15 +90,15 @@ int main(int argc, char **argv)
     check(mhw::resolveDataFile(QString(), worldName, {}, fallback) == fallback,
           "no search dirs at all -> build default is named");
 
-    // 3. compile-time fallback is used when only it exists
+    // 3. build-tree fallback is used when only it exists
     touch(QFileInfo(fallback).absolutePath(), worldName);
     check(mhw::resolveDataFile(QString(), worldName, dirs, fallback) == fallback,
-          "compile-time fallback is the last resort");
+          "build-tree fallback is the last resort");
 
     // 4. appdir/data beats the fallback
     touch(appData, worldName);
     check(mhw::resolveDataFile(QString(), worldName, dirs, fallback) == appData + "/" + worldName,
-          "appdir/data beats the compile-time fallback");
+          "appdir/data beats the build-tree fallback");
 
     // 5. XDG home beats the fallback but loses to appdir
     touch(xdgHome + QStringLiteral("/monster-overlay/data"), worldName);
@@ -95,6 +112,18 @@ int main(int argc, char **argv)
     check(mhw::resolveDataFile(QString(), worldName, {cjkDir}, fallback) == cjkFile,
           "CJK directory path resolves byte-exact");
 
+    // Shared candidate lists preserve directory priority while allowing the
+    // final loader to continue after a missing or malformed file.
+    const QString explicitBad = tmp + QStringLiteral("/explicit-bad.map");
+    check(mhw::worldMapCandidates(explicitBad, worldName, dirs, fallback)
+              == QStringList{explicitBad},
+          "World explicit map is the only candidate (no implicit fallback)");
+    check(mhw::worldMapCandidates(QString(), worldName, {appData, xdgSys1}, fallback)
+              == QStringList{appData + QLatin1Char('/') + worldName,
+                             xdgSys1 + QLatin1Char('/') + worldName,
+                             fallback},
+          "World candidates are every data dir in order, then fallback");
+
     // 7. Rise-style glob: first dir containing any version wins
     const QString riseDirA = tmp + QStringLiteral("/rise-a");
     const QString riseDirB = tmp + QStringLiteral("/rise-b");
@@ -106,9 +135,38 @@ int main(int argc, char **argv)
                                       QStringLiteral("MonsterHunterRise.*.map"),
                                       riseDirB + QStringLiteral("/MonsterHunterRise.16.0.2.0.map"))
               == riseDirB,
-          "glob scan falls back to the compile-time directory");
+          "glob scan falls back to the fallback directory");
     check(mhw::firstDataDirContaining({riseDirA}, QStringLiteral("MonsterHunterRise.*.map")).isEmpty(),
           "glob scan returns empty when nothing matches");
+
+    // Rise ordering is directory-first, numeric-version-second. A newer map
+    // in a lower-priority directory must not outrank any valid map in an
+    // earlier directory, and a broad-glob false positive must not mask later
+    // directories.
+    const QString riseDirInvalid = tmp + QStringLiteral("/rise-invalid");
+    const QString riseDirLater = tmp + QStringLiteral("/rise-later");
+    touch(riseDirInvalid, QStringLiteral("MonsterHunterRise.boom.map"));
+    touch(riseDirLater, QStringLiteral("MonsterHunterRise.16.0.2.0.map"));
+    const QString riseFallback = tmp + QStringLiteral("/src-tree/data/MonsterHunterRise.1.0.0.0.map");
+    check(mhw::riseMapCandidates(QString(), {riseDirInvalid, riseDirLater}, riseFallback)
+              == QStringList{riseDirLater + QStringLiteral("/MonsterHunterRise.16.0.2.0.map"),
+                             riseFallback},
+          "invalid Rise filename in an earlier dir cannot mask a later valid map");
+
+    const QString risePriorityA = tmp + QStringLiteral("/rise-priority-a");
+    const QString risePriorityB = tmp + QStringLiteral("/rise-priority-b");
+    touch(risePriorityA, QStringLiteral("MonsterHunterRise.9.2.0.0.map"));
+    touch(risePriorityA, QStringLiteral("MonsterHunterRise.10.0.0.0.map"));
+    touch(risePriorityB, QStringLiteral("MonsterHunterRise.99.0.0.0.map"));
+    check(mhw::riseMapCandidates(QString(), {risePriorityA, risePriorityB}, riseFallback)
+              == QStringList{risePriorityA + QStringLiteral("/MonsterHunterRise.10.0.0.0.map"),
+                             risePriorityA + QStringLiteral("/MonsterHunterRise.9.2.0.0.map"),
+                             risePriorityB + QStringLiteral("/MonsterHunterRise.99.0.0.0.map"),
+                             riseFallback},
+          "Rise candidates keep dir priority and sort four-part versions descending per dir");
+    check(mhw::riseMapCandidates(explicitBad, {risePriorityA, risePriorityB}, riseFallback)
+              == QStringList{explicitBad},
+          "Rise explicit map is the only candidate (no implicit fallback)");
 
     // 8. duplicate inputs are collapsed, order preserved
     const QStringList dup = mhw::dataSearchDirs(tmp + QStringLiteral("/app"),
@@ -120,6 +178,50 @@ int main(int argc, char **argv)
     const QStringList noDup = mhw::dataSearchDirs(tmp + QStringLiteral("/app"), tmp, {tmp});
     check(noDup.count(tmp + QStringLiteral("/monster-overlay/data")) == 1,
           "XDG_DATA_HOME and an identical XDG_DATA_DIRS entry collapse");
+
+    // XDG paths are valid only when absolute. A bad XDG_DATA_HOME is treated
+    // as unset (the standard ~/.local/share default), and relative / tilde
+    // XDG_DATA_DIRS entries are ignored rather than resolved against cwd.
+    const QStringList filteredXdg = mhw::dataSearchDirs(
+        tmp + QStringLiteral("/app"), QStringLiteral("relative-home"),
+        {QStringLiteral("relative-system"), QStringLiteral("~/shared"), xdgSys1});
+    check(filteredXdg.contains(QDir::homePath() + QStringLiteral("/.local/share/monster-overlay/data")),
+          "relative XDG_DATA_HOME falls back to the absolute home default");
+    check(!filteredXdg.contains(QStringLiteral("relative-system/monster-overlay/data"))
+              && !filteredXdg.contains(QStringLiteral("~/shared/monster-overlay/data")),
+          "relative and tilde XDG_DATA_DIRS entries are ignored without expansion");
+    check(filteredXdg.contains(xdgSys1 + QStringLiteral("/monster-overlay/data")),
+          "absolute XDG_DATA_DIRS entry remains in the search list");
+
+    const bool dataDirsWasSet = qEnvironmentVariableIsSet("XDG_DATA_DIRS");
+    const QByteArray savedDataDirs = qgetenv("XDG_DATA_DIRS");
+    qunsetenv("XDG_DATA_DIRS");
+    const QStringList defaultXdgDirs = mhw::defaultDataSearchDirs();
+    check(defaultXdgDirs.contains(QStringLiteral("/usr/local/share/monster-overlay/data"))
+              && defaultXdgDirs.contains(QStringLiteral("/usr/share/monster-overlay/data"))
+              && defaultXdgDirs.indexOf(QStringLiteral("/usr/local/share/monster-overlay/data"))
+                     < defaultXdgDirs.indexOf(QStringLiteral("/usr/share/monster-overlay/data")),
+          "unset XDG_DATA_DIRS uses /usr/local/share:/usr/share in canonical order");
+    qputenv("XDG_DATA_DIRS", QByteArray());
+    const QStringList emptyXdgDirs = mhw::defaultDataSearchDirs();
+    check(emptyXdgDirs.contains(QStringLiteral("/usr/local/share/monster-overlay/data"))
+              && emptyXdgDirs.contains(QStringLiteral("/usr/share/monster-overlay/data")),
+          "empty XDG_DATA_DIRS uses the canonical system defaults");
+    restoreEnvironment("XDG_DATA_DIRS", dataDirsWasSet, savedDataDirs);
+
+    check(mhw::redactHomePath(QStringLiteral("path=/home/alice/file other=/home/alice2/file"),
+                              QStringLiteral("/home/alice"))
+              == QStringLiteral("path=~/file other=/home/alice2/file"),
+          "home redaction replaces a complete path boundary without prefix damage");
+    check(mhw::redactHomePath(QStringLiteral("home=/home/alice, user=/home/alice2"),
+                              QStringLiteral("/home/alice"))
+              == QStringLiteral("home=~, user=/home/alice2"),
+          "home redaction recognizes punctuation after a complete HOME path");
+    check(mhw::redactHomePath(QStringLiteral("/one/two"), QStringLiteral("/"))
+              == QStringLiteral("/one/two")
+              && mhw::redactHomePath(QStringLiteral("/one/two"), QString())
+                     == QStringLiteral("/one/two"),
+          "empty or root HOME never redacts every slash");
 
     QDir(tmp).removeRecursively();
 

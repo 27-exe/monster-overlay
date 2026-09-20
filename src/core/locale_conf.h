@@ -21,6 +21,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QString>
 #include <QStringConverter>
@@ -29,14 +30,38 @@
 
 namespace mhw {
 
-// Canonical path. Mirrors ControlPanel's private maskConfigPath() — the
-// mask writer and this helper must never disagree.
+// Defined below with the locale-detection helpers. Forward-declared here so
+// config reads and startup argument resolution share the same canonicalizer.
+inline QString canonicalLocale(const QString& raw);
+
+// Canonical path shared by the console mask writer and overlay locale reader.
+// Keeping it here avoids duplicate path construction drifting between them.
 inline QString localeConfPath()
 {
     const QString dir = QStandardPaths::writableLocation(
                             QStandardPaths::GenericConfigLocation)
                         + QStringLiteral("/monster-overlay");
     return dir + QStringLiteral("/monster-overlay.conf");
+}
+
+// Copy a legacy default-QSettings file only on the first launch under the
+// stable organization name. Values already present in the destination win,
+// and the legacy file is deliberately retained for rollback.
+inline bool migrateLegacySettingsFile(const QString& legacyPath,
+                                      const QString& currentPath)
+{
+    if (!QFileInfo::exists(legacyPath) || QFileInfo::exists(currentPath))
+        return true;
+
+    QSettings legacy(legacyPath, QSettings::IniFormat);
+    QSettings current(currentPath, QSettings::IniFormat);
+    for (const QString& key : legacy.allKeys()) {
+        if (!current.contains(key))
+            current.setValue(key, legacy.value(key));
+    }
+    current.sync();
+    return legacy.status() == QSettings::NoError
+           && current.status() == QSettings::NoError;
 }
 
 // Value of the `locale=` line, or an empty string when the file or the
@@ -52,7 +77,7 @@ inline QString readLocaleFromConf(const QString& path = localeConfPath())
     while (!in.atEnd()) {
         const QString line = in.readLine().trimmed();
         if (line.startsWith(QStringLiteral("locale=")))
-            return line.mid(7).trimmed();
+            return canonicalLocale(line.mid(7).trimmed());
     }
     return {};
 }
@@ -66,6 +91,7 @@ inline bool writeLocaleToConf(const QString& locale,
 {
     if (locale.isEmpty())
         return false;
+    const QString canonical = canonicalLocale(locale);
 
     QStringList keep;
     {
@@ -80,7 +106,7 @@ inline bool writeLocaleToConf(const QString& locale,
             }
         }
     }
-    keep << QStringLiteral("locale=") + locale;
+    keep << QStringLiteral("locale=") + canonical;
 
     QDir().mkpath(QFileInfo(path).absolutePath());
     QSaveFile out(path);
@@ -121,6 +147,17 @@ inline QString normalizeLocaleCode(const QString& raw)
     return value;
 }
 
+// Canonicalize a locale request to one of the two shipped locale ids.
+// Language names are case/underscore/encoding agnostic; C/POSIX, empty and
+// unknown requests deliberately use the safe English fallback.
+inline QString canonicalLocale(const QString& raw)
+{
+    const QString code = normalizeLocaleCode(raw);
+    if (code == QLatin1String("zh") || code.startsWith(QLatin1String("zh-")))
+        return QStringLiteral("zh-CN");
+    return QStringLiteral("en-US");
+}
+
 // Precedence mirrors what the desktop itself uses for messages:
 // LC_ALL > LC_MESSAGES > LANG, then gettext's LANGUAGE list.
 inline QString detectLocaleFromEnv(const QString& lcAll, const QString& lcMessages,
@@ -128,18 +165,21 @@ inline QString detectLocaleFromEnv(const QString& lcAll, const QString& lcMessag
                                    const QString& language = QString())
 {
     for (const QString& raw : {lcAll, lcMessages, lang}) {
+        // An explicitly set C/POSIX locale is an English decision, not an
+        // absent variable. Empty means the variable was not supplied by the
+        // caller and permits falling through to the next precedence level.
+        if (raw.trimmed().isEmpty())
+            continue;
         const QString code = normalizeLocaleCode(raw);
         if (code.isEmpty())
-            continue;
-        return code.startsWith(QLatin1String("zh")) ? QStringLiteral("zh-CN")
-                                                    : QStringLiteral("en-US");
+            return QStringLiteral("en-US");
+        return canonicalLocale(code);
     }
     for (const QString& entry : language.split(QLatin1Char(':'), Qt::SkipEmptyParts)) {
         const QString code = normalizeLocaleCode(entry);
         if (code.isEmpty())
             continue;
-        return code.startsWith(QLatin1String("zh")) ? QStringLiteral("zh-CN")
-                                                    : QStringLiteral("en-US");
+        return canonicalLocale(code);
     }
     return QStringLiteral("en-US");
 }
@@ -159,10 +199,10 @@ inline QString resolveStartupLocale(const QString& cliOverride, const QString& c
                                     const QString& detected)
 {
     if (!cliOverride.isEmpty())
-        return cliOverride;
+        return canonicalLocale(cliOverride);
     if (!confLocale.isEmpty())
-        return confLocale;
-    return detected;
+        return canonicalLocale(confLocale);
+    return canonicalLocale(detected);
 }
 
 inline QString resolveStartupLocale(const QString& cliOverride,

@@ -105,6 +105,8 @@ int main()
 {
     const std::filesystem::path root{MONSTER_SOURCE_DIR};
     const std::string mainSource = compact(readFile(root / "src/main.cpp"));
+    const std::string readerSource =
+        compact(readFile(root / "src/rise/rise_damage_reader.cpp"));
     const std::string cmakeSource = compact(readFile(root / "CMakeLists.txt"));
     const std::string_view overlayTarget =
         cmakeCall(cmakeSource, "add_executable(monster-overlay");
@@ -133,12 +135,44 @@ int main()
                   "main includes the fourth panel header");
     checkContains(mainSource, "petDamagePanel.updateRiseDamage(damageSnapshot);",
                   "main delivers Rise snapshots to the fourth panel");
+    checkContains(mainSource,
+                  "petDamagePanel.setVisible(petDamagePanel.panelEnabled());",
+                  "Rise keeps the enabled pets surface mounted while waiting for data");
+    checkContains(mainSource, "diagnosticReader->lastErrorText()",
+                  "main surfaces the selected Rise feed failure reason");
+    checkContains(mainSource, "rise damage feed: available",
+                  "main reports recovery after a feed failure");
+    checkContains(mainSource, "mhr_damage_a.json",
+                  "main reads REFramework data slot A");
+    checkContains(mainSource, "mhr_damage_b.json",
+                  "main reads REFramework data slot B");
+    checkContains(mainSource, "findRiseInstallDir()",
+                  "main locates the portable Rise data directory at runtime");
+    checkContains(readerSource, "O_NOFOLLOW",
+                  "reader opens the feed without following path swaps to symlinks");
+    checkContains(readerSource, "O_NONBLOCK",
+                  "reader cannot block the UI loop on a swapped FIFO");
+    checkContains(readerSource, "fstat(",
+                  "reader validates the inode actually opened");
+    checkContains(readerSource, "S_ISREG(",
+                  "reader accepts only a regular opened inode");
     checkContains(overlayTarget, "src/ui/panel_pet_damage.h",
                   "product target tracks the fourth panel header");
     checkContains(overlayTarget, "src/ui/panel_pet_damage.cpp",
                   "product target compiles the fourth panel source");
     checkContains(coreTarget, "src/rise/rise_damage_types.h",
                   "core target tracks the shared Rise damage types");
+
+    // v0.10.1: the companion (pets) surface is Rise-only end to end.
+    const std::string panelSource =
+        compact(readFile(root / "src/ui/control_panel.cpp"));
+    checkContains(mainSource,
+                  "setPanelEnabled(isRise&&!parser.isSet(noPetsOption))",
+                  "World never mounts the Rise-only pet surface");
+    checkContains(panelSource, "navButton->setVisible(petsAvailable)",
+                  "console hides the pets rail card per game");
+    checkContains(panelSource, "setPanelPresent(3,petsAvailable)",
+                  "console removes the pets stage tile per game");
 
     if (failures == 0)
         std::cout << "\nrise-damage-wiring-tests: ALL PASSED\n";

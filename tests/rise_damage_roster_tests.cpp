@@ -21,7 +21,9 @@ namespace {
 
 mhw::PartyMemberSnapshot rosterMember(QString name, int entityIndex,
                                       int displaySlot, bool local,
-                                      mhw::PartyMemberKind kind)
+                                      mhw::PartyMemberKind kind,
+                                      int weaponId = -1,
+                                      int masterRank = 0)
 {
     mhw::PartyMemberSnapshot member;
     member.name = std::move(name);
@@ -29,6 +31,8 @@ mhw::PartyMemberSnapshot rosterMember(QString name, int entityIndex,
     member.slot = displaySlot;
     member.local = local;
     member.kind = kind;
+    member.weaponId = weaponId;
+    member.masterRank = masterRank;
     return member;
 }
 
@@ -56,11 +60,11 @@ bool joinsPlayersAndCompanionsByEntityIndex()
     game.game = mhw::GameId::Rise;
     game.party = {
         rosterMember(QStringLiteral("Remote"), 0, 3, false,
-                     mhw::PartyMemberKind::Player),
+                     mhw::PartyMemberKind::Player, 13, 241),
         rosterMember(QStringLiteral("Self"), 2, 0, true,
-                     mhw::PartyMemberKind::Player),
+                     mhw::PartyMemberKind::Player, 3, 999),
         rosterMember(QStringLiteral("Fiorayne"), 4, 1, false,
-                     mhw::PartyMemberKind::Companion),
+                     mhw::PartyMemberKind::Companion, 0, 6),
     };
 
     mhw::RiseDamageSnapshot damage;
@@ -82,17 +86,23 @@ bool joinsPlayersAndCompanionsByEntityIndex()
     CHECK(damage.actors[0].displaySlot == 3);
     CHECK(!damage.actors[0].local);
     CHECK(damage.actors[0].name == QStringLiteral("Remote"));
+    CHECK(damage.actors[0].weaponId == 13);
+    CHECK(damage.actors[0].masterRank == 241);
 
     // The local hunter is entity 2 in this fixture. Entity zero must not win
     // simply because the producer historically treated it as local.
     CHECK(damage.actors[1].displaySlot == 0);
     CHECK(damage.actors[1].local);
     CHECK(damage.actors[1].name == QStringLiteral("Self"));
+    CHECK(damage.actors[1].weaponId == 3);
+    CHECK(damage.actors[1].masterRank == 999);
 
     CHECK(damage.actors[2].kind == mhw::RiseDamageActorKind::Companion);
     CHECK(damage.actors[2].displaySlot == 1);
     CHECK(!damage.actors[2].local);
     CHECK(damage.actors[2].name == QStringLiteral("Fiorayne"));
+    CHECK(damage.actors[2].weaponId == 0);
+    CHECK(damage.actors[2].masterRank == 6);
     return true;
 }
 
@@ -110,6 +120,8 @@ bool joinsPetToOwnerWithoutInventingSpecies()
         damageActor(QStringLiteral("pet:2"), mhw::RiseDamageActorKind::Pet,
                     7, 2, 91, false, QStringLiteral(""),
                     QStringLiteral("producer owner")),
+        damageActor(QStringLiteral("pet-entity:4"), mhw::RiseDamageActorKind::Pet,
+                    4, -1, -1, false, QStringLiteral("")),
     };
 
     mhw::enrichRiseDamageSnapshot(damage, game);
@@ -122,6 +134,12 @@ bool joinsPetToOwnerWithoutInventingSpecies()
     // Pet events are one owner aggregate. The owner is a truthful display
     // identity; assigning Palico/Palamute or an individual pet name is not.
     CHECK(pet.name == QStringLiteral("Self"));
+    const auto &extraPet = damage.actors[1];
+    CHECK(extraPet.ownerEntityIndex == 2);
+    CHECK(extraPet.displaySlot == 0);
+    CHECK(extraPet.local);
+    CHECK(extraPet.ownerName == QStringLiteral("Self"));
+    CHECK(extraPet.name == QStringLiteral("Self"));
     return true;
 }
 
@@ -160,6 +178,84 @@ bool preservesProducerDataWhenRosterCannotJoin()
     return true;
 }
 
+bool mapsFollowerBuddiesByRawSlot()
+{
+    mhw::GameSnapshot game;
+    game.game = mhw::GameId::Rise;
+    game.party = {
+        rosterMember(QStringLiteral("Self"), 0, 0, true,
+                     mhw::PartyMemberKind::Player),
+        rosterMember(QStringLiteral("Fiorayne"), 4, 1, false,
+                     mhw::PartyMemberKind::Companion),
+        rosterMember(QStringLiteral("Hinoa"), 5, 2, false,
+                     mhw::PartyMemberKind::Companion),
+    };
+
+    mhw::RiseDamageSnapshot damage;
+    damage.actors = {
+        damageActor(QStringLiteral("pet-entity:4"),
+                    mhw::RiseDamageActorKind::Pet, 4, -1, -1, false,
+                    QStringLiteral("")),
+        damageActor(QStringLiteral("pet-entity:5"),
+                    mhw::RiseDamageActorKind::Pet, 5, -1, -1, false,
+                    QStringLiteral("")),
+        damageActor(QStringLiteral("pet-entity:6"),
+                    mhw::RiseDamageActorKind::Pet, 6, -1, -1, false,
+                    QStringLiteral("")),
+    };
+
+    mhw::enrichRiseDamageSnapshot(damage, game);
+
+    // The owner-less second buddy belongs to the single local hunter even
+    // when followers are present.
+    CHECK(damage.actors[0].ownerEntityIndex == 0);
+    CHECK(damage.actors[0].ownerName == QStringLiteral("Self"));
+    CHECK(damage.actors[0].name == QStringLiteral("Self"));
+
+    // Follower buddies keep the owner name plus the panel fallback label so
+    // the row reads as "Fiorayne · pet", never as her own damage row.
+    CHECK(damage.actors[1].ownerEntityIndex == 4);
+    CHECK(damage.actors[1].ownerName == QStringLiteral("Fiorayne"));
+    CHECK(damage.actors[1].name.isEmpty());
+    CHECK(damage.actors[2].ownerEntityIndex == 5);
+    CHECK(damage.actors[2].ownerName == QStringLiteral("Hinoa"));
+    CHECK(damage.actors[2].name.isEmpty());
+    return true;
+}
+
+bool keepsFallbackWhenFollowersAreAbsent()
+{
+    // Teammate sessions (no followers): raw 5..9 keep the historical
+    // owner=id-5 join, and the owner-less second buddy stays untouched.
+    mhw::GameSnapshot game;
+    game.game = mhw::GameId::Rise;
+    game.party = {
+        rosterMember(QStringLiteral("Self"), 0, 0, true,
+                     mhw::PartyMemberKind::Player),
+        rosterMember(QStringLiteral("Remote"), 3, 1, false,
+                     mhw::PartyMemberKind::Player),
+    };
+
+    mhw::RiseDamageSnapshot damage;
+    damage.actors = {
+        damageActor(QStringLiteral("pet-entity:4"),
+                    mhw::RiseDamageActorKind::Pet, 4, -1, -1, false,
+                    QStringLiteral("")),
+        damageActor(QStringLiteral("pet-entity:5"),
+                    mhw::RiseDamageActorKind::Pet, 5, -1, -1, false,
+                    QStringLiteral("")),
+    };
+
+    mhw::enrichRiseDamageSnapshot(damage, game);
+
+    CHECK(damage.actors[0].ownerEntityIndex == -1);
+    CHECK(damage.actors[0].ownerName.isEmpty());
+    CHECK(damage.actors[1].ownerEntityIndex == 0);
+    CHECK(damage.actors[1].ownerName == QStringLiteral("Self"));
+    CHECK(damage.actors[1].name == QStringLiteral("Self"));
+    return true;
+}
+
 bool refusesAmbiguousRosterIdentity()
 {
     mhw::GameSnapshot game;
@@ -195,6 +291,10 @@ int main()
     if (!preservesProducerDataWhenRosterCannotJoin())
         return 1;
     if (!refusesAmbiguousRosterIdentity())
+        return 1;
+    if (!mapsFollowerBuddiesByRawSlot())
+        return 1;
+    if (!keepsFallbackWhenFollowersAreAbsent())
         return 1;
 
     std::fprintf(stderr, "PASS Rise damage roster enrichment\n");

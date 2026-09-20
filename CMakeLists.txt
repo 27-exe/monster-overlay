@@ -9,6 +9,7 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Svg)
 find_package(LayerShellQt REQUIRED)
+find_package(Threads REQUIRED)
 
 # Core library: foundational types, memory reader, string table.
 # Other modules (address_map, monster, player, quest, world, ui)
@@ -18,6 +19,12 @@ add_library(monster-core STATIC
     src/core/string_table.cpp
     src/core/game_detector.h
     src/core/game_detector.cpp
+    src/core/steam_game_locator.h
+    src/core/steam_game_locator.cpp
+    src/core/rise_reframework_manager.h
+    src/core/rise_reframework_manager.cpp
+    src/core/reframework_fetcher.h
+    src/core/reframework_fetcher.cpp
     src/core/map_paths.h
     src/core/map_paths.cpp
     src/rise/mhr_types.h
@@ -38,7 +45,7 @@ add_library(monster-core STATIC
     src/world/world_types.cpp
 )
 target_include_directories(monster-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(monster-core PUBLIC Qt6::Core)
+target_link_libraries(monster-core PUBLIC Qt6::Core Threads::Threads)
 target_compile_options(monster-core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(monster-overlay
@@ -75,8 +82,6 @@ target_link_libraries(monster-overlay PRIVATE
 
 target_compile_definitions(monster-overlay PRIVATE
     MONSTER_VERSION="${PROJECT_VERSION}"
-    MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
-    MHR_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterRise.16.0.2.0.map"
 )
 
 target_compile_options(monster-overlay PRIVATE -Wall -Wextra -Wpedantic)
@@ -111,9 +116,6 @@ target_link_libraries(snap-player-demo PRIVATE
     monster-core
 )
 target_include_directories(snap-player-demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_compile_definitions(snap-player-demo PRIVATE
-    MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
-)
 target_compile_options(snap-player-demo PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(snap-all-demo
@@ -144,9 +146,6 @@ target_link_libraries(snap-all-demo PRIVATE
     monster-core
 )
 target_include_directories(snap-all-demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_compile_definitions(snap-all-demo PRIVATE
-    MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
-)
 target_compile_options(snap-all-demo PRIVATE -Wall -Wextra -Wpedantic)
 
 
@@ -154,6 +153,8 @@ target_compile_options(snap-all-demo PRIVATE -Wall -Wextra -Wpedantic)
 # panel paint code as the live overlay to preview section toggles.
 add_executable(monster-control
     src/main_control.cpp
+    src/ui/rise_reframework_bridge.h
+    src/ui/rise_reframework_bridge.cpp
     src/mhw_reader.cpp
     src/mhw_reader.h
     src/player/player_reader.cpp
@@ -222,7 +223,6 @@ target_include_directories(monster-control PRIVATE
 )
 target_compile_definitions(monster-control PRIVATE
     MONSTER_VERSION="${PROJECT_VERSION}"
-    MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
 )
 target_compile_options(monster-control PRIVATE -Wall -Wextra -Wpedantic)
 
@@ -277,10 +277,60 @@ target_include_directories(monster-control-l2-smoke PRIVATE ${CMAKE_CURRENT_SOUR
 target_include_directories(monster-control-l2-smoke PRIVATE
     ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
 )
-target_compile_definitions(monster-control-l2-smoke PRIVATE
-    MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
-)
 target_compile_options(monster-control-l2-smoke PRIVATE -Wall -Wextra -Wpedantic)
+
+# Rise-only REFramework console smoke test: builds the full control console
+# and verifies the Damage-inspector management card (visible with its three
+# action buttons in Rise mode, hidden in World mode). Read-only against the
+# Steam tree; config writes go to a redirected XDG_CONFIG_HOME.
+add_executable(monster-control-rise-rf-smoke
+    tests/control_reframework_smoke.cpp
+    src/mhw_reader.cpp
+    src/mhw_reader.h
+    src/player/player_reader.cpp
+    src/quest/quest_reader.cpp
+    src/world/world_reader.cpp
+    src/monster/monster_reader.cpp
+    src/monster/part_schemas.cpp
+    src/monster/target_selector.cpp
+    src/core/string_table.cpp
+    src/ui/formatters.cpp
+    src/ui/icon.cpp
+    src/ui/panel.cpp
+    src/ui/panel_player.cpp
+    src/ui/panel_damage.cpp
+    src/ui/panel_monster.cpp
+    src/ui/panel_pet_damage.h
+    src/ui/panel_pet_damage.cpp
+    src/ui/control_panel.cpp
+    src/ui/hud_canvas.cpp
+    src/ui/hud_canvas.h
+    src/ui/panel_source.cpp
+    src/ui/panel_source.h
+    src/ui/screen_query.cpp
+    src/ui/screen_query.h
+    src/ui/toggle_chip.cpp
+    src/ui/toggle_chip.h
+    src/ui/section_row.cpp
+    src/ui/section_row.h
+    src/ui/section_count_bar.cpp
+    src/ui/section_count_bar.h
+    src/ui/ui_theme.cpp
+    src/ui/ui_theme.h
+    src/world/world_types.cpp
+    src/resources/resources.qrc
+    assets/icons.qrc
+)
+target_link_libraries(monster-control-rise-rf-smoke PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+    LayerShellQt::Interface
+    monster-core
+)
+target_include_directories(monster-control-rise-rf-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(monster-control-rise-rf-smoke PRIVATE
+    ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
+)
+target_compile_options(monster-control-rise-rf-smoke PRIVATE -Wall -Wextra -Wpedantic)
 
 # v0.5 P0 invariant test: Panel setters + HudCanvas toggle + hit-test.
 # Builds without monster-control so it doesn't pull in the full GUI shell.
@@ -329,9 +379,6 @@ target_include_directories(monster-control-p0-test PRIVATE ${CMAKE_CURRENT_SOURC
 target_include_directories(monster-control-p0-test PRIVATE
     ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
 )
-target_compile_definitions(monster-control-p0-test PRIVATE
-    MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
-)
 target_compile_options(monster-control-p0-test PRIVATE -Wall -Wextra -Wpedantic)
 
 include(CTest)
@@ -342,7 +389,9 @@ if(BUILD_TESTING)
     # owns a fixed temporary config path, so keep it serial under `ctest -j`.
     add_test(NAME monster-control-l2-smoke COMMAND monster-control-l2-smoke)
     add_test(NAME monster-control-p0-test COMMAND monster-control-p0-test)
+    add_test(NAME monster-control-rise-rf-smoke COMMAND monster-control-rise-rf-smoke)
     set_tests_properties(monster-control-l2-smoke monster-control-p0-test
+        monster-control-rise-rf-smoke
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     set_tests_properties(monster-control-l2-smoke PROPERTIES RUN_SERIAL TRUE)
 
@@ -441,7 +490,6 @@ if(BUILD_TESTING)
     target_link_libraries(monster-probe PRIVATE Qt6::Core monster-core)
     target_include_directories(monster-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
-    target_compile_definitions(monster-probe PRIVATE MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map")
 
     add_executable(monster-scan
         tests/monster_scan.cpp
@@ -450,7 +498,6 @@ if(BUILD_TESTING)
     target_link_libraries(monster-scan PRIVATE Qt6::Core monster-core)
     target_include_directories(monster-scan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-scan PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
-    target_compile_definitions(monster-scan PRIVATE MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map")
 
     add_executable(monster-probe-parts
         tests/monster_probe_parts.cpp
@@ -459,7 +506,6 @@ if(BUILD_TESTING)
     target_link_libraries(monster-probe-parts PRIVATE Qt6::Core monster-core)
     target_include_directories(monster-probe-parts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-parts PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
-    target_compile_definitions(monster-probe-parts PRIVATE MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map")
 
     add_executable(monster-probe-ailments
         tests/monster_probe_ailments.cpp
@@ -476,7 +522,6 @@ if(BUILD_TESTING)
     target_link_libraries(monster-probe-ailments-watch PRIVATE Qt6::Core monster-core)
     target_include_directories(monster-probe-ailments-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-ailments-watch PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
-    target_compile_definitions(monster-probe-ailments-watch PRIVATE MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map")
 
     add_executable(monster-probe-mantles
         tests/monster_probe_mantles.cpp
@@ -554,6 +599,33 @@ if(BUILD_TESTING)
     target_include_directories(monster-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-core-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME monster-core-tests COMMAND monster-core-tests)
+
+    # Steam/Rise installation discovery and REFramework lifecycle tests are
+    # QtCore-only and link the same production core library used by the
+    # console. They never touch the real Steam or game directory.
+    add_executable(steam-game-locator-tests
+        tests/steam_game_locator_tests.cpp
+    )
+    target_link_libraries(steam-game-locator-tests PRIVATE monster-core)
+    target_include_directories(steam-game-locator-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(steam-game-locator-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME steam-game-locator-tests COMMAND steam-game-locator-tests)
+
+    add_executable(rise-reframework-manager-tests
+        tests/rise_reframework_manager_tests.cpp
+    )
+    target_link_libraries(rise-reframework-manager-tests PRIVATE monster-core)
+    target_include_directories(rise-reframework-manager-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(rise-reframework-manager-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-reframework-manager-tests COMMAND rise-reframework-manager-tests)
+
+    add_executable(reframework-fetcher-tests
+        tests/reframework_fetcher_tests.cpp
+    )
+    target_link_libraries(reframework-fetcher-tests PRIVATE monster-core)
+    target_include_directories(reframework-fetcher-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(reframework-fetcher-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME reframework-fetcher-tests COMMAND reframework-fetcher-tests)
 
     # i18n locale plumbing: conf read/write (locale_conf.h), the overlay's
     # change-detection state machine (locale_sync.h) and the per-locale
@@ -718,8 +790,7 @@ target_include_directories(monster-doctor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sr
 target_compile_options(monster-doctor PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(monster-doctor PRIVATE
     MONSTER_VERSION="${PROJECT_VERSION}"
-    MHW_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterWorld.421810.map"
-    MHR_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterRise.16.0.2.0.map")
+)
 
 add_executable(rise-probe EXCLUDE_FROM_ALL
     tests/rise_probe.cpp
@@ -739,5 +810,3 @@ add_executable(rise-probe EXCLUDE_FROM_ALL
 target_link_libraries(rise-probe PRIVATE Qt6::Core monster-core)
 target_include_directories(rise-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(rise-probe PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(rise-probe PRIVATE
-    MHR_DEFAULT_MAP="${CMAKE_CURRENT_SOURCE_DIR}/data/MonsterHunterRise.16.0.2.0.map")

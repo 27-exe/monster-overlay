@@ -31,6 +31,11 @@ public:
 
     // 0 = player, 1 = monster, 2 = damage, 3 = pets.
     void setPanelPixmap(int index, const QPixmap &pixmap, bool enabled);
+    // v0.10.1: a panel that does not exist for the selected game (Rise-only
+    // pets while World is selected) is removed from the preview entirely —
+    // not painted as a disabled placeholder and not hit-testable.
+    void setPanelPresent(int index, bool present);
+    [[nodiscard]] bool panelPresent(int index) const;
     void setSelectedPanel(int index);
     void bindPanel(int index, const PanelSource *src);
 
@@ -79,6 +84,7 @@ private:
     struct Slot {
         QPixmap pixmap;
         bool enabled{true};
+        bool present{true};
         bool bound{false};
         const PanelSource *src{nullptr};
         QRectF lastTarget_;

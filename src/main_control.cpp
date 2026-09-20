@@ -14,6 +14,7 @@
 // to every overlay it spawns (see ControlPanel::launchOverlay()).
 
 #include "ui/control_panel.h"
+#include "ui/rise_reframework_bridge.h"
 #include "ui/screen_query.h"
 #include "ui/ui_theme.h"
 #include "core/locale_conf.h"
@@ -21,6 +22,8 @@
 
 #include <QApplication>
 #include <QDebug>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QString>
 #include <cstdio>
 
@@ -43,14 +46,35 @@ QString takeValue(int argc, char *argv[], int &i, const QString &flag)
 
 int main(int argc, char *argv[])
 {
+    // systemd/journald may otherwise consume Qt diagnostics before shell and
+    // CI stderr redirection sees them. Respect an explicit user override.
+    if (!qEnvironmentVariableIsSet("QT_FORCE_STDERR_LOGGING"))
+        qputenv("QT_FORCE_STDERR_LOGGING", "1");
+
     QApplication app(argc, argv);
+    // Default QSettings must have stable identities before the first instance
+    // is created. Older releases omitted the organization and therefore wrote
+    // under "Unknown Organization".
+    app.setOrganizationName(QStringLiteral("monster-overlay"));
+    app.setApplicationName(QStringLiteral("monster-control"));
+    {
+        QSettings current;
+        const QString legacy = QStandardPaths::writableLocation(
+                                   QStandardPaths::GenericConfigLocation)
+                               + QStringLiteral(
+                                   "/Unknown Organization/monster-control.conf");
+        if (!mhw::migrateLegacySettingsFile(legacy, current.fileName())) {
+            qWarning("monster-control: failed to migrate legacy settings from %s to %s",
+                     qPrintable(legacy), qPrintable(current.fileName()));
+        }
+    }
+
     QApplication::setApplicationVersion(QStringLiteral(MONSTER_VERSION));
     // Same Kvantum blur opt-out as monster-overlay (see src/main.cpp): the
     // Kvantum style plugin auto-requests KWin blur-behind for translucent
     // top-levels via BlurHelper::update(). Fusion skips the plugin so the
     // console's translucent chrome stays crisp on Plasma 6.7.
     app.setStyle(QStringLiteral("Fusion"));
-    app.setApplicationName(QStringLiteral("monster-control"));
     // Quit as soon as the last visible window is closed. Required because
     // the three panel previews are QMainWindows in the live overlay —
     // without this, closing the console's main window leaves them around
@@ -124,12 +148,12 @@ int main(int argc, char *argv[])
                                : !confLocale.isEmpty() ? "conf"
                                                        : "system";
     if (!mhw::StringTable::instance().load(locale)) {
-        qWarning("failed to load %s strings; falling back to zh-CN",
+        qWarning("failed to load %s strings; falling back to en-US",
                  qPrintable(locale));
-        locale = QStringLiteral("zh-CN");
+        locale = QStringLiteral("en-US");
         localeSource = "fallback (locale dir missing)";
         if (!mhw::StringTable::instance().load(locale))
-            qWarning("failed to load zh-CN strings; falling back to keys");
+            qWarning("failed to load en-US strings; falling back to keys");
     }
 
     if (printLocale) {
@@ -160,6 +184,19 @@ int main(int argc, char *argv[])
         setUiTheme(false);
 
     ControlPanel cp;
+    // REFramework install/removal: the console only emits request signals;
+    // the bridge runs archive preparation (bundled local copy first, pinned
+    // download as fallback), installation and removal on its worker thread,
+    // then reports back through finishRiseReframeworkOperation().
+    RiseReFrameworkBridge reframeworkBridge(QCoreApplication::applicationDirPath());
+    QObject::connect(&cp, &ControlPanel::installRiseReframeworkRequested,
+                     &reframeworkBridge, &RiseReFrameworkBridge::install);
+    QObject::connect(&cp, &ControlPanel::removeRiseLuaRequested,
+                     &reframeworkBridge, &RiseReFrameworkBridge::removeLua);
+    QObject::connect(&cp, &ControlPanel::removeRiseReframeworkRequested,
+                     &reframeworkBridge, &RiseReFrameworkBridge::removeReframework);
+    QObject::connect(&reframeworkBridge, &RiseReFrameworkBridge::finished,
+                     &cp, &ControlPanel::finishRiseReframeworkOperation);
     cp.show();
     app.processEvents();
 

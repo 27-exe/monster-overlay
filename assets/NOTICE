@@ -19,7 +19,6 @@ A copy of the MIT text is included as assets/icons/LICENSE (or see
 upstream). The original XAML resources from HunterPie
 (assets/icons/Abnormalities.*, the ICON_* PNG-style icons) were
 replaced by the equivalent OthelloRhin SVG files where applicable.
-This commit retires the tools/xaml2svg.py conversion pipeline.
 
 This product includes WorkSans (https://github.com/weiweihuanghuang/
 Work-Sans), licensed under the SIL Open Font License, Version 1.1.

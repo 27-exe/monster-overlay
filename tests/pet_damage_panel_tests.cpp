@@ -105,8 +105,7 @@ bool sortsDeterministicallyByOwnerThenSlotThenKey()
     const auto rowsB = mhw::buildPetDamageRows(second, {},
                                                QStringLiteral("Buddy"));
     const QVector<QString> expected{
-        QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("c"),
-        QStringLiteral("z"), QStringLiteral("remote"),
+        QStringLiteral("a"), QStringLiteral("z"), QStringLiteral("remote"),
     };
 
     CHECK(rowsA.size() == expected.size());
@@ -115,6 +114,8 @@ bool sortsDeterministicallyByOwnerThenSlotThenKey()
         CHECK(rowsA[i].actor.key == expected[i]);
         CHECK(rowsB[i].actor.key == expected[i]);
     }
+    CHECK(rowsA[0].damage == 3);
+    CHECK(rowsB[0].damage == 3);
     return true;
 }
 
@@ -130,11 +131,12 @@ bool computesVisiblePetTotalAndPercentages()
     };
     const auto rows = mhw::buildPetDamageRows(actors, {},
                                               QStringLiteral("Buddy"));
-    CHECK(rows.size() == 3);
+    CHECK(rows.size() == 2);
     CHECK(mhw::totalPetDamage(rows) == 100);
-    CHECK(near(rows[0].share, 0.2));
-    CHECK(near(rows[1].share, 0.3));
-    CHECK(near(rows[2].share, 0.5));
+    CHECK(rows[0].damage == 50);
+    CHECK(rows[1].damage == 50);
+    CHECK(near(rows[0].share, 0.5));
+    CHECK(near(rows[1].share, 0.5));
 
     const QVector<mhw::RiseDamageActor> nonPositive{
         actor(QStringLiteral("negative"), mhw::RiseDamageActorKind::Pet,
@@ -172,17 +174,17 @@ bool usesOwnerAggregateNamesAndLocalizedFallbacks()
 
     const auto englishRows = mhw::buildPetDamageRows(
         actors, {}, QStringLiteral("Buddy"));
-    CHECK(englishRows.size() == 8);
+    CHECK(englishRows.size() == 7);
     CHECK(englishRows[0].displayName == QStringLiteral("Alice · Buddy"));
-    CHECK(englishRows[1].displayName == QStringLiteral("Buddy"));
-    CHECK(englishRows[2].displayName == QStringLiteral("Mochi"));
+    CHECK(englishRows[0].damage == 2);
+    CHECK(englishRows[1].displayName == QStringLiteral("Mochi"));
 
     const auto chineseRows = mhw::buildPetDamageRows(
         actors, {}, QStringLiteral("伙伴"));
-    CHECK(chineseRows.size() == 8);
+    CHECK(chineseRows.size() == 7);
     CHECK(chineseRows[0].displayName == QStringLiteral("Alice · 伙伴"));
-    CHECK(chineseRows[1].displayName == QStringLiteral("伙伴"));
-    CHECK(chineseRows[2].displayName == QStringLiteral("Mochi"));
+    CHECK(chineseRows[0].damage == 2);
+    CHECK(chineseRows[1].displayName == QStringLiteral("Mochi"));
     return true;
 }
 

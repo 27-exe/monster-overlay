@@ -95,6 +95,26 @@
       "zh": "中文",
       "en": "EN"
     },
+    "reframework": {
+      "title": "RISE · REFRAMEWORK",
+      "subtitle": "Rise-only REFramework management",
+      "notFound": "RISE INSTALL NOT FOUND IN STEAM LIBRARIES",
+      "gameFound": "STEAM INSTALL: %1",
+      "gameInvalid": "RISE INSTALL IS NOT VALID: %1",
+      "luaMissing": "DAMAGE STATS UNAVAILABLE: overlay Lua producer is not installed",
+      "gameRunning": "CLOSE THE GAME BEFORE CHANGING REFRAMEWORK FILES",
+      "pending": "OPERATION IN PROGRESS…",
+      "success": "SUCCESS: %1",
+      "failure": "FAILED: %1",
+      "noWorker": "No REFramework worker is connected.",
+      "install": "INSTALL REFRAMEWORK + LUA",
+      "removeLua": "REMOVE LUA",
+      "removeReframework": "REMOVE REFRAMEWORK + LUA",
+      "confirmTitle": "Confirm REFramework change",
+      "confirmInstall": "Install REFramework and the overlay Lua into:\n%1?",
+      "confirmRemoveLua": "Remove the managed overlay Lua from:\n%1?",
+      "confirmRemoveReframework": "Remove the overlay Lua and managed REFramework files from:\n%1?"
+    },
     "canvas": {
       "header": "LIVE HUD CANVAS  ·  %1 × %2 PHYS  ·  %3 × %4 LOGICAL  ·  DPR ×%5  ·  %6",
       "disabled": "%1 · DISABLED",

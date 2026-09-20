@@ -5,7 +5,10 @@
 -- Install: drop into reframework/autorun/
 -- Requires: REFramework (dinput8.dll) for Monster Hunter Rise
 --
--- IPC protocol: /tmp/mhr_damage.json, refreshed every 30 frames.
+-- IPC protocol: reframework/data/mhr_damage_{a,b}.json, refreshed every 30
+-- frames. REFramework 1.5.9.1 sandboxes Lua filesystem access to this data
+-- directory. Alternating slots retain one complete snapshot while the other
+-- is truncated and rewritten by fs.write().
 -- Schema v2 (abbreviated):
 -- {
 --   "version": 2,
@@ -28,11 +31,13 @@
 
 log.info("[mhr-overlay-damage] loaded (schema v2)")
 
-local OUTPUT_PATH = "/tmp/mhr_damage.json"
-local TMP_PATH = OUTPUT_PATH .. ".tmp"
+local OUTPUT_PATH = "/tmp/mhr_damage.json" -- legacy fallback path
+local OUTPUT_SLOT_A = "mhr_damage_a.json"
+local OUTPUT_SLOT_B = "mhr_damage_b.json"
 local WRITE_INTERVAL = 30
 local SCHEMA_NAME = "mhr-overlay-damage/v2"
 local MAX_ENTITY_INDEX = 9 -- HunterPie's HuntStatistics entity array has 10 slots.
+local HUNTERPIE_TARGET_ID_OFFSET = 0x2D4 -- Games::Rise::Common::Monster::id
 
 -- HunterPie-verified attacker semantics. Pet damage is one aggregate row per
 -- owner: 0x15..0x17 are not separate buddies. The upstream damage Id cannot
@@ -341,6 +346,8 @@ local function new_diagnostics()
         missing_damage_payload_events = 0,
         unconfirmed_target_events = 0,
         filtered_non_big_target_events = 0,
+        target_id_native_reads = 0,
+        target_id_managed_reads = 0,
         invalid_damage_events = 0,
         quest_state_read_failures = 0,
         training_state_read_failures = 0,
@@ -348,12 +355,17 @@ local function new_diagnostics()
         mixed_pet_source_events = 0,
         unknown_attacker_types = {},
         dropped_source_types = {},
+        unknown_attacker_targets = {},
+        pet_entity_events = {},
+        pet_entity_damage = {},
+        filtered_target_ids = {},
     }
 end
 
 local entities = {}
 local diagnostics = new_diagnostics()
 local write_failures = 0
+local last_publish_api = ""
 local sequence = 0
 local write_frame_count = 0
 local quest_active = false
@@ -371,7 +383,7 @@ local function increment_count(map, key)
     map[key] = (map[key] or 0) + 1
 end
 
-local function record_unknown_source(raw_type)
+local function record_unknown_source(raw_type, target_id)
     diagnostics.dropped_unknown_events = diagnostics.dropped_unknown_events + 1
     if raw_type == nil then
         diagnostics.missing_identity_events = diagnostics.missing_identity_events + 1
@@ -379,6 +391,13 @@ local function record_unknown_source(raw_type)
     end
     increment_count(diagnostics.unknown_attacker_types, raw_type)
     increment_count(diagnostics.dropped_source_types, raw_type)
+    if target_id ~= nil then
+        -- Pair each excluded source with the monster it hit so a live
+        -- session can identify what an unknown attacker type actually is
+        -- (monster brawls, terrain, bombs, riding).
+        increment_count(diagnostics.unknown_attacker_targets,
+            tostring(raw_type) .. "->" .. tostring(target_id))
+    end
 end
 
 local function record_missing_identity(raw_type)
@@ -415,6 +434,26 @@ local function get_enemy_id(monster)
 
     -- Some TDB revisions expose EnemyType directly on EnemyCharacterBase.
     return read_integer(monster, ENEMY_ID_METHODS, ENEMY_ID_FIELDS)
+end
+
+local function get_native_enemy_id(raw_target)
+    -- HunterPie's native Rise hook reads target->id at +0x2D4. The managed
+    -- get_EnemyType accessor is not equivalent on the current TDB and yielded
+    -- values outside the verified large-monster mask.
+    if raw_target == nil or not sdk.to_int64 or not sdk.to_valuetype then return nil end
+    local base_ok, base = pcall(sdk.to_int64, raw_target)
+    if not base_ok or type(base) ~= "number" or base == 0 then return nil end
+    local value_ok, value_type = pcall(
+        sdk.to_valuetype,
+        base + HUNTERPIE_TARGET_ID_OFFSET,
+        "System.Int32"
+    )
+    if not value_ok or value_type == nil then return nil end
+    local field_ok, value = pcall(function()
+        return value_type:get_field("mValue")
+    end)
+    if not field_ok then return nil end
+    return integer_value(value)
 end
 
 local function get_player_name(entity_id)
@@ -518,21 +557,36 @@ local function classify_actor(source_type_raw, entity_id)
     end
 
     if PET_SOURCE_TYPES[source_type_raw] then
-        -- HunterPie confirms that the pet Id is its owner's entity index. All
-        -- three source types aggregate into owner + 5; they do not identify a
-        -- first/second buddy. Only owners 0..3 have a defined aggregate slot.
-        if entity_id < 0 or entity_id > 3 then
-            return nil, "ambiguous_pet_owner"
+        -- Live sessions decode the raw pet ids as:
+        --   0..3 owner-index form (a hunter's first buddy; +5 for the
+        --        historical canonical slot)
+        --   4    the local hunter's second buddy
+        --   5, 6 follower buddies of follower slot 0 / 1 (present only while
+        --        followers are in the party; both carry chip damage)
+        -- Only the C++ roster layer can see whether followers exist, so raw
+        -- ids 4..9 keep their identity here and are re-attributed there.
+        if entity_id >= 0 and entity_id <= 3 then
+            return {
+                key = "pet:" .. string.format("%d", entity_id),
+                kind = "pet",
+                entity_index = entity_id + 5,
+                display_slot = -1,
+                owner_entity_index = entity_id,
+                -- The roster join decides local/display identity.
+                local_actor = false,
+            }, nil
         end
-        return {
-            key = "pet:" .. string.format("%d", entity_id),
-            kind = "pet",
-            entity_index = entity_id + 5,
-            display_slot = -1,
-            owner_entity_index = entity_id,
-            -- Owner 0 is not necessarily local; the roster join decides that.
-            local_actor = false,
-        }, nil
+        if entity_id >= 4 and entity_id <= 9 then
+            return {
+                key = "pet-entity:" .. string.format("%d", entity_id),
+                kind = "pet",
+                entity_index = entity_id,
+                display_slot = -1,
+                owner_entity_index = -1,
+                local_actor = false,
+            }, nil
+        end
+        return nil, "ambiguous_pet_owner"
     end
 
     return nil, "unknown_source_type"
@@ -596,13 +650,22 @@ local function on_damage_pre(args)
         return
     end
 
-    local enemy_id = get_enemy_id(monster)
+    local enemy_id = get_native_enemy_id(args[2])
+    if enemy_id ~= nil then
+        diagnostics.target_id_native_reads = diagnostics.target_id_native_reads + 1
+    else
+        enemy_id = get_enemy_id(monster)
+        if enemy_id ~= nil then
+            diagnostics.target_id_managed_reads = diagnostics.target_id_managed_reads + 1
+        end
+    end
     if enemy_id == nil then
         diagnostics.unconfirmed_target_events = diagnostics.unconfirmed_target_events + 1
         return
     end
     if not is_big_monster_id(enemy_id) then
         diagnostics.filtered_non_big_target_events = diagnostics.filtered_non_big_target_events + 1
+        increment_count(diagnostics.filtered_target_ids, enemy_id)
         return
     end
 
@@ -624,6 +687,16 @@ local function on_damage_pre(args)
         return
     end
 
+    if PET_SOURCE_TYPES[payload.source_type_raw] then
+        -- Which raw entity ids the game reports in this layout and how much
+        -- damage each stream carries. Together with each stream's per-hit
+        -- profile these close the solo/ally/multiplayer ownership questions
+        -- from real sessions without guessing owners.
+        increment_count(diagnostics.pet_entity_events, payload.entity_id)
+        local pet_damage = diagnostics.pet_entity_damage
+        pet_damage[payload.entity_id] = (pet_damage[payload.entity_id] or 0) + total
+    end
+
     local actor, reason = classify_actor(payload.source_type_raw, payload.entity_id)
     if not actor then
         if reason == "ambiguous_pet_owner" then
@@ -633,7 +706,7 @@ local function on_damage_pre(args)
         elseif reason == "invalid_player_entity" then
             record_missing_identity(payload.source_type_raw)
         else
-            record_unknown_source(payload.source_type_raw)
+            record_unknown_source(payload.source_type_raw, enemy_id)
         end
         return
     end
@@ -922,20 +995,33 @@ local function uptime_seconds()
     return finite_number(value, nil)
 end
 
+local CLOCK_REANCHOR_THRESHOLD_MS = 2000
 local wall_clock_anchor_ms = os.time() * 1000
 local uptime_anchor_seconds = uptime_seconds()
-local last_timestamp_ms = wall_clock_anchor_ms
 
 local function current_timestamp_ms()
-    local timestamp = os.time() * 1000
+    local wall_clock_ms = os.time() * 1000
     local current_uptime = uptime_seconds()
-    if uptime_anchor_seconds and current_uptime then
-        timestamp = wall_clock_anchor_ms
-            + math.floor((current_uptime - uptime_anchor_seconds) * 1000)
+
+    if not uptime_anchor_seconds or not current_uptime
+        or current_uptime < uptime_anchor_seconds then
+        wall_clock_anchor_ms = wall_clock_ms
+        uptime_anchor_seconds = current_uptime
+        return wall_clock_ms
     end
-    if timestamp < last_timestamp_ms then timestamp = last_timestamp_ms end
-    last_timestamp_ms = timestamp
-    return timestamp
+
+    local uptime_derived_ms = wall_clock_anchor_ms
+        + math.floor((current_uptime - uptime_anchor_seconds) * 1000)
+    if math.abs(wall_clock_ms - uptime_derived_ms) > CLOCK_REANCHOR_THRESHOLD_MS then
+        -- Uptime smooths sub-second timestamps, but wall time remains authoritative
+        -- after NTP corrections or suspend/resume. Sequence provides ordering, so
+        -- a legitimate backwards wall-clock correction must not be clamped away.
+        wall_clock_anchor_ms = wall_clock_ms
+        uptime_anchor_seconds = current_uptime
+        return wall_clock_ms
+    end
+
+    return uptime_derived_ms
 end
 
 local function build_snapshot(next_sequence)
@@ -952,6 +1038,8 @@ local function build_snapshot(next_sequence)
         ",\"missing_damage_payload_events\":", json_integer(diagnostics.missing_damage_payload_events),
         ",\"unconfirmed_target_events\":", json_integer(diagnostics.unconfirmed_target_events),
         ",\"filtered_non_big_target_events\":", json_integer(diagnostics.filtered_non_big_target_events),
+        ",\"target_id_native_reads\":", json_integer(diagnostics.target_id_native_reads),
+        ",\"target_id_managed_reads\":", json_integer(diagnostics.target_id_managed_reads),
         ",\"invalid_damage_events\":", json_integer(diagnostics.invalid_damage_events),
         ",\"quest_state_read_failures\":", json_integer(diagnostics.quest_state_read_failures),
         ",\"training_state_read_failures\":", json_integer(diagnostics.training_state_read_failures),
@@ -960,8 +1048,13 @@ local function build_snapshot(next_sequence)
         ",\"training_detector\":", json_string(training_detector),
         ",\"mixed_pet_source_events\":", json_integer(diagnostics.mixed_pet_source_events),
         ",\"write_failures\":", json_integer(write_failures),
+        ",\"last_publish_api\":", json_string(last_publish_api),
         ",\"unknown_attacker_types\":", encode_count_map(diagnostics.unknown_attacker_types),
         ",\"dropped_source_types\":", encode_count_map(diagnostics.dropped_source_types),
+        ",\"unknown_attacker_targets\":", encode_count_map(diagnostics.unknown_attacker_targets),
+        ",\"pet_entity_events\":", encode_count_map(diagnostics.pet_entity_events),
+        ",\"pet_entity_damage\":", encode_count_map(diagnostics.pet_entity_damage),
+        ",\"filtered_target_ids\":", encode_count_map(diagnostics.filtered_target_ids),
         "}",
     })
 
@@ -989,6 +1082,7 @@ end
 local managed_file_methods_resolved = false
 local managed_file_replace = nil
 local managed_file_move = nil
+local publish_attempt_sequence = 0
 
 local function resolve_managed_file_methods()
     if managed_file_methods_resolved then return end
@@ -1008,18 +1102,59 @@ local function resolve_managed_file_methods()
     ) or safe_call(file_type, "get_method", "Move")
 end
 
-local function temp_file_was_consumed()
-    local open_ok, probe = pcall(io.open, TMP_PATH, "rb")
+local function path_exists(path)
+    if not io or type(io.open) ~= "function" then return false end
+    local open_ok, probe = pcall(io.open, path, "rb")
     if not open_ok then return false end
     if probe then
         pcall(probe.close, probe)
-        return false
+        return true
     end
-    return true
+    return false
 end
 
-local function managed_atomic_replace()
+local function cleanup_file(path)
+    if os and type(os.remove) == "function" then
+        pcall(os.remove, path)
+    end
+end
+
+local function publish_session_id()
+    local components = { tostring(os.time()), tostring({}) }
+    local current_uptime = uptime_seconds()
+    if current_uptime then
+        table.insert(components, string.format("%.6f", current_uptime))
+    end
+
+    -- Lua's implementation asks the host for a process-safe unique name. Use
+    -- that name only as entropy for our same-directory path, and remove the
+    -- probe because POSIX Lua may create it while Windows Lua usually does not.
+    if os and type(os.tmpname) == "function" then
+        local tmpname_ok, unique_name = pcall(os.tmpname)
+        if tmpname_ok and unique_name then
+            table.insert(components, unique_name)
+            cleanup_file(unique_name)
+        end
+    end
+
+    return (table.concat(components, "-"):gsub("[^%w_%-]", "_"))
+end
+
+local PUBLISH_SESSION_ID = publish_session_id()
+
+local function next_publish_paths()
+    publish_attempt_sequence = publish_attempt_sequence + 1
+    local suffix = PUBLISH_SESSION_ID .. "." .. tostring(publish_attempt_sequence)
+    return OUTPUT_PATH .. ".tmp." .. suffix, OUTPUT_PATH .. ".bak." .. suffix
+end
+
+local function temp_file_was_consumed(temp_path)
+    return not path_exists(temp_path)
+end
+
+local function managed_atomic_publish(temp_path)
     resolve_managed_file_methods()
+    local errors = {}
 
     -- System.IO.File.Replace maps to the platform's replace primitive and is
     -- useful on Windows CRTs where os.rename refuses to overwrite a file.
@@ -1028,83 +1163,151 @@ local function managed_atomic_replace()
             managed_file_replace.call,
             managed_file_replace,
             nil,
-            TMP_PATH,
+            temp_path,
             OUTPUT_PATH,
             nil
         )
-        if replace_ok and temp_file_was_consumed() then return true, nil end
+        if replace_ok and temp_file_was_consumed(temp_path) then
+            return true, nil, "managed_replace"
+        end
         if not replace_ok then
             replace_error = tostring(replace_error)
         else
             replace_error = "System.IO.File.Replace left the temp file in place"
         end
-
-        -- Move is only expected to succeed for the first publication, when the
-        -- formal path does not exist. It never removes or truncates that path.
-        if managed_file_move then
-            local move_ok, move_error = pcall(
-                managed_file_move.call,
-                managed_file_move,
-                nil,
-                TMP_PATH,
-                OUTPUT_PATH
-            )
-            if move_ok and temp_file_was_consumed() then return true, nil end
-            return false, move_ok and "System.IO.File.Move left the temp file in place"
-                or tostring(move_error)
-        end
-        return false, replace_error
+        table.insert(errors, replace_error)
     end
 
+    -- Move is expected to succeed only when the formal path does not exist. It
+    -- is still safe to try after Replace: it never removes or truncates it.
     if managed_file_move then
         local move_ok, move_error = pcall(
             managed_file_move.call,
             managed_file_move,
             nil,
-            TMP_PATH,
+            temp_path,
             OUTPUT_PATH
         )
-        if move_ok and temp_file_was_consumed() then return true, nil end
-        return false, move_ok and "System.IO.File.Move left the temp file in place"
-            or tostring(move_error)
+        if move_ok and temp_file_was_consumed(temp_path) then
+            return true, nil, "managed_move"
+        end
+        table.insert(errors,
+            move_ok and "System.IO.File.Move left the temp file in place"
+                or tostring(move_error))
     end
 
-    return false, "no managed atomic replace API"
+    if #errors == 0 then
+        return false, "no managed atomic replace API", nil
+    end
+    return false, table.concat(errors, "; "), nil
+end
+
+local function rename_file(old_path, new_path)
+    if not os or type(os.rename) ~= "function" then
+        return false, "os.rename is unavailable"
+    end
+    local call_ok, rename_ok, rename_error = pcall(os.rename, old_path, new_path)
+    if not call_ok then return false, tostring(rename_ok) end
+    if rename_ok then return true, nil end
+    return false, tostring(rename_error or rename_ok)
+end
+
+local function backup_swap(temp_path, backup_path)
+    if not path_exists(OUTPUT_PATH) then
+        return false, "formal path does not exist for backup swap", nil
+    end
+
+    local backed_up, backup_error = rename_file(OUTPUT_PATH, backup_path)
+    if not backed_up then
+        return false, "backup rename failed: " .. tostring(backup_error), nil
+    end
+
+    local published, publish_error = rename_file(temp_path, OUTPUT_PATH)
+    if published then
+        cleanup_file(backup_path)
+        return true, nil, "backup_swap"
+    end
+
+    -- Do not unlink the known-good snapshot. If publishing the new file fails,
+    -- restore the backup first; only the unpublished temp is expendable.
+    local restored, restore_error = rename_file(backup_path, OUTPUT_PATH)
+    if restored then
+        return false, "new-file rename failed; old snapshot restored: "
+            .. tostring(publish_error), nil
+    end
+
+    -- A failed restore is exceptional (for example, another producer won the
+    -- path). Preserve the backup for recovery rather than deleting good data.
+    return false, "new-file rename failed (" .. tostring(publish_error)
+        .. "); backup restore failed (" .. tostring(restore_error)
+        .. "); old snapshot preserved at " .. backup_path, nil
 end
 
 local function atomic_publish(payload)
+    local temp_path, backup_path = next_publish_paths()
     if not io or type(io.open) ~= "function" then
-        return false, "io.open is unavailable"
+        cleanup_file(temp_path)
+        return false, "io.open is unavailable", nil
     end
 
-    local open_ok, file, open_error = pcall(io.open, TMP_PATH, "wb")
-    if not open_ok then return false, file end
-    if not file then return false, open_error end
+    local open_ok, file, open_error = pcall(io.open, temp_path, "wb")
+    if not open_ok then
+        cleanup_file(temp_path)
+        return false, file, nil
+    end
+    if not file then
+        cleanup_file(temp_path)
+        return false, open_error, nil
+    end
 
     local write_ok, write_result, write_error = pcall(file.write, file, payload)
     if not write_ok or not write_result then
         pcall(file.close, file)
-        return false, write_error or write_result
+        cleanup_file(temp_path)
+        return false, write_error or write_result, nil
     end
 
     local close_ok, close_result, close_error = pcall(file.close, file)
     if not close_ok or not close_result then
-        return false, close_error or close_result
+        cleanup_file(temp_path)
+        return false, close_error or close_result, nil
     end
 
-    -- Never unlink the formal file first. POSIX/Wine builds can normally
-    -- replace it with same-directory rename. Windows CRTs often reject that;
-    -- System.IO.File.Replace is then tried without exposing a partial file.
-    local rename_error = "os.rename is unavailable"
-    if os and type(os.rename) == "function" then
-        local call_ok, rename_ok, runtime_error = pcall(os.rename, TMP_PATH, OUTPUT_PATH)
-        if call_ok and rename_ok then return true, nil end
-        rename_error = call_ok and runtime_error or rename_ok
-    end
+    -- Never unlink the formal file first. POSIX rename replaces an existing
+    -- destination atomically, but Wine/MS CRT os.rename may reject that case.
+    local renamed, rename_error = rename_file(temp_path, OUTPUT_PATH)
+    if renamed then return true, nil, "rename" end
 
-    local replaced, managed_error = managed_atomic_replace()
-    if replaced then return true, nil end
+    local managed, managed_error, managed_api = managed_atomic_publish(temp_path)
+    if managed then return true, nil, managed_api end
+
+    local swapped, swap_error, swap_api = backup_swap(temp_path, backup_path)
+    if swapped then return true, nil, swap_api end
+
+    cleanup_file(temp_path)
+    -- backup_swap consumes its backup on successful publish or rollback. If it
+    -- still exists here, restore failed; retain the known-good copy regardless
+    -- of whether another producer concurrently populated the formal path.
     return false, tostring(rename_error) .. "; " .. tostring(managed_error)
+        .. "; " .. tostring(swap_error), nil
+end
+
+local function publish_snapshot(payload, next_sequence)
+    -- Current REFramework builds expose fs.write and deliberately sandbox it
+    -- to reframework/data. There is no rename primitive, so alternate between
+    -- two complete JSON documents. The external reader parses both and picks
+    -- the greatest valid sequence; a concurrently truncated slot is ignored.
+    if fs and type(fs.write) == "function" then
+        local slot = (next_sequence % 2 == 0) and OUTPUT_SLOT_A or OUTPUT_SLOT_B
+        local write_ok, write_error = pcall(fs.write, slot, payload)
+        if write_ok then
+            return true, nil, "fs.write:" .. slot
+        end
+        return false, tostring(write_error), nil
+    end
+
+    -- Compatibility for older REFramework builds that did not expose fs.
+    return atomic_publish(payload)
 end
 
 -- Resolve and install the safest available managed damage hook.
@@ -1151,9 +1354,11 @@ re.on_frame(function()
 
     local next_sequence = sequence + 1
     local payload = build_snapshot(next_sequence)
-    local published, publish_error = atomic_publish(payload)
+    local published, publish_error, publish_api =
+        publish_snapshot(payload, next_sequence)
     if published then
         sequence = next_sequence
+        last_publish_api = publish_api or ""
         return
     end
 

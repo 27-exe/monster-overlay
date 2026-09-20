@@ -5,6 +5,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <cstdint>
 #include <optional>
@@ -107,6 +108,9 @@ public:
 
     static std::optional<qint64> findGamePid(
         const QString &exeName = QStringLiteral("monsterhunterworld.exe"));
+    // Return the first candidate whose AddressMap parses. If none parses,
+    // retain the first path so the caller can report an actionable error.
+    [[nodiscard]] static QString selectLoadableMap(const QStringList &candidates);
     static std::uintptr_t followPointerChain(const ProcessMemory &memory,
                                              std::uintptr_t address,
                                              const std::vector<std::uintptr_t> &offsets,

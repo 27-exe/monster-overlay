@@ -58,6 +58,21 @@ public:
     explicit ControlPanel(QWidget *parent = nullptr);
     ~ControlPanel() override;
 
+public slots:
+    // Parent-owned async worker/fetcher calls this on the GUI thread after
+    // completing a request emitted below. The UI never downloads or extracts
+    // the archive itself.
+    void finishRiseReframeworkOperation(bool ok, const QString &detail);
+
+signals:
+    // Replaceable integration seam: a parent session connects these signals
+    // to its worker/fetcher and calls finishRiseReframeworkOperation(). No
+    // manager/fetcher implementation is referenced by this UI translation
+    // unit for install/removal work.
+    void installRiseReframeworkRequested(const QString &gameDir);
+    void removeRiseLuaRequested(const QString &gameDir);
+    void removeRiseReframeworkRequested(const QString &gameDir);
+
 protected:
     void closeEvent(QCloseEvent *e) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -114,6 +129,10 @@ private:
     void refreshAutoDetect();
     void onOverlayExited();
     void setOverlayRunning(bool running);
+    void refreshRiseReframeworkStatus();
+    void requestRiseReframeworkInstall();
+    void requestRiseLuaRemoval();
+    void requestRiseReframeworkRemoval();
     void syncAppearance(int idx);
     void resetPanel(int idx);
     void rebuildAndRender(int idx);
@@ -225,6 +244,20 @@ private:
     // v0.6 Phase 5: most recent successful /proc scan (persisted under the
     // "detectedGame" QSettings key). Refreshed every 5s by the live badge.
     mhw::GameId  lastDetectedGame_ = mhw::GameId::World;
+
+    // Rise-only REFramework card. Install/removal is delegated through the
+    // request signals above; these handles only own presentation/state.
+    QFrame *riseReframeworkCard_ = nullptr;
+    QLabel *riseReframeworkStatus_ = nullptr;
+    QPushButton *installRiseReframeworkButton_ = nullptr;
+    QPushButton *removeRiseLuaButton_ = nullptr;
+    QPushButton *removeRiseReframeworkButton_ = nullptr;
+    QTimer *riseReframeworkRefreshTimer_ = nullptr;
+    QString riseGameDir_;
+    QString riseReframeworkResultDetail_;
+    bool riseReframeworkOperationPending_ = false;
+    bool riseReframeworkHasResult_ = false;
+    bool riseReframeworkResultOk_ = false;
 
     // v0.5.6 polish: animated stage toggle. savedStageSize_ captures the
     // user-chosen (or default 45/55) stage height when the user hides

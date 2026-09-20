@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "mhw_reader.h"
+#include "core/map_paths.h"
 #include "core/string_table.h"
 #include "monster/target_selector.h"
 #include "player/player_types.h"
@@ -10,6 +11,9 @@
 #include "world/world_types.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
 #include <QTemporaryFile>
 
 #include <array>
@@ -69,6 +73,55 @@ Address OTHER 0xCAFE # inline comment
     check(parsed.address(QStringLiteral("OTHER")) == 0xCAFE, "inline comment ignored");
     check(parsed.offsets(QStringLiteral("CHAIN")).size() == 3, "offset chain length parsed");
     check(parsed.offsets(QStringLiteral("CHAIN"))[1] == 0x20, "offset chain value parsed");
+
+    // Selection is based on successful AddressMap loading, not mere
+    // existence. This keeps a corrupt map in an earlier install prefix from
+    // masking a valid map in a later one. An explicit bad map stays selected
+    // so --map never silently changes the user's request.
+    QTemporaryDir selectionRoot;
+    check(selectionRoot.isValid(), "map-selection temporary directory opens");
+    const QString firstDir = selectionRoot.path() + QStringLiteral("/first");
+    const QString secondDir = selectionRoot.path() + QStringLiteral("/second");
+    const QString worldName = QStringLiteral("MonsterHunterWorld.421810.map");
+    QDir().mkpath(firstDir);
+    QDir().mkpath(secondDir);
+    QFile badWorld(firstDir + QLatin1Char('/') + worldName);
+    check(badWorld.open(QIODevice::WriteOnly), "bad first World map fixture opens");
+    badWorld.write("not an address map\n");
+    badWorld.close();
+    QFile goodWorld(secondDir + QLatin1Char('/') + worldName);
+    check(goodWorld.open(QIODevice::WriteOnly), "good second World map fixture opens");
+    goodWorld.write("Address ROOT 0x1234\n");
+    goodWorld.close();
+    const QStringList worldCandidates = mhw::worldMapCandidates(
+        QString(), worldName, {firstDir, secondDir}, QString());
+    check(mhw::MhwReader::selectLoadableMap(worldCandidates) == goodWorld.fileName(),
+          "bad-content World map falls through to a later loadable candidate");
+    const QString explicitBadMap = selectionRoot.path() + QStringLiteral("/missing-explicit.map");
+    const QStringList explicitCandidates = mhw::worldMapCandidates(
+        explicitBadMap, worldName, {secondDir}, goodWorld.fileName());
+    check(mhw::MhwReader::selectLoadableMap(explicitCandidates) == explicitBadMap,
+          "bad explicit map does not fall back to an installed map");
+    const QString firstMissing = selectionRoot.path() + QStringLiteral("/first-missing.map");
+    check(mhw::MhwReader::selectLoadableMap(
+              {firstMissing, selectionRoot.path() + QStringLiteral("/second-missing.map")})
+              == firstMissing,
+          "no loadable map returns the first actionable candidate for diagnostics");
+
+    const QString riseBad = firstDir + QStringLiteral("/MonsterHunterRise.20.0.0.0.map");
+    const QString riseGood = secondDir + QStringLiteral("/MonsterHunterRise.19.0.0.0.map");
+    QFile badRise(riseBad);
+    check(badRise.open(QIODevice::WriteOnly), "bad first Rise map fixture opens");
+    badRise.write("also not an address map\n");
+    badRise.close();
+    QFile goodRise(riseGood);
+    check(goodRise.open(QIODevice::WriteOnly), "good later Rise map fixture opens");
+    goodRise.write("Address ROOT 0x5678\n");
+    goodRise.close();
+    const QStringList riseCandidates = mhw::riseMapCandidates(
+        QString(), {firstDir, secondDir}, QString());
+    check(mhw::MhrReader::findBestMap(riseCandidates) == riseGood,
+          "Rise selection skips a bad-content earlier candidate and continues across dirs");
 
     mhw::ProcessMemory ownMemory;
     check(ownMemory.attach(QCoreApplication::applicationPid(), &error), "reader opens own /proc/pid/mem");

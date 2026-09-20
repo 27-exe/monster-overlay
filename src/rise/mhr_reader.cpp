@@ -7,9 +7,6 @@
 #include "rise/mhr_monster_names.h"
 #include "rise/mhr_part_names.h"
 
-#include <QDir>
-#include <QRegularExpression>
-
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -186,48 +183,28 @@ std::optional<qint64> MhrReader::findRisePid()
     return MhwReader::findGamePid(QStringLiteral("monsterhunterrise.exe"));
 }
 
-QString MhrReader::findBestMap(const QString &dataDir)
+QString MhrReader::findBestMap(const QStringList &candidates)
 {
-    const QRegularExpression re(
-        QStringLiteral("^MonsterHunterRise\\.(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)\\.map$"));
-
-    struct Candidate {
-        QString path;
-        std::array<int, 4> version{};
-    };
-    QVector<Candidate> candidates;
-    const QDir dir(dataDir);
-    const QStringList entries =
-        dir.entryList({QStringLiteral("MonsterHunterRise.*.map")}, QDir::Files);
-    for (const QString &name : entries) {
-        const QRegularExpressionMatch match = re.match(name);
-        if (!match.hasMatch())
-            continue;
-        candidates.push_back({dir.absoluteFilePath(name),
-                              {match.captured(1).toInt(), match.captured(2).toInt(),
-                               match.captured(3).toInt(), match.captured(4).toInt()}});
-    }
-    if (candidates.isEmpty())
-        return {};
-
-    std::sort(candidates.begin(), candidates.end(),
-              [](const Candidate &a, const Candidate &b) { return a.version > b.version; });
+    const QString loadableFallback = MhwReader::selectLoadableMap(candidates);
+    AddressMap fallbackMap;
+    if (!fallbackMap.load(loadableFallback))
+        return loadableFallback;
 
     const auto pid = findRisePid();
     if (!pid)
-        return candidates.first().path;
+        return loadableFallback;
 
     ProcessMemory memory;
     if (!memory.attach(*pid))
-        return candidates.first().path;
+        return loadableFallback;
     const std::uintptr_t imageBase =
         memory.imageBase(nullptr, QStringLiteral("monsterhunterrise.exe"));
     if (imageBase == 0)
-        return candidates.first().path;
+        return loadableFallback;
 
-    for (const Candidate &candidate : candidates) {
+    for (const QString &candidate : candidates) {
         AddressMap map;
-        if (!map.load(candidate.path) || !map.hasAddress(QStringLiteral("MONSTERS_ADDRESS")))
+        if (!map.load(candidate) || !map.hasAddress(QStringLiteral("MONSTERS_ADDRESS")))
             continue;
         const std::uintptr_t base = MhwReader::followPointerChain(
             memory, imageBase + map.address(QStringLiteral("MONSTERS_ADDRESS")),
@@ -261,10 +238,10 @@ QString MhrReader::findBestMap(const QString &dataDir)
                 continue;
             const auto hp = memory.read<float>(encoded + 0x18ULL);
             if (isRiseMapProbeMonster(id, maxHealth, hp))
-                return candidate.path;
+                return candidate;
         }
     }
-    return candidates.first().path;
+    return loadableFallback;
 }
 
 std::uintptr_t MhrReader::absolute(const QString &key) const

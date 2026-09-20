@@ -25,16 +25,10 @@
 #include "core/string_table.h"
 
 namespace {
-// The path MUST match ControlPanel::maskConfigPath() in
-// ui/control_panel.cpp: $XDG_CONFIG_HOME/monster-overlay/monster-overlay.conf.
-// Keep them in sync if you change one.
+// Use the same canonical path helper as the production mask/locale writers.
 QString configPath()
 {
-    const QByteArray base = qgetenv("XDG_CONFIG_HOME");
-    const QString root = base.isEmpty()
-        ? QDir::homePath() + "/.config"
-        : QString::fromLocal8Bit(base);
-    return root + QStringLiteral("/monster-overlay/monster-overlay.conf");
+    return mhw::localeConfPath();
 }
 
 // Locate a SectionRow by its English key label (e.g. "WEAPON"), which is
@@ -191,6 +185,87 @@ int main(int argc, char *argv[])
             return 25;
         }
     }
+
+    // A mask save owns exactly the four canonical mask rows. Future keys,
+    // comments and the locale handshake must survive verbatim; duplicate mask
+    // rows collapse to the canonical four-row prefix.
+    if (!writeConfig(QStringLiteral(
+            "futureMode=experimental\n"
+            "player=ff\n"
+            "# keep this comment\n"
+            "monster=3f\n"
+            "player=fb\n"
+            "damage=f\n"
+            "pets=3\n"
+            "locale=en-US\n"))) {
+        fprintf(stderr, "FAIL: could not seed forward-compatible config\n");
+        return 36;
+    }
+    {
+        ControlPanel preserve;
+        preserve.show();
+        app.processEvents();
+    }
+    {
+        const QString preserved = readBack();
+        const QStringList lines = preserved.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        if (!preserved.contains(QStringLiteral("futureMode=experimental\n"))
+            || !preserved.contains(QStringLiteral("# keep this comment\n"))
+            || !preserved.contains(QStringLiteral("locale=en-US\n"))) {
+            fprintf(stderr, "FAIL: mask save dropped non-mask rows:\n%s",
+                    qPrintable(preserved));
+            return 37;
+        }
+        if (preserved.count(QStringLiteral("player=")) != 1
+            || preserved.count(QStringLiteral("monster=")) != 1
+            || preserved.count(QStringLiteral("damage=")) != 1
+            || preserved.count(QStringLiteral("pets=")) != 1
+            || lines.size() < 7
+            || lines[0] != QStringLiteral("player=fb")
+            || lines[1] != QStringLiteral("monster=3f")
+            || lines[2] != QStringLiteral("damage=f")
+            || lines[3] != QStringLiteral("pets=3")) {
+            fprintf(stderr, "FAIL: canonical mask rows were not collapsed/ordered:\n%s",
+                    qPrintable(preserved));
+            return 38;
+        }
+    }
+
+    // QSaveFile must leave the previous bytes intact when the destination
+    // directory cannot accept its temporary file. Root ignores mode bits, so
+    // detect that case with a probe and skip only this failure-path assertion.
+    const QString beforeFailedSave = readBack();
+    const QString configDir = QFileInfo(configPath()).absolutePath();
+    const QFileDevice::Permissions originalDirPermissions =
+        QFileInfo(configDir).permissions();
+    bool permissionFailureEnforced = false;
+    {
+        ControlPanel blockedSave;
+        blockedSave.show();
+        app.processEvents();
+        flipViaKey(&blockedSave, QStringLiteral("weapon"), true);
+        if (!QFile::setPermissions(configDir,
+                                   QFileDevice::ReadOwner | QFileDevice::ExeOwner)) {
+            fprintf(stderr, "FAIL: could not make config directory read-only\n");
+            return 39;
+        }
+        QFile probe(configDir + QStringLiteral("/write-probe"));
+        permissionFailureEnforced = !probe.open(QIODevice::WriteOnly);
+        if (!permissionFailureEnforced) {
+            probe.close();
+            // Avoid changing the expected config on platforms/users for which
+            // directory mode bits do not prevent writes (notably root).
+            flipViaKey(&blockedSave, QStringLiteral("weapon"), false);
+            QFile::setPermissions(configDir, originalDirPermissions);
+        }
+    }
+    QFile::setPermissions(configDir, originalDirPermissions);
+    if (permissionFailureEnforced && readBack() != beforeFailedSave) {
+        fprintf(stderr, "FAIL: failed atomic save changed the old config:\n%s",
+                qPrintable(readBack()));
+        return 40;
+    }
+
     QFile::remove(configPath());
 
     QString written;

@@ -86,10 +86,35 @@ buildPetDamageRows(const QVector<RiseDamageActor> &actors,
         row.actor = actor;
         row.displayName = petDisplayName(actor, petNameFallback);
         row.damage = std::max<qint64>(0, actor.total);
+
         rows.append(std::move(row));
     }
 
     std::sort(rows.begin(), rows.end(), petRowLess);
+
+    // Producer keys preserve raw hook identity, but the UI contract is one
+    // aggregate row per proven owner. Sorting first makes the representative
+    // key/name deterministic; unknown owners (<0) remain separate and honest.
+    QVector<PetDamageRow> merged;
+    merged.reserve(rows.size());
+    for (const PetDamageRow &row : std::as_const(rows)) {
+        if (row.actor.ownerEntityIndex >= 0 && !merged.isEmpty()
+            && merged.last().actor.ownerEntityIndex == row.actor.ownerEntityIndex) {
+            PetDamageRow &existing = merged.last();
+            existing.damage = addDamageClamped(existing.damage, row.damage);
+            existing.actor.total = existing.damage;
+            existing.actor.physical = addDamageClamped(
+                existing.actor.physical, row.actor.physical);
+            existing.actor.elemental = addDamageClamped(
+                existing.actor.elemental, row.actor.elemental);
+            const quint64 remaining = std::numeric_limits<quint64>::max()
+                                      - existing.actor.hits;
+            existing.actor.hits += std::min(remaining, row.actor.hits);
+            continue;
+        }
+        merged.append(row);
+    }
+    rows = std::move(merged);
 
     long double shareTotal = 0.0L;
     for (const PetDamageRow &row : rows)
@@ -326,8 +351,30 @@ void PetDamagePanel::setupDemoData()
 
 void PetDamagePanel::paintPanel(QPainter &p)
 {
-    if (rows_.isEmpty())
+    if (rows_.isEmpty()) {
+        constexpr int kPlaceholderH = 36;
+        const int totalH = kMargin + kTitleH + kTitleGap
+                         + kPlaceholderH + kMargin;
+        setContentSize(kPanelW, totalH);
+        drawV03Chrome(p, Panel::Accent::Damage);
+
+        QFont titleFont(QStringLiteral("Chakra Petch"), 9, QFont::Bold);
+        titleFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.8);
+        p.setFont(titleFont);
+        p.setPen(QColor(245, 246, 247));
+        p.drawText(QRectF(kMargin, kMargin,
+                          kPanelW - 2 * kMargin, kTitleH),
+                   Qt::AlignLeft | Qt::AlignVCenter, panelHeader());
+
+        p.setFont(QFont(QStringLiteral("Chakra Petch"), 9));
+        p.setPen(QColor(150, 153, 155));
+        p.drawText(QRectF(kMargin, kMargin + kTitleH + kTitleGap,
+                          kPanelW - 2 * kMargin, kPlaceholderH),
+                   Qt::AlignCenter,
+                   mhw::StringTable::instance().tr(
+                       QStringLiteral("ui.pet_damage_waiting")));
         return;
+    }
 
     const int rowCount = static_cast<int>(rows_.size());
     const int rowsHeight = rowCount * kRowH

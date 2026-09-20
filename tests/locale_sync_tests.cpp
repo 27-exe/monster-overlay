@@ -17,6 +17,7 @@
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QThread>
 
@@ -78,6 +79,10 @@ int main(int argc, char **argv)
           "write locale to fresh file");
     check(mhw::readLocaleFromConf(conf) == QStringLiteral("zh-CN"),
           "read back zh-CN");
+    check(mhw::writeLocaleToConf(QStringLiteral("ZH_cn.UTF-8"), conf),
+          "write locale spelling variant");
+    check(slurp(conf).contains(QStringLiteral("locale=zh-CN\n")),
+          "locale writer persists the canonical locale id");
 
     check(writeAll(conf, QStringLiteral(
               "player=ff\nmonster=1f\ndamage=7\nlocale=zh-CN\n")),
@@ -92,6 +97,15 @@ int main(int argc, char **argv)
     check(txt.count(QStringLiteral("locale=")) == 1
               && mhw::readLocaleFromConf(conf) == QStringLiteral("en-US"),
           "locale line replaced exactly once");
+
+    check(writeAll(conf, QStringLiteral("locale=ZH_cn.UTF-8\n")),
+          "seed locale spelling variant");
+    check(mhw::readLocaleFromConf(conf) == QStringLiteral("zh-CN"),
+          "conf reader canonicalizes locale spelling variants");
+    check(writeAll(conf, QStringLiteral("locale=unknown_LOCALE\n")),
+          "seed unsupported locale");
+    check(mhw::readLocaleFromConf(conf) == QStringLiteral("en-US"),
+          "conf reader safely maps unsupported locale to en-US");
 
     // ---------------------------------------------------------------- sync
     const QString conf2 = tmp.filePath("sync.conf");
@@ -148,6 +162,37 @@ int main(int argc, char **argv)
     check(mhw::normalizeLocaleCode(QStringLiteral("POSIX")).isEmpty(),
           "normalize: POSIX is not a language");
 
+    // Explicit and persisted locale values share one startup resolver in the
+    // console and overlay. Every accepted spelling must leave that helper as
+    // one of the two locale ids that actually ship.
+    check(mhw::resolveStartupLocale(QStringLiteral("zh_CN.UTF-8"),
+                                    QStringLiteral("en-US"),
+                                    QStringLiteral("en-US"))
+              == QStringLiteral("zh-CN"),
+          "policy: CLI zh_CN.UTF-8 canonicalizes to zh-CN");
+    check(mhw::resolveStartupLocale(QStringLiteral("EN_us"),
+                                    QStringLiteral("zh-CN"),
+                                    QStringLiteral("zh-CN"))
+              == QStringLiteral("en-US"),
+          "policy: CLI case/underscore variant canonicalizes to en-US");
+    check(mhw::resolveStartupLocale(QString(), QStringLiteral("ZH_cn.utf8"),
+                                    QStringLiteral("en-US"))
+              == QStringLiteral("zh-CN"),
+          "policy: conf locale variant canonicalizes to zh-CN");
+    check(mhw::resolveStartupLocale(QStringLiteral("xx_YY"),
+                                    QStringLiteral("zh-CN"),
+                                    QStringLiteral("zh-CN"))
+              == QStringLiteral("en-US"),
+          "policy: unknown explicit locale safely falls back to en-US");
+    check(mhw::resolveStartupLocale(QStringLiteral("zhish"), QString(),
+                                    QStringLiteral("en-US"))
+              == QStringLiteral("en-US"),
+          "policy: unknown zh-prefixed locale safely falls back to en-US");
+    check(mhw::resolveStartupLocale(QString(), QStringLiteral("POSIX"),
+                                    QStringLiteral("zh-CN"))
+              == QStringLiteral("en-US"),
+          "policy: POSIX persisted locale safely falls back to en-US");
+
     check(mhw::detectLocaleFromEnv(QString(), QString(), QStringLiteral("zh_CN.UTF-8"))
               == QStringLiteral("zh-CN"),
           "detect: LANG zh_CN -> zh-CN");
@@ -167,6 +212,9 @@ int main(int argc, char **argv)
     check(mhw::detectLocaleFromEnv(QStringLiteral("en_US.UTF-8"), QString(),
                                    QStringLiteral("zh_CN.UTF-8")) == QStringLiteral("en-US"),
           "detect: LC_ALL wins over LANG");
+    check(mhw::detectLocaleFromEnv(QStringLiteral("C"), QString(),
+                                   QStringLiteral("zh_CN.UTF-8")) == QStringLiteral("en-US"),
+          "detect: LC_ALL=C is an en-US decision, not an absent override");
     check(mhw::detectLocaleFromEnv(QString(), QStringLiteral("zh_CN.UTF-8"),
                                    QStringLiteral("en_US.UTF-8")) == QStringLiteral("zh-CN"),
           "detect: LC_MESSAGES wins over LANG");
@@ -186,6 +234,47 @@ int main(int argc, char **argv)
     check(mhw::systemLocale().startsWith(QLatin1String("zh"))
               || mhw::systemLocale() == QStringLiteral("en-US"),
           "policy: systemLocale() always yields a shipping locale id");
+
+    // ----------------------------------------------------- QSettings migration
+    const QString legacySettings = tmp.filePath("Unknown Organization/monster-control.conf");
+    const QString currentSettings = tmp.filePath("monster-overlay/monster-control.conf");
+    QDir().mkpath(QFileInfo(legacySettings).absolutePath());
+    {
+        QSettings legacy(legacySettings, QSettings::IniFormat);
+        legacy.setValue(QStringLiteral("game"), QStringLiteral("rise"));
+        legacy.setValue(QStringLiteral("ui/zoom"), 2.5);
+        legacy.setValue(QStringLiteral("ui/geometry"), QByteArray("opaque-geometry"));
+        legacy.sync();
+    }
+    check(mhw::migrateLegacySettingsFile(legacySettings, currentSettings),
+          "settings: legacy file migrates when current file is absent");
+    {
+        QSettings current(currentSettings, QSettings::IniFormat);
+        check(current.value(QStringLiteral("game")).toString() == QStringLiteral("rise")
+                  && current.value(QStringLiteral("ui/zoom")).toDouble() == 2.5
+                  && current.value(QStringLiteral("ui/geometry")).toByteArray()
+                         == QByteArray("opaque-geometry"),
+              "settings: migration preserves nested keys and value types");
+    }
+    check(QFileInfo::exists(legacySettings),
+          "settings: migration leaves the legacy file intact");
+    {
+        QSettings legacy(legacySettings, QSettings::IniFormat);
+        legacy.setValue(QStringLiteral("game"), QStringLiteral("world"));
+        legacy.setValue(QStringLiteral("legacyOnly"), 42);
+        legacy.sync();
+        QSettings current(currentSettings, QSettings::IniFormat);
+        current.setValue(QStringLiteral("game"), QStringLiteral("rise"));
+        current.sync();
+    }
+    check(mhw::migrateLegacySettingsFile(legacySettings, currentSettings),
+          "settings: existing current file makes migration a no-op");
+    {
+        QSettings current(currentSettings, QSettings::IniFormat);
+        check(current.value(QStringLiteral("game")).toString() == QStringLiteral("rise")
+                  && !current.contains(QStringLiteral("legacyOnly")),
+              "settings: current config wins and existing keys are not overwritten");
+    }
 
     // --------------------------------------------------------- string table
     auto &t = mhw::StringTable::instance();

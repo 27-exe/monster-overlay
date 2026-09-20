@@ -332,6 +332,8 @@ void DamagePanel::updateRiseDamage(const mhw::RiseDamageSnapshot &dmg)
         const auto &actor = *actors[i];
         nextKeys[i] = actor.key;
         nextNames[i] = actor.name;
+        nextWeaponIds[i] = actor.weaponId;
+        nextMasterRanks[i] = actor.masterRank;
         nextSlots[i] = actor.displaySlot;
         nextLocals[i] = actor.local;
 

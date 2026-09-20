@@ -4,11 +4,15 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
 
 #include <iostream>
 #include <limits>
+
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -67,6 +71,106 @@ int main(int argc, char **argv)
     const QString path = temp.filePath(QStringLiteral("mhr_damage.json"));
     mhw::RiseDamageReader reader(path);
 
+    check(reader.path() == path, "reader exposes the configured feed path");
+    check(!reader.update(), "missing feed is rejected");
+    check(reader.lastError() == mhw::RiseDamageReader::Error::Missing,
+          "missing feed has a typed failure reason");
+    check(reader.lastErrorText().contains(path),
+          "missing-feed diagnostic identifies the actionable path");
+
+    const QString symlinkTarget = temp.filePath(QStringLiteral("symlink-target.json"));
+    const QString symlinkPath = temp.filePath(QStringLiteral("symlink-feed.json"));
+    check(writeFixture(symlinkTarget,
+                       v2Document(QDateTime::currentMSecsSinceEpoch(), "[]")),
+          "symlink target fixture writes");
+    check(QFile::link(symlinkTarget, symlinkPath), "feed symlink is created");
+    mhw::RiseDamageReader symlinkReader(symlinkPath);
+    check(!symlinkReader.update(), "symlink feed is rejected");
+    check(symlinkReader.lastError() == mhw::RiseDamageReader::Error::Symlink,
+          "symlink feed has a typed failure reason");
+    check(symlinkReader.lastErrorText().contains(symlinkPath)
+              && !symlinkReader.lastErrorText().contains(symlinkTarget),
+          "symlink diagnostic identifies only the configured feed path");
+
+    const QString directoryPath = temp.filePath(QStringLiteral("feed-directory"));
+    check(QDir().mkpath(directoryPath), "feed-directory fixture is created");
+    mhw::RiseDamageReader directoryReader(directoryPath);
+    check(!directoryReader.update(), "directory feed is rejected without reading");
+    check(directoryReader.lastError()
+              == mhw::RiseDamageReader::Error::OpenDeniedOrFailed,
+          "directory feed has the open-failed reason");
+    check(directoryReader.lastErrorText().contains(directoryPath),
+          "directory-feed diagnostic identifies the actionable path");
+
+    const QString fifoPath = temp.filePath(QStringLiteral("feed-fifo"));
+    const QByteArray fifoNativePath = QFile::encodeName(fifoPath);
+    check(::mkfifo(fifoNativePath.constData(), 0600) == 0,
+          "FIFO feed fixture is created");
+    mhw::RiseDamageReader fifoReader(fifoPath);
+    ::alarm(2);
+    const bool fifoAccepted = fifoReader.update();
+    ::alarm(0);
+    check(!fifoAccepted, "FIFO feed is rejected without blocking");
+    check(fifoReader.lastError()
+              == mhw::RiseDamageReader::Error::OpenDeniedOrFailed,
+          "FIFO feed has the open-failed reason");
+
+    const QString deniedPath = temp.filePath(QStringLiteral("permission-denied.json"));
+    check(writeFixture(deniedPath,
+                       v2Document(QDateTime::currentMSecsSinceEpoch(), "[]")),
+          "permission-denied fixture writes");
+    check(QFile::setPermissions(deniedPath, QFileDevice::Permissions{}),
+          "permission-denied fixture permissions are cleared");
+    mhw::RiseDamageReader deniedReader(deniedPath);
+    if (deniedReader.update()) {
+        std::cout << "SKIP: environment permits reading a mode-000 feed\n";
+    } else {
+        check(true, "unreadable feed is rejected");
+        check(deniedReader.lastError()
+                  == mhw::RiseDamageReader::Error::OpenDeniedOrFailed,
+              "unreadable feed has the open-failed reason");
+        check(deniedReader.lastErrorText().contains(deniedPath),
+              "open-failed diagnostic identifies the actionable path");
+    }
+    check(QFile::setPermissions(deniedPath,
+                                QFileDevice::ReadOwner | QFileDevice::WriteOwner),
+          "permission-denied fixture permissions are restored");
+
+    check(mhw::RiseDamageReader::kMaximumFeedBytes == 1024 * 1024,
+          "feed-size limit is exactly one MiB");
+    const QString boundaryPath = temp.filePath(QStringLiteral("boundary-size.json"));
+    QByteArray boundaryFixture =
+        v2Document(QDateTime::currentMSecsSinceEpoch(), "[]");
+    boundaryFixture.append(
+        mhw::RiseDamageReader::kMaximumFeedBytes - boundaryFixture.size(), ' ');
+    check(boundaryFixture.size() == mhw::RiseDamageReader::kMaximumFeedBytes
+              && writeFixture(boundaryPath, boundaryFixture),
+          "one-MiB boundary fixture writes");
+    mhw::RiseDamageReader boundaryReader(boundaryPath);
+    check(boundaryReader.update(), "feed at the one-MiB limit is accepted");
+
+    const QString oversizedPath = temp.filePath(QStringLiteral("oversized.json"));
+    QByteArray oversizedFixture =
+        v2Document(QDateTime::currentMSecsSinceEpoch(), "[]");
+    oversizedFixture.append(
+        mhw::RiseDamageReader::kMaximumFeedBytes + 1 - oversizedFixture.size(), ' ');
+    check(oversizedFixture.size() == mhw::RiseDamageReader::kMaximumFeedBytes + 1
+              && writeFixture(oversizedPath, oversizedFixture),
+          "over-limit fixture writes");
+    check(QFile::setPermissions(oversizedPath, QFileDevice::Permissions{}),
+          "over-limit fixture permissions are cleared");
+    mhw::RiseDamageReader oversizedReader(oversizedPath);
+    check(!oversizedReader.update(), "feed over one MiB is rejected before open");
+    check(oversizedReader.lastError() == mhw::RiseDamageReader::Error::TooLarge,
+          "over-limit feed has a typed failure reason");
+    check(oversizedReader.lastErrorText().contains(oversizedPath)
+              && oversizedReader.lastErrorText().contains(
+                     QString::number(mhw::RiseDamageReader::kMaximumFeedBytes)),
+          "over-limit diagnostic identifies the path and byte limit");
+    check(QFile::setPermissions(oversizedPath,
+                                QFileDevice::ReadOwner | QFileDevice::WriteOwner),
+          "over-limit fixture permissions are restored");
+
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const QByteArray allKinds = R"([
         {"key":"player:7","kind":"player","entity_index":7,"display_slot":0,
@@ -84,6 +188,9 @@ int main(int argc, char **argv)
     ])";
     check(writeFixture(path, v2Document(now, allKinds)), "v2 fixture writes");
     check(reader.update(), "v2 document parses");
+    check(reader.lastError() == mhw::RiseDamageReader::Error::None
+              && reader.lastErrorText().isEmpty(),
+          "successful update clears the previous failure state");
 
     const auto &v2 = reader.snapshot();
     check(v2.valid && v2.timestampMs == now && v2.sequence == 42,
@@ -143,11 +250,39 @@ int main(int argc, char **argv)
           "stale fixture writes");
     check(!reader.update() && !reader.snapshot().valid,
           "documents older than five seconds are rejected");
+    check(reader.lastError() == mhw::RiseDamageReader::Error::Stale,
+          "old document has a typed stale reason");
+    check(reader.lastErrorText().contains(path)
+              && reader.lastErrorText().contains(QStringLiteral("age"))
+              && reader.lastErrorText().contains(QStringLiteral("ms")),
+          "old-document diagnostic includes path and age");
     check(writeFixture(path,
                        v2Document(QDateTime::currentMSecsSinceEpoch() + 6000, "[]")),
           "future fixture writes");
     check(!reader.update() && !reader.snapshot().valid,
           "documents more than five seconds in the future are rejected");
+    check(reader.lastError() == mhw::RiseDamageReader::Error::Stale,
+          "future document has a typed stale reason");
+    check(reader.lastErrorText().contains(path)
+              && reader.lastErrorText().contains(QStringLiteral("ahead"))
+              && reader.lastErrorText().contains(QStringLiteral("ms")),
+          "future-document diagnostic includes path and clock skew");
+
+    check(writeFixture(path, QByteArray{}), "empty fixture writes");
+    check(!reader.update() && !reader.snapshot().valid,
+          "empty feed is rejected without crashing");
+    check(reader.lastError() == mhw::RiseDamageReader::Error::Parse,
+          "empty feed has a typed parse reason");
+    check(reader.lastErrorText().contains(path),
+          "empty-feed diagnostic identifies the actionable path");
+    check(writeFixture(path, QByteArray("{\"version\":2,")),
+          "truncated fixture writes");
+    check(!reader.update() && !reader.snapshot().valid,
+          "truncated feed is rejected without crashing");
+    check(reader.lastError() == mhw::RiseDamageReader::Error::Parse,
+          "truncated feed has a typed parse reason");
+    check(reader.lastErrorText().contains(path),
+          "truncated-feed diagnostic identifies the actionable path");
 
     const QByteArray huge = R"([
         {"key":"huge","kind":"player","total":1e100,
@@ -251,6 +386,11 @@ int main(int argc, char **argv)
         + QByteArray::number(QDateTime::currentMSecsSinceEpoch()) + '}';
     check(writeFixture(path, unsupported), "unsupported-version fixture writes");
     check(!reader.update(), "unsupported protocol versions are rejected");
+    check(reader.lastError() == mhw::RiseDamageReader::Error::UnsupportedVersion,
+          "unsupported version has a typed failure reason");
+    check(reader.lastErrorText().contains(path)
+              && reader.lastErrorText().contains(QStringLiteral("3")),
+          "unsupported-version diagnostic identifies path and version");
 
     check(writeFixture(path,
                        QByteArray("{\"version\":2,\"timestamp_ms\":")
