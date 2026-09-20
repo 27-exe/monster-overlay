@@ -29,7 +29,11 @@ add_library(monster-core STATIC
     src/rise/mhr_monster_names.cpp
     src/rise/mhr_abnormalities.h
     src/rise/mhr_abnormalities.cpp
+    src/rise/rise_damage_types.h
+    src/rise/rise_damage_reader.h
     src/rise/rise_damage_reader.cpp
+    src/rise/rise_damage_roster.h
+    src/rise/rise_damage_roster.cpp
     src/world/world_types.h
     src/world/world_types.cpp
 )
@@ -53,6 +57,8 @@ add_executable(monster-overlay
     src/ui/panel_monster.cpp
     src/ui/panel_player.cpp
     src/ui/panel_damage.cpp
+    src/ui/panel_pet_damage.h
+    src/ui/panel_pet_damage.cpp
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -126,6 +132,8 @@ add_executable(snap-all-demo
     src/ui/panel_player.cpp
     src/ui/panel_damage.cpp
     src/ui/panel_monster.cpp
+    src/ui/panel_pet_damage.h
+    src/ui/panel_pet_damage.cpp
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -161,6 +169,8 @@ add_executable(monster-control
     src/ui/panel_player.cpp
     src/ui/panel_damage.cpp
     src/ui/panel_monster.cpp
+    src/ui/panel_pet_damage.h
+    src/ui/panel_pet_damage.cpp
     src/ui/control_panel.cpp
     src/ui/hud_canvas.cpp
     src/ui/hud_canvas.h
@@ -237,6 +247,8 @@ add_executable(monster-control-l2-smoke
     src/ui/panel_player.cpp
     src/ui/panel_damage.cpp
     src/ui/panel_monster.cpp
+    src/ui/panel_pet_damage.h
+    src/ui/panel_pet_damage.cpp
     src/ui/control_panel.cpp
     src/ui/hud_canvas.cpp
     src/ui/hud_canvas.h
@@ -324,6 +336,16 @@ target_compile_options(monster-control-p0-test PRIVATE -Wall -Wextra -Wpedantic)
 
 include(CTest)
 if(BUILD_TESTING)
+    # GUI smoke targets are built above because they share the complete control
+    # console source set. Register them here so a normal CTest run cannot miss
+    # persistence/preview regressions. Both use the offscreen QPA; the L2 test
+    # owns a fixed temporary config path, so keep it serial under `ctest -j`.
+    add_test(NAME monster-control-l2-smoke COMMAND monster-control-l2-smoke)
+    add_test(NAME monster-control-p0-test COMMAND monster-control-p0-test)
+    set_tests_properties(monster-control-l2-smoke monster-control-p0-test
+        PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    set_tests_properties(monster-control-l2-smoke PROPERTIES RUN_SERIAL TRUE)
+
     # Diagnostic snapshot tool for the MonsterPanel no-data state. It is
     # intentionally not a CTest: rendering is an offscreen visual aid, not a
     # deterministic assertion. Keep it available for explicit test-period
@@ -560,6 +582,67 @@ if(BUILD_TESTING)
     target_include_directories(map-path-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(map-path-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME map-path-tests COMMAND map-path-tests)
+
+    # Rise damage ingestion and pet-panel behavior are independent targets so
+    # failures identify the feed or rendering contract directly.
+    add_executable(rise-damage-reader-tests
+        tests/rise_damage_reader_tests.cpp
+    )
+    target_link_libraries(rise-damage-reader-tests PRIVATE Qt6::Core monster-core)
+    target_include_directories(rise-damage-reader-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(rise-damage-reader-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-damage-reader-tests COMMAND rise-damage-reader-tests)
+
+    add_executable(rise-damage-lifecycle-tests
+        tests/rise_damage_lifecycle_tests.cpp
+    )
+    target_link_libraries(rise-damage-lifecycle-tests PRIVATE Qt6::Core)
+    target_include_directories(rise-damage-lifecycle-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(rise-damage-lifecycle-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-damage-lifecycle-tests COMMAND rise-damage-lifecycle-tests)
+
+    add_executable(rise-damage-roster-tests
+        tests/rise_damage_roster_tests.cpp
+    )
+    target_link_libraries(rise-damage-roster-tests PRIVATE Qt6::Core monster-core)
+    target_include_directories(rise-damage-roster-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(rise-damage-roster-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-damage-roster-tests COMMAND rise-damage-roster-tests)
+
+    add_executable(damage-party-filter-tests
+        tests/damage_party_filter_tests.cpp
+    )
+    target_link_libraries(damage-party-filter-tests PRIVATE Qt6::Core)
+    target_include_directories(damage-party-filter-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(damage-party-filter-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME damage-party-filter-tests COMMAND damage-party-filter-tests)
+
+    add_executable(pet-damage-panel-tests
+        tests/pet_damage_panel_tests.cpp
+        src/ui/panel_pet_damage.cpp
+    )
+    # This target exercises the pure row model without constructing a
+    # layer-shell window. The implementation keeps that seam explicitly
+    # behind MHW_PET_DAMAGE_DATA_TEST.
+    set_target_properties(pet-damage-panel-tests PROPERTIES AUTOMOC OFF)
+    target_compile_definitions(pet-damage-panel-tests PRIVATE
+        MHW_PET_DAMAGE_DATA_TEST
+    )
+    target_link_libraries(pet-damage-panel-tests PRIVATE Qt6::Core Qt6::Widgets)
+    target_include_directories(pet-damage-panel-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(pet-damage-panel-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME pet-damage-panel-tests COMMAND pet-damage-panel-tests)
+
+    # Source-level CLI/build contract: catches an option that is declared but
+    # not registered, or a fourth panel omitted from the product target.
+    add_executable(rise-damage-wiring-tests
+        tests/rise_damage_wiring_tests.cpp
+    )
+    target_compile_definitions(rise-damage-wiring-tests PRIVATE
+        MONSTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_compile_options(rise-damage-wiring-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-damage-wiring-tests COMMAND rise-damage-wiring-tests)
 
     # An unhandled flag used to fall through to the GUI and never exit;
     # --version/--help must return. TIMEOUT turns such a regression into a

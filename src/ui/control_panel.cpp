@@ -4,6 +4,7 @@
 #include "ui/panel_player.h"
 #include "ui/panel_monster.h"
 #include "ui/panel_damage.h"
+#include "ui/panel_pet_damage.h"
 #include "ui/panel_sections.h"
 #include "ui/toggle_chip.h"
 #include "ui/section_row.h"
@@ -63,6 +64,42 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 #include <sys/types.h>
 
 namespace {
+
+QString consoleText(const QString &key)
+{
+    return mh::tr(key);
+}
+
+void prepareDamagePreview(DamagePanel *damage,
+                          const mhw::RiseDamageDisplayOptions &options)
+{
+    // DamagePanel's production/demo implementation is frozen. Re-seed its
+    // ordinary four-hunter demo from the console, then replace it with a
+    // one-hunter Rise snapshot when OtherMembers is disabled. Calling through
+    // Panel keeps the virtual demo hook accessible without widening the
+    // DamagePanel API.
+    Panel *panel = damage;
+    panel->setupDemoData();
+    panel->markDemoPrimed();
+    if (options.showOtherMembers)
+        return;
+
+    mhw::RiseDamageActor local;
+    local.key = QStringLiteral("demo-player-local");
+    local.kind = mhw::RiseDamageActorKind::Player;
+    local.entityIndex = 0;
+    local.displaySlot = 0;
+    local.name = QStringLiteral("A27exe");
+    local.total = 184220;
+    local.local = true;
+
+    mhw::RiseDamageSnapshot snapshot;
+    snapshot.valid = true;
+    snapshot.questActive = true;
+    snapshot.questEpoch = 1;
+    snapshot.actors.append(local);
+    damage->updateRiseDamage(snapshot, options);
+}
 
 QString qssBase()
 {
@@ -165,12 +202,13 @@ QString qssBase()
         "QLabel#railBrand{font-family:'Chakra Petch';font-size:17px;letter-spacing:2px;color:%2;}"
         "QLabel#railBrandSub,QLabel#railHint{font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;color:%6;}"
         "QLabel#sectionCap{font-family:'Chakra Petch';font-size:12px;letter-spacing:2px;color:%6;}"
-        "QFrame#navPlayer,QFrame#navMonster,QFrame#navDamage{background:transparent;border:1px solid transparent;border-radius:3px;}"
-        "QFrame#navPlayer:hover,QFrame#navMonster:hover,QFrame#navDamage:hover{background:%3;}"
-        "QFrame#navPlayer[selected=\"true\"],QFrame#navMonster[selected=\"true\"],QFrame#navDamage[selected=\"true\"]{background:%1;border-color:%8;}"
+        "QFrame#navPlayer,QFrame#navMonster,QFrame#navDamage,QFrame#navPets{background:transparent;border:1px solid transparent;border-radius:3px;}"
+        "QFrame#navPlayer:hover,QFrame#navMonster:hover,QFrame#navDamage:hover,QFrame#navPets:hover{background:%3;}"
+        "QFrame#navPlayer[selected=\"true\"],QFrame#navMonster[selected=\"true\"],QFrame#navDamage[selected=\"true\"],QFrame#navPets[selected=\"true\"]{background:%1;border-color:%8;}"
         "QFrame#navPlayer   > QLabel#navEnabled {color:%11;}"
         "QFrame#navMonster  > QLabel#navEnabled {color:%9;}"
         "QFrame#navDamage   > QLabel#navEnabled {color:%10;}"
+        "QFrame#navPets     > QLabel#navEnabled {color:%10;}"
         "QLabel#navTitle{font-family:'Chakra Petch';font-size:15px;letter-spacing:1px;color:%2;}"
         "QLabel#navSummary{font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;color:%5;}"
         "QLabel#navEnabled{font-size:11px;color:%10;}"
@@ -184,6 +222,7 @@ QString qssBase()
         "QLabel#countLabelP{color:%11;}"
         "QLabel#countLabelM{color:%9;}"
         "QLabel#countLabelD{color:%10;}"
+        "QLabel#countLabelPets{color:%10;}"
         "QLabel#sliderLabel{color:%6;font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;min-width:52px;}"
         "QLabel#sliderValue{color:%2;font-family:'Chakra Petch';font-size:13px;min-width:36px;}"
         "QPushButton#foldout{background:transparent;color:%6;border:1px solid %8;border-radius:3px;"
@@ -243,7 +282,7 @@ QString qssBase()
     );
     // Replace longest placeholders first. QString::arg historically treats
     // %1 as a prefix of %10/%11 in chained substitutions, which produced
-    // startup warnings and corrupted the P/M/D accent colours.
+    // startup warnings and corrupted the panel accent colours.
     qss.replace(QStringLiteral("%11"), purple);
     qss.replace(QStringLiteral("%10"), teal);
     qss.replace(QStringLiteral("%9"), orange);
@@ -259,8 +298,7 @@ QString qssBase()
 }
 
 // v0.5 P2: map (panel index, section bit index) → SectionRow::Icon.
-// The mapping follows panel_sections.h exactly: Player 0..5, Monster 0..4,
-// Damage 0..2.
+// The mapping follows panel_sections.h exactly.
 int iconKind(int panel, int section)
 {
     static const int kPlayerIcons[] = {
@@ -274,10 +312,13 @@ int iconKind(int panel, int section)
     };
     static const int kDamageIcons[] = {
         SectionRow::IconRows, SectionRow::IconShare, SectionRow::IconChart,
+        SectionRow::IconRows,
     };
     if (panel == 0 && section < 8) return kPlayerIcons[section];
     if (panel == 1 && section < 5) return kMonsterIcons[section];
-    if (panel == 2 && section < 3) return kDamageIcons[section];
+    if (panel == 2 && section < mhw::DamageSection::kCount) return kDamageIcons[section];
+    if (panel == 3 && section < mhw::PetDamageSection::kCount)
+        return SectionRow::IconRows;
     return SectionRow::IconNone;
 }
 
@@ -311,10 +352,17 @@ QString sectionLabel(int panel, int index)
 {
     if (panel == 0) return mhw::PlayerSection::displayName(index);
     if (panel == 1) return mhw::MonsterSection::displayName(index);
-    return mhw::DamageSection::displayName(index);
+    if (panel == 2) return mhw::DamageSection::displayName(index);
+    if (panel == 3) return mhw::PetDamageSection::displayName(index);
+    return {};
 }
 
 } // namespace
+
+Panel *ControlPanel::panelAt(int idx) const
+{
+    return mhw::isPanelIndex(idx) ? ctl_[idx].panel : nullptr;
+}
 
 ControlPanel::ControlPanel(QWidget *parent)
     : QMainWindow(parent)
@@ -363,9 +411,17 @@ ControlPanel::ControlPanel(QWidget *parent)
     player_  = new PlayerPanel();
     monster_ = new MonsterPanel();
     damage_  = new DamagePanel();
-    for (Panel *p : {static_cast<Panel*>(player_),
-                     static_cast<Panel*>(monster_),
-                     static_cast<Panel*>(damage_)}) {
+    pets_    = new PetDamagePanel();
+    const std::array<Panel *, mhw::kPanelCount> panels = {
+        static_cast<Panel *>(player_),
+        static_cast<Panel *>(monster_),
+        static_cast<Panel *>(damage_),
+        static_cast<Panel *>(pets_),
+    };
+    static_assert(panels.size() == mhw::kPanelCount);
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
+        Panel *p = panels[i];
+        ctl_[i].panel = p;
         p->setAttribute(Qt::WA_DontShowOnScreen);
         p->setEditMode(true);   // seeds setupDemoData() on first paint
         // WA_DontShowOnScreen + show() is the supported combo for off-screen
@@ -496,6 +552,9 @@ ControlPanel::ControlPanel(QWidget *parent)
     scrollLayout->addWidget(buildObjectButton(QStringLiteral("D"),
                                               QStringLiteral("console.nav.damage"),
                                               QStringLiteral("console.nav.damageSummary"), 2));
+    scrollLayout->addWidget(buildObjectButton(QStringLiteral("C"),
+                                              QStringLiteral("console.nav.pets"),
+                                              QStringLiteral("console.nav.petsSummary"), 3));
     scrollLayout->addSpacing(20);
 
     auto *workspaceTitle = new QLabel();
@@ -572,6 +631,9 @@ ControlPanel::ControlPanel(QWidget *parent)
     inspectorStack_->addWidget(buildInspector(QStringLiteral("console.nav.damage"),
                                                QStringLiteral("console.inspector.sub.damage"),
                                                mhw::DamageSection::displayNames(), 2));
+    inspectorStack_->addWidget(buildInspector(QStringLiteral("console.nav.pets"),
+                                               QStringLiteral("console.inspector.sub.pets"),
+                                               mhw::PetDamageSection::displayNames(), 3));
     inspectorLayout->addWidget(inspectorStack_);
     topRow->addWidget(inspectorHost);
 
@@ -688,7 +750,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     // v0.5.6: stage now owns the full window width, so let the canvas
     // stretch horizontally to fill the viewport. The paint path already
     // recomputes layout from width()/height(), so widening the widget
-    // widens the 16:9 frame and the three panel slots inside it.
+    // widens the 16:9 frame and the four panel slots inside it.
     // Vertical overflow still scrolls (canvas heightForWidth enforces
     // the 16:9 + header/footer ratio).
     canvasScroll->setWidgetResizable(true);
@@ -705,9 +767,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     // target margins; we apply them to the live panel (no persist —
     // the console writes on exit) and re-render the preview.
     connect(canvas_, &HudCanvas::panelMoved, this, [this](int idx, QMargins m){
-        Panel *p = idx == 0 ? static_cast<Panel*>(player_)
-                 : idx == 1 ? static_cast<Panel*>(monster_)
-                            : static_cast<Panel*>(damage_);
+        Panel *p = panelAt(idx);
         if (!p) return;
         p->setMargins(m, /*persist=*/false);
         rebuildAndRender(idx);
@@ -738,9 +798,8 @@ ControlPanel::ControlPanel(QWidget *parent)
         canvas_->setZoom(savedZoom);
         updateZoomLabel();
     }
-    canvas_->bindPanel(0, new PanelSourceAdapter(static_cast<Panel*>(player_)));
-    canvas_->bindPanel(1, new PanelSourceAdapter(static_cast<Panel*>(monster_)));
-    canvas_->bindPanel(2, new PanelSourceAdapter(static_cast<Panel*>(damage_)));
+    for (int i = 0; i < mhw::kPanelCount; ++i)
+        canvas_->bindPanel(i, new PanelSourceAdapter(panelAt(i)));
     // v0.5.6: top row (rail + inspector) sits in a container that owns
     // the QHBoxLayout; the stage is the second pane of the splitter.
     // Wrap the topRow in a QWidget so QSplitter can manage its size
@@ -860,7 +919,7 @@ ControlPanel::ControlPanel(QWidget *parent)
             [this]{ launchOverlay(/*editMode=*/true); });
 
     loadMaskFromDisk();
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < mhw::kPanelCount; ++i)
         rebuildAndRender(i);
     selectPanel(0);
 
@@ -950,7 +1009,7 @@ ControlPanel::~ControlPanel()
     // exit, explicit delete). Safe to call even if load was never reached.
     saveMaskToDisk();
 
-    // The three preview panels were created as TOP-level QMainWindows
+    // The four preview panels were created as TOP-level QMainWindows
     // (no parent) so they get their own QWidgetWindow and don't pollute
     // the console's backing store (see renderPreview). They need to be
     // deleted explicitly here — otherwise QApplication sees them in the
@@ -961,12 +1020,13 @@ ControlPanel::~ControlPanel()
     if (player_)  { player_->setVisible(false);  delete player_;  player_  = nullptr; }
     if (monster_) { monster_->setVisible(false); delete monster_; monster_ = nullptr; }
     if (damage_)  { damage_->setVisible(false);  delete damage_;  damage_  = nullptr; }
+    if (pets_)    { pets_->setVisible(false);    delete pets_;    pets_    = nullptr; }
 }
 
 // ---- v0.9 i18n: registration + replay -----------------------------------
 //
 // Design: a language switch must not rebuild the window (the console
-// owns three live panel instances, a splitter layout and a scroll state
+// owns four live panel instances, a splitter layout and a scroll state
 // that would all be lost). Instead every localized string is registered
 // ONCE at construction with the key it came from; retranslateUi() replays
 // the registry and then re-runs the ordinary refresh paths for anything
@@ -979,7 +1039,7 @@ void ControlPanel::trSet(QWidget *widget, const QString &key)
     if (!widget)
         return;
     trPairs_.append({QPointer<QWidget>(widget), key});
-    const QString text = mh::tr(key);
+    const QString text = consoleText(key);
     if (auto *label = qobject_cast<QLabel *>(widget))
         label->setText(text);
     else if (auto *button = qobject_cast<QAbstractButton *>(widget))
@@ -1013,7 +1073,7 @@ void ControlPanel::retranslateUi()
         QWidget *widget = pair.first.data();
         if (!widget)
             continue;
-        const QString text = mh::tr(pair.second);
+        const QString text = consoleText(pair.second);
         if (auto *label = qobject_cast<QLabel *>(widget))
             label->setText(text);
         else if (auto *button = qobject_cast<QAbstractButton *>(widget))
@@ -1030,14 +1090,17 @@ void ControlPanel::retranslateUi()
     // (instead of duplicating their format strings here) is what keeps a
     // language flip consistent with what the live timers write 5s later.
     setOverlayRunning(overlayPid_ != 0);          // rail START/STOP + badge
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < mhw::kPanelCount; ++i)
         updatePanelSummary(i);                    // counts + nav summaries
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < mhw::kPanelCount; ++i)
         updatePosLabel(i);                        // corner + margin readout
     refreshAutoDetect();                          // badge + GAME column
+    for (int i = 0; i < mhw::kPanelCount; ++i)
+        if (Panel *panel = panelAt(i))
+            panel->retranslateUi();               // cached preview-panel copy
     // Preview tiles carry PAINTED chrome (e.g. the disabled placeholder)
     // and the canvas paints its header/footer — repaint both.
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < mhw::kPanelCount; ++i)
         rebuildAndRender(i);
     if (canvas_)
         canvas_->update();
@@ -1122,16 +1185,16 @@ void ControlPanel::updateZoomLabel()
 
 void ControlPanel::closeEvent(QCloseEvent *e)
 {
-    // Hide the three preview panels BEFORE accepting close. They're
+    // Hide the four preview panels BEFORE accepting close. They're
     // top-level QMainWindows (no parent — keeping them parented would
     // composite their paint into the console's backing store, which is
     // what produced the "panel painted on top of switches" bug). They're
     // also invisible (WA_DontShowOnScreen), but the explicit hide steers
     // QApplication::quitOnLastWindowClosed toward the right answer — it
     // sees 0 visible windows the moment the console goes away and exits.
-    if (player_)  player_->setVisible(false);
-    if (monster_) monster_->setVisible(false);
-    if (damage_)  damage_->setVisible(false);
+    for (int i = 0; i < mhw::kPanelCount; ++i)
+        if (Panel *panel = panelAt(i))
+            panel->setVisible(false);
 
     // v0.5 UI-link: persist scale/opacity that the APPEARANCE sliders
     // changed (with persist=false). saveAppearance() writes ONLY scale
@@ -1139,9 +1202,9 @@ void ControlPanel::closeEvent(QCloseEvent *e)
     // live overlay's geometry or accidentally hide a panel (the console
     // panels are WA_DontShowOnScreen + hidden; isVisible()==false would
     // write visible=false and break the overlay's next launch).
-    if (player_)  player_->saveAppearance();
-    if (monster_) monster_->saveAppearance();
-    if (damage_)  damage_->saveAppearance();
+    for (int i = 0; i < mhw::kPanelCount; ++i)
+        if (Panel *panel = panelAt(i))
+            panel->saveAppearance();
 
     saveMaskToDisk();
     {
@@ -1153,13 +1216,14 @@ void ControlPanel::closeEvent(QCloseEvent *e)
     QMainWindow::closeEvent(e);
 }
 
-// v0.5 P1: 1/2/3 hot-keys for the HUD objects rail. Visible in the
+// v0.5 P1: 1/2/3/4 hot-keys for the HUD objects rail. Visible in the
 // rail hint at the bottom of the left column.
 void ControlPanel::keyPressEvent(QKeyEvent *e)
 {
     if (e->key() == Qt::Key_1) { selectPanel(0); return; }
     if (e->key() == Qt::Key_2) { selectPanel(1); return; }
     if (e->key() == Qt::Key_3) { selectPanel(2); return; }
+    if (e->key() == Qt::Key_4) { selectPanel(3); return; }
     QMainWindow::keyPressEvent(e);
 }
 
@@ -1238,7 +1302,7 @@ bool ControlPanel::eventFilter(QObject *watched, QEvent *event)
             }
             return true;
         }
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < mhw::kPanelCount; ++i) {
             if (watched == ctl_[i].navButton) {
                 selectPanel(i);
                 return true;
@@ -1250,7 +1314,7 @@ bool ControlPanel::eventFilter(QObject *watched, QEvent *event)
 
 void ControlPanel::selectPanel(int idx)
 {
-    if (idx < 0 || idx >= 3) return;
+    if (!mhw::isPanelIndex(idx)) return;
     selectedPanel_ = idx;
     syncAppearance(idx);
     updatePosLabel(idx);
@@ -1263,12 +1327,10 @@ void ControlPanel::selectPanel(int idx)
     // the user sees the panel's actual position drawn against the
     // wrong output's rectangle.
     if (canvas_) {
-        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
-                    : idx == 1 ? static_cast<Panel*>(monster_)
-                               : static_cast<Panel*>(damage_));
+        Panel *p = panelAt(idx);
         canvas_->setPreviewScreen(p ? p->outputName() : QString());
     }
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
         if (!ctl_[i].navButton) continue;
         ctl_[i].navButton->setProperty("selected", i == idx);
         ctl_[i].navButton->style()->unpolish(ctl_[i].navButton);
@@ -1278,6 +1340,8 @@ void ControlPanel::selectPanel(int idx)
 
 void ControlPanel::updatePanelSummary(int idx)
 {
+    if (!mhw::isPanelIndex(idx))
+        return;
     int on = 0;
     for (auto *row : ctl_[idx].subs)
         if (row->isChecked()) ++on;
@@ -1287,10 +1351,16 @@ void ControlPanel::updatePanelSummary(int idx)
             mh::tr(QStringLiteral("console.inspector.count")).arg(on).arg(total));
     if (ctl_[idx].countBar)
         ctl_[idx].countBar->setRatio(total > 0 ? qreal(on) / total : 1.0);
-    if (ctl_[idx].navSummary)
-        ctl_[idx].navSummary->setText(ctl_[idx].master->isChecked()
-            ? mh::tr(QStringLiteral("console.inspector.sections")).arg(on).arg(total)
-            : mh::tr(QStringLiteral("console.panel.disabled")));
+    if (ctl_[idx].navSummary) {
+        if (idx == 3 && currentGame_ == mhw::GameId::World) {
+            ctl_[idx].navSummary->setText(
+                consoleText(QStringLiteral("console.panel.petsRiseOnly")));
+        } else {
+            ctl_[idx].navSummary->setText(ctl_[idx].master->isChecked()
+                ? mh::tr(QStringLiteral("console.inspector.sections")).arg(on).arg(total)
+                : mh::tr(QStringLiteral("console.panel.disabled")));
+        }
+    }
 }
 
 // i18n: `titleKey` / `summaryKey` are StringTable keys (console.nav.*), not
@@ -1303,7 +1373,8 @@ QWidget *ControlPanel::buildObjectButton(const QString &letter,
     auto *box = new QFrame();
     box->setObjectName(idx == 0 ? "navPlayer"
                        : idx == 1 ? "navMonster"
-                                  : "navDamage");
+                       : idx == 2 ? "navDamage"
+                                  : "navPets");
     box->setProperty("navObject", true);
     box->setProperty("panelIndex", idx);
     box->setCursor(Qt::PointingHandCursor);
@@ -1395,11 +1466,12 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     vl->addLayout(head);
 
     auto *count = new QLabel();
-    // v0.5 P1: per-panel objectName suffix (P/M/D) so the QSS rule
+    // v0.5 P1: per-panel objectName suffix so the QSS rule
     // can tint the section count by the matching panel accent.
     count->setObjectName(idx == 0 ? "countLabelP"
                        : idx == 1 ? "countLabelM"
-                                  : "countLabelD");
+                       : idx == 2 ? "countLabelD"
+                                  : "countLabelPets");
     ctl_[idx].countLabel = count;
     vl->addWidget(count);
 
@@ -1416,7 +1488,8 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
 
     const QStringList &keys = idx == 0 ? mhw::PlayerSection::names()
                             : idx == 1 ? mhw::MonsterSection::names()
-                                       : mhw::DamageSection::names();
+                            : idx == 2 ? mhw::DamageSection::names()
+                                       : mhw::PetDamageSection::names();
     for (int b = 0; b < labels.size(); ++b) {
         auto *row = new SectionRow(labels[b], b < keys.size() ? keys[b] : QString(), iconKind(idx, b));
         row->setAccent(panelAccent(idx));
@@ -1449,17 +1522,13 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     auto *scaleSlider = new QSlider(Qt::Horizontal);
     scaleSlider->setRange(50, 300);
     {
-        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
-                  : idx == 1 ? static_cast<Panel*>(monster_)
-                             : static_cast<Panel*>(damage_));
+        Panel *p = panelAt(idx);
         scaleSlider->setValue(qRound(p->scale() * 100));
     }
     scaleVal->setText(QStringLiteral("%1%").arg(scaleSlider->value()));
     connect(scaleSlider, &QSlider::valueChanged, this, [this, idx, scaleVal](int v){
         scaleVal->setText(QStringLiteral("%1%").arg(v));
-        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
-                  : idx == 1 ? static_cast<Panel*>(monster_)
-                             : static_cast<Panel*>(damage_));
+        Panel *p = panelAt(idx);
         p->setScale(v / 100.0, false);
         rebuildAndRender(idx);
     });
@@ -1479,17 +1548,13 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     auto *opacSlider = new QSlider(Qt::Horizontal);
     opacSlider->setRange(10, 100);
     {
-        Panel *p2 = (idx == 0 ? static_cast<Panel*>(player_)
-                   : idx == 1 ? static_cast<Panel*>(monster_)
-                              : static_cast<Panel*>(damage_));
+        Panel *p2 = panelAt(idx);
         opacSlider->setValue(qRound(p2->opacity() * 100));
     }
     opacVal->setText(QStringLiteral("%1%").arg(opacSlider->value()));
     connect(opacSlider, &QSlider::valueChanged, this, [this, idx, opacVal](int v){
         opacVal->setText(QStringLiteral("%1%").arg(v));
-        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
-                  : idx == 1 ? static_cast<Panel*>(monster_)
-                             : static_cast<Panel*>(damage_));
+        Panel *p = panelAt(idx);
         p->setOpacity(v / 100.0, false);
         rebuildAndRender(idx);
     });
@@ -1513,17 +1578,13 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     auto *bgSlider = new QSlider(Qt::Horizontal);
     bgSlider->setRange(0, 255);
     {
-        Panel *p3 = (idx == 0 ? static_cast<Panel*>(player_)
-                   : idx == 1 ? static_cast<Panel*>(monster_)
-                              : static_cast<Panel*>(damage_));
+        Panel *p3 = panelAt(idx);
         bgSlider->setValue(p3->bgAlpha());
     }
     bgVal->setText(QStringLiteral("%1").arg(bgSlider->value()));
     connect(bgSlider, &QSlider::valueChanged, this, [this, idx, bgVal](int v){
         bgVal->setText(QStringLiteral("%1").arg(v));
-        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
-                  : idx == 1 ? static_cast<Panel*>(monster_)
-                             : static_cast<Panel*>(damage_));
+        Panel *p = panelAt(idx);
         p->setBgAlpha(v, false);
         rebuildAndRender(idx);
     });
@@ -1567,9 +1628,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         }
         // Pick the persisted value (if any) — match either by userData
         // (output name) or fall back to the first entry.
-        const Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
-                          : idx == 1 ? static_cast<Panel*>(monster_)
-                                     : static_cast<Panel*>(damage_));
+        const Panel *p = panelAt(idx);
         const QString cur = p ? p->outputName() : QString();
         if (!cur.isEmpty()) {
             const int found = combo->findData(cur);
@@ -1577,9 +1636,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         }
         connect(combo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, [this, idx, combo](int /*idx2*/){
-            Panel *pan = (idx == 0 ? static_cast<Panel*>(player_)
-                          : idx == 1 ? static_cast<Panel*>(monster_)
-                                     : static_cast<Panel*>(damage_));
+            Panel *pan = panelAt(idx);
             const QString name = combo->currentData().toString();
             pan->setOutputName(name, /*persist=*/false);
             // saveAppearance is gated on editMode for most setters, but
@@ -1590,8 +1647,8 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
             updatePosLabel(idx);
             // v0.8: redirect the preview's screen frame to the output
             // the user just picked. The preview is a single widget
-            // shared by all three panels, so we follow whichever panel
-            // the user is currently configuring — switching the P/M/D
+            // shared by all four panels, so we follow whichever panel
+            // the user is currently configuring — switching the P/M/D/C
             // inspector tab will update it again from the next combo's
             // currentData() if the user picks different screens per
             // panel.
@@ -1621,7 +1678,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     auto *reset = new QPushButton();
     trHook([reset, titleKey]{
         reset->setText(mh::tr(QStringLiteral("console.inspector.reset"))
-                           .arg(mh::tr(titleKey)));
+                           .arg(consoleText(titleKey)));
     });
     reset->setObjectName("resetButton");
     reset->setCursor(Qt::PointingHandCursor);
@@ -1838,7 +1895,8 @@ void ControlPanel::switchGame(mhw::GameId game)
             row->setEnabled(!hide);
         }
     }
-    for (int i = 0; i < 3; ++i) rebuildAndRender(i);
+    for (int i = 0; i < mhw::kPanelCount; ++i)
+        rebuildAndRender(i);
 
     if (changed) {
         QSettings s;
@@ -1886,9 +1944,9 @@ void ControlPanel::launchOverlay(bool editMode)
     // loadConfig() reads the values the user set in the console.
     // Without this, the overlay always starts with the last
     // edit-mode save (or factory defaults).
-    if (player_)  player_->saveAppearance();
-    if (monster_) monster_->saveAppearance();
-    if (damage_)  damage_->saveAppearance();
+    for (int i = 0; i < mhw::kPanelCount; ++i)
+        if (Panel *panel = panelAt(i))
+            panel->saveAppearance();
 
     // Build argv from the same mask source the file uses.
     auto maskFor = [](const PanelCtl &c) -> uint32_t {
@@ -1902,11 +1960,13 @@ void ControlPanel::launchOverlay(bool editMode)
     const uint32_t mp = maskFor(ctl_[0]);
     const uint32_t mm = maskFor(ctl_[1]);
     const uint32_t md = maskFor(ctl_[2]);
+    const uint32_t mt = maskFor(ctl_[3]);
 
     QStringList args;
     args << QStringLiteral("--mask-player=%1").arg(mp, 0, 16)
          << QStringLiteral("--mask-monster=%1").arg(mm, 0, 16)
-         << QStringLiteral("--mask-damage=%1").arg(md, 0, 16);
+         << QStringLiteral("--mask-damage=%1").arg(md, 0, 16)
+         << QStringLiteral("--mask-pets=%1").arg(mt, 0, 16);
     // Master toggle maps to a separate --no-* flag per panel. The
     // mask controls which sub-blocks render inside an enabled panel;
     // --no-* unmounts the layer-shell surface entirely so the user
@@ -1918,6 +1978,8 @@ void ControlPanel::launchOverlay(bool editMode)
         args << QStringLiteral("--no-monster");
     if (!ctl_[2].master->isChecked())
         args << QStringLiteral("--no-damage");
+    if (!ctl_[3].master->isChecked())
+        args << QStringLiteral("--no-pets");
     if (editMode) args << QStringLiteral("--edit");
 
     // v0.9 i18n: start the overlay in the console's active language.
@@ -1946,9 +2008,7 @@ void ControlPanel::launchOverlay(bool editMode)
     // QScreen::name() on the overlay side; on Niri that's the wlr-output
     // id and LayerShellQt::Window::setScreen() binds correctly.
     auto appendOutput = [&](int idx, const char *flag) {
-        Panel *p = (idx == 0 ? static_cast<Panel*>(player_)
-                    : idx == 1 ? static_cast<Panel*>(monster_)
-                               : static_cast<Panel*>(damage_));
+        Panel *p = panelAt(idx);
         const QString name = p ? p->outputName() : QString();
         if (!name.isEmpty())
             args << QString::fromLatin1(flag) + QStringLiteral("=") + name;
@@ -1956,6 +2016,7 @@ void ControlPanel::launchOverlay(bool editMode)
     appendOutput(0, "--output-player");
     appendOutput(1, "--output-monster");
     appendOutput(2, "--output-damage");
+    appendOutput(3, "--output-pets");
 
     // monster-overlay lives next to monster-control in the same build dir.
     const QString overlay = QCoreApplication::applicationDirPath()
@@ -2036,9 +2097,9 @@ void ControlPanel::onOverlayExited()
 void ControlPanel::restartOverlayWithCurrentGame()
 {
     saveMaskToDisk();
-    if (player_)  player_->saveAppearance();
-    if (monster_) monster_->saveAppearance();
-    if (damage_)  damage_->saveAppearance();
+    for (int i = 0; i < mhw::kPanelCount; ++i)
+        if (Panel *panel = panelAt(i))
+            panel->saveAppearance();
     launchOverlay(/*editMode=*/false);
 }
 
@@ -2113,25 +2174,55 @@ void ControlPanel::loadMaskFromDisk()
         // calls already established.
         return;
     }
-    // File format (3 lines, key=value hex32):
+    // File format (4 mask lines, key=value hex32):
     //   player=<hex32>
     //   monster=<hex32>
     //   damage=<hex32>
+    //   pets=<hex32>
     // Anything malformed is silently ignored — we never want a bad
     // config to make the console unstartable.
     QTextStream in(&f);
-    int playerMask = -1, monsterMask = -1, damageMask = -1;
+    uint32_t playerMask = 0;
+    uint32_t monsterMask = 0;
+    uint32_t damageMask = 0;
+    uint32_t petsMask = 0;
+    bool playerValid = false;
+    bool monsterValid = false;
+    bool damageValid = false;
+    bool petsValid = false;
+    bool petsLineSeen = false;
+
+    auto parseMask = [](const QString &text, uint32_t &mask, bool &valid) {
+        bool ok = false;
+        const uint parsed = text.toUInt(&ok, 16);
+        if (ok) {
+            mask = parsed;
+            valid = true;
+        }
+    };
+
     while (!in.atEnd()) {
         const QString line = in.readLine().trimmed();
-        if (line.startsWith(QLatin1String("player=")))
-            playerMask = line.mid(7).toInt(0, 16);
-        else if (line.startsWith(QLatin1String("monster=")))
-            monsterMask = line.mid(8).toInt(0, 16);
-        else if (line.startsWith(QLatin1String("damage=")))
-            damageMask = line.mid(7).toInt(0, 16);
+        if (line.startsWith(QLatin1String("player="))) {
+            parseMask(line.mid(7), playerMask, playerValid);
+        } else if (line.startsWith(QLatin1String("monster="))) {
+            parseMask(line.mid(8), monsterMask, monsterValid);
+        } else if (line.startsWith(QLatin1String("damage="))) {
+            parseMask(line.mid(7), damageMask, damageValid);
+        } else if (line.startsWith(QLatin1String("pets="))) {
+            petsLineSeen = true;
+            parseMask(line.mid(5), petsMask, petsValid);
+        }
     }
 
-    // v0.9 i18n (integration fix): the conf's 4th `locale=` row is the
+    // A pre-pets config has no way to express either new owner filter. Keep
+    // the old visible behaviour: the Pets defaults remain untouched, and an
+    // enabled damage panel continues to include teammates / followers. A zero
+    // damage mask still means the whole panel was disabled and remains zero.
+    if (!petsLineSeen && damageValid && damageMask > 0u)
+        damageMask |= static_cast<uint32_t>(mhw::DamageSection::OtherMembers);
+
+    // v0.9 i18n (integration fix): the optional `locale=` row is the
     // console->overlay handshake (core/locale_conf.h). It is resolved at
     // startup by main_control.cpp (--locale > conf > system locale) and by the
     // ctor guard above; it must NOT be re-applied here. Doing so silently
@@ -2142,17 +2233,19 @@ void ControlPanel::loadMaskFromDisk()
     // switchLocale() (the EN/CH chip); cross-process sync is the overlay's
     // conf poll (locale_sync.h).
 
-    auto applyTo = [](int m, PanelCtl &c) {
-        if (m < 0) return;
+    auto applyTo = [](bool valid, uint32_t mask, PanelCtl &c) {
+        if (!valid)
+            return;
         // master stays ON if any bit is set; otherwise treat as fully
         // disabled (mirrors the "all off" intent in the file).
-        c.master->setChecked(m != 0);
+        c.master->setChecked(mask != 0u);
         for (int b = 0; b < c.subs.size(); ++b)
-            c.subs[b]->setChecked((m & (1u << b)) != 0);
+            c.subs[b]->setChecked((mask & (1u << b)) != 0u);
     };
-    applyTo(playerMask,  ctl_[0]);
-    applyTo(monsterMask, ctl_[1]);
-    applyTo(damageMask,  ctl_[2]);
+    applyTo(playerValid, playerMask, ctl_[0]);
+    applyTo(monsterValid, monsterMask, ctl_[1]);
+    applyTo(damageValid, damageMask, ctl_[2]);
+    applyTo(petsValid, petsMask, ctl_[3]);
 }
 
 void ControlPanel::saveMaskToDisk() const
@@ -2171,6 +2264,7 @@ void ControlPanel::saveMaskToDisk() const
     const uint32_t mp = maskFor(ctl_[0]);
     const uint32_t mm = maskFor(ctl_[1]);
     const uint32_t md = maskFor(ctl_[2]);
+    const uint32_t mt = maskFor(ctl_[3]);
 
     // v0.9.2: the `locale=` row means "the user chose this language"
     // (--locale or the EN/CH chip). A mask save must not turn whatever we
@@ -2185,30 +2279,58 @@ void ControlPanel::saveMaskToDisk() const
         return;
     }
     QTextStream out(&f);
-    // Line order is part of the contract: the three legacy mask rows first
-    // (lowercase hex — tests/control_l2_smoke.cpp reads back "fb"/"2f"/"7"),
-    // then, only when the user has chosen a language, the `locale=` row
-    // polled by the overlay (locale_sync.h).
+    // Line order is part of the contract: the three legacy mask rows first,
+    // followed by pets (all lowercase hex), then, only when the user has
+    // chosen a language, the `locale=` row polled by the overlay
+    // (locale_sync.h).
     out << "player="  << QString::number(mp, 16) << '\n'
         << "monster=" << QString::number(mm, 16) << '\n'
-        << "damage="  << QString::number(md, 16) << '\n';
+        << "damage="  << QString::number(md, 16) << '\n'
+        << "pets="    << QString::number(mt, 16) << '\n';
     if (!chosenLocale.isEmpty())
         out << "locale=" << chosenLocale << '\n';
 }
 
 void ControlPanel::rebuildAndRender(int idx)
 {
-    Panel *panel = nullptr;
-    if (idx == 0) panel = player_;
-    else if (idx == 1) panel = monster_;
-    else panel = damage_;
+    if (!mhw::isPanelIndex(idx))
+        return;
+    Panel *panel = panelAt(idx);
+    if (!panel)
+        return;
 
     auto *lab = ctl_[idx].preview;
     updatePanelSummary(idx);
-    if (!ctl_[idx].master->isChecked()) {
-        if (canvas_) canvas_->setPanelPixmap(idx, QPixmap(), false);
-        // Master off: show a flat disabled placeholder. The panel is not
-        // painted at all (matches live setVisible(false) gate).
+
+    uint32_t mask = 0;
+    for (int b = 0; b < ctl_[idx].subs.size(); ++b)
+        if (ctl_[idx].subs[b]->isChecked())
+            mask |= (1u << b);
+    panel->setSectionMask(mask);   // also calls update()
+
+    // Section bits that filter actors are also expressed through the frozen
+    // Rise display-options interface. The generic section mask still owns
+    // rows/chart layout; these options own actor inclusion.
+    if (idx == 2) {
+        mhw::RiseDamageDisplayOptions options;
+        options.showOtherMembers = (mask & mhw::DamageSection::OtherMembers) != 0;
+        damage_->setRiseDisplayOptions(options);
+        prepareDamagePreview(damage_, options);
+    } else if (idx == 3) {
+        mhw::RiseDamageDisplayOptions options;
+        options.showLocalPets = (mask & mhw::PetDamageSection::LocalPets) != 0;
+        options.showOtherPets = (mask & mhw::PetDamageSection::OtherPets) != 0;
+        pets_->setDisplayOptions(options);
+    }
+
+    const bool riseOnlyUnavailable =
+        idx == 3 && currentGame_ == mhw::GameId::World;
+    if (riseOnlyUnavailable || !ctl_[idx].master->isChecked()) {
+        if (canvas_)
+            canvas_->setPanelPixmap(idx, QPixmap(), false);
+        // Master off (or World-mode pets): show a flat disabled placeholder.
+        // The panel is not painted into the HUD canvas, matching the live
+        // visibility gate.
         QPixmap ph(378, 90);
         ph.fill(QColor(22, 24, 26));
         QPainter p(&ph);
@@ -2217,22 +2339,20 @@ void ControlPanel::rebuildAndRender(int idx)
         f.setLetterSpacing(QFont::AbsoluteSpacing, 2);
         p.setFont(f);
         p.drawText(ph.rect(), Qt::AlignCenter,
-                   mh::tr(QStringLiteral("console.panel.disabled")));
+                   riseOnlyUnavailable
+                       ? consoleText(QStringLiteral("console.panel.petsRiseOnly"))
+                       : mh::tr(QStringLiteral("console.panel.disabled")));
         p.end();
-        if (lab) lab->setPixmap(ph);
+        if (lab)
+            lab->setPixmap(ph);
         return;
     }
 
-    uint32_t mask = 0;
-    for (int b = 0; b < ctl_[idx].subs.size(); ++b)
-        if (ctl_[idx].subs[b]->isChecked())
-            mask |= (1u << b);
-    panel->setSectionMask(mask);   // also calls update()
     const QPixmap pix = renderPreview(panel);
-    if (lab) lab->setPixmap(pix);
-    if (canvas_) {
+    if (lab)
+        lab->setPixmap(pix);
+    if (canvas_)
         canvas_->setPanelPixmap(idx, pix, true);
-    }
 }
 
 QPixmap ControlPanel::renderPreview(Panel *p)
@@ -2253,13 +2373,14 @@ QPixmap ControlPanel::renderPreview(Panel *p)
     painter.end();
 
     // R6: paint a 4-px vertical accent stripe on the left edge of every
-    // preview tile (purple for player, orange for monster, teal for
-    // damage) so each panel has a clear identity at a glance. The stripe
+    // preview tile (purple for player, orange for monster, blue for damage,
+    // green for pets) so each panel has a clear identity at a glance. The stripe
     // sits OUTSIDE the panel rectangle, so we just draw it on the pixmap.
     QColor accent;
     if (p == player_)      accent = QColor(170, 85, 255);   // #aa55ff
     else if (p == monster_) accent = QColor(255, 128, 64);  // #ff8040
-    else                   accent = QColor(80, 197, 183);  // #50c5b7
+    else if (p == damage_) accent = QColor(64, 169, 255);   // #40a9ff
+    else                   accent = QColor(103, 214, 157);  // #67d69d
     QPainter stripe(&pix);
     stripe.fillRect(QRect(0, 0, 4, sz.height()), accent);
     stripe.end();
@@ -2318,9 +2439,11 @@ void ControlPanel::setOverlayRunning(bool running)
 // loops (slider → setScale → rebuildAndRender → syncAppearance → slider…).
 void ControlPanel::syncAppearance(int idx)
 {
-    Panel *panel = (idx == 0 ? static_cast<Panel*>(player_)
-                  : idx == 1 ? static_cast<Panel*>(monster_)
-                             : static_cast<Panel*>(damage_));
+    if (!mhw::isPanelIndex(idx))
+        return;
+    Panel *panel = panelAt(idx);
+    if (!panel)
+        return;
     auto &c = ctl_[idx];
     if (c.scaleSlider) {
         c.scaleSlider->blockSignals(true);
@@ -2341,9 +2464,11 @@ void ControlPanel::syncAppearance(int idx)
 // by closeEvent's saveAppearance() + saveMaskToDisk().
 void ControlPanel::resetPanel(int idx)
 {
-    Panel *panel = (idx == 0 ? static_cast<Panel*>(player_)
-                  : idx == 1 ? static_cast<Panel*>(monster_)
-                             : static_cast<Panel*>(damage_));
+    if (!mhw::isPanelIndex(idx))
+        return;
+    Panel *panel = panelAt(idx);
+    if (!panel)
+        return;
     panel->resetToDefaults();
     // Sync UI: master on, all subs on, sliders to defaults.
     auto &c = ctl_[idx];
@@ -2356,10 +2481,10 @@ void ControlPanel::resetPanel(int idx)
 
 void ControlPanel::updatePosLabel(int idx)
 {
+    if (!mhw::isPanelIndex(idx))
+        return;
     if (!ctl_[idx].posLabel) return;
-    Panel *p = idx == 0 ? static_cast<Panel*>(player_)
-             : idx == 1 ? static_cast<Panel*>(monster_)
-                        : static_cast<Panel*>(damage_);
+    Panel *p = panelAt(idx);
     if (!p) return;
     const QMargins m = p->margins();
     // Display the panel's *current screen quadrant*, not its immutable

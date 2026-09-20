@@ -146,6 +146,21 @@ struct MHRPlayerLevelStructure {
 };
 static_assert(sizeof(MHRPlayerLevelStructure) == 8);
 
+// HunterPie MHRCharacterData uses explicit layout. Session/SOS arrays contain
+// pointers to these records; NamePointer references a managed UTF-16 string.
+struct MHRCharacterData {
+    std::uint8_t reserved00[0x18];
+    std::uintptr_t namePointer;       // 0x18
+    std::uint8_t reserved20[0x18];
+    std::int32_t highRank;            // 0x38
+    std::uint8_t reserved3C[0x54];
+    std::int32_t masterRank;          // 0x90
+};
+static_assert(sizeof(MHRCharacterData) == 0x94);
+static_assert(offsetof(MHRCharacterData, namePointer) == 0x18);
+static_assert(offsetof(MHRCharacterData, highRank) == 0x38);
+static_assert(offsetof(MHRCharacterData, masterRank) == 0x90);
+
 struct MHRQurioThresholdStructure {
     float maxThreshold;
     float threshold;

@@ -10,12 +10,13 @@
 #include <QWidget>
 #include <array>
 
-class PanelSource;
+#include "panel_source.h"
+
 namespace screen_query {
 struct Result;
 }
 
-// Paint the three overlay panels at the position they will actually occupy
+// Paint the four overlay panels at the position they will actually occupy
 // on the user's screen. The control console calls HudCanvas::bindPanel()
 // for each panel after construction; the canvas then queries the panel
 // for its anchor corner, persisted margins, and zoom so the preview
@@ -28,7 +29,7 @@ class HudCanvas : public QWidget {
 public:
     explicit HudCanvas(QWidget *parent = nullptr);
 
-    // 0 = player, 1 = monster, 2 = damage.
+    // 0 = player, 1 = monster, 2 = damage, 3 = pets.
     void setPanelPixmap(int index, const QPixmap &pixmap, bool enabled);
     void setSelectedPanel(int index);
     void bindPanel(int index, const PanelSource *src);
@@ -95,7 +96,7 @@ private:
     // paintEvent / drag / sizeHint.
     const screen_query::Result &previewScreenInfo() const;
 
-    std::array<Slot, 3> slots_{};
+    std::array<Slot, mhw::kPanelCount> slots_{};
     int selected_{0};
     bool showSafeArea_{true};
     bool showGrid_{true};

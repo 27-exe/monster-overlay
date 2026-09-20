@@ -91,6 +91,85 @@ int riseWeaponTypeToCore(int memoryIdx)
     return kRiseMemToCore[memoryIdx];
 }
 
+QVector<PartyMemberSnapshot> buildRisePartyRoster(
+    const std::array<RisePartyRosterCandidate, kRisePartyPlayerCount> &players,
+    const std::array<RisePartyRosterCandidate, kRisePartyCompanionCount> &companions,
+    const PlayerSnapshot &localPlayer,
+    bool playersFromSos)
+{
+    QVector<PartyMemberSnapshot> result;
+    result.reserve(kRisePartyRosterCount);
+
+    const QString localName = localPlayer.name.trimmed();
+    bool hasPlayerTeammate = false;
+    int playerCount = 0;
+    for (int index = 0; index < kRisePartyPlayerCount; ++index) {
+        const RisePartyRosterCandidate &candidate = players[index];
+        const QString name = candidate.name.trimmed();
+        if (name.isEmpty())
+            continue;
+
+        PartyMemberSnapshot member;
+        member.name = name;
+        member.weaponId = candidate.weaponId;
+        member.highRank = candidate.highRank;
+        member.masterRank = candidate.masterRank;
+        member.local = !localName.isEmpty() && name == localName;
+        member.slot = index;
+        member.entityIndex = index;
+        member.kind = PartyMemberKind::Player;
+        result.append(std::move(member));
+        ++playerCount;
+
+        if (!localName.isEmpty() && name != localName)
+            hasPlayerTeammate = true;
+    }
+
+    if (playerCount > 1)
+        hasPlayerTeammate = true;
+
+    // HunterPie adds the local snapshot when the session character array has
+    // not materialised yet. Name availability is the only safe identity proof;
+    // entity index zero alone is never promoted to local.
+    if (playerCount == 0 && !localName.isEmpty()) {
+        PartyMemberSnapshot local;
+        local.name = localName;
+        local.weaponId = localPlayer.weaponId;
+        local.highRank = localPlayer.highRank;
+        local.masterRank = localPlayer.masterRank;
+        local.local = true;
+        local.slot = 0;
+        local.entityIndex = 0;
+        local.kind = PartyMemberKind::Player;
+        result.append(std::move(local));
+        playerCount = 1;
+    }
+
+    // Followers are solo-only. SOS/player-party data wins over stale servant
+    // pointers, and an observed non-local player also suppresses followers.
+    if (playersFromSos || hasPlayerTeammate)
+        return result;
+
+    for (int index = 0; index < kRisePartyCompanionCount; ++index) {
+        const RisePartyRosterCandidate &candidate = companions[index];
+        const QString name = candidate.name.trimmed();
+        if (name.isEmpty())
+            continue;
+
+        PartyMemberSnapshot member;
+        member.name = name;
+        member.weaponId = candidate.weaponId;
+        member.highRank = candidate.highRank;
+        member.masterRank = candidate.masterRank;
+        member.local = false;
+        member.slot = playerCount + index;
+        member.entityIndex = kRisePartyPlayerCount + index;
+        member.kind = PartyMemberKind::Companion;
+        result.append(std::move(member));
+    }
+    return result;
+}
+
 MhrReader::MhrReader(QString mapPath)
     : mapPath_(std::move(mapPath))
 {
@@ -797,6 +876,154 @@ PlayerSnapshot MhrReader::readPlayer(QString *error)
     return result;
 }
 
+QVector<PartyMemberSnapshot> MhrReader::readParty(
+    const PlayerSnapshot &localPlayer, int questState, bool isTrainingRoom,
+    QString *error)
+{
+    if (!shouldReadRisePartyRoster(questState, isTrainingRoom))
+        return {};
+
+    auto readArrayPointerField = [this](const QString &addressKey,
+                                        const QString &offsetKey,
+                                        QString *readError) -> std::uintptr_t {
+        if (!map_.hasAddress(addressKey) || !map_.hasOffsets(offsetKey))
+            return 0;
+        const std::uintptr_t field = MhwReader::followPointerChain(
+            memory_, absolute(addressKey), map_.offsets(offsetKey), readError);
+        if (!field)
+            return 0;
+        const auto pointer = memory_.read<std::uintptr_t>(field, readError);
+        return pointer && isSanePointer(*pointer) ? *pointer : 0;
+    };
+
+    auto readPointerArray = [this](std::uintptr_t header, int cap) {
+        if (cap <= 0)
+            return std::vector<std::uintptr_t>{};
+        std::vector<std::uintptr_t> pointers(static_cast<std::size_t>(cap));
+        if (!isSanePointer(header))
+            return pointers;
+
+        const auto length = memory_.read<std::int32_t>(
+            header + kRiseMonoArrayLengthOffset);
+        const int count = risePartyMonoArrayCount(length, cap);
+        for (int index = 0; index < count; ++index) {
+            const auto elementAddress = risePartyMonoArrayElementAddress(
+                header, index, *length, cap);
+            if (!elementAddress || !isSanePointer(*elementAddress))
+                continue;
+            const auto pointer = memory_.read<std::uintptr_t>(*elementAddress);
+            if (pointer && isSanePointer(*pointer))
+                pointers[static_cast<std::size_t>(index)] = *pointer;
+        }
+        return pointers;
+    };
+
+    auto readManagedName = [this](std::uintptr_t stringPointer) {
+        if (!isSanePointer(stringPointer))
+            return QString{};
+        const auto length = memory_.read<std::int32_t>(stringPointer + 0x10ULL);
+        if (!length || *length <= 0 || *length > 32)
+            return QString{};
+        return readUtf16(stringPointer + 0x14ULL, *length).trimmed();
+    };
+
+    // MHRPlayer.cs:575-595. SOS session data wins when any of its first four
+    // character pointers is valid; otherwise use the regular six-entry
+    // character-info array (only indexes 0..3 are real players).
+    std::vector<std::uintptr_t> playerPointers(kRisePartyPlayerCount);
+    const std::uintptr_t sosArray = readArrayPointerField(
+        QStringLiteral("CHARACTER_ADDRESS"),
+        QStringLiteral("SOS_SESSION_PLAYER_OFFSETS"), error);
+    const auto sosPointers = readPointerArray(sosArray, kRisePartyPlayerCount);
+    const bool playersFromSos = std::any_of(
+        sosPointers.cbegin(), sosPointers.cend(),
+        [](std::uintptr_t pointer) { return pointer != 0; });
+    if (playersFromSos) {
+        playerPointers = sosPointers;
+    } else {
+        const std::uintptr_t characterArray = readArrayPointerField(
+            QStringLiteral("CHARACTER_ADDRESS"),
+            QStringLiteral("CHARACTER_INFO_OFFSETS"), nullptr);
+        playerPointers = readPointerArray(characterArray, kRisePartyPlayerCount);
+    }
+
+    // Weapon records are a parallel Mono pointer array. Never compute +0x134
+    // unless both the declared array slot and its pointer are valid.
+    const std::uintptr_t weaponArray = readArrayPointerField(
+        QStringLiteral("SESSION_PLAYERS_ADDRESS"),
+        QStringLiteral("SESSION_PLAYER_OFFSETS"), nullptr);
+    const auto weaponPointers = readPointerArray(weaponArray, kRisePartyRosterCount);
+
+    std::array<RisePartyRosterCandidate, kRisePartyPlayerCount> players{};
+    for (int index = 0; index < kRisePartyPlayerCount; ++index) {
+        const std::uintptr_t characterPointer =
+            playerPointers[static_cast<std::size_t>(index)];
+        const std::uintptr_t weaponPointer =
+            weaponPointers[static_cast<std::size_t>(index)];
+        if (!isSanePointer(characterPointer) || !isSanePointer(weaponPointer))
+            continue;
+
+        const auto character = memory_.read<MHRCharacterData>(characterPointer);
+        const auto weapon = memory_.read<std::int32_t>(weaponPointer + 0x134ULL);
+        if (!character || !weapon || !isSanePointer(character->namePointer))
+            continue;
+
+        const QString name = readManagedName(character->namePointer);
+        if (name.isEmpty())
+            continue;
+        players[static_cast<std::size_t>(index)] = {
+            name,
+            riseWeaponTypeToCore(*weapon),
+            character->highRank,
+            character->masterRank,
+        };
+    }
+
+    std::array<RisePartyRosterCandidate, kRisePartyCompanionCount> companions{};
+    if (!playersFromSos
+        && map_.hasAddress(QStringLiteral("SERVANTS_DATA_ADDRESS"))
+        && map_.hasOffsets(QStringLiteral("SERVANTS_DATA_ARRAY_OFFSETS"))
+        && map_.hasOffsets(QStringLiteral("SERVANT_NAME_OFFSETS"))) {
+        // This chain ends in 0x0, so followPointerChain already returns the
+        // Mono array object itself (unlike the one-field arrays above).
+        const std::uintptr_t servantsArray = MhwReader::followPointerChain(
+            memory_, absolute(QStringLiteral("SERVANTS_DATA_ADDRESS")),
+            map_.offsets(QStringLiteral("SERVANTS_DATA_ARRAY_OFFSETS")), nullptr);
+        const auto servantPointers = readPointerArray(
+            servantsArray, kRisePartyCompanionCount);
+
+        for (int index = 0; index < kRisePartyCompanionCount; ++index) {
+            const std::uintptr_t servantPointer =
+                servantPointers[static_cast<std::size_t>(index)];
+            const std::uintptr_t weaponPointer = weaponPointers[
+                static_cast<std::size_t>(kRisePartyPlayerCount + index)];
+            if (!isSanePointer(servantPointer) || !isSanePointer(weaponPointer))
+                continue;
+
+            const std::uintptr_t namePointer =
+                MhwReader::followPointerChainOffsetThenDeref(
+                    memory_, servantPointer,
+                    map_.offsets(QStringLiteral("SERVANT_NAME_OFFSETS")), nullptr);
+            const auto weapon = memory_.read<std::int32_t>(
+                weaponPointer + 0x134ULL);
+            if (!isSanePointer(namePointer) || !weapon)
+                continue;
+
+            const QString name = readManagedName(namePointer);
+            if (name.isEmpty())
+                continue;
+            companions[static_cast<std::size_t>(index)] = {
+                name,
+                riseWeaponTypeToCore(*weapon),
+                localPlayer.highRank,
+                localPlayer.masterRank,
+            };
+        }
+    }
+
+    return buildRisePartyRoster(players, companions, localPlayer, playersFromSos);
+}
+
 // Rise wirebug entries use a Mono nint[] object. Its header length is at +0x1C
 // and the pointer payload begins at +0x20, like HunterPie's ReadArraySafeAsync.
 // Counts only identify valid partitions; they do not determine a contiguous
@@ -1121,8 +1348,18 @@ GameSnapshot MhrReader::poll()
 
     snapshot.quest = stageInfo.inHuntingZone ? readQuest(nullptr) : QuestSnapshot{};
 
-    snapshot.party = {};
-    snapshot.isMultiplayer = false;
+    // HunterPie MHRPlayer.cs:560-708. Party identity is independent from the
+    // damage producer and remains readable in training/result states; the UI
+    // owns result-screen freezing. Followers are tagged separately from real
+    // players and never make a session multiplayer.
+    snapshot.party = readParty(snapshot.player, snapshot.quest.state,
+                               isRiseTrainingRoom(stageInfo.stage), nullptr);
+    const int realPlayerCount = static_cast<int>(std::count_if(
+        snapshot.party.cbegin(), snapshot.party.cend(),
+        [](const PartyMemberSnapshot &member) {
+            return member.kind == PartyMemberKind::Player;
+        }));
+    snapshot.isMultiplayer = realPlayerCount > 1;
 
     if (!error.isEmpty() && snapshot.monsters.isEmpty())
         snapshot.status += trMessage(QStringLiteral("ui.reader.partial_read_failed")).arg(error);

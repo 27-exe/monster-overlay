@@ -22,6 +22,13 @@ public:
     // valid data has arrived the panel keeps the riseMode_ placeholder;
     // the first valid snapshot switches it over to the normal chart.
     void updateRiseDamage(const mhw::RiseDamageSnapshot &dmg);
+    void updateRiseDamage(const mhw::RiseDamageSnapshot &dmg,
+                          const mhw::RiseDamageDisplayOptions &options);
+
+    // Controls which Rise actors can enter the main damage table. The main
+    // panel intentionally supports hunters and companions only; pets have
+    // their own presentation path.
+    void setRiseDisplayOptions(const mhw::RiseDamageDisplayOptions &options);
 
     // i18n: window title + demo party labels are cached; the rest of the
     // panel reads tr() at the draw site. Called after a locale swap.
@@ -48,6 +55,10 @@ private:
     QVector<int>  masterRanks_;
     QVector<int>  slots_;            // party slot (0-3) for color assignment
     QVector<bool> locals_;           // self flag (HunterPie name match)
+    QVector<QString> riseKeys_;      // stable Rise row identity (never array index)
+    mhw::RiseDamageDisplayOptions riseDisplayOptions_;
+    int riseQuestEpoch_{0};
+    bool hasRiseQuestEpoch_{false};
     QVector<bool> left_;             // true once a previously-seen player
                                      // disappears from snap.party (party
                                      // shrink, drop-out, kick). Their row

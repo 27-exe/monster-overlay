@@ -24,7 +24,7 @@
       "presets": "▱   预设",
       "startOverlay": "▶   启动悬浮窗",
       "stopOverlay": "■   停止悬浮窗",
-      "hint": "ESC 返回 · 1/2/3 选择",
+      "hint": "ESC 返回 · 1/2/3/4 选择",
       "game": "游戏",
       "detected": "检测到",
       "none": "--"
@@ -37,14 +37,18 @@
       "player": "玩家",
       "monster": "怪物",
       "damage": "伤害",
+      "pets": "伙伴伤害",
       "playerSummary": "玩家状态",
       "monsterSummary": "怪物 HP",
-      "damageSummary": "DPS / 占比"
+      "damageSummary": "DPS / 占比",
+      "petsSummary": "按主人汇总的伙伴伤害"
     },
     "panel": {
       "player": "玩家",
       "monster": "怪物",
       "damage": "伤害",
+      "pets": "伙伴伤害",
+      "petsRiseOnly": "仅在 RISE 模式下可用",
       "disabled": "面板已禁用"
     },
     "inspector": {
@@ -64,12 +68,13 @@
       "sub": {
         "player": "玩家状态面板",
         "monster": "怪物状态面板",
-        "damage": "队伍伤害面板"
+        "damage": "队伍伤害面板",
+        "pets": "按主人汇总的伙伴伤害面板"
       }
     },
     "edit": {
       "title": "编辑模式",
-      "hint": "进入后三个面板强制显示，方向键移动",
+      "hint": "进入后四个面板强制显示，方向键移动",
       "start": "启动",
       "enter": "进入编辑"
     },
@@ -135,7 +140,12 @@
       "damage": {
         "rows": "玩家行",
         "share": "占比条",
-        "chart": "折线图"
+        "chart": "折线图",
+        "otherMembers": "其他玩家 / 盟友"
+      },
+      "pets": {
+        "localPets": "自己的伙伴伤害",
+        "otherPets": "其他成员的伙伴伤害"
       }
     }
   }

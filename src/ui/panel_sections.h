@@ -169,11 +169,12 @@ inline QStringList displayNames()
 // ----- Damage panel sections ----------------------------------------------
 namespace DamageSection {
 enum : uint32_t {
-    Rows  = 1u << 0,     // 玩家行 (name/dmg/dps)
-    Share = 1u << 1,     // 横向占比条
-    Chart = 1u << 2,     // 折线图
+    Rows         = 1u << 0,     // 玩家行 (name/dmg/dps)
+    Share        = 1u << 1,     // 横向占比条
+    Chart        = 1u << 2,     // 折线图
+    OtherMembers = 1u << 3,     // 队友 / 盟友行
 };
-constexpr uint32_t kAll = Rows | Share | Chart;
+constexpr uint32_t kAll = Rows | Share | Chart | OtherMembers;
 
 inline const QStringList &names()
 {
@@ -181,11 +182,12 @@ inline const QStringList &names()
         QStringLiteral("rows"),
         QStringLiteral("share"),
         QStringLiteral("chart"),
+        QStringLiteral("otherMembers"),
     };
     return n;
 }
 
-constexpr int kCount = 3;
+constexpr int kCount = 4;
 
 inline QString displayName(int index)
 {
@@ -193,11 +195,13 @@ inline QString displayName(int index)
         "console.section.damage.rows",
         "console.section.damage.share",
         "console.section.damage.chart",
+        "console.section.damage.otherMembers",
     };
     static const QStringList kFallback = {
         QStringLiteral("玩家行"),
         QStringLiteral("占比条"),
         QStringLiteral("折线图"),
+        QStringLiteral("其他玩家 / 盟友"),
     };
     if (index < 0 || index >= kCount)
         return {};
@@ -215,5 +219,56 @@ inline QStringList displayNames()
     return n;
 }
 } // namespace DamageSection
+
+// ----- Pet damage panel sections ------------------------------------------
+namespace PetDamageSection {
+enum : uint32_t {
+    LocalPets = 1u << 0,   // 本地玩家拥有的猫狗
+    OtherPets = 1u << 1,   // 队友 / 盟友拥有的猫狗
+};
+constexpr uint32_t kAll = LocalPets | OtherPets;
+
+inline const QStringList &names()
+{
+    static const QStringList n = {
+        QStringLiteral("localPets"),
+        QStringLiteral("otherPets"),
+    };
+    return n;
+}
+
+constexpr int kCount = 2;
+
+inline QString displayName(int index)
+{
+    static const char *const kKeys[kCount] = {
+        "console.section.pets.localPets",
+        "console.section.pets.otherPets",
+    };
+    static const QStringList kFallback = {
+        QStringLiteral("自己的猫狗"),
+        QStringLiteral("其他成员的猫狗"),
+    };
+    if (index < 0 || index >= kCount)
+        return {};
+    const QString key = QString::fromLatin1(kKeys[index]);
+    const QString val = StringTable::instance().tr(key);
+    return val == key ? kFallback.value(index) : val;
+}
+
+inline QStringList displayNames()
+{
+    QStringList n;
+    n.reserve(kCount);
+    for (int i = 0; i < kCount; ++i)
+        n << displayName(i);
+    return n;
+}
+} // namespace PetDamageSection
+
+static_assert(DamageSection::kCount == 4);
+static_assert(DamageSection::kAll == 0x0Fu);
+static_assert(PetDamageSection::kCount == 2);
+static_assert(PetDamageSection::kAll == 0x03u);
 
 } // namespace mhw

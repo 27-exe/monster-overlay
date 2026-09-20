@@ -101,10 +101,69 @@ inline bool isRisePlayerValid(const QString &name, float health, float maxHealth
     return !name.isEmpty() || hasSaneVitals;
 }
 
-// Rise wirebug entries use a Mono nint[] object. Its header length is at +0x1C
-// and the pointer payload begins at +0x20, like HunterPie's ReadArraySafeAsync.
+// Rise wirebug and party entries use Mono nint[] objects. Their header length
+// is at +0x1C and the pointer payload begins at +0x20, matching HunterPie's
+// ReadArraySafeAsync / ReadArrayAsync helpers.
 constexpr std::uintptr_t kRiseMonoArrayLengthOffset = 0x1CULL;
 constexpr std::uintptr_t kRiseMonoArrayDataOffset = 0x20ULL;
+
+constexpr int kRisePartyPlayerCount = 4;
+constexpr int kRisePartyCompanionCount = 2;
+constexpr int kRisePartyRosterCount =
+    kRisePartyPlayerCount + kRisePartyCompanionCount;
+
+// A stateless reader cannot retain HunterPie's mutable _party collection in
+// result states. Keep returning the live roster for states 3..7 so panels can
+// freeze their last active rows, and always allow the training-room exception.
+inline constexpr bool shouldReadRisePartyRoster(int questState,
+                                                bool isTrainingRoom)
+{
+    return isTrainingRoom || (questState >= kRiseQuestStateInQuest
+                              && questState <= 7);
+}
+
+inline int risePartyMonoArrayCount(
+    const std::optional<std::int32_t> &length, int cap)
+{
+    if (!length || *length <= 0 || cap <= 0)
+        return 0;
+    return std::min(*length, cap);
+}
+
+inline std::optional<std::uintptr_t> risePartyMonoArrayElementAddress(
+    std::uintptr_t header, int index, std::int32_t declaredLength, int cap)
+{
+    if (declaredLength <= 0 || cap <= 0)
+        return std::nullopt;
+    const int count = std::min(declaredLength, cap);
+    if (header == 0 || index < 0 || index >= count
+        || header > std::numeric_limits<std::uintptr_t>::max()
+                         - kRiseMonoArrayDataOffset) {
+        return std::nullopt;
+    }
+
+    const std::uintptr_t data = header + kRiseMonoArrayDataOffset;
+    const auto element = static_cast<std::uintptr_t>(index);
+    constexpr std::uintptr_t stride = sizeof(std::uintptr_t);
+    if (element > (std::numeric_limits<std::uintptr_t>::max() - data) / stride)
+        return std::nullopt;
+    return data + element * stride;
+}
+
+// A fully dereferenced candidate from HunterPie's character/weapon arrays.
+// Empty names are invalid and are intentionally omitted by buildRisePartyRoster.
+struct RisePartyRosterCandidate {
+    QString name;
+    int weaponId{-1};
+    int highRank{};
+    int masterRank{};
+};
+
+[[nodiscard]] QVector<PartyMemberSnapshot> buildRisePartyRoster(
+    const std::array<RisePartyRosterCandidate, kRisePartyPlayerCount> &players,
+    const std::array<RisePartyRosterCandidate, kRisePartyCompanionCount> &companions,
+    const PlayerSnapshot &localPlayer,
+    bool playersFromSos);
 
 // Rise exposes four source slots in HunterPie's MHRWirebug[] (default plus
 // up to three temporary entries). Preserve that proven cap; the panel
@@ -429,6 +488,10 @@ private:
     void readMonsterQurio(std::uintptr_t monster, MonsterSnapshot &snapshot);
     [[nodiscard]] std::uintptr_t readLockOnTarget() const;
     PlayerSnapshot readPlayer(QString *error);
+    QVector<PartyMemberSnapshot> readParty(const PlayerSnapshot &localPlayer,
+                                           int questState,
+                                           bool isTrainingRoom,
+                                           QString *error);
     void readWirebugs(PlayerSnapshot &snapshot, QString *error);
     // v0.8.4-r18 player-abnormalities: consumable buffs + debuffs from
     // ABNORMALITIES_ADDRESS + CONS_/DEBUFF_ABNORMALITIES_OFFSETS. Mirrors

@@ -85,7 +85,9 @@
     "monster_title": "怪物",
     "player_title": "猎人状态",
     "damage_title": "伤害统计",
+    "pet_damage_title": "伙伴伤害",
     "damage_waiting": "等待伤害数据...",
+    "pet_damage_waiting": "等待伙伴伤害数据...",
     "part_severable_tag": " (切断)",
     "part_breakable_tag": " (破坏)",
     "enrage_buildup": "怒气 %1%",
@@ -130,6 +132,9 @@
     "damage_rise_unsupported": "Rise 不支持实时伤害追踪",
     "damage_quest_timer": "任务计时 %1:%2",
     "damage_chart_waiting": "等待数据...",
+    "pet_damage_header": "伙伴伤害  PET DAMAGE",
+    "pet_damage_total": "伙伴总伤害",
+    "pet_name_fallback": "伙伴",
 
     "reader": {
       "address_table_open_failed": "无法打开地址表 %1: %2",

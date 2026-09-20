@@ -1,5 +1,6 @@
 #include "hud_canvas.h"
 
+#include <QColor>
 #include <QFont>
 #include <QFontMetrics>
 #include <QGuiApplication>
@@ -34,19 +35,31 @@ namespace {
 const QColor kPlayerAccent(167, 79, 255);
 const QColor kMonsterAccent(255, 112, 67);
 const QColor kDamageAccent(64, 169, 255);
-const QColor kAccents[] = {kPlayerAccent, kMonsterAccent, kDamageAccent};
+const QColor kPetsAccent(103, 214, 157);
+const std::array<QColor, mhw::kPanelCount> kAccents = {
+    kPlayerAccent, kMonsterAccent, kDamageAccent, kPetsAccent,
+};
 // i18n: panel display names come from the console string table
 // (console.panel.*) and are resolved at PAINT time, so a language switch
 // only needs a repaint (ControlPanel::retranslateUi() → canvas_->update()).
 // The ASCII names stay as the fallback for a missing key.
-const char *kNameKeys[] = {"console.panel.player",
-                           "console.panel.monster",
-                           "console.panel.damage"};
-const char *kNames[] = {"PLAYER", "MONSTER", "DAMAGE"};
+const std::array<const char *, mhw::kPanelCount> kNameKeys = {
+    "console.panel.player",
+    "console.panel.monster",
+    "console.panel.damage",
+    "console.panel.pets",
+};
+const std::array<const char *, mhw::kPanelCount> kNames = {
+    "PLAYER", "MONSTER", "DAMAGE", "PETS",
+};
+
+static_assert(kAccents.size() == mhw::kPanelCount);
+static_assert(kNameKeys.size() == mhw::kPanelCount);
+static_assert(kNames.size() == mhw::kPanelCount);
 
 QString panelName(int index)
 {
-    const int i = (index < 0 || index > 2) ? 0 : index;
+    const int i = mhw::isPanelIndex(index) ? index : 0;
     const QString key = QString::fromLatin1(kNameKeys[i]);
     const QString val = mh::tr(key);
     return val == key ? QString::fromLatin1(kNames[i]) : val;
@@ -126,7 +139,7 @@ HudCanvas::HudCanvas(QWidget *parent) : QWidget(parent)
 
 void HudCanvas::setPanelPixmap(int index, const QPixmap &pixmap, bool enabled)
 {
-    if (index < 0 || index >= 3) return;
+    if (!mhw::isPanelIndex(index)) return;
     slots_[index].pixmap = pixmap;
     slots_[index].enabled = enabled;
     update();
@@ -148,14 +161,14 @@ void HudCanvas::setShowGrid(bool on)
 
 void HudCanvas::setSelectedPanel(int index)
 {
-    if (index < 0 || index >= 3 || selected_ == index) return;
+    if (!mhw::isPanelIndex(index) || selected_ == index) return;
     selected_ = index;
     update();
 }
 
 void HudCanvas::bindPanel(int index, const PanelSource *src)
 {
-    if (index < 0 || index >= 3) return;
+    if (!mhw::isPanelIndex(index)) return;
     slots_[index].src = src;
     slots_[index].bound = (src != nullptr);
     update();
@@ -279,7 +292,7 @@ void HudCanvas::setPreviewScreen(QString outputName)
 
 QString HudCanvas::cornerLabel(int index) const
 {
-    if (index < 0 || index >= 3 || !slots_[index].bound) return {};
+    if (!mhw::isPanelIndex(index) || !slots_[index].bound) return {};
     return cornerName(slots_[index].src->corner());
 }
 
@@ -287,7 +300,7 @@ QString HudCanvas::cornerLabel(int index) const
 
 QMargins HudCanvas::movedMargins(int index, int dxLogical, int dyLogical) const
 {
-    if (index < 0 || index >= 3 || !slots_[index].bound) return {};
+    if (!mhw::isPanelIndex(index) || !slots_[index].bound) return {};
     const Corner corner = slots_[index].src->corner();
     QMargins m = dragStartMargins_;   // set at drag/key start
     const QSize logical = previewScreenInfo().logical;
@@ -326,7 +339,8 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::TextAntialiasing, true);
     p.fillRect(rect(), QColor(6, 8, 10));
 
-    for (int i = 0; i < 3; ++i) slots_[i].lastTarget_ = QRectF();
+    for (int i = 0; i < mhw::kPanelCount; ++i)
+        slots_[i].lastTarget_ = QRectF();
 
     // --- header ---
     QFont headFont(QStringLiteral("Chakra Petch"), 11, QFont::Medium);
@@ -408,7 +422,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
                       lr.height() * fit);
     };
 
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
         if (!slots_[i].bound) continue;
         const Slot &s = slots_[i];
         const qreal z = std::max(0.1, s.src->scale());
@@ -491,7 +505,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
 void HudCanvas::mousePressEvent(QMouseEvent *e)
 {
     if (e->button() != Qt::LeftButton) return;
-    for (int i = 2; i >= 0; --i) {
+    for (int i = mhw::kPanelCount - 1; i >= 0; --i) {
         if (slots_[i].lastTarget_.contains(e->position())) {
             if (i != selected_) {
                 selected_ = i;

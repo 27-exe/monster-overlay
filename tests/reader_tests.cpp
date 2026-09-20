@@ -313,6 +313,124 @@ Address OTHER 0xCAFE # inline comment
     check(mhw::isHuntingZone(mhw::Zone::RiseTrainingRoom),
           "rebased Rise training room reaches the overlay hunting-zone gate");
 
+    // Rise party roster gating deliberately differs from active-damage gating:
+    // state 2 is live, result states 3..7 remain readable for panel-side
+    // freezing, and the training room reads even while the quest manager is
+    // idle. Lobby/accepted/unknown states do not probe party arrays.
+    check(mhw::shouldReadRisePartyRoster(2, false),
+          "Rise party roster reads during an active quest");
+    check(mhw::shouldReadRisePartyRoster(3, false)
+              && mhw::shouldReadRisePartyRoster(7, false),
+          "Rise party roster remains readable throughout result states 3..7");
+    check(mhw::shouldReadRisePartyRoster(0, true),
+          "Rise party roster reads in the training room while quest state is idle");
+    check(!mhw::shouldReadRisePartyRoster(0, false)
+              && !mhw::shouldReadRisePartyRoster(1, false)
+              && !mhw::shouldReadRisePartyRoster(8, false),
+          "Rise party roster rejects non-hunt and unknown states outside training");
+
+    // Every roster source is a Mono pointer array. A corrupt declaration must
+    // never turn into an unbounded remote-memory walk, and address arithmetic
+    // must stay inside both the declared length and the source-specific cap.
+    check(mhw::risePartyMonoArrayCount(std::nullopt, 6) == 0
+              && mhw::risePartyMonoArrayCount(std::optional<std::int32_t>{-1}, 6) == 0
+              && mhw::risePartyMonoArrayCount(std::optional<std::int32_t>{99}, 6) == 6,
+          "Rise party Mono array lengths are required, nonnegative, and capped");
+    check(mhw::risePartyMonoArrayElementAddress(0x1000, 1, 2, 6)
+              == std::optional<std::uintptr_t>{0x1020 + sizeof(std::uintptr_t)},
+          "Rise party Mono pointer address stays inside declared length");
+    check(!mhw::risePartyMonoArrayElementAddress(0x1000, 2, 2, 6)
+              && !mhw::risePartyMonoArrayElementAddress(0x1000, 0, -1, 6)
+              && !mhw::risePartyMonoArrayElementAddress(0, 0, 1, 6)
+              && !mhw::risePartyMonoArrayElementAddress(0x1000, 6, 99, 6)
+              && !mhw::risePartyMonoArrayElementAddress(
+                     std::numeric_limits<std::uintptr_t>::max() - 0x10, 0, 1, 6),
+          "Rise party Mono pointer address rejects length, cap, and overflow violations");
+
+    // HunterPie MHRPlayer.cs:560-708 identity/layout semantics. Real players
+    // retain entity indexes 0..3; followers use 4..5 and compact display slots.
+    // Locality is name-based, never inferred from entity index zero.
+    mhw::PlayerSnapshot rosterLocal;
+    rosterLocal.name = QStringLiteral("Self");
+    rosterLocal.weaponId = 8;
+    rosterLocal.highRank = 321;
+    rosterLocal.masterRank = 210;
+
+    std::array<mhw::RisePartyRosterCandidate, mhw::kRisePartyPlayerCount> players{};
+    players[0] = {QStringLiteral("Remote"), 3, 55, 44};
+    players[2] = {QStringLiteral("Self"), 8, 321, 210};
+    std::array<mhw::RisePartyRosterCandidate, mhw::kRisePartyCompanionCount> companions{};
+    companions[0] = {QStringLiteral("Fiorayne"), 0, 321, 210};
+    companions[1] = {QStringLiteral("Luchika"), 13, 321, 210};
+
+    const auto onlineRoster = mhw::buildRisePartyRoster(
+        players, companions, rosterLocal, true);
+    check(onlineRoster.size() == 2
+              && onlineRoster[0].entityIndex == 0
+              && onlineRoster[0].slot == 0
+              && onlineRoster[0].kind == mhw::PartyMemberKind::Player
+              && onlineRoster[0].weaponId == 3
+              && onlineRoster[0].highRank == 55
+              && onlineRoster[0].masterRank == 44
+              && !onlineRoster[0].local
+              && onlineRoster[1].entityIndex == 2
+              && onlineRoster[1].slot == 2
+              && onlineRoster[1].local,
+          "Rise online roster keeps real entity/display slots and name-based local identity");
+
+    std::array<mhw::RisePartyRosterCandidate, mhw::kRisePartyPlayerCount> soloPlayers{};
+    soloPlayers[0] = {QStringLiteral("Self"), 8, 321, 210};
+    const auto followerRoster = mhw::buildRisePartyRoster(
+        soloPlayers, companions, rosterLocal, false);
+    check(followerRoster.size() == 3
+              && followerRoster[1].entityIndex == 4
+              && followerRoster[1].slot == 1
+              && followerRoster[1].kind == mhw::PartyMemberKind::Companion
+              && followerRoster[1].weaponId == 0
+              && followerRoster[1].highRank == 321
+              && followerRoster[1].masterRank == 210
+              && !followerRoster[1].local
+              && followerRoster[2].entityIndex == 5
+              && followerRoster[2].slot == 2
+              && followerRoster[2].kind == mhw::PartyMemberKind::Companion,
+          "Rise solo followers use entity indexes 4..5 and compact display slots");
+
+    const auto staleFollowerRoster = mhw::buildRisePartyRoster(
+        players, companions, rosterLocal, false);
+    check(staleFollowerRoster.size() == 2,
+          "Rise player teammates and stale follower data are mutually exclusive");
+
+    std::array<mhw::RisePartyRosterCandidate, mhw::kRisePartyPlayerCount> noPlayers{};
+    const auto fallbackRoster = mhw::buildRisePartyRoster(
+        noPlayers, companions, rosterLocal, false);
+    check(fallbackRoster.size() == 3
+              && fallbackRoster[0].entityIndex == 0
+              && fallbackRoster[0].slot == 0
+              && fallbackRoster[0].local
+              && fallbackRoster[0].name == rosterLocal.name
+              && fallbackRoster[1].slot == 1,
+          "Rise missing session array falls back to the local snapshot before followers");
+
+    mhw::PlayerSnapshot unnamedLocal;
+    std::array<mhw::RisePartyRosterCandidate, mhw::kRisePartyPlayerCount> unknownPlayers{};
+    unknownPlayers[0] = {QStringLiteral("Unknown hunter"), 1, 1, 1};
+    const auto unknownRoster = mhw::buildRisePartyRoster(
+        unknownPlayers, {}, unnamedLocal, true);
+    check(unknownRoster.size() == 1 && !unknownRoster[0].local,
+          "Rise entity index zero is not assumed local when the local name is unavailable");
+
+    mhw::PartyMemberSnapshot worldMember;
+    worldMember.slot = 3;
+    check(worldMember.kind == mhw::PartyMemberKind::Player
+              && worldMember.effectiveEntityIndex() == 3,
+          "World party snapshots default to Player and resolve entity identity from slot");
+
+    check(sizeof(mhw::MHRCharacterData) == 0x94
+              && offsetof(mhw::MHRCharacterData, namePointer) == 0x18
+              && offsetof(mhw::MHRCharacterData, highRank) == 0x38
+              && offsetof(mhw::MHRCharacterData, masterRank) == 0x90,
+          "Rise character roster data matches HunterPie explicit offsets");
+
     check(mhw::isRiseMeleeWeaponId(0) && mhw::isRiseMeleeWeaponId(10),
           "known Rise core melee weapons may read sharpness");
     check(!mhw::isRiseMeleeWeaponId(-1)

@@ -13,9 +13,12 @@
 #include <QFontMetrics>
 #include <QLinearGradient>
 #include <QHash>
+#include <QSet>
 #include <QStringList>
 
 #include <algorithm>
+#include <limits>
+#include <utility>
 
 using mhw::Icon;
 
@@ -166,14 +169,69 @@ void DamagePanel::retranslateUi()
     triggerUpdate();
 }
 
+void DamagePanel::setRiseDisplayOptions(
+    const mhw::RiseDamageDisplayOptions &options)
+{
+    riseDisplayOptions_ = options;
+    canvas()->update();
+}
+
+void DamagePanel::updateRiseDamage(
+    const mhw::RiseDamageSnapshot &dmg,
+    const mhw::RiseDamageDisplayOptions &options)
+{
+    riseDisplayOptions_ = options;
+    updateRiseDamage(dmg);
+}
+
 void DamagePanel::updateRiseDamage(const mhw::RiseDamageSnapshot &dmg)
 {
-    if (!dmg.valid || dmg.players.isEmpty()) {
+    auto clearRiseState = [this] {
+        history_.clear();
+        tick_ = 0;
+        firstHitTick_.clear();
+        baselineDamage_.clear();
+        rawDamage_.clear();
+        names_.clear();
+        weaponIds_.clear();
+        masterRanks_.clear();
+        slots_.clear();
+        locals_.clear();
+        left_.clear();
+        riseKeys_.clear();
+        lastElapsedSeconds_ = 0.0F;
+        hasData_ = false;
+        questEnded_ = false;
+        riseMode_ = true;
+    };
+
+    const mhw::RiseDamageLifecycleAction action =
+        mhw::riseDamageLifecycleAction(dmg);
+    if (action == mhw::RiseDamageLifecycleAction::Keep) {
+        canvas()->update();
+        return;
+    }
+    if (action == mhw::RiseDamageLifecycleAction::Clear) {
+        clearRiseState();
+        hasRiseQuestEpoch_ = false;
         canvas()->update();
         return;
     }
 
-    if (!dmg.questActive) {
+    const bool epochChanged = hasRiseQuestEpoch_
+                           && dmg.questEpoch != riseQuestEpoch_;
+    riseQuestEpoch_ = dmg.questEpoch;
+    hasRiseQuestEpoch_ = true;
+
+    if (epochChanged) {
+        // Epoch is the authoritative hunt identity for v2. Reset even when
+        // the producer does not expose an inactive frame between two hunts.
+        clearRiseState();
+        riseQuestEpoch_ = dmg.questEpoch;
+        hasRiseQuestEpoch_ = true;
+    }
+
+    if (action == mhw::RiseDamageLifecycleAction::Freeze) {
         if (hasData_)
             questEnded_ = true;
         canvas()->update();
@@ -190,40 +248,138 @@ void DamagePanel::updateRiseDamage(const mhw::RiseDamageSnapshot &dmg)
         lastElapsedSeconds_ = 0.0F;
     }
 
+    // The main damage table intentionally contains hunters and NPC
+    // companions only. Pet/Palico/Palamute rows belong to their own display,
+    // while Unknown is never promoted into a user-facing row. Disabling
+    // "other members" is stricter still: only the local Player survives;
+    // even a locally-owned Companion is an other member for this option.
+    QVector<const mhw::RiseDamageActor *> actors;
+    actors.reserve(dmg.actors.size());
+    QSet<QString> seenKeys;
+    for (const auto &actor : dmg.actors) {
+        const bool supportedKind = actor.kind == mhw::RiseDamageActorKind::Player
+                                || actor.kind == mhw::RiseDamageActorKind::Companion;
+        if (!supportedKind || actor.key.isEmpty() || seenKeys.contains(actor.key))
+            continue;
+        if (!riseDisplayOptions_.showOtherMembers
+            && !(actor.kind == mhw::RiseDamageActorKind::Player && actor.local)) {
+            continue;
+        }
+        seenKeys.insert(actor.key);
+        actors.append(&actor);
+    }
+
+    std::sort(actors.begin(), actors.end(),
+              [](const mhw::RiseDamageActor *lhs,
+                 const mhw::RiseDamageActor *rhs) {
+        if (lhs->local != rhs->local)
+            return lhs->local > rhs->local;
+        if (lhs->displaySlot != rhs->displaySlot)
+            return lhs->displaySlot < rhs->displaySlot;
+        return lhs->key < rhs->key;
+    });
+
+    if (actors.isEmpty()) {
+        // Preserve the startup placeholder until a supported actor has ever
+        // arrived. Once rows existed, however, an authoritative empty/filter
+        // result must remove them rather than leave disallowed stale members.
+        if (!riseKeys_.isEmpty()) {
+            history_.clear();
+            tick_ = 0;
+            firstHitTick_.clear();
+            baselineDamage_.clear();
+            rawDamage_.clear();
+            names_.clear();
+            weaponIds_.clear();
+            masterRanks_.clear();
+            slots_.clear();
+            locals_.clear();
+            left_.clear();
+            riseKeys_.clear();
+            hasData_ = false;
+            riseMode_ = true;
+        }
+        canvas()->update();
+        return;
+    }
+
     hasData_ = true;
     riseMode_ = false;
 
-    const int n = std::min(static_cast<int>(dmg.players.size()), kMaxPlayers);
+    const int n = actors.size();
 
-    names_.resize(n);
-    weaponIds_.resize(n);
-    masterRanks_.resize(n);
-    slots_.resize(n);
-    locals_.resize(n);
-    firstHitTick_.resize(n);
-    baselineDamage_.resize(n);
-    rawDamage_.resize(n);
+    // Every positional vector and every historical sample is remapped through
+    // actor.key before the sorted order is installed. Thus a producer may
+    // reorder its JSON array (or a display slot may change) without assigning
+    // one actor another actor's chart, baseline, or DPS history.
+    QHash<QString, int> oldIndexByKey;
+    oldIndexByKey.reserve(riseKeys_.size() * 2);
+    for (int i = 0; i < riseKeys_.size(); ++i)
+        oldIndexByKey.insert(riseKeys_[i], i);
+
+    QVector<int> oldIndexes(n, -1);
+    QVector<QString> nextKeys(n);
+    QVector<QString> nextNames(n);
+    QVector<int> nextWeaponIds(n, -1);
+    QVector<int> nextMasterRanks(n, 0);
+    QVector<int> nextSlots(n, -1);
+    QVector<bool> nextLocals(n, false);
+    QVector<int> nextFirstHitTicks(n, 0);
+    QVector<int> nextBaselines(n, 0);
+    QVector<int> nextRawDamage(n, 0);
 
     for (int i = 0; i < n; ++i) {
-        const auto &e = dmg.players[i];
-        names_[i]       = e.name;
-        weaponIds_[i]   = -1;
-        masterRanks_[i] = 0;
-        slots_[i]       = e.slot;
-        locals_[i]      = e.isLocal;
+        const auto &actor = *actors[i];
+        nextKeys[i] = actor.key;
+        nextNames[i] = actor.name;
+        nextSlots[i] = actor.displaySlot;
+        nextLocals[i] = actor.local;
 
-        const int total = static_cast<int>(e.total);
-        if (firstHitTick_[i] == 0 && total > 0) {
-            firstHitTick_[i]   = tick_;
-            baselineDamage_[i] = total;
+        const int oldIndex = oldIndexByKey.value(actor.key, -1);
+        oldIndexes[i] = oldIndex;
+        if (oldIndex >= 0) {
+            nextFirstHitTicks[i] = firstHitTick_.value(oldIndex, 0);
+            nextBaselines[i] = baselineDamage_.value(oldIndex, 0);
+            nextRawDamage[i] = rawDamage_.value(oldIndex, 0);
+        }
+
+        const int total = actor.total >= std::numeric_limits<int>::max()
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(actor.total);
+        if (nextFirstHitTicks[i] == 0 && total > 0) {
+            nextFirstHitTicks[i] = tick_;
+            nextBaselines[i] = total;
         }
     }
+
+    for (Sample &sample : history_) {
+        const QVector<int> oldDamage = sample.damage;
+        sample.damage.fill(0, n);
+        for (int i = 0; i < n; ++i) {
+            if (oldIndexes[i] >= 0)
+                sample.damage[i] = oldDamage.value(oldIndexes[i], 0);
+        }
+    }
+
+    riseKeys_ = std::move(nextKeys);
+    names_ = std::move(nextNames);
+    weaponIds_ = std::move(nextWeaponIds);
+    masterRanks_ = std::move(nextMasterRanks);
+    slots_ = std::move(nextSlots);
+    locals_ = std::move(nextLocals);
+    firstHitTick_ = std::move(nextFirstHitTicks);
+    baselineDamage_ = std::move(nextBaselines);
+    rawDamage_ = std::move(nextRawDamage);
+    left_.fill(false, n);
 
     Sample s;
     s.tick = tick_++;
     s.damage.resize(n);
     for (int i = 0; i < n; ++i) {
-        s.damage[i]   = static_cast<int>(dmg.players[i].total);
+        const qint64 total = actors[i]->total;
+        s.damage[i] = total >= std::numeric_limits<int>::max()
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(total);
         rawDamage_[i] = s.damage[i];
     }
     history_.append(s);
@@ -558,7 +714,7 @@ void DamagePanel::paintPanel(QPainter &p)
         const QRectF msgRect(kMargin, kMargin + 14 + 9,
                              kPanelW - 2 * kMargin, kPlaceholderH);
         p.drawText(msgRect, Qt::AlignCenter,
-                   mh::tr("ui.damage_rise_unsupported"));
+                   mh::tr("ui.damage_waiting"));
         return;
     }
 
@@ -930,7 +1086,10 @@ int DamagePanel::computeDps(int playerIdx) const
     const int dmg = history_.last().damage.value(playerIdx, 0);
     const int elapsedTicks = history_.last().tick - firstHitTick_[playerIdx];
     if (elapsedTicks <= 0) return 0;
-    return dmg * 4 / elapsedTicks;     // 250ms poll → ×4 per second
+    const qint64 dps = static_cast<qint64>(dmg) * 4 / elapsedTicks;
+    return dps >= std::numeric_limits<int>::max()
+        ? std::numeric_limits<int>::max()
+        : static_cast<int>(dps);       // 250ms poll → ×4 per second
 }
 
 void DamagePanel::setupDemoData()

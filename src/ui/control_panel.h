@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/game_snapshot.h"
+#include "ui/panel_source.h"
 
 #include <QMainWindow>
 #include <QPointer>
@@ -26,6 +27,7 @@ class Panel;
 class PlayerPanel;
 class MonsterPanel;
 class DamagePanel;
+class PetDamagePanel;
 class ToggleChip;
 class SectionRow;
 class SectionCountBar;
@@ -33,7 +35,7 @@ class HudCanvas;
 
 // Standalone control console for Monster Overlay. NOT a layer-shell
 // surface — a plain QMainWindow the user can move, focus and close like
-// any app. It owns three real overlay panel instances rendered off-screen
+// any app. It owns four real overlay panel instances rendered off-screen
 // (WA_DontShowOnScreen) so toggling a switch re-paints the matching
 // preview with the exact QPainter code the live overlay uses.
 //
@@ -116,6 +118,7 @@ private:
     void resetPanel(int idx);
     void rebuildAndRender(int idx);
     void updatePosLabel(int idx);
+    [[nodiscard]] Panel *panelAt(int idx) const;
     QPixmap renderPreview(Panel *p);
     // v0.5.6 polish: animated show/hide of the bottom canvas stage.
     // animStageTo(true) restores the splitter sizes stored in
@@ -162,7 +165,8 @@ private:
     PlayerPanel *player_ = nullptr;
     MonsterPanel *monster_ = nullptr;
     DamagePanel *damage_ = nullptr;
-    std::array<PanelCtl, 3> ctl_{};
+    PetDamagePanel *pets_ = nullptr;
+    std::array<PanelCtl, mhw::kPanelCount> ctl_{};
 
     // L3: handles for the EDIT MODE block launcher buttons (one START,
     // one ENTER EDIT). Stored as plain members — not in ctl_ — because

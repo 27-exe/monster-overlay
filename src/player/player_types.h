@@ -119,14 +119,50 @@ struct PlayerSnapshot {
     QVector<PlayerAbnormalitySnapshot> abnormalities;
 };
 
+enum class PartyMemberKind {
+    Player,
+    Companion,
+};
+
 struct PartyMemberSnapshot {
     QString name;
     int weaponId{-1};
+    int highRank{};
     int masterRank{};
     int damage{};
     bool local{};
-    int slot{-1};  // party slot 0-3, used for color assignment
+    int slot{-1};  // display slot used for stable row colour/order
+
+    // Rise damage events identify hunters/followers by entity index. World has
+    // no separate identity today, so an unset value resolves to the existing
+    // party slot and preserves all World reader/UI behaviour.
+    int entityIndex{-1};
+    PartyMemberKind kind{PartyMemberKind::Player};
+
+    [[nodiscard]] int effectiveEntityIndex() const
+    {
+        return entityIndex >= 0 ? entityIndex : slot;
+    }
 };
+
+// The console's OtherMembers filter is shared by Rise and World. Keep the
+// complete roster for PlayerPanel; only the damage consumer receives this view.
+inline QVector<PartyMemberSnapshot> visibleDamageParty(
+    const QVector<PartyMemberSnapshot> &party, bool showOtherMembers)
+{
+    if (showOtherMembers)
+        return party;
+
+    QVector<PartyMemberSnapshot> visible;
+    visible.reserve(1);
+    for (const PartyMemberSnapshot &member : party) {
+        if (member.local) {
+            visible.append(member);
+            break;
+        }
+    }
+    return visible;
+}
 
 // ---------------------------------------------------------------------------
 // v0.9 i18n (WS-A): locale-aware lookups for the World player-abnormality

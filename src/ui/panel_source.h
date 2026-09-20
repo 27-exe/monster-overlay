@@ -4,6 +4,21 @@
 #include <QSize>
 #include <QtGlobal>
 
+namespace mhw {
+
+// Shared slot-count contract for the control console and HUD preview.
+// Slot order is fixed: 0 Player, 1 Monster, 2 Damage, 3 Pets.
+inline constexpr int kPanelCount = 4;
+
+[[nodiscard]] constexpr bool isPanelIndex(int index)
+{
+    return index >= 0 && index < kPanelCount;
+}
+
+static_assert(kPanelCount == 4, "the console/HUD contract requires four panels");
+
+} // namespace mhw
+
 // Forward-declared so the canvas header doesn't need the full Panel
 // header (which transitively pulls in QMainWindow + layer-shell).
 enum class Corner;

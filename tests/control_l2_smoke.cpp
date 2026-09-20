@@ -8,13 +8,17 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QString>
 #include <QTextStream>
 #include <QVector>
 
 #include "ui/control_panel.h"
+#include "ui/panel_damage.h"
+#include "ui/panel_pet_damage.h"
 #include "ui/section_row.h"
 #include "ui/toggle_chip.h"
 #include "core/locale_conf.h"
@@ -36,10 +40,10 @@ QString configPath()
 // Locate a SectionRow by its English key label (e.g. "WEAPON"), which is
 // unique across the whole console. Index-based lookup is a trap: the
 // QStackedWidget page order — and therefore findChildren()'s traversal
-// order — is NOT the ctl_[0..2] order, so the old hard-coded starts
+// order — is NOT the ctl_[0..3] order, so the old hard-coded starts
 // {6,5,3} silently flipped the wrong panel's rows (and the counts were
 // stale anyway: Player has 8 bits since v0.7.1 Wirebug, Monster 6 since
-// v0.7.3 Tenderize).
+// v0.7.3 Tenderize, Damage 4 with OtherMembers, and Pets 2).
 SectionRow *findRow(ControlPanel *cp, const QString &key)
 {
     const QString want = key.toUpper();
@@ -59,7 +63,34 @@ void flipViaKey(ControlPanel *cp, const QString &key, bool on)
         qCritical("FAIL: SectionRow '%s' not found", qPrintable(key));
         std::exit(4);
     }
+    if (row->isChecked() == on)
+        return;
     row->setChecked(on);
+    row->stateChanged(on ? Qt::Checked : Qt::Unchecked);
+}
+
+template <typename T>
+T *findTopLevelPanel()
+{
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+        if (auto *panel = qobject_cast<T *>(widget))
+            return panel;
+    }
+    return nullptr;
+}
+
+bool selectRise(ControlPanel *cp)
+{
+    const QString rise = mhw::StringTable::instance().tr(
+        QStringLiteral("console.game.rise"));
+    for (QPushButton *button : cp->findChildren<QPushButton *>()) {
+        if (button->objectName() == QStringLiteral("gameBtn")
+            && button->text() == rise) {
+            button->click();
+            return true;
+        }
+    }
+    return false;
 }
 
 QString readBack()
@@ -69,6 +100,24 @@ QString readBack()
         return QString();
     QTextStream in(&f);
     return in.readAll();
+}
+
+bool writeConfig(const QString &text)
+{
+    const QFileInfo info(configPath());
+    if (!QDir().mkpath(info.absolutePath()))
+        return false;
+    QFile f(info.absoluteFilePath());
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate))
+        return false;
+    const QByteArray bytes = text.toUtf8();
+    return f.write(bytes) == bytes.size();
+}
+
+bool checked(ControlPanel *cp, const QString &key)
+{
+    SectionRow *row = findRow(cp, key);
+    return row && row->isChecked();
 }
 } // namespace
 
@@ -89,18 +138,133 @@ int main(int argc, char *argv[])
     // A synthetic value proves the substitution without pinning the release.
     QApplication::setApplicationVersion(QStringLiteral("9.9.9-test"));
 
+    // A pre-pets three-row config must migrate Damage to include the new
+    // OtherMembers bit while Pets keeps its all-on default.
+    if (!writeConfig(QStringLiteral(
+            "player=fb\nmonster=2f\ndamage=7\n"))) {
+        fprintf(stderr, "FAIL: could not seed legacy config\n");
+        return 20;
+    }
+    {
+        ControlPanel legacy;
+        legacy.show();
+        app.processEvents();
+        if (!checked(&legacy, QStringLiteral("otherMembers"))
+            || !checked(&legacy, QStringLiteral("localPets"))
+            || !checked(&legacy, QStringLiteral("otherPets"))) {
+            fprintf(stderr, "FAIL: three-row config did not migrate new bits on\n");
+            return 21;
+        }
+    }
+    const QString migrated = readBack();
+    if (!migrated.contains(QStringLiteral("damage=f"))
+        || !migrated.contains(QStringLiteral("pets=3"))) {
+        fprintf(stderr, "FAIL: migrated masks were not persisted:\n%s",
+                qPrintable(migrated));
+        return 22;
+    }
+
+    // Invalid and overflowing hexadecimal masks are ignored independently;
+    // they must retain each panel's all-on default rather than parse as zero.
+    if (!writeConfig(QStringLiteral(
+            "player=fb\nmonster=2f\ndamage=not-hex\npets=100000000\n"))) {
+        fprintf(stderr, "FAIL: could not seed invalid config\n");
+        return 23;
+    }
+    {
+        ControlPanel invalid;
+        invalid.show();
+        app.processEvents();
+        const QStringList damageRows{
+            QStringLiteral("rows"), QStringLiteral("share"),
+            QStringLiteral("chart"), QStringLiteral("otherMembers")};
+        for (const QString &key : damageRows) {
+            if (!checked(&invalid, key)) {
+                fprintf(stderr, "FAIL: invalid damage mask disabled '%s'\n",
+                        qPrintable(key));
+                return 24;
+            }
+        }
+        if (!checked(&invalid, QStringLiteral("localPets"))
+            || !checked(&invalid, QStringLiteral("otherPets"))) {
+            fprintf(stderr, "FAIL: overflowing pets mask disabled defaults\n");
+            return 25;
+        }
+    }
+    QFile::remove(configPath());
+
     QString written;
     {
         ControlPanel cp;
         cp.show();
         app.processEvents();
 
-        flipViaKey(&cp, QStringLiteral("weapon"), false);  // PlayerSection::Weapon OFF
-        flipViaKey(&cp, QStringLiteral("parts"),  false);  // MonsterSection::Parts OFF
-        // After both flips the file must read:
+        if (!selectRise(&cp)) {
+            fprintf(stderr, "FAIL: Rise game selector missing\n");
+            return 26;
+        }
+        app.processEvents();
+
+        DamagePanel *damagePanel = findTopLevelPanel<DamagePanel>();
+        PetDamagePanel *petPanel = findTopLevelPanel<PetDamagePanel>();
+        if (!damagePanel || !petPanel) {
+            fprintf(stderr, "FAIL: preview panels missing\n");
+            return 27;
+        }
+        const int damageAllHeight = damagePanel->contentSize().height();
+        const int petsAllHeight = petPanel->contentSize().height();
+
+        // Both owner-scope toggles must change the edit-mode Pets demo.
+        flipViaKey(&cp, QStringLiteral("localPets"), false);
+        app.processEvents();
+        const int petsOtherOnlyHeight = petPanel->contentSize().height();
+        if (petsOtherOnlyHeight >= petsAllHeight) {
+            fprintf(stderr, "FAIL: LocalPets did not reduce Pets preview (%d >= %d)\n",
+                    petsOtherOnlyHeight, petsAllHeight);
+            return 28;
+        }
+        flipViaKey(&cp, QStringLiteral("localPets"), true);
+        flipViaKey(&cp, QStringLiteral("otherPets"), false);
+        app.processEvents();
+        const int petsLocalOnlyHeight = petPanel->contentSize().height();
+        if (petsLocalOnlyHeight >= petsOtherOnlyHeight) {
+            fprintf(stderr, "FAIL: OtherPets did not reduce Pets preview (%d >= %d)\n",
+                    petsLocalOnlyHeight, petsOtherOnlyHeight);
+            return 29;
+        }
+        flipViaKey(&cp, QStringLiteral("otherPets"), true);
+        app.processEvents();
+        if (petPanel->contentSize().height() != petsAllHeight) {
+            fprintf(stderr, "FAIL: re-enabling OtherPets did not restore Pets preview\n");
+            return 34;
+        }
+        flipViaKey(&cp, QStringLiteral("otherPets"), false);
+
+        // DamagePanel itself is intentionally frozen; the console must still
+        // prepare a local-only demo when OtherMembers is disabled.
+        flipViaKey(&cp, QStringLiteral("otherMembers"), false);
+        app.processEvents();
+        const int damageLocalHeight = damagePanel->contentSize().height();
+        if (damageLocalHeight >= damageAllHeight) {
+            fprintf(stderr, "FAIL: OtherMembers did not reduce Damage preview (%d >= %d)\n",
+                    damageLocalHeight, damageAllHeight);
+            return 30;
+        }
+        flipViaKey(&cp, QStringLiteral("otherMembers"), true);
+        app.processEvents();
+        if (damagePanel->contentSize().height() != damageAllHeight) {
+            fprintf(stderr, "FAIL: re-enabling OtherMembers did not restore Damage preview\n");
+            return 35;
+        }
+        flipViaKey(&cp, QStringLiteral("otherMembers"), false);
+
+        flipViaKey(&cp, QStringLiteral("weapon"),      false); // PlayerSection::Weapon OFF
+        flipViaKey(&cp, QStringLiteral("parts"),       false); // MonsterSection::Parts OFF
+        // After all flips the file must read:
         //   player=fb  (0xff & ~(1<<2))
         //   monster=2f (0x3f & ~(1<<4))
-        //   damage=7
+        //   damage=7   (0x0f & ~(1<<3))
+        //   pets=1     (0x03 & ~(1<<1))
         app.processEvents();
 
         // Trigger save before destruction (dtor also saves, but being
@@ -121,9 +285,11 @@ int main(int argc, char *argv[])
         ControlPanel cp2;
         cp2.show();
         app.processEvents();
-        SectionRow *weapon = findRow(&cp2, QStringLiteral("weapon"));
-        SectionRow *parts  = findRow(&cp2, QStringLiteral("parts"));
-        if (!weapon || !parts) {
+        SectionRow *weapon       = findRow(&cp2, QStringLiteral("weapon"));
+        SectionRow *parts        = findRow(&cp2, QStringLiteral("parts"));
+        SectionRow *otherMembers = findRow(&cp2, QStringLiteral("otherMembers"));
+        SectionRow *otherPets    = findRow(&cp2, QStringLiteral("otherPets"));
+        if (!weapon || !parts || !otherMembers || !otherPets) {
             fprintf(stderr, "FAIL: rows missing on reopen\n");
             return 5;
         }
@@ -135,13 +301,17 @@ int main(int argc, char *argv[])
             fprintf(stderr, "FAIL: monster parts section should be OFF after load\n");
             return 7;
         }
+        if (otherMembers->isChecked() || otherPets->isChecked()) {
+            fprintf(stderr, "FAIL: Rise damage filters should be OFF after load\n");
+            return 17;
+        }
     }
 
     // ------------------------------------------------------------------
-    // Mask rows: three lowercase-hex lines, same order — the overlay's
-    // locale_sync.h polls the file and older readers must keep working.
+    // Mask rows: four lowercase-hex lines, same order — the overlay's
+    // locale_sync.h polls the file and older three-row configs remain readable.
     //
-    // v0.9.2 semantics: the optional 4th `locale=` row records an EXPLICIT
+    // v0.9.2 semantics: the optional trailing `locale=` row records an EXPLICIT
     // language choice (--locale or the EN/CH chip). A mask save must neither
     // invent nor drop it, otherwise a detected language would silently
     // become a pinned one; the chip block below asserts it appears on a
@@ -150,10 +320,11 @@ int main(int argc, char *argv[])
     {
         const QString text = readBack();
         const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-        if (lines.size() != 3
+        if (lines.size() != 4
             || lines[0] != QStringLiteral("player=fb")
             || lines[1] != QStringLiteral("monster=2f")
-            || lines[2] != QStringLiteral("damage=7")) {
+            || lines[2] != QStringLiteral("damage=7")
+            || lines[3] != QStringLiteral("pets=1")) {
             fprintf(stderr, "FAIL: mask conf layout wrong (%d lines):\n%s",
                     int(lines.size()), qPrintable(text));
             return 8;
@@ -189,6 +360,12 @@ int main(int argc, char *argv[])
                     qPrintable(brandSub->text()));
             return 10;
         }
+        if (mhw::StringTable::instance().tr(
+                QStringLiteral("ui.pet_name_fallback"))
+            != QStringLiteral("伙伴")) {
+            fprintf(stderr, "FAIL: zh pet fallback is not localized\n");
+            return 31;
+        }
 
         auto clickChip = [&]{
             const QPoint p = chip->rect().center();
@@ -210,11 +387,18 @@ int main(int argc, char *argv[])
                     qPrintable(brandSub->text()));
             return 11;
         }
+        if (mhw::StringTable::instance().tr(
+                QStringLiteral("ui.pet_name_fallback"))
+            != QStringLiteral("Buddy")) {
+            fprintf(stderr, "FAIL: en pet fallback is not localized\n");
+            return 32;
+        }
         const QString afterEn = readBack();
         if (!afterEn.contains(QStringLiteral("locale=en-US"))
             || !afterEn.contains(QStringLiteral("player=fb"))
             || !afterEn.contains(QStringLiteral("monster=2f"))
-            || !afterEn.contains(QStringLiteral("damage=7"))) {
+            || !afterEn.contains(QStringLiteral("damage=7"))
+            || !afterEn.contains(QStringLiteral("pets=1"))) {
             fprintf(stderr, "FAIL: mask rows must survive the locale write:\n%s",
                     qPrintable(afterEn));
             return 12;
@@ -234,6 +418,12 @@ int main(int argc, char *argv[])
             fprintf(stderr, "FAIL: second click did not restore zh copy ('%s')\n",
                     qPrintable(brandSub->text()));
             return 13;
+        }
+        if (mhw::StringTable::instance().tr(
+                QStringLiteral("ui.pet_name_fallback"))
+            != QStringLiteral("伙伴")) {
+            fprintf(stderr, "FAIL: zh pet fallback was not restored\n");
+            return 33;
         }
         if (!readBack().contains(QStringLiteral("locale=zh-CN"))) {
             fprintf(stderr, "FAIL: second click did not write locale=zh-CN\n");

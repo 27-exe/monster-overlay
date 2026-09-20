@@ -1,6 +1,6 @@
-// Offscreen snapshot of MonsterPanel + DamagePanel in demo mode.
-// Mirrors snap_player_demo.cpp so the block-table refactor of these two
-// panels can be verified with a pixel diff (before vs after) without
+// Offscreen snapshot of MonsterPanel + DamagePanel + PetDamagePanel in demo
+// mode. Mirrors snap_player_demo.cpp so panel layout changes can be verified
+// with a pixel diff (before vs after) without
 // bringing the layer-shell live overlay on screen.
 //
 // Renders each panel into a fixed oversized buffer (content paints into
@@ -14,6 +14,7 @@
 
 #include "ui/panel_monster.h"
 #include "ui/panel_damage.h"
+#include "ui/panel_pet_damage.h"
 #include "core/string_table.h"
 
 #include <QApplication>
@@ -44,10 +45,15 @@ QString parseArgs(const QStringList &args, QStringList &positional)
 
 void snapPanel(Panel &panel, const QString &path)
 {
+    // Snapshot geometry must not inherit the live panel's persisted/default
+    // 2x scale; otherwise the old fixed 420px buffer clips the value columns.
+    panel.setScale(1.0, false);
+    panel.setOpacity(1.0, false);
     panel.setEditMode(true);   // triggers setupDemoData() on first paint
-    panel.setFixedSize(420, 1000);
     panel.show();
+    QApplication::processEvents();
     panel.repaint();
+    QApplication::processEvents();
 
     QImage img(panel.size(), QImage::Format_ARGB32_Premultiplied);
     img.fill(Qt::transparent);
@@ -83,7 +89,10 @@ int main(int argc, char *argv[])
     DamagePanel damage;
     snapPanel(damage, prefix + QStringLiteral("_damage.png"));
 
-    qInfo("wrote %s_{monster,damage}.png [locale=%s]",
+    PetDamagePanel pets;
+    snapPanel(pets, prefix + QStringLiteral("_pets.png"));
+
+    qInfo("wrote %s_{monster,damage,pets}.png [locale=%s]",
           prefix.toLocal8Bit().constData(), locale.toLocal8Bit().constData());
     return 0;
 }

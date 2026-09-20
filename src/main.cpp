@@ -8,9 +8,12 @@
 #include "mhw_reader.h"
 #include "rise/mhr_reader.h"
 #include "rise/rise_damage_reader.h"
+#include "rise/rise_damage_roster.h"
 #include "ui/panel_damage.h"
 #include "ui/panel_monster.h"
+#include "ui/panel_pet_damage.h"
 #include "ui/panel_player.h"
+#include "ui/panel_sections.h"
 #include "monster/target_selector.h"
 
 #include <QApplication>
@@ -22,10 +25,23 @@
 #include <QFontDatabase>
 #include <QResource>
 #include <QTimer>
-#include <algorithm>
 #include <functional>
 
 #include <cstdio>
+
+namespace {
+
+// The base contract keeps hasContent() protected for painting. Main only
+// exposes it to decide whether mounting the Rise-only surface would produce
+// an empty frame; quest/epoch ownership stays inside PetDamagePanel.
+class VisiblePetDamagePanel final : public PetDamagePanel {
+public:
+    using PetDamagePanel::PetDamagePanel;
+
+    [[nodiscard]] bool hasVisibleContent() const { return hasContent(); }
+};
+
+} // namespace
 
 void messageHandler(QtMsgType type, const QMessageLogContext &, const QString &msg)
 {
@@ -161,6 +177,10 @@ int main(int argc, char **argv)
         QStringLiteral("mask-damage"),
         QStringLiteral("Damage panel section mask (hex32)"),
         QStringLiteral("hex32"));
+    QCommandLineOption maskPetsOption(
+        QStringLiteral("mask-pets"),
+        QStringLiteral("Pet damage panel section mask (hex32)"),
+        QStringLiteral("hex32"));
     // Disable a whole panel. Independent of --mask-* — this hides the
     // layer-shell surface entirely (no chrome, no title row), while
     // the mask flags control which sub-blocks are rendered inside an
@@ -175,6 +195,9 @@ int main(int argc, char **argv)
     QCommandLineOption noDamageOption(
         QStringLiteral("no-damage"),
         QStringLiteral("Disable the damage panel entirely"));
+    QCommandLineOption noPetsOption(
+        QStringLiteral("no-pets"),
+        QStringLiteral("Disable the pet damage panel entirely"));
     // Target game selector. auto = scan /proc for a running Monster Hunter
     // process (see core/game_detector.h), world/rise = force a specific
     // reader. Lets the control console relaunch the overlay against the
@@ -202,6 +225,10 @@ int main(int argc, char **argv)
         QStringLiteral("output-damage"),
         QStringLiteral("Damage panel QScreen name (default: OS primary)"),
         QStringLiteral("name"));
+    QCommandLineOption outputPetsOption(
+        QStringLiteral("output-pets"),
+        QStringLiteral("Pet damage panel QScreen name (default: OS primary)"),
+        QStringLiteral("name"));
 
     parser.addOption(mapOption);
     parser.addOption(localeOption);
@@ -210,13 +237,16 @@ int main(int argc, char **argv)
     parser.addOption(maskPlayerOption);
     parser.addOption(maskMonsterOption);
     parser.addOption(maskDamageOption);
+    parser.addOption(maskPetsOption);
     parser.addOption(noPlayerOption);
     parser.addOption(noMonsterOption);
     parser.addOption(noDamageOption);
+    parser.addOption(noPetsOption);
     parser.addOption(gameOption);
     parser.addOption(outputPlayerOption);
     parser.addOption(outputMonsterOption);
     parser.addOption(outputDamageOption);
+    parser.addOption(outputPetsOption);
     parser.process(app);
 
     // i18n startup locale, priority: --locale > conf(locale= row) > system
@@ -252,6 +282,15 @@ int main(int argc, char **argv)
     const uint32_t maskPlayer  = parseMask(maskPlayerOption);
     const uint32_t maskMonster = parseMask(maskMonsterOption);
     const uint32_t maskDamage  = parseMask(maskDamageOption);
+    const uint32_t maskPets    = parseMask(maskPetsOption);
+
+    mhw::RiseDamageDisplayOptions riseDamageDisplayOptions;
+    riseDamageDisplayOptions.showOtherMembers =
+        (maskDamage & mhw::DamageSection::OtherMembers) != 0u;
+    riseDamageDisplayOptions.showLocalPets =
+        (maskPets & mhw::PetDamageSection::LocalPets) != 0u;
+    riseDamageDisplayOptions.showOtherPets =
+        (maskPets & mhw::PetDamageSection::OtherPets) != 0u;
 
     // Resolve the target game. auto scans for a running process; an
     // explicit world/rise forces the matching reader. Default to World
@@ -280,16 +319,21 @@ int main(int argc, char **argv)
     PlayerPanel playerPanel;
     MonsterPanel monsterPanel;
     DamagePanel damagePanel;
+    VisiblePetDamagePanel petDamagePanel;
 
     playerPanel.setEditMode(editMode);
     monsterPanel.setEditMode(editMode);
     damagePanel.setEditMode(editMode);
+    petDamagePanel.setEditMode(editMode);
 
     // L1: apply section masks BEFORE show() so the first paint reflects
     // them — no one-frame flash of "all visible" if a mask is restrictive.
     playerPanel.setSectionMask(maskPlayer);
     monsterPanel.setSectionMask(maskMonster);
     damagePanel.setSectionMask(maskDamage);
+    petDamagePanel.setSectionMask(maskPets);
+    damagePanel.setRiseDisplayOptions(riseDamageDisplayOptions);
+    petDamagePanel.setDisplayOptions(riseDamageDisplayOptions);
     // Master gate: maps to the control console's "面板启用"
     // toggle. When the flag is set, the panel does not show its
     // layer-shell surface at all — independent of the section mask
@@ -298,6 +342,7 @@ int main(int argc, char **argv)
     playerPanel.setPanelEnabled(!parser.isSet(noPlayerOption));
     monsterPanel.setPanelEnabled(!parser.isSet(noMonsterOption));
     damagePanel.setPanelEnabled(!parser.isSet(noDamageOption));
+    petDamagePanel.setPanelEnabled(!parser.isSet(noPetsOption));
 
 
     // v0.8: CLI --output-* overrides whatever the persisted panels.ini
@@ -311,10 +356,15 @@ int main(int argc, char **argv)
         monsterPanel.setOutputName(parser.value(outputMonsterOption), false);
     if (parser.isSet(outputDamageOption))
         damagePanel.setOutputName(parser.value(outputDamageOption), false);
+    if (parser.isSet(outputPetsOption))
+        petDamagePanel.setOutputName(parser.value(outputPetsOption), false);
 
     playerPanel.show();
     monsterPanel.show();
     damagePanel.show();
+    // Never flash an empty fourth frame at startup. In edit mode Rise can
+    // show its demo immediately; live mode waits for a visible pet row.
+    petDamagePanel.setVisible(isRise && editMode);
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
     // loop below stays game-agnostic.
@@ -383,9 +433,11 @@ int main(int argc, char **argv)
         playerPanel.setWindowTitle(table.tr(QStringLiteral("ui.player_title")));
         monsterPanel.setWindowTitle(table.tr(QStringLiteral("ui.monster_title")));
         damagePanel.setWindowTitle(table.tr(QStringLiteral("ui.damage_title")));
+        petDamagePanel.setWindowTitle(table.tr(QStringLiteral("ui.pet_damage_title")));
         playerPanel.retranslateUi();
         monsterPanel.retranslateUi();
         damagePanel.retranslateUi();
+        petDamagePanel.retranslateUi();
     };
 
     QObject::connect(&timer, &QTimer::timeout, [&] {
@@ -465,23 +517,52 @@ int main(int argc, char **argv)
         }
 
         if (isRise) {
-            // Rise party damage arrives out-of-band via /tmp/mhr_damage.json.
-            // Feeding it only on a successful parse keeps the placeholder
-            // (riseMode_) on screen until real data shows up. The panel
-            // always has content in Rise mode — placeholder or chart.
-            if (riseDamageReader.update())
-                damagePanel.updateRiseDamage(riseDamageReader.snapshot());
+            // Rise damage arrives out-of-band. Edit-mode panels own their demo
+            // state once primed; live snapshots must not erase that preview.
+            const bool keepDamageDemo = skipUpdate(damagePanel);
+            const bool keepPetDemo = skipUpdate(petDamagePanel);
+            if (!keepDamageDemo || !keepPetDemo) {
+                if (riseDamageReader.update()) {
+                    auto damageSnapshot = riseDamageReader.snapshot();
+                    mhw::enrichRiseDamageSnapshot(damageSnapshot, snap);
+                    if (!keepDamageDemo)
+                        damagePanel.updateRiseDamage(damageSnapshot);
+                    if (!keepPetDemo)
+                        petDamagePanel.updateRiseDamage(damageSnapshot);
+                } else {
+                    // Missing, malformed, or stale (>5 s) feed is an explicit
+                    // lifecycle event. Deliver an invalid snapshot so live
+                    // panels clear old quest data instead of keeping it forever.
+                    const mhw::RiseDamageSnapshot feedLost;
+                    if (!keepDamageDemo)
+                        damagePanel.updateRiseDamage(feedLost);
+                    if (!keepPetDemo)
+                        petDamagePanel.updateRiseDamage(feedLost);
+                }
+            }
             damagePanel.setVisible(true);
             damagePanel.triggerUpdate();
+            petDamagePanel.setVisible(
+                petDamagePanel.panelEnabled()
+                && (petDamagePanel.hasVisibleContent() || showAll));
+            petDamagePanel.triggerUpdate();
         } else if (skipUpdate(damagePanel)) {
+            petDamagePanel.setVisible(false);
             damagePanel.triggerUpdate();
             damagePanel.setVisible(!snap.party.isEmpty() || showAll);
         } else {
+            petDamagePanel.setVisible(false);
             // Always deliver empty/non-hunting snapshots too. DamagePanel owns
             // the hunt lifecycle; skipping these updates leaves the previous
             // chart and DPS tick counter alive into the next quest.
-            damagePanel.update(snap);
-            damagePanel.setVisible(!snap.party.isEmpty() || showAll);
+            const mhw::GameSnapshot damageSnap = [&] {
+                mhw::GameSnapshot filtered = snap;
+                filtered.party = mhw::visibleDamageParty(
+                    snap.party, riseDamageDisplayOptions.showOtherMembers);
+                return filtered;
+            }();
+            damagePanel.update(damageSnap);
+            damagePanel.setVisible(!damageSnap.party.isEmpty() || showAll);
         }
     });
     timer.start(pollMs);  // consistent poll rate regardless of mode
@@ -492,6 +573,7 @@ int main(int argc, char **argv)
         playerPanel.saveConfig();
         monsterPanel.saveConfig();
         damagePanel.saveConfig();
+        petDamagePanel.saveConfig();
     }
 
     return code;

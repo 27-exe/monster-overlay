@@ -1,32 +1,16 @@
 #pragma once
 
+#include "rise/rise_damage_types.h"
+
 #include <QString>
-#include <QVector>
-#include <cstdint>
 
 namespace mhw {
 
-// Reads per-player damage data written by the REFramework Lua script
-// (reframework/mhr-overlay-damage.lua) to /tmp/mhr_damage.json.
-// Poll-friendly: call update() each tick; returns false if the file
-// is missing, stale (>5s old), or unparseable.
-struct RiseDamageEntry {
-    int     slot{0};
-    QString name;
-    float   total{0.0F};
-    float   physical{0.0F};
-    float   elemental{0.0F};
-    int     hits{0};
-    bool    isLocal{false};
-};
-
-struct RiseDamageSnapshot {
-    bool valid{false};
-    bool questActive{false};
-    qint64 timestamp{0};
-    QVector<RiseDamageEntry> players;
-};
-
+// Reads actor damage data written by the REFramework Lua script to
+// /tmp/mhr_damage.json. Protocol v2 carries stable actor identities; legacy
+// v1 player-only documents are converted to the same shared snapshot.
+// Poll-friendly: call update() each tick; returns false if the file is
+// missing, outside the +/-5 second freshness window, or unparseable.
 class RiseDamageReader {
 public:
     explicit RiseDamageReader(QString path = QStringLiteral("/tmp/mhr_damage.json"));

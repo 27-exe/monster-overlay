@@ -24,7 +24,7 @@
       "presets": "▱   PRESETS",
       "startOverlay": "▶   START OVERLAY",
       "stopOverlay": "■   STOP OVERLAY",
-      "hint": "ESC BACK · 1/2/3 SELECT",
+      "hint": "ESC BACK · 1/2/3/4 SELECT",
       "game": "GAME",
       "detected": "DETECTED",
       "none": "--"
@@ -37,14 +37,18 @@
       "player": "PLAYER",
       "monster": "MONSTER",
       "damage": "DAMAGE",
+      "pets": "PET DAMAGE",
       "playerSummary": "Player status",
       "monsterSummary": "Monster HP",
-      "damageSummary": "DPS / share"
+      "damageSummary": "DPS / share",
+      "petsSummary": "Pet damage grouped by owner"
     },
     "panel": {
       "player": "PLAYER",
       "monster": "MONSTER",
       "damage": "DAMAGE",
+      "pets": "PET DAMAGE",
+      "petsRiseOnly": "AVAILABLE IN RISE ONLY",
       "disabled": "PANEL DISABLED"
     },
     "inspector": {
@@ -64,12 +68,13 @@
       "sub": {
         "player": "Player status panel",
         "monster": "Monster status panel",
-        "damage": "Team damage panel"
+        "damage": "Team damage panel",
+        "pets": "Owner-grouped pet damage panel"
       }
     },
     "edit": {
       "title": "EDIT MODE",
-      "hint": "All three panels are forced visible; arrow keys move them",
+      "hint": "All four panels are forced visible; arrow keys move them",
       "start": "START",
       "enter": "ENTER EDIT"
     },
@@ -135,7 +140,12 @@
       "damage": {
         "rows": "Player rows",
         "share": "Share bars",
-        "chart": "Chart"
+        "chart": "Chart",
+        "otherMembers": "Other players / followers"
+      },
+      "pets": {
+        "localPets": "Your pet damage",
+        "otherPets": "Other owners' pet damage"
       }
     }
   }
