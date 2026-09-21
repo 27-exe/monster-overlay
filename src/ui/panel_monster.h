@@ -52,6 +52,34 @@ private:
     };
     std::array<AilTrack, 32> ailTrack_{};
 
+    // v0.10.x-r2 PartAutoHide: same shape as AilTrack, slot keyed by the
+    // normalized PartSnapshot.index (see kPartAutoHideMs + the eight-field
+    // pack inside paintPanel()).
+    //
+    // v0.10.x-r2 fix: the raw index is NOT a dense 0..N key — the readers
+    // assign it on three different scales (World severable 1000+s, World
+    // normal -1-n, Rise i). paintPanel() normalizes it to three disjoint
+    // regions:
+    //   severable: 100 + s           [100, 131)
+    //   normal:    1000 + slotIdx    [1000, 2024)
+    //   Rise:      i                 [0, 64)
+    // so the table needs 2048 entries. The extra ~1900 entries are 30 KB and
+    // only the slots actually observed are ever touched, so there is no
+    // per-tick scan cost.
+    //
+    // v0.10.x-r2 fix (B1): reset on monster swap. A stale (sig, stampMs)
+    // carried over from a previous target made a new monster's part look
+    // "already silent" (hidden on its first paint) or "already fresh"
+    // (pinned for a spurious 15 s). update() clears the table whenever the
+    // snapshot's address changes — the address is the identity the rest of
+    // the panel already keys on (panel_monster.cpp:831) and it is refreshed
+    // on every tick (monster_reader.cpp:854 / mhr_reader.cpp:667).
+    struct PartTrack {
+        quint64 sig{0};
+        qint64  stampMs{0};
+    };
+    std::array<PartTrack, 2048> partTrack_{};
+
     mhw::MonsterSnapshot monster_;
     bool hasData_{false};
     bool multiplayer_{false};

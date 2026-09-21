@@ -321,6 +321,10 @@ struct PcEntry {
     QString tagKind;       // "" / "brk" / "sev"
     int     counter{0};    // HunterPie raw counter
     bool    broken{false}; // true if part has been broken/severed at least once
+    // v0.10.x-r3 UI-template alignment (HunterPie XAML
+    // BossMonsterSeverablePartView.xaml:101-134 / Breakable 124-157):
+    // drives the Row 3 conditional text -- Sever -> Flinch or Health -> Flinch.
+    bool    severed{false}; // true once the part has been severed (tail/horn)
     float   pct{0.0F};     // 0..1 (solo: per-part HP; non-host multi: flinch layer)
     QString value;         // compact current/max, e.g. 34k/57k
     // v0.7.4 PR C: per-part tenderize. When tenderizeDuration > 0 the
@@ -416,7 +420,7 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
                    miniRect.width() * clamped, miniRect.height());
     }
 
-    const int tenderizeHeight = e.tenderizeDuration > 0.0F
+    const int tenderizeHeight = e.tenderizeMaxDuration > 0.0F
         ? kPcTnLabelH + kPcTnH + kPcTnGap : 0;
     QFont valueFont(QStringLiteral("Chakra Petch"), kPcValueFont, QFont::Medium);
     valueFont.setStyleStrategy(QFont::PreferAntialias);
@@ -439,7 +443,7 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
     //   amber fill bar (kPcTnH tall)
     //   ↓ kPcTnGap
     //   .mini row
-    if (e.tenderizeDuration > 0.0F) {
+    if (e.tenderizeMaxDuration > 0.0F) {
         const QColor amber(246, 165, 34);    // #f6a522
         // Strip + label layout: stack from .mini top going up.
         const int barY = static_cast<int>(miniRect.top())
@@ -512,6 +516,19 @@ void MonsterPanel::retranslateUi()
 
 void MonsterPanel::update(const mhw::MonsterSnapshot &m)
 {
+    // v0.10.x-r2 fix (B1): the AutoHide table is keyed by a part slot, not
+    // by a monster. When the player switches target the whole snapshot is
+    // replaced, and a stale (sig, stampMs) pair from the previous target
+    // would make the new monster's parts look already-silent (hidden on
+    // their first paint) or already-fresh (pinned for a spurious 15 s).
+    // Clear it on the identity change. `address` is refreshed on every tick
+    // (monster_reader.cpp:854 / mhr_reader.cpp:667) and is the same key the
+    // panel already prints in its meta row, so this fires exactly once per
+    // target switch. Note this deliberately does NOT clear `ailTrack_`:
+    // ailment cards are gated on a live timer and HunterPie keeps the same
+    // per-cell ViewModel lifetime, so the ailment residue is invisible.
+    if (m.address != monster_.address)
+        partTrack_ = {};
     monster_ = m;
     hasData_ = (m.id >= 0);
 
@@ -760,7 +777,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         const int kPcTnExtra = kPcTnLabelH + kPcTnH + kPcTnGap;
         QVector<int> cellHeights(pcCount, kPcBaseCellH);
         for (int i = 0; i < pcCount; ++i) {
-            if (onTenderize && shownParts[i].tenderizeDuration > 0.0F)
+            if (onTenderize && shownParts[i].tenderizeMaxDuration > 0.0F)
                 cellHeights[i] += kPcTnExtra;
         }
         // Per-row max height → row height. Sum of (rowHeights + gaps).
@@ -1090,15 +1107,114 @@ void MonsterPanel::paintPanel(QPainter &p)
     // grid "几乎不显示" in multiplayer).
     // (v0.7.4 PR B: totalPct removed — was never consumed in either
     // solo or multiplayer path.)
+    // v0.10.x-r2 fix (B5): hoisted out of the loop. `constexpr` inside the
+    // body was harmless, but the per-iteration
+    // QDateTime::currentMSecsSinceEpoch() was a syscall per card per paint.
+    // Reuse the timestamp the ailments path already samples once above
+    // (panel_monster.cpp:624) so a single paint compares every card against
+    // ONE clock.
+    constexpr qint64 kPartAutoHideMs = 15000;
     QVector<PcEntry> pcList;
     pcList.reserve(shownParts.size());
     for (const auto &p : shownParts) {
+        // v0.10.x-r2 PartAutoHide: same 15 s silence timeout as HunterPie's
+        // MonsterPartViewModel (MonsterWidgetConfig.cs:131-139 default
+        // `AutoHidePartsDelay = new(15, 300, 1, 1)`). The signature is the
+        // eight PartSnapshot fields the player perceives as "the part
+        // moved" — HP/maxHP (Severable / Breakable layer), Flinch/maxFlinch
+        // (the alternate layer HunterPie's Row 3 Conditional switches to
+        // once a part is severed/broken), tenderizeDuration (the strip's
+        // countdown), Counter (+0x18, the player's "破 N" feedback), and
+        // the broken/severed flags. tenderizeMaxDuration is the sentinel
+        // "slot has authored this part" gate used by the panel's strip draw,
+        // not a per-tick value, so it deliberately does NOT participate —
+        // including it would pin a card forever as soon as one tick
+        // authored the slot (see v0.10.x-r3 merged-stackable patch).
+        //
+        // Quantize each float field at 0.1 (matches ailments' ailSig —
+        // panel_monster.cpp:626-628) so float jitter doesn't keep the
+        // card from settling into the silent state. Counter / bool fields
+        // are already integer-stable, no quantize needed.
+        const quint32 hpQ = static_cast<quint32>(qRound(p.health            * 10.0F));
+        const quint32 mhQ = static_cast<quint32>(qRound(p.maxHealth         * 10.0F));
+        const quint32 flQ = static_cast<quint32>(qRound(p.flinch            * 10.0F));
+        const quint32 mfQ = static_cast<quint32>(qRound(p.maxFlinch         * 10.0F));
+        const quint32 tdQ = static_cast<quint32>(qRound(p.tenderizeDuration * 10.0F));
+        const quint32 ctQ = static_cast<quint32>(p.counter);
+        const quint32 brQ = p.isBroken       ? 1u : 0u;
+        const quint32 svQ = p.isPartSevered  ? 1u : 0u;
+        // Accumulate (do NOT XOR-fold). The previous fold
+        //   (a<<32)^b ^ (c<<32)^d ^ ...
+        // let two IDENTICAL pairs cancel: on a World normal part the reader
+        // sets flinch/maxFlinch == health/maxHealth (monster_reader.cpp:746-753),
+        // so the (hp,mh) and (fl,mf) terms were equal and cancelled to 0 —
+        // and 0 is also the zero-initialized PartTrack default. That made
+        // `partSig == 0` for 25 % of the World breakable grid whenever
+        // Counter == 0, which both suppressed the card on its first paint and
+        // let a *moving* bar hide. A multiply-accumulate fold cannot cancel.
+        quint64 partSig = 0x9E3779B97F4A7C15ULL;
+        auto mix = [&partSig](quint64 v) {
+            partSig = (partSig ^ v) * 0x100000001B3ULL;
+        };
+        mix((static_cast<quint64>(hpQ) << 32) | mhQ);
+        mix((static_cast<quint64>(flQ) << 32) | mfQ);
+        mix((static_cast<quint64>(tdQ) << 32) | ctQ);
+        mix((static_cast<quint64>(brQ) << 32) | svQ);
+        // A real state can still hash to 0 by coincidence; force the low bit
+        // so a genuine signature is never confusable with the zero-init slot.
+        partSig |= 1ULL;
+        // edit-mode demo: never auto-hide (mirrors ailments' `recent = true`
+        // // default on line 629). Non-host multiplayer can still proceed —
+        // the non-host override below ("--/--" when HP is stale) is purely
+        // a value-masking concern and is unrelated to the silence filter,
+        // so the card falls out cleanly when the player's actual game-clock
+        // signal goes quiet.
+        bool recent = true;
+        // v0.10.x-r2 fix: the guard used the RAW PartSnapshot::index, but the
+        // three readers assign it on three different scales:
+        //   World severable  1000 + s        (monster_reader.cpp:680)  >= 1000
+        //   World normal     -1 - normalSlot (monster_reader.cpp:743)  < 0
+        //   Rise             i               (mhr_reader.cpp:419)      0..15
+        // Only the Rise scale lands inside [0, partTrack_.size()), so
+        // AutoHide silently did nothing on World — the whole grid stayed
+        // pinned forever. Normalize to a dense, stable slot key instead of
+        // changing the reader's index semantics (that field is also used for
+        // the "部位 N" fallback label and is intentionally signed to encode
+        // which table a part came from).
+        //
+        // Key = (100 + schema row) for severable, (1000 + normal slot) for
+        // normal, i for Rise. The three regions are disjoint:
+        //   severable [100, 131)   Rise [0, 64)   normal [1000, 2024)
+        // so no key can alias another even if a panel ever saw parts from
+        // two games (it cannot — main.cpp:316 fixes the reader at startup).
+        // A key outside [0, 2048) falls out of the guard below and leaves
+        // `recent == true`, i.e. it degrades to "always visible", which is
+        // the safe failure mode.
+        const int slot = (p.index >= 1000)
+            ? 100 + (p.index - 1000)       // World severable
+            : (p.index < 0 ? 1000 - p.index // World normal: -1-n -> 1000+n
+                           : p.index);      // Rise: already dense
+        if (!editMode() && slot >= 0
+                       && slot < static_cast<int>(partTrack_.size())) {
+            PartTrack &track = partTrack_[slot];
+            if (track.sig != partSig) {
+                track.sig     = partSig;
+                track.stampMs = nowMs;
+                recent = true;
+            } else {
+                recent = track.stampMs > 0
+                      && (nowMs - track.stampMs) < kPartAutoHideMs;
+            }
+        }
+        if (!recent)
+            continue;
         PcEntry e;
         e.name = p.name.isEmpty()
             ? mh::tr("ui.monster_part_fallback").arg(p.index)
             : p.name;
         e.counter = p.counter;
         e.broken = p.isBroken;
+        e.severed = p.isPartSevered;
         switch (p.partType) {
         case mhw::PartType::Severable:
             e.tag = mh::tr("ui.monster_tag_sever");
@@ -1131,8 +1247,28 @@ void MonsterPanel::paintPanel(QPainter &p)
         //     flinch bar values instead of the broken double-filled
         //     health/flinch pair.
         const mhw::PartHealthPair hp = mhw::partHealthForDisplay(p);
-        const float mHP = hp.maximum;
-        const float cHP = hp.current;
+        // v0.10.x-r3 UI-template alignment: Row 3 Conditional
+        // (HunterPie MonsterPartTemplateSelector + BossMonsterSeverablePartView.xaml:101-134,
+        //  BossMonsterBreakablePartView.xaml:124-157). The displayed value flips
+        // from the primary layer (Sever / Health) to Flinch/MaxFlinch once the
+        // part is severed or broken. Mapping:
+        //   Severable + severed  → "Flinch/MaxFlinch"
+        //   Severable + !severed → "Sever/MaxSever"   (= health/maxHealth)
+        //   Breakable + broken   → "Flinch/MaxFlinch"
+        //   Breakable + !broken  → "Health/MaxHealth" (= health/maxHealth)
+        //   Flinch               → "Flinch/MaxFlinch"
+        // The multiplayer non-host override below still takes precedence
+        // (it forces "—" when the layer pair is stale), so this never
+        // masks a frozen non-host value.
+        float mHP = hp.maximum;
+        float cHP = hp.current;
+        const bool switchToFlinch =
+            (p.partType == mhw::PartType::Severable && e.severed)
+         || (p.partType == mhw::PartType::Breakable && e.broken);
+        if (switchToFlinch && p.maxFlinch > 0.0F) {
+            cHP = p.flinch;
+            mHP = p.maxFlinch;
+        }
         e.value = mhw::compactPartHealth(cHP, mHP);
         if (multiplayer_) {
             // v0.8.4-r23 non-host readability: on a non-host client the
@@ -1193,7 +1329,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         // from shownParts (filtered) and the heights are 1:1.
         QVector<int> cellHeights(pcList.size(), kPcBaseCellH);
         for (int i = 0; i < pcList.size(); ++i) {
-            if (pcList[i].tenderizeDuration > 0.0F)
+            if (pcList[i].tenderizeMaxDuration > 0.0F)
                 cellHeights[i] += kPcTnExtra;
         }
         const int cellW = (innerW - kPcGap * (kPcCols - 1)) / kPcCols;

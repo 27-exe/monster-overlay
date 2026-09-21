@@ -437,7 +437,35 @@ void MhrReader::readMonsterParts(std::uintptr_t monster, MonsterSnapshot &snapsh
             part.maxHealth = flinchMax;
             break;
         }
-        part.isBroken = (part.maxHealth > 0.0F && part.health <= 0.0F);
+        // v0.10.x-r1: Rise isBroken parity with HunterPie MHRise. The single-
+        // clause `health <= 0` only fires on Severable (where severCur is a
+        // steady-state value); for Breakable, Health/MaxHealth is a per-layer
+        // cumulative that snaps back to the next full layer the instant one
+        // threshold is crossed, so `health <= 0` is invisible to the player.
+        // Mirrors src/monster/monster_reader.cpp:761-764 and HunterPie-v2
+        // .../MonsterPartContextHandler.cs:120: in Rise `Breaks` is always 0
+        // (MHRPartStructure has no Counter field), so the clause reduces to
+        // the flinch-delta test.
+        const bool flinchNotFull =
+            std::fabs(part.flinch - part.maxFlinch) > 1e-4F;
+        part.isBroken = (part.partType == PartType::Severable)
+            ? (part.maxHealth > 0.0F && part.health <= 0.0F)
+            : (part.maxHealth <= 0.0F
+               || (std::fabs(part.health - part.maxHealth) <= 1e-4F
+                   && flinchNotFull));
+        // v0.10.x-r3 UI-template alignment: HunterPie IsPartSevered
+        // (MonsterPartContextHandler.cs:104):
+        //   MaxSever == Sever && (Breaks > 0 || Flinch != MaxFlinch)
+        // Rise never has Breaks (MHRPartStructure has no Counter field,
+        // see sibling v0.10.x-r1 comment above), so the clause reduces
+        // to the flinch-delta test. Only Severable parts can ever have
+        // MaxSever > 0; on Breakable/Flinch this stays false by
+        // construction (part.isSeverable is false). Use flinchNotFull
+        // already computed above to keep the epsilon identical to the
+        // sibling isBroken branch.
+        part.isPartSevered = part.isSeverable
+            && (std::fabs(part.health - part.maxHealth) <= 1e-4F)
+            && flinchNotFull;
         snapshot.parts.push_back(part);
     }
 }

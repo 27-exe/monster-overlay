@@ -322,9 +322,14 @@ void MhwReader::applyTenderizesToParts(MonsterSnapshot &monster)
     constexpr int SLOT_SIZE  = 64;          // sizeof(MHWTenderizeInfoStructure)
 
     // Reset before applying so expired slots actually clear the part.
+    // v0.10.x tenderize-misalign fix: reset only tenderizeDuration.
+    // tenderizeMaxDuration stays set across ticks and acts as the
+    // "slot has authored this part" sentinel — UI gates on it instead
+    // of on remaining duration (mirrors HunterPie MHWMonsterPart
+    // Tenderize/MaxTenderize semantics where visibility tracks raw
+    // elapsed Tenderize, not remaining).
     for (PartSnapshot &p : monster.parts) {
         p.tenderizeDuration = 0.0F;
-        p.tenderizeMaxDuration = 0.0F;
     }
 
     std::vector<std::uint8_t> buf(SLOT_COUNT * SLOT_SIZE);
@@ -695,6 +700,22 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                             // and the layer HP is no longer updated.
                             p.isBroken = counter > 0
                                       || (p.maxHealth > 0.0F && p.health <= 0.0F);
+                            // v0.10.x-r3 UI-template alignment: HunterPie
+                            // IsPartSevered (MonsterPartContextHandler.cs:104).
+                            // Severable layer HP is bound to data.Health /
+                            // data.MaxHealth verbatim, so the equality check
+                            // (`MaxSever == Sever`) reduces to
+                            // `maxHealth == health` (within float epsilon).
+                            // World also exposes Counter (+0x18), so the
+                            // `Breaks > 0` clause stays meaningful (unlike
+                            // Rise where MHRPartStructure has no Counter).
+                            // UpdateSeverableData leaves Flinch untouched, so
+                            // the second clause collapses to the same epsilon
+                            // test on whatever residual flinch survives.
+                            const bool sevFl = std::fabs(p.flinch - p.maxFlinch) > 1e-4F;
+                            p.isPartSevered = (p.maxHealth > 0.0F
+                                            && std::fabs(p.health - p.maxHealth) <= 1e-4F
+                                            && (counter > 0 || sevFl));
                             // Raw Counter is the observed small-flinch count;
                             // major-break count is not yet decoded, so keep the
                             // localized base name free of a false "N/M破" suffix.

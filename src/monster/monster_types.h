@@ -49,6 +49,13 @@ struct PartSnapshot {
     bool isSeverable{false};
     bool isBreakable{false};
     bool isBroken{};
+    // v0.10.x-r3 UI-template alignment (HunterPie MonsterPartContextHandler.cs:104):
+    // `IsPartSevered = MaxSever == Sever && (Breaks > 0 || Flinch != MaxFlinch)`.
+    // Severable parts need this signal distinct from isBroken so the UI can
+    // drive the Row 3 Conditional text (Sever/MaxSever -> Flinch/MaxFlinch)
+    // the same way HunterPie's BossMonsterSeverablePartView.xaml:101-134 does.
+    // Lives on the snapshot (reader computes it) so the UI never recomputes.
+    bool isPartSevered{};
 };
 
 struct MonsterAilmentSnapshot {
