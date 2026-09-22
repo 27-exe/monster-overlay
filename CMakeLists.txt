@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(monster_overlay VERSION 0.10.4 LANGUAGES CXX)
+project(monster_overlay VERSION 0.10.5 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -383,6 +383,13 @@ target_compile_options(monster-control-p0-test PRIVATE -Wall -Wextra -Wpedantic)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(world-severable-scan-tests
+        tests/world_severable_scan_tests.cpp
+    )
+    target_include_directories(world-severable-scan-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(world-severable-scan-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME world-severable-scan-tests COMMAND world-severable-scan-tests)
+
     # GUI smoke targets are built above because they share the complete control
     # console source set. Register them here so a normal CTest run cannot miss
     # persistence/preview regressions. Both use the offscreen QPA; the L2 test

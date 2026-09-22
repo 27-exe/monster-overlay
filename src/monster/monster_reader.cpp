@@ -1,5 +1,6 @@
 #include "mhw_reader.h"
 #include "core/string_table.h"
+#include "monster/world_severable_scan.h"
 #include <QFile>
 #include <QIODevice>
 #include <QSet>
@@ -583,27 +584,27 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             // last threshold.
             auto readPartStruct = [&](std::uintptr_t addr, float &mhp, float &chp,
                                       float &emhp, float &ehp, int &counter,
-                                      std::uint32_t &index) -> bool {
+                                      std::uint32_t &index) -> WorldPartReadStatus {
                 std::vector<char> raw(0x78, 0);
-                if (!memory_.readBytes(addr, raw.data(), 0x78, nullptr)) return false;
+                if (!memory_.readBytes(addr, raw.data(), 0x78, nullptr))
+                    return WorldPartReadStatus::Failure;
                 std::memcpy(&mhp, raw.data() + 0x0C, 4);
                 std::memcpy(&chp, raw.data() + 0x10, 4);
                 std::memcpy(&emhp, raw.data() + 0x20, 4);
                 std::memcpy(&ehp, raw.data() + 0x24, 4);
                 std::memcpy(&counter, raw.data() + 0x18, 4);
                 std::memcpy(&index, raw.data() + 0x6C, 4);
-                // NaN/Inf guard — 2026-09-22. A struct read that straddles
-                // a slot teardown can land on garbage bits, which reinterpret
-                // as NaN/Inf. Two consequences downstream: `NaN > 0.0F` is
-                // TRUE, so an "empty slot" check that should fail passes and
-                // the part is published with a garbage layer; and the panel's
-                // AutoHide quantifier calls qRound() on it, which Qt6 asserts
-                // on → SIGABRT. Fold non-finite to 0 before the gate.
+                // NaN/Inf guard. A struct read that straddles a slot teardown
+                // can land on non-finite values. Treat that as an empty layer;
+                // the downstream hazards are propagation into clamp/division
+                // and Qt qRound(), not a positive comparison with NaN.
                 mhp  = std::isfinite(mhp)  ? mhp  : 0.0F;
                 chp  = std::isfinite(chp)  ? chp  : 0.0F;
                 emhp = std::isfinite(emhp) ? emhp : 0.0F;
                 ehp  = std::isfinite(ehp)  ? ehp  : 0.0F;
-                return mhp > 0.0F;
+                return mhp > 0.0F
+                    ? WorldPartReadStatus::Valid
+                    : WorldPartReadStatus::Empty;
             };
 
             // HunterPie UpdateBreakableData, copied semantically:
@@ -686,11 +687,18 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                         float mhp = 0, chp = 0, emhp = 0, ehp = 0;
                         int counter = 0;
                         std::uint32_t index = 0;
-                        if (!readPartStruct(addr, mhp, chp, emhp, ehp, counter, index))
+                        const WorldPartReadStatus readStatus =
+                            readPartStruct(addr, mhp, chp, emhp, ehp, counter, index);
+                        const SeverableScanAction action = severableScanAction(
+                            readStatus, index, static_cast<std::uint32_t>(ps.id));
+                        if (action == SeverableScanAction::Stop)
                             break;
-                        if (static_cast<int>(index) == ps.id) {
-                            // Match — use schema position s as stable key.
-                            PartSnapshot p;
+                        if (action == SeverableScanAction::Continue) {
+                            addr += 0x78ULL;
+                            continue;
+                        }
+
+                        PartSnapshot p;
                             p.index = 1000 + s; // positive key = severable
                             // Severable layer is bound to data.Health /
                             // data.MaxHealth verbatim (HunterPie
@@ -739,10 +747,8 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                             p.name = pname.isEmpty()
                                 ? QStringLiteral("Part[%1]").arg(s)
                                 : pname;
-                            parts.push_back(p);
-                            break;
-                        }
-                        addr += 0x78ULL;
+                        parts.push_back(p);
+                        break;
                     }
                 } else {
                     // Normal table: stride 0x1F8 from base 0x40.
@@ -750,9 +756,9 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                     float mhp = 0, chp = 0, emhp = 0, ehp = 0;
                     int counter = 0;
                     std::uint32_t index = 0;
-                    if (!readPartStruct(addr, mhp, chp, emhp, ehp, counter, index))
+                    if (readPartStruct(addr, mhp, chp, emhp, ehp, counter, index)
+                        != WorldPartReadStatus::Valid)
                         continue;
-                    if (mhp <= 0.0F) continue; // empty slot
                     PartSnapshot p;
                     p.index = -1 - normalSlotIdx; // negative key = normal
                     // Flinch is always data.Health / data.MaxHealth

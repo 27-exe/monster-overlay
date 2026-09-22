@@ -400,13 +400,10 @@ void MhrReader::readMonsterParts(std::uintptr_t monster, MonsterSnapshot &snapsh
         const auto curV = memory_.read<float>(encoded + 0x18ULL);
         if (!maxV || !curV)
             return false;
-        // NaN/Inf guard — 2026-09-22. The slot can be mid-teardown while
-        // we read it (target switch, multiplayer slot churn), which yields
-        // a non-finite float for one tick. Downstream that is fatal in
-        // two ways: `NaN > 0.0F` is TRUE, so isSeverable / isBreakable /
-        // pcHasFlinch all answer "yes, this layer exists" and then draw a
-        // garbage-width bar; and the panel's AutoHide quantifier calls
-        // qRound() on it, which Qt6 asserts on → SIGABRT.
+        // NaN/Inf guard. A slot can be mid-teardown during target switches or
+        // multiplayer churn. Comparisons with NaN are false in C++; the actual
+        // hazards are non-finite values propagating into clamp/division and the
+        // panel's qRound() quantizer, which asserts on NaN.
         //
         // Fold non-finite to 0 but KEEP returning true, so the layer's
         // slot identity survives (the caller sees "this layer exists,
