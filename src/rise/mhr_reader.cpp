@@ -427,10 +427,25 @@ void MhrReader::readMonsterParts(std::uintptr_t monster, MonsterSnapshot &snapsh
         case PartType::Severable:
             part.health = severCur;
             part.maxHealth = severMax;
+            // v0.10.3-r5 break-layer fix: HunterPie keeps the break layer
+            // (MHRPartStructure.Health/MaxHealth) on Severable parts too
+            // (MHRMonsterPart.Update assigns all six fields, MHRMonsterPart.cs:
+            // 124-129), so the player sees both Body HP and Sever HP. Our
+            // health/maxHealth pair is reserved for the sever layer here (the
+            // semantics isBroken / isPartSevered / Row 3 Conditional /
+            // AutoHide signatures depend on), so the break layer that this
+            // switch used to drop is carried in breakHealth/breakMaxHealth
+            // instead — see the field comment in monster_types.h.
+            // Values come from the same partValue() read above, exactly like
+            // health/maxHealth; a part with no break table entry has
+            // hasBreak == false and keeps 0/0 there.
+            part.breakHealth = breakCur;
+            part.breakMaxHealth = breakMax;
             break;
         case PartType::Breakable:
             part.health = breakCur;
             part.maxHealth = breakMax;
+            // break layer is already the primary pair — nothing to duplicate.
             break;
         case PartType::Flinch:
             part.health = flinchCur;

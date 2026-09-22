@@ -49,6 +49,28 @@ struct PartSnapshot {
     bool isSeverable{false};
     bool isBreakable{false};
     bool isBroken{};
+    // v0.10.3-r5 break-layer fix (Rise): PartSnapshot used to carry a single
+    // health/maxHealth pair, and MhrReader::readMonsterParts picked ONE of the
+    // three Rise layers (sever / break / flinch) for it via the partType
+    // switch. For a Severable part that sever-first dispatch silently threw
+    // away the break layer — the player could see "how much HP until the tail
+    // is cut off" but not "how many breakable-body hits are left to flush the
+    // current break layer". HunterPie keeps both: MHRPartStructure carries
+    // Health/MaxHealth (break layer), Sever/MaxSever and Flinch/MaxFlinch as
+    // six independent fields (MHRPartStructure.cs) and MHRMonsterPart.Update
+    // assigns all six from one data record (MHRMonsterPart.cs:124-129), so a
+    // Severable part shows Body HP and Sever HP side by side.
+    //
+    // breakHealth/breakMaxHealth carry that break layer alongside. Semantics:
+    //   * Severable part → health/maxHealth stays the sever layer (unchanged,
+    //     isBroken / isPartSevered / Row 3 Conditional / AutoHide signatures
+    //     all read it), and breakHealth/breakMaxHealth hold the break layer.
+    //   * Breakable part → health/maxHealth already IS the break layer, so
+    //     the duplicate fields are left at 0 (that layer is already exposed).
+    //   * Flinch part    → both stay 0 (no break layer exists).
+    // extraHealth/extraMaxHealth are NOT reused: the World path
+    // (monster_reader.cpp:691-692, 788-789) already uses them for the
+    // severable-part secondary HP.
     // v0.10.x-r3 UI-template alignment (HunterPie MonsterPartContextHandler.cs:104):
     // `IsPartSevered = MaxSever == Sever && (Breaks > 0 || Flinch != MaxFlinch)`.
     // Severable parts need this signal distinct from isBroken so the UI can
@@ -56,6 +78,14 @@ struct PartSnapshot {
     // the same way HunterPie's BossMonsterSeverablePartView.xaml:101-134 does.
     // Lives on the snapshot (reader computes it) so the UI never recomputes.
     bool isPartSevered{};
+    // v0.10.3-r5 break-layer fix (see the long comment above): the break
+    // layer of a Severable part. 0 when the part has no break layer, which is
+    // also true for Breakable parts — there health/maxHealth already IS the
+    // break layer, and for Flinch parts no break layer exists at all. So a
+    // nonzero breakMaxHealth is exactly "this Severable part also has a
+    // breakable body". Both are raw reader values (not display-formatted).
+    float breakHealth{};
+    float breakMaxHealth{};
 };
 
 struct MonsterAilmentSnapshot {
