@@ -19,6 +19,21 @@ enum class SeverableScanAction {
     Stop,
 };
 
+struct WorldSeverableSlotLayout {
+    std::uintptr_t payloadAddress{};
+    std::uintptr_t nextAddress{};
+};
+
+inline constexpr WorldSeverableSlotLayout worldSeverableSlotLayout(
+    std::uintptr_t slotAddress,
+    std::int32_t prefixWord)
+{
+    const std::uintptr_t payload = prefixWord <= 0xA0
+        ? slotAddress + 0x8ULL
+        : slotAddress;
+    return {payload, payload + 0x78ULL};
+}
+
 inline constexpr SeverableScanAction severableScanAction(
     WorldPartReadStatus status,
     std::uint32_t slotIndex,

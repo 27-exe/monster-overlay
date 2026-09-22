@@ -12,9 +12,13 @@
 // Build target added by CMakeLists.
 
 #include "mhw_reader.h"
+#include "monster/world_severable_scan.h"
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QVector>
+
+#include "monster/monster_types.h"
 
 #include <cstring>
 #include <cstdio>
@@ -77,6 +81,95 @@ void dumpTable(mhw::ProcessMemory &mem, std::uintptr_t baseAddr,
                     ok ? "VALID" : "(empty)");
     }
     std::printf("  -> %d / %d slots with MaxHealth > 0\n", valid, nSlots);
+}
+
+// The severable table is NOT a fixed-stride dump: a record may start with an
+// optional 8-byte prefix, and the payload must be read in the same iteration
+// (this mirrors the production reader and HunterPie). A fixed-stride dump
+// reads the wrong offsets whenever a prefix is present, which is exactly how
+// earlier probes managed to "prove" healthy slots while the reader resolved
+// the very same addresses differently.
+void dumpSeverableTable(mhw::ProcessMemory &mem, std::uintptr_t baseAddr,
+                        const QVector<int> &schemaSeverableIds, int maxRecords)
+{
+    std::printf("\n=== SEVERABLE TABLE (live scan, prefix-aware) ===\n");
+    std::printf("  base=0x%lx  schema severable ids:", (unsigned long)baseAddr);
+    for (int id : schemaSeverableIds) std::printf(" %d", id);
+    if (schemaSeverableIds.isEmpty()) std::printf(" (none)");
+    std::printf("\n");
+
+    std::uintptr_t addr = baseAddr;
+    int matched = 0;
+    for (int scan = 0; scan < maxRecords; ++scan) {
+        const auto pad = mem.read<std::int32_t>(addr, nullptr);
+        if (!pad) {
+            std::printf("  slot[%2d] @ 0x%lx  read failed\n", scan, (unsigned long)addr);
+            break;
+        }
+        const mhw::WorldSeverableSlotLayout layout =
+            mhw::worldSeverableSlotLayout(addr, *pad);
+        const std::uintptr_t payloadAddr = layout.payloadAddress;
+        char raw[0x78] = {0};
+        const bool readOk = mem.readBytes(payloadAddr, raw, sizeof(raw), nullptr);
+        if (!readOk) {
+            std::printf("  slot[%2d] @ 0x%lx (prefix=%d) payload read failed\n",
+                        scan, (unsigned long)addr, *pad);
+            break;
+        }
+        PartSlot p{};
+        const bool ok = decodeSlot(raw, p);
+        const bool isSchemaPart =
+            ok && schemaSeverableIds.contains(static_cast<int>(p.index));
+        if (isSchemaPart) ++matched;
+        std::printf("  slot[%2d] @ 0x%llx -> payload 0x%llx (prefix=%d)  head=0x%08x"
+                    "  idx=%2u  mhp=%9.1f  hp=%9.1f  cnt=%d  emhp=%9.1f  ehp=%9.1f  %s%s\n",
+                    scan,
+                    (unsigned long long)addr,
+                    (unsigned long long)payloadAddr,
+                    *pad,
+                    (unsigned)*pad,
+                    p.index, p.maxHealth, p.health, p.counter,
+                    p.extraMaxHealth, p.extraHealth,
+                    ok ? "VALID" : "(empty)",
+                    isSchemaPart ? "  <== schema severable" : "");
+        addr = layout.nextAddress;
+    }
+    std::printf("  -> %d / %d records matched the schema\n", matched, maxRecords);
+}
+
+// Watch-mode variant: same prefix-aware scan, compact one-line-per-tick
+// output, schema matches flagged inline.
+void dumpSeverableTableTick(mhw::ProcessMemory &mem, std::uintptr_t baseAddr,
+                            const QVector<int> &schemaSeverableIds, int maxRecords,
+                            int tick)
+{
+    std::printf("t=%ds severable ", tick);
+    std::uintptr_t addr = baseAddr;
+    int printed = 0;
+    for (int scan = 0; scan < maxRecords && printed < 4; ++scan) {
+        const auto pad = mem.read<std::int32_t>(addr, nullptr);
+        if (!pad) break;
+        const mhw::WorldSeverableSlotLayout layout =
+            mhw::worldSeverableSlotLayout(addr, *pad);
+        const std::uintptr_t payloadAddr = layout.payloadAddress;
+        char raw[0x78] = {0};
+        if (!mem.readBytes(payloadAddr, raw, sizeof(raw), nullptr)) break;
+        PartSlot p{};
+        const bool ok = decodeSlot(raw, p);
+        if (!ok) {
+            addr = layout.nextAddress;
+            continue;
+        }
+        const bool isSchemaPart = schemaSeverableIds.contains(static_cast<int>(p.index));
+        std::printf("S%02d:0x%llx->0x%llx %.0f/%.0f(i=%u,c=%d)%s ",
+                    scan,
+                    (unsigned long long)addr,
+                    (unsigned long long)payloadAddr,
+                    p.health, p.maxHealth, p.index, p.counter,
+                    isSchemaPart ? "<" : "");
+        addr = layout.nextAddress;
+        ++printed;
+    }
 }
 
 } // namespace
@@ -142,7 +235,20 @@ int main(int argc, char *argv[])
 
     // Get Id
     const auto id = mem.read<std::int32_t>(monsterAddr + 0x12280ULL);
-    std::printf("hunterId=%d\n", id ? *id : -1);
+    const int hunterId = id ? *id : -1;
+    std::printf("hunterId=%d\n", hunterId);
+
+    // Schema severable ids the reader is allowed to bind against. Raw-table
+    // captures are only meaningful next to this list.
+    const QVector<int> schemaSeverableIds = [&]() {
+        QVector<int> ids;
+        if (hunterId >= 0) {
+            for (const mhw::PartSchema &ps : mhw::kPartSchemas.value(hunterId)) {
+                if (ps.isSeverable) ids.append(ps.id);
+            }
+        }
+        return ids;
+    }();
 
     // Read part pointer
     const auto partPtr = mem.read<std::uintptr_t>(monsterAddr + kPartPtrOffset);
@@ -159,8 +265,10 @@ int main(int argc, char *argv[])
     // Dump the normal table (16 slots × 0x1F8 stride — read 0x78 bytes each).
     dumpTable(mem, partBase + kNormalBase, kNormalStride, 16, "NORMAL TABLE (0x40)");
 
-    // Dump the severable table (32 slots × 0x78 stride).
-    dumpTable(mem, partBase + kSeverableBase, kSeverableStride, 32, "SEVERABLE TABLE (0x1FC8)");
+    // Dump the severable table with the production reader's prefix-aware
+    // live scan. A fixed-stride dump here reads the wrong payload whenever an
+    // 8-byte prefix is present, so it must not be used as evidence.
+    dumpSeverableTable(mem, partBase + kSeverableBase, schemaSeverableIds, 32);
 
     // Watch mode: sample first 6 normal + 6 severable slots every second
     // for 8 ticks. Useful for proving whether the Flinch field updates
@@ -193,25 +301,13 @@ int main(int argc, char *argv[])
                 std::printf("  N%d:%.0f/%.0f(idx=%u,cnt=%d)",
                             s, p.health, p.maxHealth, p.index, p.counter);
             }
-            // First 6 severable slots
-            for (int s = 0; s < 6; ++s) {
-                char raw[0x78] = {0};
-                std::uintptr_t addr = partBase + kSeverableBase
-                                    + std::uintptr_t(s) * kSeverableStride;
-                // Skip sentinel
-                if (const auto pad = mem.read<std::int32_t>(addr, nullptr)) {
-                    if (pad && *pad <= 0xA0) addr += 0x8;
-                }
-                if (!mem.readBytes(addr, raw, sizeof(raw), nullptr)) {
-                    std::printf("  S%d:read-err", s);
-                    continue;
-                }
-                PartSlot p{};
-                const bool ok = decodeSlot(raw, p);
-                if (!ok) { std::printf("  S%d:----", s); continue; }
-                std::printf("  S%d:%.0f/%.0f(idx=%u,cnt=%d)",
-                            s, p.health, p.maxHealth, p.index, p.counter);
-            }
+            // Severable slots — mirror the production reader exactly: start at
+            // severableBase, consume an optional 8-byte prefix, read the
+            // aligned payload in the same iteration, advance to payload+0x78.
+            // A fixed base + s*0x78 walk reads the wrong payload whenever a
+            // prefix is present, so watch mode must not use it either.
+            dumpSeverableTableTick(mem, partBase + kSeverableBase, schemaSeverableIds,
+                                   32, t);
             std::printf("\n");
             std::fflush(stdout);
             ::sleep(1);

@@ -84,6 +84,20 @@ int main()
               == mhw::SeverableScanAction::Continue,
           "an empty wanted-index slot is not a false match");
 
+    {
+        const auto prefixed = mhw::worldSeverableSlotLayout(0x1000ULL, 0x10);
+        check(prefixed.payloadAddress == 0x1008ULL,
+              "an 8-byte table prefix is consumed before reading the same slot");
+        check(prefixed.nextAddress == 0x1080ULL,
+              "the next record starts 0x78 bytes after the aligned payload");
+
+        const auto direct = mhw::worldSeverableSlotLayout(0x2000ULL, 0x1000);
+        check(direct.payloadAddress == 0x2000ULL,
+              "a live structure is read without a spurious prefix skip");
+        check(direct.nextAddress == 0x2078ULL,
+              "an unprefixed structure advances by exactly 0x78 bytes");
+    }
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

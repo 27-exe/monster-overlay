@@ -655,7 +655,6 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
             // across schema rows isn't worth the consistency risk when a
             // part breaks during the quest.
             int normalSlotIdx = 0;
-            const std::uintptr_t sevEnd = severableBase + 0x78ULL * 32;
             for (int s = 0; s < schema.size(); ++s) {
                 const PartSchema &ps = schema[s];
 
@@ -679,22 +678,29 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
 
                 if (ps.isSeverable) {
                     std::uintptr_t addr = severableBase;
-                    for (int scan = 0; scan < 32 && addr < sevEnd; ++scan) {
-                        // Sentinel check on the first 4 bytes (int32).
-                        if (const auto pad = memory_.read<std::int32_t>(addr, nullptr)) {
-                            if (*pad <= 0xA0) { addr += 0x8ULL; continue; }
-                        }
+                    for (int scan = 0; scan < 32; ++scan) {
+                        // HunterPie aligns an optional 8-byte table prefix and
+                        // reads the resulting payload in the SAME iteration.
+                        // The old `addr += 8; continue` spent one scan budget
+                        // entry on the prefix, then re-tested the payload's
+                        // Reference pointer as if it were another prefix.
+                        const auto prefixWord = memory_.read<std::int32_t>(addr, nullptr);
+                        if (!prefixWord)
+                            break;
+                        const WorldSeverableSlotLayout layout =
+                            worldSeverableSlotLayout(addr, *prefixWord);
                         float mhp = 0, chp = 0, emhp = 0, ehp = 0;
                         int counter = 0;
                         std::uint32_t index = 0;
                         const WorldPartReadStatus readStatus =
-                            readPartStruct(addr, mhp, chp, emhp, ehp, counter, index);
+                            readPartStruct(layout.payloadAddress,
+                                           mhp, chp, emhp, ehp, counter, index);
                         const SeverableScanAction action = severableScanAction(
                             readStatus, index, static_cast<std::uint32_t>(ps.id));
                         if (action == SeverableScanAction::Stop)
                             break;
                         if (action == SeverableScanAction::Continue) {
-                            addr += 0x78ULL;
+                            addr = layout.nextAddress;
                             continue;
                         }
 
