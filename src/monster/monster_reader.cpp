@@ -322,14 +322,17 @@ void MhwReader::applyTenderizesToParts(MonsterSnapshot &monster)
     constexpr int SLOT_SIZE  = 64;          // sizeof(MHWTenderizeInfoStructure)
 
     // Reset before applying so expired slots actually clear the part.
-    // v0.10.x tenderize-misalign fix: reset only tenderizeDuration.
-    // tenderizeMaxDuration stays set across ticks and acts as the
-    // "slot has authored this part" sentinel — UI gates on it instead
-    // of on remaining duration (mirrors HunterPie MHWMonsterPart
-    // Tenderize/MaxTenderize semantics where visibility tracks raw
-    // elapsed Tenderize, not remaining).
+    // Both fields go: tenderizeDuration is the remaining seconds and
+    // tenderizeMaxDuration the total. HunterPie gates the strip on the
+    // REMAINING time (MonsterPartContextHandler.cs:109 computes
+    // MaxTenderize - Tenderize, and BossMonsterPartView.xaml:94 binds
+    // that through NumberToVisibilityConverter), so a slot that stopped
+    // being written must leave the part with 0/0 — not a stale max.
+    // Keeping the old max across ticks pinned the strip as a "0s" empty
+    // track until the target changed (v0.10.x sentinel regression).
     for (PartSnapshot &p : monster.parts) {
-        p.tenderizeDuration = 0.0F;
+        p.tenderizeDuration    = 0.0F;
+        p.tenderizeMaxDuration = 0.0F;
     }
 
     std::vector<std::uint8_t> buf(SLOT_COUNT * SLOT_SIZE);

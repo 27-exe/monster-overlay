@@ -334,6 +334,33 @@ struct PcEntry {
     float   tenderizeMaxDuration{0.0F};
 };
 
+// One predicate for "this .pc card carries a tenderize strip", shared
+// verbatim by the draw gate and BOTH height reservations. v0.10.x shipped
+// an invisible strip because the draw gate read tenderizeMaxDuration while
+// the reservations read tenderizeDuration; a second refactor pinned it as
+// a "0s" empty track by gating on the max-duration SENTINEL. HunterPie
+// binds visibility to the REMAINING time (MonsterPartContextHandler.cs:109
+// computes MaxTenderize - Tenderize, consumed at BossMonsterPartView.xaml:94
+// via NumberToBooleanConverter, i.e. value != 0.0f). Our reader already
+// stores remaining seconds in tenderizeDuration (monster_reader.cpp:374-375),
+// so "> 0" is the same gate.
+//
+// DO NOT "simplify" this by folding the two overloads or by inlining the
+// comparison back at a call site: v0.10.x regressed exactly that way — see
+// the "0s" empty-track bug report and the invisible-strip regression in
+// 48b05f3. All five call sites (tenderizeHeight reservation in drawPc,
+// the strip draw in drawPc, and the two cellHeights reservations) must
+// resolve to this one function.
+inline bool pcHasTenderize(const PcEntry &e)
+{
+    return e.tenderizeDuration > 0.0F;
+}
+
+inline bool pcHasTenderize(const mhw::PartSnapshot &p)
+{
+    return p.tenderizeDuration > 0.0F;
+}
+
 void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
 {
     // .pc — card bg + border, padding 4 6.
@@ -420,7 +447,7 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
                    miniRect.width() * clamped, miniRect.height());
     }
 
-    const int tenderizeHeight = e.tenderizeMaxDuration > 0.0F
+    const int tenderizeHeight = pcHasTenderize(e)
         ? kPcTnLabelH + kPcTnH + kPcTnGap : 0;
     QFont valueFont(QStringLiteral("Chakra Petch"), kPcValueFont, QFont::Medium);
     valueFont.setStyleStrategy(QFont::PreferAntialias);
@@ -443,7 +470,7 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
     //   amber fill bar (kPcTnH tall)
     //   ↓ kPcTnGap
     //   .mini row
-    if (e.tenderizeMaxDuration > 0.0F) {
+    if (pcHasTenderize(e)) {
         const QColor amber(246, 165, 34);    // #f6a522
         // Strip + label layout: stack from .mini top going up.
         const int barY = static_cast<int>(miniRect.top())
@@ -471,6 +498,13 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
         p.setBrush(QColor(10, 11, 12));
         p.drawRect(tnRect);
         // Fill.
+        // NOTE: this `tenderizeMaxDuration > 0.0F` is a DIVISOR guard, not
+        // a visibility gate — the strip above is already gated by
+        // pcHasTenderize(e). It stays here on purpose so a remaining
+        // duration that ever arrives without its matching total renders
+        // an empty track instead of dividing by zero. Do NOT fold it into
+        // pcHasTenderize() and do NOT delete it; the visibility decision
+        // lives in the single helper, this one only keeps the ratio finite.
         const float tnPct = (e.tenderizeMaxDuration > 0.0F)
             ? std::clamp(e.tenderizeDuration / e.tenderizeMaxDuration,
                          0.0F, 1.0F)
@@ -777,7 +811,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         const int kPcTnExtra = kPcTnLabelH + kPcTnH + kPcTnGap;
         QVector<int> cellHeights(pcCount, kPcBaseCellH);
         for (int i = 0; i < pcCount; ++i) {
-            if (onTenderize && shownParts[i].tenderizeMaxDuration > 0.0F)
+            if (onTenderize && pcHasTenderize(shownParts[i]))
                 cellHeights[i] += kPcTnExtra;
         }
         // Per-row max height → row height. Sum of (rowHeights + gaps).
@@ -1329,7 +1363,7 @@ void MonsterPanel::paintPanel(QPainter &p)
         // from shownParts (filtered) and the heights are 1:1.
         QVector<int> cellHeights(pcList.size(), kPcBaseCellH);
         for (int i = 0; i < pcList.size(); ++i) {
-            if (pcList[i].tenderizeMaxDuration > 0.0F)
+            if (pcHasTenderize(pcList[i]))
                 cellHeights[i] += kPcTnExtra;
         }
         const int cellW = (innerW - kPcGap * (kPcCols - 1)) / kPcCols;
