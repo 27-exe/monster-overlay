@@ -53,13 +53,13 @@ struct PartSnapshot {
     // health/maxHealth pair, and MhrReader::readMonsterParts picked ONE of the
     // three Rise layers (sever / break / flinch) for it via the partType
     // switch. For a Severable part that sever-first dispatch silently threw
-    // away the break layer — the player could see "how much HP until the tail
-    // is cut off" but not "how many breakable-body hits are left to flush the
-    // current break layer". HunterPie keeps both: MHRPartStructure carries
+    // away the break layer. HunterPie's data model keeps both:
+    // MHRPartStructure carries
     // Health/MaxHealth (break layer), Sever/MaxSever and Flinch/MaxFlinch as
     // six independent fields (MHRPartStructure.cs) and MHRMonsterPart.Update
-    // assigns all six from one data record (MHRMonsterPart.cs:124-129), so a
-    // Severable part shows Body HP and Sever HP side by side.
+    // assigns all six from one data record (MHRMonsterPart.cs:124-129).
+    // Its Severable view renders Flinch and Sever gauges, not a third
+    // break gauge; the extra break pair is retained for data parity only.
     //
     // breakHealth/breakMaxHealth carry that break layer alongside. Semantics:
     //   * Severable part → health/maxHealth stays the sever layer (unchanged,

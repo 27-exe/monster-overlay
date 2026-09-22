@@ -592,6 +592,17 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 std::memcpy(&ehp, raw.data() + 0x24, 4);
                 std::memcpy(&counter, raw.data() + 0x18, 4);
                 std::memcpy(&index, raw.data() + 0x6C, 4);
+                // NaN/Inf guard — 2026-09-22. A struct read that straddles
+                // a slot teardown can land on garbage bits, which reinterpret
+                // as NaN/Inf. Two consequences downstream: `NaN > 0.0F` is
+                // TRUE, so an "empty slot" check that should fail passes and
+                // the part is published with a garbage layer; and the panel's
+                // AutoHide quantifier calls qRound() on it, which Qt6 asserts
+                // on → SIGABRT. Fold non-finite to 0 before the gate.
+                mhp  = std::isfinite(mhp)  ? mhp  : 0.0F;
+                chp  = std::isfinite(chp)  ? chp  : 0.0F;
+                emhp = std::isfinite(emhp) ? emhp : 0.0F;
+                ehp  = std::isfinite(ehp)  ? ehp  : 0.0F;
                 return mhp > 0.0F;
             };
 

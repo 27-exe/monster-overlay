@@ -400,8 +400,21 @@ void MhrReader::readMonsterParts(std::uintptr_t monster, MonsterSnapshot &snapsh
         const auto curV = memory_.read<float>(encoded + 0x18ULL);
         if (!maxV || !curV)
             return false;
-        max = *maxV;
-        cur = *curV;
+        // NaN/Inf guard — 2026-09-22. The slot can be mid-teardown while
+        // we read it (target switch, multiplayer slot churn), which yields
+        // a non-finite float for one tick. Downstream that is fatal in
+        // two ways: `NaN > 0.0F` is TRUE, so isSeverable / isBreakable /
+        // pcHasFlinch all answer "yes, this layer exists" and then draw a
+        // garbage-width bar; and the panel's AutoHide quantifier calls
+        // qRound() on it, which Qt6 asserts on → SIGABRT.
+        //
+        // Fold non-finite to 0 but KEEP returning true, so the layer's
+        // slot identity survives (the caller sees "this layer exists,
+        // currently reads 0"), matching how a legitimately empty layer
+        // looks. Returning false instead would drop the whole part from
+        // the grid for a tick, which is worse than showing a 0 layer.
+        max = std::isfinite(*maxV) ? *maxV : 0.0F;
+        cur = std::isfinite(*curV) ? *curV : 0.0F;
         return true;
     };
 
@@ -430,7 +443,7 @@ void MhrReader::readMonsterParts(std::uintptr_t monster, MonsterSnapshot &snapsh
             // v0.10.3-r5 break-layer fix: HunterPie keeps the break layer
             // (MHRPartStructure.Health/MaxHealth) on Severable parts too
             // (MHRMonsterPart.Update assigns all six fields, MHRMonsterPart.cs:
-            // 124-129), so the player sees both Body HP and Sever HP. Our
+            // 124-129); the view still binds only Flinch and Sever gauges. Our
             // health/maxHealth pair is reserved for the sever layer here (the
             // semantics isBroken / isPartSevered / Row 3 Conditional /
             // AutoHide signatures depend on), so the break layer that this
