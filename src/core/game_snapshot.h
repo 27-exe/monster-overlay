@@ -23,6 +23,12 @@ struct GameSnapshot {
     PlayerSnapshot player;
     QVector<PartyMemberSnapshot> party;
     QuestSnapshot quest;
+    // World: the session's real player count, read from the session structure
+    // (see mhw_reader.cpp readSessionPlayerCount). Distinct from
+    // party.size(), which counts every filled 4-slot roster entry — including
+    // companions — because MhwReader::readParty never tags a member's
+    // PartyMemberKind. 0 means "not in a session" (solo).
+    int playerCount{0};
     bool isMultiplayer{false};
     // Diagnostic raw bytes (populated when --diagnose-ailments is set).
     QVector<QByteArray> diagnosisAilmentPointers;

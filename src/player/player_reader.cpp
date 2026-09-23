@@ -428,6 +428,44 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// readSessionPlayerCount — HunterPie MHWPlayer.GetParty (MHWPlayer.cs:344-355)
+//
+// The session's real player count, as an int, straight out of the session
+// structure. This is the ONLY reliable "are we in a multiplayer session"
+// signal on World: the 4-slot roster (readParty above) is filled by name
+// and MhwReader::readParty never tags a member's PartyMemberKind, so
+// counting roster entries conflates real hunters with companions and
+// stale slots. HunterPie reads the same two map symbols for the same
+// purpose and returns early with a solo party when the value is 0.
+//
+// Map symbols (data/MonsterHunterWorld.421810.map):
+//   Address SESSION_OFFSET        0x051C46B8
+//   Offset SESSION_PARTY_OFFSETS  0x258,0x10,0x6574
+// ---------------------------------------------------------------------------
+std::optional<int> MhwReader::readSessionPlayerCount(QString *error)
+{
+    const std::uintptr_t addr = followPointerChain(
+        memory_,
+        absolute(QStringLiteral("SESSION_OFFSET")),
+        map_.offsets(QStringLiteral("SESSION_PARTY_OFFSETS")),
+        error);
+    if (!addr)
+        return std::nullopt;
+    const auto count = memory_.read<std::int32_t>(addr);
+    if (!count || !std::isfinite(static_cast<double>(*count)))
+        return std::nullopt;
+    // A session holds at most 4 hunters. Anything outside [0,4] is a
+    // misaligned or mid-teardown read, so the value is untrustworthy — report
+    // it as "no reading" rather than silently substituting a solo count.
+    // NOTE: 0 is a MEANINGFUL value here (HunterPie's solo signal), which is
+    // exactly why this returns nullopt for a failed read instead of 0: 0 and
+    // "could not read" must never share a return code.
+    if (*count < 0 || *count > 4)
+        return std::nullopt;
+    return static_cast<int>(*count);
+}
+
 QVector<PartyMemberSnapshot> MhwReader::readParty(QString *error)
 {
     QVector<PartyMemberSnapshot> result;

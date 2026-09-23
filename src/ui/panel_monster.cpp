@@ -339,11 +339,6 @@ constexpr bool kPcDrawFlinchRow = true;
 // must still reserve and draw — collapsing the two is exactly how the
 // tenderize strip went invisible.
 inline bool pcHasFlinch(float flinchMax) { return std::isfinite(flinchMax) && flinchMax > 0.0F; }
-inline bool pcHasFlinch(const PcEntry &e)
-{
-    return pcHasFlinch(e.flinchMax);
-}
-
 // ---------------------------------------------------------------------------
 // NaN/Inf guard — 2026-09-22 real-machine crash + garbage-bar fix.
 //
@@ -452,10 +447,66 @@ QVector<mhw::PartSnapshot> displayableParts(const QVector<mhw::PartSnapshot> &pa
 // both fold its result into the shared cell height. v0.10.3's tenderize
 // strip went invisible when its draw gate and height gate disagreed.
 //
+// v0.10.8: one predicate for "this .pc card carries a primary-layer gauge"
+// (.mini bar + its numeric value row), shared verbatim by the draw gate and
+// every height budget — same discipline as pcHasTenderize/pcHasFlinch below.
+//
+// Why a flag and not a heuristic: on World the per-layer Health/MaxHealth is
+// local-feedback data (monster_reader.cpp:578-584), so in a multiplayer
+// session a non-host client's pair is frozen at whatever value the last
+// authoritative update left behind — usually full. Drawing that as HP shows a
+// broken part at 90-100%. The session player count (GameSnapshot::
+// playerCount, read from SESSION_PARTY_OFFSETS) says when that happens; the
+// older v0.8.4-r23 branch only masked the VALUE ("--/--") and left the fake
+// bar in place.
+//
+// HunterPie does NOT do this — MHWMonster.GetMonsterParts has no multiplayer
+// gate at all. This is a deliberate local concession to the read-only Wine
+// environment, not a parity claim.
+inline bool pcHasPrimaryGauge(const PcEntry &e) { return e.hasPrimaryGauge; }
+
+// v0.10.8: one predicate for "this .pc card carries its optional Row 1
+// flinch gauge".
+//
+// A World NORMAL part does receive a flinch layer (monster_reader.cpp's
+// normal branch assigns p.flinch = chp), and that layer is exactly as
+// stale as the Health pair on a non-host client: both are local-feedback
+// data (see pcHasPrimaryGauge). So a World Breakable card in a multiplayer
+// session can still have a nonzero flinchMax, and drawing it would render a
+// second blue row for a value nobody can trust. Suppress it under the same
+// World + multiplayer condition.
+//
+// Scoped to the PcEntry overload on purpose: the float primitive stays the
+// pure denominator test, because the pcAreaH pass calls it before pcList
+// exists (see the kPcDrawFlinchRow note above).
+inline bool pcHasFlinch(const PcEntry &e)
+{
+    if (!pcHasPrimaryGauge(e))
+        return false;
+    return pcHasFlinch(e.flinchMax);
+}
+
 // Returns the height ADDED to kPcBaseCellH by the optional rows: the
 // tenderize strip and the Row 1 flinch gauge. Both are gated by the same
 // predicates their painters use, so the reserved height and the drawn
 // height can never diverge.
+
+// The height this card does NOT spend on a primary-layer gauge. Exactly the
+// two rows pcHasPrimaryGauge() suppresses — the .mini track and the value
+// label above it — folded into ONE place so the two `cellHeights` sites
+// (panel_monster.cpp height reservation and .pgrid render) stay identical by
+// construction. kPcBaseCellH already bakes both rows in unconditionally.
+//
+// Why negative-adjust instead of conditional-add at the call sites: v0.10.3
+// shipped an invisible tenderize strip because a draw gate and two height
+// reservations read different fields. Keeping kPcBaseCellH as the single
+// base and subtracting here means there is still exactly one expression to
+// inspect when the arithmetic looks wrong.
+inline int pcPrimaryGaugeDebt(const PcEntry &e)
+{
+    return pcHasPrimaryGauge(e) ? 0 : (kPcMiniH + kPcValueH + kPcValueGap);
+}
+
 inline int pcGaugeExtraH(const PcEntry &e)
 {
     int extra = 0;
@@ -466,6 +517,9 @@ inline int pcGaugeExtraH(const PcEntry &e)
     // The optional Flinch gauge uses the same gate as drawPc().
     if (kPcDrawFlinchRow && pcHasFlinch(e))
         extra += kPcFlinchExtra;
+    // A hidden primary gauge gives back the rows it owned: the track itself
+    // and the value row that only exists to label it.
+    extra -= pcPrimaryGaugeDebt(e);
     return extra;
 }
 
@@ -567,30 +621,35 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
                    Qt::AlignCenter, chipText);
     }
 
-    // .mini: 4px track + #78909c fill, anchored to the bottom padding.
+    // v0.10.8: the primary-layer gauge and its numeric value row are only
+    // present when we have live data for them (see pcHasPrimaryGauge). On
+    // World in a multiplayer session both go: no track, no fill, no label.
+    // The rows that DO survive (.pn header, tag chip, flinch gauge on Rise,
+    // tenderize strip) are laid out top-down below the header instead of
+    // being anchored to a bottom bar that is no longer there.
     const int miniY = static_cast<int>(cell.bottom())
                       - kPcPadY - kPcMiniH;
     const QRectF miniRect(cell.x() + kPcPadX, miniY,
                           cell.width() - 2 * kPcPadX, kPcMiniH);
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(10, 11, 12));          // #0a0b0c
-    p.drawRect(miniRect);
-    const float clamped = std::clamp(e.pct, 0.0F, 1.0F);
-    if (clamped > 0.001F) {
-        // v0.8.4-r23: broken/severed parts paint the fill in the tag
-        // palette (brk pink / sev amber) — HunterPie swaps its gauge
-        // brush to Broken.Foreground on IsPartBroken/IsPartSevered.
-        // This keeps the state visible even when the HP layer itself is
-        // unreadable on a non-host client.
-        QColor fill = QColor(120, 144, 156); // #78909c default
-        if (e.broken) {
-            fill = (e.tagKind == QLatin1String("sev"))
-                ? QColor(246, 165, 34)   // #f6a522
-                : QColor(244, 17, 98);   // #f41162
+    if (pcHasPrimaryGauge(e)) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(10, 11, 12));          // #0a0b0c
+        p.drawRect(miniRect);
+        const float clamped = std::clamp(e.pct, 0.0F, 1.0F);
+        if (clamped > 0.001F) {
+            // v0.8.4-r23: broken/severed parts paint the fill in the tag
+            // palette (brk pink / sev amber) — HunterPie swaps its gauge
+            // brush to Broken.Foreground on IsPartBroken/IsPartSevered.
+            QColor fill = QColor(120, 144, 156); // #78909c default
+            if (e.broken) {
+                fill = (e.tagKind == QLatin1String("sev"))
+                    ? QColor(246, 165, 34)   // #f6a522
+                    : QColor(244, 17, 98);   // #f41162
+            }
+            p.setBrush(fill);
+            p.drawRect(miniRect.x(), miniY,
+                       miniRect.width() * clamped, miniRect.height());
         }
-        p.setBrush(fill);
-        p.drawRect(miniRect.x(), miniY,
-                   miniRect.width() * clamped, miniRect.height());
     }
 
     // Position the value above only the tenderize strip. The Flinch row
@@ -603,12 +662,36 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
     const QString layerName = e.valueLayer == PcEntry::Layer::Flinch
         ? QStringLiteral("Flinch") : e.valueLayer == PcEntry::Layer::Sever
         ? QStringLiteral("Sever") : QStringLiteral("Break");
-    const int valueY = miniY - kPcValueGap - tenderizeHeight - kPcValueH;
-    p.drawText(QRectF(cell.x() + kPcPadX,
-                      valueY,
-                      cell.width() - 2 * kPcPadX, kPcValueH),
-               Qt::AlignRight | Qt::AlignVCenter,
-               layerName + QStringLiteral(" ") + e.value);
+    // The value row only exists to label the primary gauge; without the
+    // gauge it is a dangling "Sever 2750/2750" over empty space.
+    //
+    // When the gauge is present the row keeps its original bottom-anchored
+    // position (directly above .mini, below any tenderize strip). When it is
+    // gone the row is not drawn at all and the rows below re-anchor to the
+    // .pn header. The tenderize strip deliberately KEEPS its
+    // `miniRect.top()` anchor in both cases: it is one of the signals that
+    // survive on a non-host client, so its position must not move.
+    //
+    // NOTE on the flinch row below: it is NOT unconditionally suppressed.
+    // A World NORMAL part does get a flinch layer written (monster_reader.cpp
+    // normal branch assigns p.flinch = chp), and that layer is exactly as
+    // stale as the Health pair on a non-host client — both are local
+    // feedback data. So pcHasFlinch() CAN still be true for a World
+    // Breakable card in multiplayer, and today that card keeps drawing a
+    // blue row for a value nobody can trust. Deliberately left out of this
+    // gate's scope: see REPORT.md §"Known gap" — hiding it needs its own
+    // decision, because the re-anchored valueY above is only reachable from
+    // that branch and has never been exercised on a real card.
+    const int valueY = pcHasPrimaryGauge(e)
+        ? (miniY - kPcValueGap - tenderizeHeight - kPcValueH)
+        : (pnY + pnH + kPcValueGap + tenderizeHeight);
+    if (pcHasPrimaryGauge(e)) {
+        p.drawText(QRectF(cell.x() + kPcPadX,
+                          valueY,
+                          cell.width() - 2 * kPcPadX, kPcValueH),
+                   Qt::AlignRight | Qt::AlignVCenter,
+                   layerName + QStringLiteral(" ") + e.value);
+    }
 
     // Flinch gauge sits above the value row with kPcGaugeGap; the primary
     // gauge remains anchored at the bottom. Height and paint share the gate.
@@ -927,43 +1010,25 @@ QVector<PcEntry> buildPcList(MonsterPanel &panel,
                                      sanitizePartValue(layers.flinch.maximum))
             : mhw::compactPartHealth(cHP, mHP);
         e.pct = mHP > 0.0F ? std::clamp(cHP / mHP, 0.0F, 1.0F) : 0.0F;
-        if (panel.multiplayer_) {
-            // v0.8.4-r23 non-host readability: on a non-host client the
-            // Health/MaxHealth layer pair is not replicated by the game
-            // (mhw-parts-hp-frozen-on-client-2026-07-23) — it stays at
-            // its last authoritative value, usually full, even while
-            // teammates break the part. Never draw a stuck-at-full pair
-            // as if it were live HP: a broken part would show a 90-100%
-            // bar and an untouched one "--/--" with the chip stripped
-            // (the old gate also cleared tag/tagKind, which is why the
-            // grid "几乎不显示" in multiplayer).
-            //
-            // The signals that ARE live on a client (and that HunterPie
-            // keeps rendering in the same situation):
-            //   * Flinch/MaxFlinch — locally simulated stagger layer.
-            //     Once it has moved it can carry the value row; the
-            //     primary gauge keeps its own source binding.
-            //   * Counter (+0x18) and the broken/severed state — break
-            //     events are replicated; the tag chip keeps them
-            //     visible unconditionally.
-            const bool staleFullHp = mHP > 0.0F && cHP >= mHP;
-            if (staleFullHp) {
-                // sFlinchMax is already sanitized; sanitize the current
-                // half too so a NaN flinch can't fake "still live".
-                const float sFlinch = sanitizePartValue(p.flinch);
-                const bool flinchLive =
-                    sFlinchMax > 0.0F && sFlinch + 1.0e-4F < sFlinchMax;
-                if (flinchLive) {
-                    e.value = mhw::compactPartHealth(sFlinch, sFlinchMax);
-                    e.valueLayer = PcEntry::Layer::Flinch;
-                } else {
-                    e.value = QStringLiteral("--/--");
-                }
-                // NOTE: the tag chip is deliberately NOT cleared here —
-                // the counter/state is exactly the readable signal for
-                // non-host members.
-            }
-        }
+        // v0.10.8: on World in a multiplayer session the Health/MaxHealth
+        // pair (and therefore the .mini gauge it feeds, plus the value row
+        // that labels it) is stale local data — see pcHasPrimaryGauge(). The
+        // whole gauge goes away rather than being masked to "--/--" over a
+        // fake full bar, which is what v0.8.4-r23 did and what the user
+        // reported as redundant.
+        //
+        // Deliberately Scoped: only World. Rise writes all six layers from
+        // its own per-tick reads (mhr_reader.cpp), so its multiplayer part
+        // data is real and stays rendered even in a session.
+        //
+        // The signals that survive are the ones the game actually replicates
+        // to a non-host client: the Counter (+0x18) with the broken/severed
+        // state in the tag chip, and the tenderize strip (an independent
+        // table read locally, monster_reader.cpp:340). Flinch stays on Rise;
+        // on World a Severable part is never given a flinch layer at all
+        // (references/parity §2), so there is nothing extra to keep.
+        e.hasPrimaryGauge = !(panel.multiplayer_
+                              && panel.monster_.game == mhw::GameId::World);
         pcList.append(e);
     }
     return pcList;

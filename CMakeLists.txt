@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(monster_overlay VERSION 0.10.7 LANGUAGES CXX)
+project(monster_overlay VERSION 0.10.8 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -147,6 +147,39 @@ target_link_libraries(snap-all-demo PRIVATE
 )
 target_include_directories(snap-all-demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snap-all-demo PRIVATE -Wall -Wextra -Wpedantic)
+
+# v0.10.8: World multiplayer part-card layout probe. Renders the same
+# synthetic World part data solo and multiplayer so the extra-row arithmetic
+# (pcHasPrimaryGauge / pcGaugeExtraH) can be verified with a pixel diff
+# instead of by reasoning about it. Diagnostic only — never built by
+# `cmake --build .`, never registered as a CTest.
+add_executable(snap-world-mp EXCLUDE_FROM_ALL
+    tests/snap_world_mp.cpp
+    src/mhw_reader.cpp
+    src/mhw_reader.h
+    src/player/player_reader.cpp
+    src/quest/quest_reader.cpp
+    src/world/world_reader.cpp
+    src/monster/monster_reader.cpp
+    src/monster/part_schemas.cpp
+    src/monster/target_selector.cpp
+    src/ui/formatters.cpp
+    src/ui/icon.cpp
+    src/ui/panel.cpp
+    src/ui/panel_player.cpp
+    src/ui/panel_damage.cpp
+    src/ui/panel_monster.cpp
+    src/world/world_types.cpp
+    src/resources/resources.qrc
+    assets/icons.qrc
+)
+target_link_libraries(snap-world-mp PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+    LayerShellQt::Interface
+    monster-core
+)
+target_include_directories(snap-world-mp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(snap-world-mp PRIVATE -Wall -Wextra -Wpedantic)
 
 
 # Control console — standalone Qt window, no layer-shell. Reuses the same

@@ -178,4 +178,29 @@ QString playerDebuffName(int offset);
 QString playerSongName(int id);
 QString playerBuffName(int offset, int dependsOn, int withValue);
 
+// ---------------------------------------------------------------------------
+// v0.10.8: session player-count normalisation.
+//
+// HunterPie's MHWPlayer.GetParty (MHWPlayer.cs:344-355) treats partySize 0 as
+// "solo", which makes 0 a MEANINGFUL value rather than a failure code. A raw
+// read that misses the session structure (map transition, quest-start, target
+// switch) therefore cannot be allowed to surface as 0: doing so would re-enable
+// every per-part gauge that the World multiplayer gate suppresses, at exactly
+// the moments the session is least stable.
+//
+// `raw` == kSessionReadFailed means the read itself failed; any other value is
+// a genuine session reading, including 0 (solo). `previous` is the last count
+// that came from a successful read (0 = none).
+// ---------------------------------------------------------------------------
+inline constexpr int kSessionReadFailed = -1;
+
+inline int sanitizeSessionPlayerCount(int raw, int previous)
+{
+    if (raw == kSessionReadFailed)
+        return previous;          // a miss keeps the last resolved session
+    if (raw < 0 || raw > 4)
+        return previous > 0 ? previous : 1;
+    return raw;                   // 0..4 taken at face value, 0 = solo
+}
+
 } // namespace mhw

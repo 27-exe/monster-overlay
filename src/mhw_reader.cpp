@@ -2,6 +2,7 @@
 // Core offsets and structures are derived from HunterPie/HunterPie (Apache-2.0).
 
 #include "mhw_reader.h"
+#include "player/player_types.h"
 
 #include "core/string_table.h"
 
@@ -503,7 +504,27 @@ GameSnapshot MhwReader::poll()
     // damage is actually meaningful).
     snapshot.party = isHuntingZone(snapshot.zone) ? readParty(nullptr)
                                                    : QVector<PartyMemberSnapshot>{};
-    snapshot.isMultiplayer = (snapshot.party.size() > 1);
+    // v0.10.8: multiplayer now comes from the session structure's player
+    // count (HunterPie MHWPlayer.GetParty) instead of the roster size.
+    // readParty fills a 4-slot roster by name and never tags a member's
+    // PartyMemberKind, so `party.size() > 1` counted companions and stale
+    // slots as real hunters — a solo hunter with a palico got the
+    // multiplayer treatment. `party` itself is untouched: DamagePanel owns
+    // its roster semantics and still reads it as before.
+    // The session count is only trustworthy if a failed read keeps the last
+    // session we actually resolved. partySize 0 is HunterPie's SOLO value, so
+    // letting a miss surface as 0 would re-show every fake full Health bar the
+    // multiplayer gate removes — and it would do so during map transitions and
+    // quest start, i.e. when the overlay matters most. `previousPlayerCount_`
+    // only advances on a validated read, so one bad tick cannot flip the UI
+    // back to solo semantics.
+    const int rawPlayerCount =
+        readSessionPlayerCount(nullptr).value_or(mhw::kSessionReadFailed);
+    snapshot.playerCount = mhw::sanitizeSessionPlayerCount(rawPlayerCount, previousPlayerCount_);
+    if (rawPlayerCount != mhw::kSessionReadFailed && rawPlayerCount >= 0
+        && rawPlayerCount <= 4)
+        previousPlayerCount_ = rawPlayerCount;
+    snapshot.isMultiplayer = (snapshot.playerCount > 1);
     if (!error.isEmpty() && snapshot.monsters.isEmpty())
         snapshot.status += trMessage("ui.reader.partial_read_failed").arg(error);
     return snapshot;

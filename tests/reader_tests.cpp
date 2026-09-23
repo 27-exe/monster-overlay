@@ -966,6 +966,32 @@ Address OTHER 0xCAFE # inline comment
               && mhw::playerBuffName(0x6A0, 0x6A4, 25) == QStringLiteral("怪力药丸"),
           "songs/buffs keep 自我强化/怪力药丸 (zh)");
 
+    // ---- v0.10.8: session player count normalisation -------------------
+    // The World readSessionPlayerCount value must never collapse to 0 on a
+    // failed/out-of-range read: in HunterPie's semantics 0 IS the solo
+    // value, so "read failed -> 0" would silently re-enable every gauge the
+    // multiplayer gate suppresses. A failed read must keep the previous
+    // session's truth instead.
+    using mhw::kSessionReadFailed;
+    check(mhw::sanitizeSessionPlayerCount(kSessionReadFailed, 2) == 2,
+          "a failed read keeps the previous multiplayer count");
+    check(mhw::sanitizeSessionPlayerCount(kSessionReadFailed, 0) == 0,
+          "a failed read with no prior context stays solo");
+    check(mhw::sanitizeSessionPlayerCount(0, 2) == 0,
+          "a genuine 0 (solo) is NOT confused with a failed read");
+    check(mhw::sanitizeSessionPlayerCount(0, 1) == 0,
+          "solo reads 0 even after a solo session");
+    check(mhw::sanitizeSessionPlayerCount(3, 0) == 3,
+          "a valid multiplayer read is accepted straight away");
+    check(mhw::sanitizeSessionPlayerCount(1, 3) == 1,
+          "a genuine 1 (someone left) is accepted, not suppressed");
+    check(mhw::sanitizeSessionPlayerCount(4, 3) == 4,
+          "a full session reads 4");
+    check(mhw::sanitizeSessionPlayerCount(99, 2) == 2,
+          "out-of-range count keeps the previous session value");
+    check(mhw::sanitizeSessionPlayerCount(-7, 2) == 2,
+          "negative garbage keeps the previous session value");
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

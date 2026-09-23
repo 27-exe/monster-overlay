@@ -139,6 +139,15 @@ private:
     void applyTenderizesToParts(MonsterSnapshot &monster);
     PlayerSnapshot readPlayer(QString *error);
     QVector<PartyMemberSnapshot> readParty(QString *error);
+    // World session player count (HunterPie MHWPlayer.GetParty). 0 = solo /
+    // not in a session, 1..4 = hunters in the current session. Companions
+    // are not counted, which is why this replaces `party.size() > 1` as the
+    // GameSnapshot::isMultiplayer signal.
+    // Returns nullopt when the session structure could not be read (chain
+    // miss, non-finite value, or a count outside [0,4]). 0 is a valid,
+    // meaningful SOLO signal and is returned as such — the optional is what
+    // keeps "read failed" and "the session is empty" distinguishable.
+    [[nodiscard]] std::optional<int> readSessionPlayerCount(QString *error);
     QuestSnapshot readQuest(QString *error);
     // Sharpness — HunterPie MHWMeleeWeapon.GetWeaponSharpness. Returns
     // a zero-initialised snapshot when the equipped weapon is ranged
@@ -183,6 +192,13 @@ private:
     // same way thresholds are.
     int  cachedMinimumSharpnesses_[8] = {0,0,0,0,0,0,0,0};
     bool cachedMinimumSharpnessesValid_ = false;
+    // v0.10.8: last session player count that passed validation. Guards the
+    // multiplayer part-card gate: a single failed/unaligned read must not
+    // publish 0, because 0 is HunterPie's SOLO value and would restore every
+    // fake full Health bar the gate exists to remove. Same failure mode (and
+    // the same remedy) as the mantle CD cache above, which was added for the
+    // same class of transient miss in 4-player sessions.
+    int previousPlayerCount_ = 0;
     // HunterPie LockOn mode: LOCKON chain resolves a list node whose +0x950
     // contains the targeted monster's double-linked-list index.
     int lockOnTargetIndex_ = -1;

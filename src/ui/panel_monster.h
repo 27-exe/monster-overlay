@@ -97,6 +97,14 @@ struct PcEntry {
     // presence-vs-value split as flinchMax above.
     float   breakPct{0.0F};
     float   breakMax{0.0F};
+
+    // v0.10.8: whether this card carries the primary-layer gauge (.mini bar
+    // plus its numeric value row). False only on World in a multiplayer
+    // session, where the Health/MaxHealth pair is stale local data that we
+    // choose not to render. Defaults to true so every existing single-player
+    // path is unchanged. Drawn and height-reserved through the SAME
+    // predicate (pcHasPrimaryGauge / pcGaugeExtraH, panel_monster.cpp).
+    bool    hasPrimaryGauge{true};
 };
 
 class MonsterPanel : public Panel {
