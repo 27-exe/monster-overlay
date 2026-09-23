@@ -598,6 +598,55 @@ Address OTHER 0xCAFE # inline comment
     check(mhw::risePartType(false, false) == mhw::PartType::Flinch,
           "Rise flinch is the fallback part type");
 
+    // Rise part identity/type parity with HunterPie. Type is selected only
+    // when a flinch-pointer-keyed part object is first created; subsequent
+    // scans update values without reclassifying the object.
+    check(mhw::riseStablePartType(std::nullopt, true, true)
+              == mhw::PartType::Severable,
+          "new Rise part classifies severable before breakable");
+    check(mhw::riseStablePartType(mhw::PartType::Severable, false, true)
+              == mhw::PartType::Severable,
+          "cached Rise severable type survives a complete zero sever layer");
+    check(mhw::riseStablePartType(mhw::PartType::Breakable, true, true)
+              == mhw::PartType::Breakable,
+          "cached Rise breakable type is not reclassified on later scans");
+
+    const mhw::RisePartTableIdentity risePartsIdentity{
+        42, 0x1000, 0x2000, 0x3000, 16};
+    check(mhw::sameRisePartTableIdentity(
+              risePartsIdentity, {42, 0x1000, 0x2000, 0x3000, 16}),
+          "Rise part cache matches the same monster and three arrays");
+    check(!mhw::sameRisePartTableIdentity(
+              risePartsIdentity, {43, 0x1000, 0x2000, 0x3000, 16}),
+          "Rise part cache rejects a reused monster address with another id");
+    check(!mhw::sameRisePartTableIdentity(
+              risePartsIdentity, {42, 0x1008, 0x2000, 0x3000, 16}),
+          "Rise part cache rejects a changed flinch array");
+    check(!mhw::sameRisePartTableIdentity(
+              risePartsIdentity, {42, 0x1000, 0x2000, 0x3000, 15}),
+          "Rise part cache rejects a changed part count");
+
+    const mhw::RisePartValues firstRiseValues{
+        90.0F, 100.0F, 40.0F, 50.0F, 25.0F, 30.0F};
+    const mhw::PartSnapshot firstRisePart = mhw::buildRisePartSnapshot(
+        3, QStringLiteral("Tail"), firstRiseValues, nullptr);
+    check(firstRisePart.partType == mhw::PartType::Severable,
+          "first complete Rise sample creates a severable part");
+    const mhw::RisePartValues nextRiseValues{
+        70.0F, 100.0F, 30.0F, 50.0F, 0.0F, 0.0F};
+    const mhw::PartSnapshot nextRisePart = mhw::buildRisePartSnapshot(
+        3, QStringLiteral("Tail"), nextRiseValues, &firstRisePart);
+    check(nextRisePart.partType == mhw::PartType::Severable
+              && nextRisePart.isSeverable,
+          "complete later Rise sample preserves the cached severable identity");
+    check(nextRisePart.flinch == 70.0F && nextRisePart.maxFlinch == 100.0F
+              && nextRisePart.breakHealth == 30.0F
+              && nextRisePart.breakMaxHealth == 50.0F
+              && nextRisePart.health == 0.0F && nextRisePart.maxHealth == 0.0F,
+          "cached Rise part still refreshes all dynamic layer values");
+    check(nextRisePart.isPartSevered && !nextRisePart.isBroken,
+          "stable Rise severable part uses HunterPie severed-state projection at zero");
+
     // v0.8 alignment: HunterPie v2 MHRiseUtils.cs:25-44 ToWeaponId table.
     // The Rise memory byte at WEAPON_ADDRESS + 0x8C is a WeaponType enum
     // (Rise-internal order), NOT a Core Weapon enum. The reader must

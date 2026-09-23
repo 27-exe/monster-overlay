@@ -173,6 +173,11 @@ MhrReader::MhrReader(QString mapPath)
     map_.load(mapPath_, &mapError_);
 }
 
+void MhrReader::clearRisePartCaches()
+{
+    risePartCaches_.clear();
+}
+
 const QString &MhrReader::mapPath() const
 {
     return mapPath_;
@@ -258,15 +263,20 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
 
     const auto pid = findRisePid();
     if (!pid) {
+        clearRisePartCaches();
         memory_.detach();
         imageBase_ = 0;
         snapshot.status = trMessage(QStringLiteral("ui.reader.rise_waiting"));
         return false;
     }
 
-    if (!memory_.attached() || memory_.pid() != *pid) {
+    const bool processChanged = memory_.attached() && memory_.pid() != *pid;
+    if (!memory_.attached() || processChanged) {
+        if (processChanged)
+            clearRisePartCaches();
         QString error;
         if (!memory_.attach(*pid, &error)) {
+            clearRisePartCaches();
             snapshot.pid = *pid;
             snapshot.status = trMessage(QStringLiteral("ui.reader.rise_attach_failed"))
                                   .arg(*pid).arg(error);
@@ -274,6 +284,7 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
         }
         imageBase_ = memory_.imageBase(&error, QStringLiteral("monsterhunterrise.exe"));
         if (imageBase_ == 0) {
+            clearRisePartCaches();
             memory_.detach();
             snapshot.status = error;
             return false;
@@ -283,6 +294,7 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
         // MhwReader::ensureAttached for the rationale.
         std::uint8_t headerProbe[8] = {};
         if (!memory_.readBytes(imageBase_, headerProbe, sizeof(headerProbe), &error)) {
+            clearRisePartCaches();
             memory_.detach();
             imageBase_ = 0;
             snapshot.pid = *pid;
@@ -361,6 +373,12 @@ std::uintptr_t MhrReader::readLockOnTarget() const
 
 void MhrReader::readMonsterParts(std::uintptr_t monster, MonsterSnapshot &snapshot)
 {
+    auto cached = risePartCaches_.find(monster);
+    auto publishCached = [&]() {
+        if (cached != risePartCaches_.end() && cached->monsterId == snapshot.id)
+            snapshot.parts = cached->published;
+    };
+
     const std::uintptr_t flinchArr = MhwReader::followPointerChainOffsetThenDeref(
         memory_, monster,
         map_.offsets(QStringLiteral("MONSTER_FLINCH_HEALTH_COMPONENT_OFFSETS")), nullptr);
@@ -370,129 +388,111 @@ void MhrReader::readMonsterParts(std::uintptr_t monster, MonsterSnapshot &snapsh
     const std::uintptr_t severArr = MhwReader::followPointerChainOffsetThenDeref(
         memory_, monster,
         map_.offsets(QStringLiteral("MONSTER_SEVER_HEALTH_COMPONENT_OFFSETS")), nullptr);
-    if (!flinchArr || !breakArr || !severArr)
+    if (!flinchArr || !breakArr || !severArr) {
+        publishCached();
         return;
+    }
 
     const auto flinchCount = memory_.read<std::int32_t>(flinchArr + 0x1CULL);
     const auto breakCount = memory_.read<std::int32_t>(breakArr + 0x1CULL);
     const auto severCount = memory_.read<std::int32_t>(severArr + 0x1CULL);
-    if (!flinchCount || !breakCount || !severCount)
+    if (!flinchCount || !breakCount || !severCount
+        || *flinchCount != *breakCount || *breakCount != *severCount
+        || *flinchCount <= 0 || *flinchCount > 64) {
+        publishCached();
         return;
-    if (*flinchCount != *breakCount || *breakCount != *severCount)
-        return;
+    }
 
     const int count = *flinchCount;
-    if (count <= 0 || count > 64)
-        return;
+    const RisePartTableIdentity table{
+        snapshot.id, flinchArr, breakArr, severArr, count};
 
-    auto partValue = [&](std::uintptr_t arr, int idx, float &cur, float &max) -> bool {
+    // A readable identity change starts a candidate new generation. Keep the
+    // old generation available as a transactional fallback until every slot
+    // in the new table has been read successfully, but never reuse its type
+    // metadata for the new pointers.
+    const bool sameGeneration = cached != risePartCaches_.end()
+        && sameRisePartTableIdentity(cached->table, table);
+
+    struct LayerRead {
+        std::uintptr_t pointer{};
+        float current{};
+        float maximum{};
+    };
+    auto partValue = [&](std::uintptr_t arr, int idx, LayerRead &out) -> bool {
         const auto partOpt = memory_.read<std::uintptr_t>(
             arr + 0x20ULL + static_cast<std::uintptr_t>(idx) * kPointerSize);
         if (!partOpt || !isSanePointer(*partOpt))
             return false;
-        const std::uintptr_t part = *partOpt;
-        const auto maxV = memory_.read<float>(part + 0x18ULL);
+        out.pointer = *partOpt;
+        const auto maxV = memory_.read<float>(out.pointer + 0x18ULL);
         const std::uintptr_t encoded = MhwReader::followPointerChainOffsetThenDeref(
-            memory_, part,
+            memory_, out.pointer,
             map_.offsets(QStringLiteral("MONSTER_HEALTH_COMPONENT_ENCODED_OFFSETS")), nullptr);
-        if (!encoded)
+        if (!maxV || !encoded)
             return false;
         const auto curV = memory_.read<float>(encoded + 0x18ULL);
-        if (!maxV || !curV)
+        if (!curV || !std::isfinite(*maxV) || !std::isfinite(*curV))
             return false;
-        // NaN/Inf guard. A slot can be mid-teardown during target switches or
-        // multiplayer churn. Comparisons with NaN are false in C++; the actual
-        // hazards are non-finite values propagating into clamp/division and the
-        // panel's qRound() quantizer, which asserts on NaN.
-        //
-        // Fold non-finite to 0 but KEEP returning true, so the layer's
-        // slot identity survives (the caller sees "this layer exists,
-        // currently reads 0"), matching how a legitimately empty layer
-        // looks. Returning false instead would drop the whole part from
-        // the grid for a tick, which is worse than showing a 0 layer.
-        max = std::isfinite(*maxV) ? *maxV : 0.0F;
-        cur = std::isfinite(*curV) ? *curV : 0.0F;
+        out.maximum = *maxV;
+        out.current = *curV;
         return true;
     };
 
-    for (int i = 0; i < count; ++i) {
-        float flinchCur = 0.0F, flinchMax = 0.0F;
-        float breakCur = 0.0F, breakMax = 0.0F;
-        float severCur = 0.0F, severMax = 0.0F;
-        const bool hasFlinch = partValue(flinchArr, i, flinchCur, flinchMax);
-        const bool hasBreak = partValue(breakArr, i, breakCur, breakMax);
-        const bool hasSever = partValue(severArr, i, severCur, severMax);
-        if (!hasFlinch && !hasBreak && !hasSever)
-            continue;
+    QHash<std::uintptr_t, PartSnapshot> nextByFlinch;
+    QVector<PartSnapshot> nextPublished;
+    nextPublished.reserve(count);
 
-        PartSnapshot part;
-        part.index = i;
-        part.flinch = flinchCur;
-        part.maxFlinch = flinchMax;
-        part.isBreakable = breakMax > 0.0F;
-        part.isSeverable = severMax > 0.0F;
-        part.partType = risePartType(part.isSeverable, part.isBreakable);
-        part.name = risePartDisplayName(snapshot.id, i);
-        switch (part.partType) {
-        case PartType::Severable:
-            part.health = severCur;
-            part.maxHealth = severMax;
-            // v0.10.3-r5 break-layer fix: HunterPie keeps the break layer
-            // (MHRPartStructure.Health/MaxHealth) on Severable parts too
-            // (MHRMonsterPart.Update assigns all six fields, MHRMonsterPart.cs:
-            // 124-129); the view still binds only Flinch and Sever gauges. Our
-            // health/maxHealth pair is reserved for the sever layer here (the
-            // semantics isBroken / isPartSevered / Row 3 Conditional /
-            // AutoHide signatures depend on), so the break layer that this
-            // switch used to drop is carried in breakHealth/breakMaxHealth
-            // instead — see the field comment in monster_types.h.
-            // Values come from the same partValue() read above, exactly like
-            // health/maxHealth; a part with no break table entry has
-            // hasBreak == false and keeps 0/0 there.
-            part.breakHealth = breakCur;
-            part.breakMaxHealth = breakMax;
-            break;
-        case PartType::Breakable:
-            part.health = breakCur;
-            part.maxHealth = breakMax;
-            // break layer is already the primary pair — nothing to duplicate.
-            break;
-        case PartType::Flinch:
-            part.health = flinchCur;
-            part.maxHealth = flinchMax;
-            break;
+    for (int i = 0; i < count; ++i) {
+        LayerRead flinch;
+        LayerRead breaking;
+        LayerRead sever;
+        if (!partValue(flinchArr, i, flinch)
+            || !partValue(breakArr, i, breaking)
+            || !partValue(severArr, i, sever)) {
+            publishCached();
+            return;
         }
-        // v0.10.x-r1: Rise isBroken parity with HunterPie MHRise. The single-
-        // clause `health <= 0` only fires on Severable (where severCur is a
-        // steady-state value); for Breakable, Health/MaxHealth is a per-layer
-        // cumulative that snaps back to the next full layer the instant one
-        // threshold is crossed, so `health <= 0` is invisible to the player.
-        // Mirrors src/monster/monster_reader.cpp:761-764 and HunterPie-v2
-        // .../MonsterPartContextHandler.cs:120: in Rise `Breaks` is always 0
-        // (MHRPartStructure has no Counter field), so the clause reduces to
-        // the flinch-delta test.
-        const bool flinchNotFull =
-            std::fabs(part.flinch - part.maxFlinch) > 1e-4F;
-        part.isBroken = (part.partType == PartType::Severable)
-            ? (part.maxHealth > 0.0F && part.health <= 0.0F)
-            : (part.maxHealth <= 0.0F
-               || (std::fabs(part.health - part.maxHealth) <= 1e-4F
-                   && flinchNotFull));
-        // v0.10.x-r3 UI-template alignment: HunterPie IsPartSevered
-        // (MonsterPartContextHandler.cs:104):
-        //   MaxSever == Sever && (Breaks > 0 || Flinch != MaxFlinch)
-        // Rise never has Breaks (MHRPartStructure has no Counter field,
-        // see sibling v0.10.x-r1 comment above), so the clause reduces
-        // to the flinch-delta test. Only Severable parts can ever have
-        // MaxSever > 0; on Breakable/Flinch this stays false by
-        // construction (part.isSeverable is false). Use flinchNotFull
-        // already computed above to keep the epsilon identical to the
-        // sibling isBroken branch.
-        part.isPartSevered = part.isSeverable
-            && (std::fabs(part.health - part.maxHealth) <= 1e-4F)
-            && flinchNotFull;
-        snapshot.parts.push_back(part);
+
+        // HunterPie skips a slot only when all three maxima are negative. It
+        // retains an already-created object instead of deleting it mid-hunt.
+        if (flinch.maximum < 0.0F && breaking.maximum < 0.0F
+            && sever.maximum < 0.0F) {
+            if (sameGeneration) {
+                const auto old = cached->byFlinchPointer.constFind(flinch.pointer);
+                if (old != cached->byFlinchPointer.cend()) {
+                    nextByFlinch.insert(flinch.pointer, *old);
+                    nextPublished.push_back(*old);
+                }
+            }
+            continue;
+        }
+
+        const auto old = sameGeneration
+            ? cached->byFlinchPointer.constFind(flinch.pointer)
+            : QHash<std::uintptr_t, PartSnapshot>::const_iterator{};
+        const bool hasOld = sameGeneration
+            && old != cached->byFlinchPointer.cend();
+
+        const RisePartValues values{
+            flinch.current, flinch.maximum,
+            breaking.current, breaking.maximum,
+            sever.current, sever.maximum};
+        PartSnapshot part = buildRisePartSnapshot(
+            i, risePartDisplayName(snapshot.id, i), values,
+            hasOld ? &(*old) : nullptr);
+
+        nextByFlinch.insert(flinch.pointer, part);
+        nextPublished.push_back(part);
     }
+
+    RiseCachedMonsterParts committed;
+    committed.monsterId = snapshot.id;
+    committed.table = table;
+    committed.byFlinchPointer = std::move(nextByFlinch);
+    committed.published = std::move(nextPublished);
+    risePartCaches_.insert(monster, std::move(committed));
+    snapshot.parts = risePartCaches_[monster].published;
 }
 
 void MhrReader::readMonsterTenderizes(std::uintptr_t /*monster*/,
@@ -674,15 +674,30 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
     const std::uintptr_t lockOnTarget = readLockOnTarget();
 
     const auto countOpt = memory_.read<std::int32_t>(base + kRiseMonoArrayLengthOffset);
+    if (!countOpt || *countOpt < 0)
+        return result;
     const int count = riseMonsterListCount(countOpt);
+    bool listComplete = true;
+    QSet<std::uintptr_t> liveMonsterAddresses;
     for (int i = 0; i < count; ++i) {
         const auto monsterAddress = riseMonsterListElementAddress(base, i);
-        if (!monsterAddress)
+        if (!monsterAddress) {
+            listComplete = false;
             continue;
+        }
         const auto monsterOpt = memory_.read<std::uintptr_t>(*monsterAddress);
-        if (!monsterOpt || !isSanePointer(*monsterOpt))
+        if (!monsterOpt) {
+            listComplete = false;
             continue;
+        }
+        if (*monsterOpt == 0)
+            continue;
+        if (!isSanePointer(*monsterOpt)) {
+            listComplete = false;
+            continue;
+        }
         const std::uintptr_t monster = *monsterOpt;
+        liveMonsterAddresses.insert(monster);
 
         const auto idOpt = memory_.read<std::int32_t>(monster + 0x2D4ULL);
         if (!hasRiseMonsterId(idOpt))
@@ -794,6 +809,15 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
         readMonsterQurio(monster, snapshot);
 
         result.push_back(snapshot);
+    }
+
+    if (listComplete) {
+        for (auto it = risePartCaches_.begin(); it != risePartCaches_.end();) {
+            if (!liveMonsterAddresses.contains(it.key()))
+                it = risePartCaches_.erase(it);
+            else
+                ++it;
+        }
     }
     return result;
 }
@@ -1368,6 +1392,8 @@ GameSnapshot MhrReader::poll()
 
     if (stageInfo.inHuntingZone)
         snapshot.monsters = readMonsters(&error);
+    else
+        clearRisePartCaches();
 
     snapshot.player = readPlayer(nullptr);
 

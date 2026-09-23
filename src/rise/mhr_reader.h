@@ -4,6 +4,8 @@
 #include "rise/mhr_types.h"
 
 #include <QString>
+#include <QHash>
+#include <QSet>
 #include <QVector>
 #include <algorithm>
 #include <array>
@@ -378,6 +380,94 @@ inline constexpr PartType risePartType(bool isSeverable, bool isBreakable)
                         : (isBreakable ? PartType::Breakable : PartType::Flinch);
 }
 
+// HunterPie keys each Rise part object by the flinch-layer pointer and chooses
+// its ordinary PartType only when that object is first created. Later scans
+// update the six dynamic values without reclassifying the part, so a transient
+// sever/break read cannot make an existing card change type or disappear.
+inline constexpr PartType riseStablePartType(
+    std::optional<PartType> cachedType,
+    bool isSeverable,
+    bool isBreakable)
+{
+    return cachedType.value_or(risePartType(isSeverable, isBreakable));
+}
+
+struct RisePartValues {
+    float flinch{};
+    float maxFlinch{};
+    float breaking{};
+    float maxBreaking{};
+    float sever{};
+    float maxSever{};
+};
+
+inline PartSnapshot buildRisePartSnapshot(
+    int index,
+    const QString &name,
+    const RisePartValues &values,
+    const PartSnapshot *cached)
+{
+    PartSnapshot part;
+    part.index = index;
+    part.name = name;
+    part.flinch = values.flinch;
+    part.maxFlinch = values.maxFlinch;
+    part.partType = riseStablePartType(
+        cached ? std::optional<PartType>{cached->partType} : std::nullopt,
+        values.maxSever > 0.0F,
+        values.maxBreaking > 0.0F);
+    part.isSeverable = cached ? cached->isSeverable : values.maxSever > 0.0F;
+    part.isBreakable = cached ? cached->isBreakable : values.maxBreaking > 0.0F;
+
+    switch (part.partType) {
+    case PartType::Severable:
+        part.health = values.sever;
+        part.maxHealth = values.maxSever;
+        part.breakHealth = values.breaking;
+        part.breakMaxHealth = values.maxBreaking;
+        break;
+    case PartType::Breakable:
+        part.health = values.breaking;
+        part.maxHealth = values.maxBreaking;
+        break;
+    case PartType::Flinch:
+        part.health = values.flinch;
+        part.maxHealth = values.maxFlinch;
+        break;
+    }
+
+    const bool flinchNotFull =
+        std::fabs(part.flinch - part.maxFlinch) > 1e-4F;
+    part.isBroken = (part.partType == PartType::Severable)
+        ? (part.maxHealth > 0.0F && part.health <= 0.0F)
+        : (part.maxHealth <= 0.0F
+           || (std::fabs(part.health - part.maxHealth) <= 1e-4F
+               && flinchNotFull));
+    part.isPartSevered = part.isSeverable
+        && (std::fabs(part.health - part.maxHealth) <= 1e-4F)
+        && flinchNotFull;
+    return part;
+}
+
+struct RisePartTableIdentity {
+    int monsterId{-1};
+    std::uintptr_t flinchArray{};
+    std::uintptr_t breakArray{};
+    std::uintptr_t severArray{};
+    int count{};
+};
+
+inline constexpr bool sameRisePartTableIdentity(
+    const RisePartTableIdentity &lhs,
+    const RisePartTableIdentity &rhs)
+{
+    return lhs.monsterId == rhs.monsterId
+        && lhs.flinchArray == rhs.flinchArray
+        && lhs.breakArray == rhs.breakArray
+        && lhs.severArray == rhs.severArray
+        && lhs.count == rhs.count;
+}
+
 // Returns cumulative thresholds for a Mono int[] payload. The array length must
 // be in [1, 7]; absent colour slots remain zero. Negative or implausibly large
 // segment values and sums outside int are rejected before a snapshot is built.
@@ -508,11 +598,21 @@ private:
     QuestSnapshot readQuest(QString *error);
     [[nodiscard]] QString readUtf16(std::uintptr_t address, int length) const;
 
+    struct RiseCachedMonsterParts {
+        int monsterId{-1};
+        RisePartTableIdentity table{};
+        QHash<std::uintptr_t, PartSnapshot> byFlinchPointer;
+        QVector<PartSnapshot> published;
+    };
+
+    void clearRisePartCaches();
+
     AddressMap map_;
     ProcessMemory memory_;
     QString mapPath_;
     QString mapError_;
     std::uintptr_t imageBase_ = 0;
+    QHash<std::uintptr_t, RiseCachedMonsterParts> risePartCaches_;
 
     // BUG #5: sharpness threshold cache. It keys on the live Mono int[]
     // object rather than weapon type: two weapons of the same type can
