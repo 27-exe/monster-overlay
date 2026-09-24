@@ -484,6 +484,152 @@ int main(int argc, char **argv)
     }
 #endif
 
+    // ---- v0.10.10: re2_fw_config.txt overlay ----------------------------
+    // The menu-state fix REFramework needs on install. These assert the two
+    // properties that matter for a USER file shared with ~80 other settings:
+    // foreign lines survive untouched, and the rewrite is idempotent.
+    {
+        using mhw::ReFrameworkConfigSetting;
+        using mhw::rewriteReFrameworkConfig;
+
+        const QList<ReFrameworkConfigSetting> menuFix{
+            {QStringLiteral("REFrameworkConfig_RememberMenuState"),
+             QStringLiteral("true")}};
+
+        const QString fresh = rewriteReFrameworkConfig(QString(), menuFix);
+        check(fresh == QStringLiteral(
+                  "REFrameworkConfig_RememberMenuState=true\n"),
+              "an absent config gains only the managed key");
+
+        // The real shipped file shape: CRLF, a header comment, foreign keys
+        // both before and after the one we own.
+        const QString real =
+            "Camera_GlobalFOV=81.000000\r\n"
+            "REFrameworkConfig_FontSize=16\r\n"
+            "REFrameworkConfig_MenuKey_V2=45\r\n"
+            "REFrameworkConfig_MenuOpen=false\r\n"
+            "REFrameworkConfig_RememberMenuState=false\r\n"
+            "REFrameworkConfig_ShowCursorKey=-1\r\n"
+            "Scene_TimeScale=1.000000\r\n";
+        const QString patched = rewriteReFrameworkConfig(real, menuFix);
+        check(patched.contains(QStringLiteral(
+                  "REFrameworkConfig_RememberMenuState=true\r\n")),
+              "the managed key is flipped in place");
+        check(!patched.contains(QStringLiteral(
+                   "REFrameworkConfig_RememberMenuState=false")),
+              "the managed key is not left behind as a stale duplicate");
+        check(patched.contains(QStringLiteral("Camera_GlobalFOV=81.000000\r\n")),
+              "a foreign key before ours survives");
+        check(patched.contains(QStringLiteral("Scene_TimeScale=1.000000\r\n")),
+              "a foreign key after ours survives");
+        check(patched.count(QStringLiteral("REFrameworkConfig_RememberMenuState")) == 1,
+              "the managed key appears exactly once");
+        check(patched.count(QLatin1Char('\n')) == 7,
+              "the rewrite does not change the line count");
+
+        // Idempotence: applying twice must equal applying once.
+        check(rewriteReFrameworkConfig(patched, menuFix) == patched,
+              "pressing the button twice changes nothing the second time");
+
+        // Appended when absent, in the middle of a file that has no trailing
+        // newline, without disturbing that last foreign line.
+        const QString noTrailing =
+            "Camera_Enabled=false\r\nVR_ForceVSync=true";
+        const QString appended = rewriteReFrameworkConfig(noTrailing, menuFix);
+        check(appended.contains(QStringLiteral("VR_ForceVSync=true")),
+              "a final foreign line with no newline survives");
+        check(appended.contains(QStringLiteral(
+                  "REFrameworkConfig_RememberMenuState=true")),
+              "the managed key is appended when absent");
+        check(appended.count(QStringLiteral("VR_ForceVSync=true")) == 1,
+              "the trailing foreign line is not duplicated");
+
+        // Empty settings must be a pure no-op — never rewrite a user file
+        // into something else for no reason.
+        check(rewriteReFrameworkConfig(real, {}) == real,
+              "an empty setting list returns the file untouched");
+
+        // Multiple keys in one pass keep their order.
+        const QList<ReFrameworkConfigSetting> two{
+            {QStringLiteral("REFrameworkConfig_MenuOpen"),
+             QStringLiteral("false")},
+            {QStringLiteral("REFrameworkConfig_DrawCursorWithMenuOpen"),
+             QStringLiteral("false")}};
+        const QString both = rewriteReFrameworkConfig(
+            "REFrameworkConfig_MenuOpen=true\r\n", two);
+        check(both.count(QStringLiteral("REFrameworkConfig_MenuOpen")) == 1,
+              "the first managed key is replaced, not duplicated");
+        check(both.contains(QStringLiteral("REFrameworkConfig_MenuOpen=false")),
+              "the first managed key takes the requested value");
+        check(both.contains(
+                  QStringLiteral("REFrameworkConfig_DrawCursorWithMenuOpen=false")),
+              "the second managed key is appended");
+    }
+
+    // ---- file-level round trip ------------------------------------------
+    // rewriteReFrameworkConfig preserves CRLF, but that is only useful if the
+    // caller actually hands it the CRLF. Reading with QIODevice::Text silently
+    // strips it, which would rewrite every line ending in a 85-line user file
+    // to fix one setting. Assert the whole file comes back byte-identical
+    // apart from the single line we own.
+    {
+        QTemporaryDir dir;
+        check(dir.isValid(), "temp dir for the config round trip is usable");
+        if (dir.isValid()) {
+            const QString path = dir.path()
+                + QStringLiteral("/re2_fw_config.txt");
+            const QByteArray before =
+                "Camera_GlobalFOV=81.000000\r\n"
+                "REFrameworkConfig_MenuKey_V2=45\r\n"
+                "REFrameworkConfig_RememberMenuState=false\r\n";
+            const QByteArray after =
+                "Camera_GlobalFOV=81.000000\r\n"
+                "REFrameworkConfig_MenuKey_V2=45\r\n"
+                "REFrameworkConfig_RememberMenuState=true\r\n";
+            const QByteArray tail = "Scene_TimeScale=1.000000\r\n";
+            QFile f(path);
+            check(f.open(QIODevice::WriteOnly), "can write the fixture");
+            f.write(before + tail);
+            f.close();
+
+            QString detail;
+            check(mhw::applyReFrameworkMenuStateFix(dir.path(), &detail),
+                  "the menu-state fix succeeds on a real file");
+            check(detail.isEmpty() || detail.contains(path),
+                  "the detail names the file it touched");
+
+            QFile f2(path);
+            check(f2.open(QIODevice::ReadOnly), "can read the patched file");
+            const QByteArray result = f2.readAll();
+            f2.close();
+            check(result == after + tail,
+                  "only the owned line changed; CRLF survived");
+            check(result.count("\r\n") == 4,
+                  "every line ending is still CRLF");
+
+            // Rollback copy exists and still holds the original bytes.
+            const QFileInfo backup(path
+                + QStringLiteral(".pre-monster-overlay"));
+            check(backup.exists(), "a rollback copy was written");
+            if (backup.exists()) {
+                QFile b(backup.absoluteFilePath());
+                check(b.open(QIODevice::ReadOnly), "can read the rollback copy");
+                check(b.readAll() == before + tail,
+                      "the rollback copy is the untouched original");
+                b.close();
+            }
+
+            // Idempotent at the file level, and it must not re-copy the backup.
+            check(mhw::applyReFrameworkMenuStateFix(dir.path(), &detail),
+                  "pressing again reports success");
+            QFile f3(path);
+            check(f3.open(QIODevice::ReadOnly), "can re-read the file");
+            check(f3.readAll() == result,
+                  "a second press leaves the file byte-identical");
+            f3.close();
+        }
+    }
+
     if (failures == 0)
         std::cout << "ALL TESTS PASSED\n";
     else

@@ -113,7 +113,10 @@
       "confirmTitle": "Confirm REFramework change",
       "confirmInstall": "Install REFramework and the overlay Lua into:\n%1?",
       "confirmRemoveLua": "Remove the managed overlay Lua from:\n%1?",
-      "confirmRemoveReframework": "Remove the overlay Lua and managed REFramework files from:\n%1?"
+      "confirmRemoveReframework": "Remove the overlay Lua and managed REFramework files from:\n%1?",
+      "fixMenuState": "Fix menu popup",
+      "fixMenuStateTip": "Set RememberMenuState to true so REFramework remembers the menu state (no popup on launch). Every other setting is left alone.",
+      "confirmFixMenuState": "Modify this file?\n%1\n\nOnly RememberMenuState changes; the original is kept as re2_fw_config.txt.pre-monster-overlay so you can restore it."
     },
     "canvas": {
       "header": "LIVE HUD CANVAS  ·  %1 × %2 PHYS  ·  %3 × %4 LOGICAL  ·  DPR ×%5  ·  %6",

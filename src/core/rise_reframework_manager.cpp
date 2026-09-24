@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QSaveFile>
 #include <QSet>
+#include <algorithm>
 #include <utility>
 
 namespace mhw {
@@ -1111,6 +1112,124 @@ QString RiseReFrameworkManager::luaSourcePath(const QString &applicationDir)
     // copy when the executable is relocated.
     return QDir(applicationDir).filePath(
         QStringLiteral("reframework/autorun/mhr-overlay-damage.lua"));
+}
+
+QString rewriteReFrameworkConfig(const QString &original,
+                                 const QList<ReFrameworkConfigSetting> &settings)
+{
+    if (settings.isEmpty())
+        return original;
+
+    // Split keeping the separators so every foreign line — including its
+    // original CRLF or LF — is reproduced byte for byte. REFramework writes
+    // this file itself with CRLF, and we must not silently convert it.
+    QStringList lines = original.split(QStringLiteral("\n"));
+    // QString::split on a trailing newline yields one empty tail element that
+    // does not represent a line; remember it and re-attach it at the end.
+    // An EMPTY original splits to a single empty element as well, and that
+    // element is not a line either — it is the whole (absent) file.
+    const bool hadTrailingNewline = !original.isEmpty()
+                                 && lines.last().isEmpty();
+    if (hadTrailingNewline)
+        lines.removeLast();
+    else if (original.isEmpty())
+        lines.clear();
+
+    QSet<QString> pending;
+    for (const auto &setting : settings)
+        pending.insert(setting.key);
+
+    QStringList result = lines;
+    for (auto &line : result) {
+        const QString body = line.trimmed();
+        if (body.isEmpty() || body.startsWith(QLatin1Char('#')))
+            continue;                      // blank or comment: not ours
+        const int eq = body.indexOf(QLatin1Char('='));
+        if (eq < 0)
+            continue;                      // not a key=value line
+        const QString key = body.left(eq).trimmed();
+        const auto it = std::find_if(settings.cbegin(), settings.cend(),
+                                     [&key](const ReFrameworkConfigSetting &s) {
+                                         return s.key == key;
+                                     });
+        if (it == settings.cend())
+            continue;                      // foreign setting: never touched
+        // Replace the value, keep the line's own terminator.
+        const qsizetype crAt = line.lastIndexOf(QLatin1Char('\r'));
+        const QString terminator = crAt == line.size() - 1
+            ? QStringLiteral("\r")
+            : QString();
+        line = it->key + QLatin1Char('=') + it->value + terminator;
+        pending.remove(it->key);
+    }
+
+    // Keys with no existing line are appended. The terminator we add matches
+    // whatever the file already uses so a mixed file stays consistent.
+    for (const auto &setting : settings) {
+        if (!pending.contains(setting.key))
+            continue;
+        const QString terminator = original.contains(QLatin1String("\r\n"))
+            ? QStringLiteral("\r\n")
+            : QStringLiteral("\n");
+        result.append(setting.key + QLatin1Char('=') + setting.value + terminator);
+    }
+
+    QString out = result.join(QLatin1Char('\n'));
+    if (hadTrailingNewline)
+        out += QLatin1Char('\n');
+    return out;
+}
+
+bool applyReFrameworkMenuStateFix(const QString &gameDir, QString *detail)
+{
+    const QString configPath = QDir(gameDir).filePath(
+        QStringLiteral("re2_fw_config.txt"));
+
+    QString existing;
+    if (QFileInfo::exists(configPath)) {
+        QFile in(configPath);
+        // Binary mode on purpose: QIODevice::Text would translate CRLF to LF
+        // on read and rewrite every line ending in the file, which is exactly
+        // the kind of unrelated change this function must never make.
+        if (!in.open(QIODevice::ReadOnly)) {
+            if (detail)
+                *detail = QStringLiteral("Cannot read %1: %2")
+                              .arg(configPath, in.errorString());
+            return false;
+        }
+        existing = QString::fromUtf8(in.readAll());
+        in.close();
+
+        // Keep a copy before touching it. Only the first press creates one;
+        // a second press must not clobber the original with the already-fixed
+        // version, which would destroy the only rollback path.
+        const QString backupPath = configPath
+            + QStringLiteral(".pre-monster-overlay");
+        if (!QFileInfo::exists(backupPath) && !QFile::copy(configPath, backupPath)) {
+            if (detail)
+                *detail = QStringLiteral("Cannot back up %1 before writing.")
+                              .arg(configPath);
+            return false;
+        }
+    }
+
+    const QString rewritten = rewriteReFrameworkConfig(
+        existing,
+        {{QStringLiteral("REFrameworkConfig_RememberMenuState"),
+          QStringLiteral("true")}});
+    if (rewritten == existing) {
+        if (detail)
+            *detail = QStringLiteral("%1 is already set.").arg(configPath);
+        return true;
+    }
+
+    if (!writeBytesAtomically(configPath, rewritten.toUtf8(), detail)) {
+        // writeBytesAtomically already filled in detail.
+        return false;
+    }
+    if (detail)
+        *detail = QStringLiteral("Wrote %1").arg(configPath);
+    return true;
 }
 
 } // namespace mhw

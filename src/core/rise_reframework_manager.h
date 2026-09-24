@@ -4,6 +4,8 @@
 #include <QString>
 #include <QStringList>
 #include <QByteArray>
+#include <QList>
+#include <QSet>
 
 namespace mhw {
 
@@ -91,5 +93,43 @@ public:
 private:
     QString m_applicationDir;
 };
+
+// ---------------------------------------------------------------------------
+// REFramework user-config overlay (re2_fw_config.txt)
+//
+// REFramework keeps its settings in the game directory as `re2_fw_config.txt`
+// (the historical RE2 filename, shared by every REFramework-supported game).
+// Out of the box `RememberMenuState` is false, so the ImGui menu pops up on
+// every launch even after the player closed it — the close is never persisted.
+//
+// A single pure function owns the rewrite so the console button, the installer
+// path and the unit tests all share one implementation. It is deliberately
+// additive and idempotent: unknown lines are preserved verbatim, and a key we
+// manage is replaced in place rather than appended, so repeated presses never
+// duplicate entries or grow the file.
+//
+// `re2_fw_config.txt` is a user file shared with ~80 unrelated settings
+// (Camera / VR / FreeCam ...); nothing here may touch a line it does not own.
+// ---------------------------------------------------------------------------
+
+struct ReFrameworkConfigSetting {
+    QString key;      // e.g. REFrameworkConfig_RememberMenuState
+    QString value;    // e.g. "true"
+};
+
+// Renders the full file content for `original` with each setting in `settings`
+// applied. An existing line for that key is replaced in place (comment lines
+// are ignored); a missing key is appended at the end. Returns the original
+// content untouched when `settings` is empty.
+[[nodiscard]] QString rewriteReFrameworkConfig(const QString &original,
+                                               const QList<ReFrameworkConfigSetting> &settings);
+
+// Applies the menu-state fix to <gameDir>/re2_fw_config.txt, the REFramework
+// user config. A copy of the pre-existing file is kept next to it as
+// `re2_fw_config.txt.pre-monster-overlay` before any write, so the action is
+// reversible by hand. `detail` receives a short human summary on failure.
+// Returns false when the game directory cannot be written.
+[[nodiscard]] bool applyReFrameworkMenuStateFix(const QString &gameDir,
+                                               QString *detail = nullptr);
 
 } // namespace mhw

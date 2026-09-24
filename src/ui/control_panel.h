@@ -132,6 +132,7 @@ private:
     void refreshRiseReframeworkStatus();
     void requestRiseReframeworkInstall();
     void requestRiseLuaRemoval();
+    void requestRiseMenuStateFix();
     void requestRiseReframeworkRemoval();
     void syncAppearance(int idx);
     void resetPanel(int idx);
@@ -251,6 +252,7 @@ private:
     QLabel *riseReframeworkStatus_ = nullptr;
     QPushButton *installRiseReframeworkButton_ = nullptr;
     QPushButton *removeRiseLuaButton_ = nullptr;
+    QPushButton *menuStateFixButton_ = nullptr;
     QPushButton *removeRiseReframeworkButton_ = nullptr;
     QTimer *riseReframeworkRefreshTimer_ = nullptr;
     QString riseGameDir_;

@@ -293,15 +293,18 @@ QString qssBase()
         "color:%2;background:transparent;}"
         "QPushButton#installRiseReframeworkButton,"
         "QPushButton#removeRiseLuaButton,"
+        "QPushButton#fixMenuStateButton,"
         "QPushButton#removeRiseReframeworkButton{background:transparent;color:%6;"
         "border:1px solid %8;border-radius:3px;padding:8px 10px;"
         "font-family:'Chakra Petch';font-size:11px;letter-spacing:0.5px;"
         "text-align:left;}"
         "QPushButton#installRiseReframeworkButton:hover,"
         "QPushButton#removeRiseLuaButton:hover,"
+        "QPushButton#fixMenuStateButton:hover,"
         "QPushButton#removeRiseReframeworkButton:hover{background:%1;color:%2;}"
         "QPushButton#installRiseReframeworkButton:disabled,"
         "QPushButton#removeRiseLuaButton:disabled,"
+        "QPushButton#fixMenuStateButton:disabled,"
         "QPushButton#removeRiseReframeworkButton:disabled{color:%6;background:%4;}"
     );
     // Replace longest placeholders first. QString::arg historically treats
@@ -1589,6 +1592,21 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         actions->addWidget(removeLua);
         removeRiseLuaButton_ = removeLua;
 
+        // v0.10.10: menu-state fix. Deliberately NOT part of install — it is a
+        // user-config overlay on a file REFramework shares with ~80 other
+        // settings, so it stays an explicit, reversible click. Only the one
+        // missing key is rewritten; usage is spelled out in the confirm text.
+        auto *menuFix = new QPushButton();
+        trSet(menuFix, QStringLiteral("console.reframework.fixMenuState"));
+        menuFix->setObjectName(QStringLiteral("fixMenuStateButton"));
+        menuFix->setCursor(Qt::PointingHandCursor);
+        menuFix->setToolTip(
+            mh::tr(QStringLiteral("console.reframework.fixMenuStateTip")));
+        connect(menuFix, &QPushButton::clicked, this,
+                [this]{ requestRiseMenuStateFix(); });
+        actions->addWidget(menuFix);
+        menuStateFixButton_ = menuFix;
+
         auto *removeReframework = new QPushButton();
         trSet(removeReframework,
               QStringLiteral("console.reframework.removeReframework"));
@@ -2099,6 +2117,11 @@ void ControlPanel::refreshRiseReframeworkStatus()
         canChange
         && (status.manifest == mhw::RiseReFrameworkManager::ManifestState::Valid
             || status.lua != mhw::RiseReFrameworkManager::LuaState::Missing));
+    // The menu-state fix edits REFramework's own user config, which exists
+    // whether or not the overlay Lua is installed — it only needs a writable
+    // game directory. Unlike the destructive buttons there is nothing to
+    // un-install, so no ownership state gates it.
+    menuStateFixButton_->setEnabled(canChange);
 }
 
 void ControlPanel::requestRiseReframeworkInstall()
@@ -2155,6 +2178,42 @@ void ControlPanel::requestRiseLuaRemoval()
         return;
     }
     emit removeRiseLuaRequested(riseGameDir_);
+}
+
+void ControlPanel::requestRiseMenuStateFix()
+{
+    if (currentGame_ != mhw::GameId::Rise || riseGameDir_.isEmpty()
+        || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
+        refreshRiseReframeworkStatus();
+        return;
+    }
+
+    const QString configPath = riseGameDir_
+        + QStringLiteral("/re2_fw_config.txt");
+    const auto answer = QMessageBox::question(
+        this,
+        mh::tr(QStringLiteral("console.reframework.confirmTitle")),
+        mh::tr(QStringLiteral("console.reframework.confirmFixMenuState"))
+            .arg(configPath),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+        return;
+
+    // One key, one file. Nothing is downloaded and no core file is touched, so
+    // this runs inline — but it still routes through the shared pending/result
+    // state so the card shows exactly what it shows for install/removal.
+    riseReframeworkOperationPending_ = true;
+    riseReframeworkHasResult_ = false;
+    riseReframeworkResultDetail_.clear();
+    refreshRiseReframeworkStatus();
+
+    QString error;
+    if (!mhw::applyReFrameworkMenuStateFix(riseGameDir_, &error)) {
+        finishRiseReframeworkOperation(false, error);
+        return;
+    }
+    finishRiseReframeworkOperation(true, QString());
 }
 
 void ControlPanel::requestRiseReframeworkRemoval()

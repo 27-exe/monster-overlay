@@ -113,7 +113,10 @@
       "confirmTitle": "确认 REFramework 操作",
       "confirmInstall": "要将 REFramework 和悬浮窗 Lua 安装到：\n%1？",
       "confirmRemoveLua": "要从以下目录移除受管理的悬浮窗 Lua 吗？\n%1？",
-      "confirmRemoveReframework": "要从以下目录移除悬浮窗 Lua 与受管理的 REFramework 文件吗？\n%1？"
+      "confirmRemoveReframework": "要从以下目录移除悬浮窗 Lua 与受管理的 REFramework 文件吗？\n%1？",
+      "fixMenuState": "修复菜单弹窗",
+      "fixMenuStateTip": "把 RememberMenuState 设为 true，让 REFramework 记住菜单开关状态（启动时不再自动弹出）。其余设置原样保留。",
+      "confirmFixMenuState": "要修改这个文件吗？\n%1\n\n只会改动 RememberMenuState 一项，原文件会另存为 re2_fw_config.txt.pre-monster-overlay 以便还原。"
     },
     "canvas": {
       "header": "LIVE HUD 画布  ·  %1 × %2 物理  ·  %3 × %4 逻辑  ·  DPR ×%5  ·  %6",
