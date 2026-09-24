@@ -18,8 +18,13 @@ BIN_DIR="${HOME}/.local/bin"
 DATA_ROOT="${XDG_DATA_HOME:-${HOME}/.local/share}"
 DATA_DIR="${DATA_ROOT}/monster-overlay/data"
 PAYLOAD_DIR="${BIN_DIR}/third_party/REFramework"
+# The Rise damage producer. RiseReFrameworkManager::luaSourcePath() resolves
+# this relative to the running binary and has NO search path, so it must land
+# next to it — installing only the binaries leaves Rise damage tracking with
+# nothing to install and no way to repair itself.
+LUA_DIR="${BIN_DIR}/reframework/autorun"
 
-mkdir -p "${BIN_DIR}" "${DATA_DIR}" "${PAYLOAD_DIR}"
+mkdir -p "${BIN_DIR}" "${DATA_DIR}" "${PAYLOAD_DIR}" "${LUA_DIR}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -33,11 +38,16 @@ if [ -d "${SCRIPT_DIR}/third_party/REFramework" ]; then
         "${PAYLOAD_DIR}/"
 fi
 
+if [ -f "${SCRIPT_DIR}/reframework/autorun/mhr-overlay-damage.lua" ]; then
+    install -m 644 "${SCRIPT_DIR}/reframework/autorun/"*.lua "${LUA_DIR}/"
+fi
+
 echo "Installed:"
 echo "  ${BIN_DIR}/monster-overlay"
 echo "  ${BIN_DIR}/monster-control"
 echo "  ${BIN_DIR}/monster-doctor"
-echo "  ${BIN_DIR}/third_party/REFramework/       (Rise damage producer)"
+echo "  ${BIN_DIR}/third_party/REFramework/       (REFramework payload)"
+echo "  ${LUA_DIR}/mhr-overlay-damage.lua   (Rise damage producer)"
 echo "  ${DATA_DIR}/MonsterHunterWorld.421810.map"
 echo "  ${DATA_DIR}/MonsterHunterRise.16.0.2.0.map"
 echo

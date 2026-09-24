@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.25)
 project(monster_overlay VERSION 0.10.10 LANGUAGES CXX)
 
+# Strip the build machine's absolute paths out of every compiled TU. Without
+# this the binaries embed CMAKE_SOURCE_DIR via __FILE__ and the wiring test's
+# MONSTER_SOURCE_DIR, so (a) a stranger reading `strings` sees the maintainer's
+# home directory and (b) a checkout at a different path can fail to build.
+# This is the same class of defect as the v0.9.0 release, which hardcoded a
+# local path into the shipped binaries.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=.)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

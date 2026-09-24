@@ -34,8 +34,8 @@ The original MHW_Icons_SVG project is at:
   https://github.com/OthelloRhin/MHW_Icons_SVG
 
 What we do NOT use:
-- Anything extracted from the MHW game binary at runtime. The em\em\*
-  strings in memory are used as data, not as image sources.
+- Anything extracted from the MHW game binary at runtime. The "em" and
+  "em*" path strings in memory are read as data, never as image sources.
 - Anything derived from MHW game assets (Capcom EULA forbids).
 
 Conversion script archived at:

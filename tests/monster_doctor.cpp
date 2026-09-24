@@ -870,7 +870,10 @@ int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("monster-doctor"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("1.0.0"));
+    // Same macro the other two binaries use (CMakeLists MONSTER_VERSION).
+    // This was hardcoded to "1.0.0", so the one report strangers attach to an
+    // issue named a version that does not exist anywhere else.
+    QCoreApplication::setApplicationVersion(QStringLiteral(MONSTER_VERSION));
     const QStringList args = QCoreApplication::arguments();
 
     if (args.contains(QStringLiteral("--help")) || args.contains(QStringLiteral("-h"))) {
