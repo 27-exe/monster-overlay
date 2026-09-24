@@ -122,6 +122,7 @@
       "menuStateOverridden": "Current: state is remembered (no popup on launch)",
       "menuStateDefault": "Current: default behaviour (popup on launch)",
       "menuStateUnknown": "Current: no config file detected (created on first game run)",
+      "menuStateNoCore": "(REFramework is uninstalled — nothing reads this setting)",
       "confirmFixMenuState": "Make REFramework remember the menu state?\nIt will be written to:\n%1\n\nOnly RememberMenuState changes. The first original of each file you modify is kept with a .pre-monster-overlay suffix so you can restore it by hand.",
       "confirmRestoreMenuState": "Restore REFramework's default behaviour?\nIt will be written to:\n%1\n\nOnly RememberMenuState changes.",
       "fixMenuStateFailed": "Could not write any config location. Check write permission for the game directory and %APPDATA%."

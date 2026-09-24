@@ -2147,11 +2147,13 @@ void ControlPanel::refreshRiseReframeworkStatus()
         canChange
         && (status.manifest == mhw::RiseReFrameworkManager::ManifestState::Valid
             || status.lua != mhw::RiseReFrameworkManager::LuaState::Missing));
-    // The menu-state fix edits REFramework's own user config, which exists
-    // whether or not the overlay Lua is installed — it only needs a writable
-    // game directory. Unlike the destructive buttons there is nothing to
-    // un-install, so no ownership state gates it.
-    menuStateFixButton_->setEnabled(canChange);
+    // The menu-state fix edits REFramework's own user config. The overlay Lua
+    // may legitimately be gone (it is ours to remove), and the config file
+    // itself survives — but the REFramework CORE is the thing that happens to
+    // read that file. With it uninstalled the key is an orphan line nothing
+    // parses, so editing it would be a no-op dressed up as a fix. Gate on the
+    // core, exactly like the removal buttons do.
+    menuStateFixButton_->setEnabled(canChange && usableCore);
 
     // Report what the files actually say, and label the two actions by the
     // state they lead to rather than by fixed text — the point is that the
@@ -2166,10 +2168,19 @@ void ControlPanel::refreshRiseReframeworkStatus()
                     ? "console.reframework.menuStateDefault"
                     : "console.reframework.menuStateUnknown";
         const QString keyText = mh::tr(QString::fromLatin1(stateKey));
+        // With the core gone the key is real but inert — say so rather than
+        // leaving the player to read an "active" state that nothing consumes.
+        const QString note =
+            usableCore ? QString()
+                       : QStringLiteral("\n")
+                         + mh::tr(QStringLiteral(
+                             "console.reframework.menuStateNoCore"));
         const QString pathText = menuReport.paths.join(QStringLiteral("\n"));
-        menuStateStatus_->setText(keyText + QStringLiteral("\n") + pathText);
+        menuStateStatus_->setText(keyText + note + QStringLiteral("\n")
+                                  + pathText);
         menuStateRestoreButton_->setEnabled(
-            canChange && menuReport.state != mhw::ReFrameworkMenuState::Default);
+            canChange && usableCore
+            && menuReport.state != mhw::ReFrameworkMenuState::Default);
     }
 }
 
@@ -2231,8 +2242,19 @@ void ControlPanel::requestRiseLuaRemoval()
 
 void ControlPanel::requestRiseMenuStateFix(bool restoreDefault)
 {
+    // Same core gate as the button: without a REFramework core there is
+    // nothing to read the key we would write, so the action is meaningless.
+    const mhw::RiseReFrameworkManager manager(
+        QCoreApplication::applicationDirPath());
+    const mhw::RiseReFrameworkManager::Status rfStatus =
+        manager.status(mhw::findRiseInstallDir());
+    const bool rfCorePresent =
+        rfStatus.core == mhw::RiseReFrameworkManager::CoreState::Managed
+        || rfStatus.core == mhw::RiseReFrameworkManager::CoreState::External;
+
     if (currentGame_ != mhw::GameId::Rise || riseGameDir_.isEmpty()
-        || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
+        || riseReframeworkOperationPending_ || !rfCorePresent
+        || mhw::detectGame().has_value()) {
         refreshRiseReframeworkStatus();
         return;
     }
