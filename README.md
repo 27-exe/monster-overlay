@@ -11,12 +11,6 @@ process from the outside — no DLL injection, no game files touched.
 
 ## Known limitations
 
-- **Monster part damage (World and Rise)** is still rough around the edges —
-  the data structure is fiddly enough that we want to spend a proper chunk of
-  time on it before claiming a fix.
-- **No DPS panel for Rise.** Rise does not surface live damage inside the game
-  process, so the overlay cannot compute a DPS stat for it. We are looking
-  for a low-intrusion, stable read path before promising anything here.
 - **No Monster Hunter Wilds — yet.** This repo does not carry a Wilds fork
   today: Wilds' current reception has not given us a reason to buy it, and
   without the game in hand there is nothing to adapt. If a future DLC makes
@@ -29,7 +23,9 @@ process from the outside — no DLL injection, no game files touched.
 - Qt 6.10 or newer (Widgets, Svg) and `layer-shell-qt` —
   `sudo ./install-deps.sh` installs both on Arch
 - Steam, with **GE-Proton 10-34** recommended (other Proton 9+ builds work)
-- No REFramework, no mods, no special permissions by default
+- No mods and no special permissions. World needs nothing else at all;
+  Rise damage tracking additionally uses the bundled REFramework Lua
+  producer, which the console installs for you
 
 ## Install
 
@@ -73,7 +69,7 @@ scale, `Ctrl+S` to persist — lives in [docs/USAGE.md §4](docs/USAGE.md).
 |---|---|
 | Player | name, HP / stamina, sharpness, weapon, wirebug (Rise), mantles (World), ailments, food skills |
 | Monster | current target, HP and part damage, ailments, enrage / stamina (Rise), crown size |
-| Damage | per-player damage and DPS (World; Rise does not expose live damage) |
+| Damage | per-player damage and DPS — World reads it directly; Rise needs the bundled REFramework Lua producer (see [docs/USAGE.md](docs/USAGE.md)) |
 
 ## Language
 

@@ -123,7 +123,6 @@
     "monster_tag_sever": "SEV",
     "monster_tag_break": "BRK",
     "damage_header": "DAMAGE STATS",
-    "damage_rise_unsupported": "Rise has no live damage tracking",
     "damage_quest_timer": "Quest time %1:%2",
     "damage_chart_waiting": "Waiting for data...",
     "pet_damage_header": "PET DAMAGE",

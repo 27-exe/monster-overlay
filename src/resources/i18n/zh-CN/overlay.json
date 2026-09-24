@@ -124,7 +124,6 @@
     "monster_tag_sever": "斩",
     "monster_tag_break": "破",
     "damage_header": "伤害统计 DAMAGE",
-    "damage_rise_unsupported": "Rise 不支持实时伤害追踪",
     "damage_quest_timer": "任务计时 %1:%2",
     "damage_chart_waiting": "等待数据...",
     "pet_damage_header": "伙伴伤害  PET DAMAGE",
