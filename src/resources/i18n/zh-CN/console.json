@@ -116,7 +116,15 @@
       "confirmRemoveReframework": "要从以下目录移除悬浮窗 Lua 与受管理的 REFramework 文件吗？\n%1？",
       "fixMenuState": "修复菜单弹窗",
       "fixMenuStateTip": "把 RememberMenuState 设为 true，让 REFramework 记住菜单开关状态（启动时不再自动弹出）。其余设置原样保留。",
-      "confirmFixMenuState": "要修改这个文件吗？\n%1\n\n只会改动 RememberMenuState 一项，原文件会另存为 re2_fw_config.txt.pre-monster-overlay 以便还原。"
+      "restoreMenuState": "还原默认（每次启动都弹出）",
+      "restoreMenuStateTip": "把 RememberMenuState 设回 false，恢复 REFramework 的默认行为：每次启动都显示菜单。",
+      "menuStateHeader": "菜单弹窗设置",
+      "menuStateOverridden": "当前：已记住状态（启动时不弹菜单）",
+      "menuStateDefault": "当前：默认行为（启动时弹出菜单）",
+      "menuStateUnknown": "当前：未检测到配置文件（首次运行游戏后生成）",
+      "confirmFixMenuState": "要让 REFramework 记住菜单开关状态吗？\n会写入以下位置：\n%1\n\n只会改动 RememberMenuState 一项；每个被修改文件的首份原文件会以 .pre-monster-overlay 后缀保留，可手动还原。",
+      "confirmRestoreMenuState": "要恢复 REFramework 默认行为吗？\n会写入以下位置：\n%1\n\n只会改动 RememberMenuState 一项。",
+      "fixMenuStateFailed": "无法写入任何配置位置，请检查游戏目录与 %APPDATA% 的写权限。"
     },
     "canvas": {
       "header": "LIVE HUD 画布  ·  %1 × %2 物理  ·  %3 × %4 逻辑  ·  DPR ×%5  ·  %6",

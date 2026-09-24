@@ -294,6 +294,7 @@ QString qssBase()
         "QPushButton#installRiseReframeworkButton,"
         "QPushButton#removeRiseLuaButton,"
         "QPushButton#fixMenuStateButton,"
+        "QPushButton#restoreMenuStateButton,"
         "QPushButton#removeRiseReframeworkButton{background:transparent;color:%6;"
         "border:1px solid %8;border-radius:3px;padding:8px 10px;"
         "font-family:'Chakra Petch';font-size:11px;letter-spacing:0.5px;"
@@ -301,10 +302,12 @@ QString qssBase()
         "QPushButton#installRiseReframeworkButton:hover,"
         "QPushButton#removeRiseLuaButton:hover,"
         "QPushButton#fixMenuStateButton:hover,"
+        "QPushButton#restoreMenuStateButton:hover,"
         "QPushButton#removeRiseReframeworkButton:hover{background:%1;color:%2;}"
         "QPushButton#installRiseReframeworkButton:disabled,"
         "QPushButton#removeRiseLuaButton:disabled,"
         "QPushButton#fixMenuStateButton:disabled,"
+        "QPushButton#restoreMenuStateButton:disabled,"
         "QPushButton#removeRiseReframeworkButton:disabled{color:%6;background:%4;}"
     );
     // Replace longest placeholders first. QString::arg historically treats
@@ -1594,18 +1597,45 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
 
         // v0.10.10: menu-state fix. Deliberately NOT part of install — it is a
         // user-config overlay on a file REFramework shares with ~80 other
-        // settings, so it stays an explicit, reversible click. Only the one
-        // missing key is rewritten; usage is spelled out in the confirm text.
+        // settings, so it stays an explicit click. Both directions are offered
+        // because the point is to give the player control, not to force one
+        // behaviour; the label under them reflects what the files say now.
+        auto *menuHeader = new QLabel();
+        trSet(menuHeader, QStringLiteral("console.reframework.menuStateHeader"));
+        menuHeader->setObjectName(QStringLiteral("riseReframeworkSubtitle"));
+        menuHeader->setWordWrap(true);
+        actions->addWidget(menuHeader);
+
+        auto *menuState = new QLabel();
+        menuState->setObjectName(QStringLiteral("riseReframeworkStatus"));
+        menuState->setWordWrap(true);
+        actions->addWidget(menuState);
+        menuStateStatus_ = menuState;
+
         auto *menuFix = new QPushButton();
         trSet(menuFix, QStringLiteral("console.reframework.fixMenuState"));
         menuFix->setObjectName(QStringLiteral("fixMenuStateButton"));
         menuFix->setCursor(Qt::PointingHandCursor);
-        menuFix->setToolTip(
-            mh::tr(QStringLiteral("console.reframework.fixMenuStateTip")));
+        // trTip, not setToolTip: only trTip registers the widget with the
+        // locale switcher, so a plain setToolTip would freeze it in whatever
+        // language the panel happened to be built in.
+        trTip(menuFix, QStringLiteral("console.reframework.fixMenuStateTip"));
         connect(menuFix, &QPushButton::clicked, this,
-                [this]{ requestRiseMenuStateFix(); });
+                [this]{ requestRiseMenuStateFix(false); });
         actions->addWidget(menuFix);
         menuStateFixButton_ = menuFix;
+
+        auto *menuRestore = new QPushButton();
+        trSet(menuRestore,
+              QStringLiteral("console.reframework.restoreMenuState"));
+        menuRestore->setObjectName(QStringLiteral("restoreMenuStateButton"));
+        menuRestore->setCursor(Qt::PointingHandCursor);
+        trTip(menuRestore,
+              QStringLiteral("console.reframework.restoreMenuStateTip"));
+        connect(menuRestore, &QPushButton::clicked, this,
+                [this]{ requestRiseMenuStateFix(true); });
+        actions->addWidget(menuRestore);
+        menuStateRestoreButton_ = menuRestore;
 
         auto *removeReframework = new QPushButton();
         trSet(removeReframework,
@@ -2122,6 +2152,25 @@ void ControlPanel::refreshRiseReframeworkStatus()
     // game directory. Unlike the destructive buttons there is nothing to
     // un-install, so no ownership state gates it.
     menuStateFixButton_->setEnabled(canChange);
+
+    // Report what the files actually say, and label the two actions by the
+    // state they lead to rather than by fixed text — the point is that the
+    // player can see which one is in effect right now.
+    if (menuStateStatus_) {
+        const mhw::ReFrameworkMenuStateReport menuReport =
+            mhw::queryReFrameworkMenuState(riseGameDir_);
+        const char *stateKey =
+            menuReport.state == mhw::ReFrameworkMenuState::Overridden
+                ? "console.reframework.menuStateOverridden"
+                : menuReport.state == mhw::ReFrameworkMenuState::Default
+                    ? "console.reframework.menuStateDefault"
+                    : "console.reframework.menuStateUnknown";
+        const QString keyText = mh::tr(QString::fromLatin1(stateKey));
+        const QString pathText = menuReport.paths.join(QStringLiteral("\n"));
+        menuStateStatus_->setText(keyText + QStringLiteral("\n") + pathText);
+        menuStateRestoreButton_->setEnabled(
+            canChange && menuReport.state != mhw::ReFrameworkMenuState::Default);
+    }
 }
 
 void ControlPanel::requestRiseReframeworkInstall()
@@ -2180,7 +2229,7 @@ void ControlPanel::requestRiseLuaRemoval()
     emit removeRiseLuaRequested(riseGameDir_);
 }
 
-void ControlPanel::requestRiseMenuStateFix()
+void ControlPanel::requestRiseMenuStateFix(bool restoreDefault)
 {
     if (currentGame_ != mhw::GameId::Rise || riseGameDir_.isEmpty()
         || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
@@ -2188,29 +2237,35 @@ void ControlPanel::requestRiseMenuStateFix()
         return;
     }
 
-    const QString configPath = riseGameDir_
-        + QStringLiteral("/re2_fw_config.txt");
+    // Every place REFramework might read its config from — the game dir plus
+    // the %APPDATA% fallback it switches to when the game dir is unreachable.
+    const QStringList configPaths =
+        mhw::reframeworkConfigPaths(riseGameDir_);
+    const QString pathList = configPaths.join(QStringLiteral("\n"));
+    const char *confirmKey = restoreDefault
+        ? "console.reframework.confirmRestoreMenuState"
+        : "console.reframework.confirmFixMenuState";
     const auto answer = QMessageBox::question(
         this,
         mh::tr(QStringLiteral("console.reframework.confirmTitle")),
-        mh::tr(QStringLiteral("console.reframework.confirmFixMenuState"))
-            .arg(configPath),
+        mh::tr(QString::fromLatin1(confirmKey)).arg(pathList),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
     if (answer != QMessageBox::Yes)
         return;
 
-    // One key, one file. Nothing is downloaded and no core file is touched, so
-    // this runs inline — but it still routes through the shared pending/result
-    // state so the card shows exactly what it shows for install/removal.
+    // One key, a handful of files. Nothing is downloaded and no core file is
+    // touched, so this runs inline — but it still routes through the shared
+    // pending/result state so the card reads the same as install/removal.
     riseReframeworkOperationPending_ = true;
     riseReframeworkHasResult_ = false;
     riseReframeworkResultDetail_.clear();
     refreshRiseReframeworkStatus();
 
-    QString error;
-    if (!mhw::applyReFrameworkMenuStateFix(riseGameDir_, &error)) {
-        finishRiseReframeworkOperation(false, error);
+    mhw::ReFrameworkMenuStateReport report;
+    if (!mhw::applyReFrameworkMenuStateFix(riseGameDir_, restoreDefault, &report)) {
+        finishRiseReframeworkOperation(
+            false, mh::tr(QStringLiteral("console.reframework.fixMenuStateFailed")));
         return;
     }
     finishRiseReframeworkOperation(true, QString());

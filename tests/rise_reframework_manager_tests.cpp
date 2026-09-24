@@ -592,11 +592,14 @@ int main(int argc, char **argv)
             f.write(before + tail);
             f.close();
 
-            QString detail;
-            check(mhw::applyReFrameworkMenuStateFix(dir.path(), &detail),
+            mhw::ReFrameworkMenuStateReport report;
+            check(mhw::applyReFrameworkMenuStateFix(dir.path(), false,
+                                                    &report),
                   "the menu-state fix succeeds on a real file");
-            check(detail.isEmpty() || detail.contains(path),
-                  "the detail names the file it touched");
+            check(report.state == mhw::ReFrameworkMenuState::Overridden,
+                  "the report reflects the applied state");
+            check(report.written.contains(path),
+                  "the report names the file it wrote");
 
             QFile f2(path);
             check(f2.open(QIODevice::ReadOnly), "can read the patched file");
@@ -620,13 +623,40 @@ int main(int argc, char **argv)
             }
 
             // Idempotent at the file level, and it must not re-copy the backup.
-            check(mhw::applyReFrameworkMenuStateFix(dir.path(), &detail),
+            check(mhw::applyReFrameworkMenuStateFix(dir.path(), false, nullptr),
                   "pressing again reports success");
             QFile f3(path);
             check(f3.open(QIODevice::ReadOnly), "can re-read the file");
             check(f3.readAll() == result,
                   "a second press leaves the file byte-identical");
             f3.close();
+
+            // The query the console uses must agree with what was written.
+            const mhw::ReFrameworkMenuStateReport queried =
+                mhw::queryReFrameworkMenuState(dir.path());
+            check(queried.state == mhw::ReFrameworkMenuState::Overridden,
+                  "the query reports the overridden state");
+            check(queried.paths.contains(path),
+                  "the query inspects the game-directory config");
+
+            // The other direction must put the key back to false, and it must
+            // NOT touch the backup that still holds the original.
+            check(mhw::applyReFrameworkMenuStateFix(dir.path(), true, nullptr),
+                  "restoring the default reports success");
+            QFile f4(path);
+            check(f4.open(QIODevice::ReadOnly), "can read the restored file");
+            const QByteArray restored = f4.readAll();
+            f4.close();
+            check(restored.contains(
+                      "REFrameworkConfig_RememberMenuState=false\r\n"),
+                  "restoring writes false back");
+            check(restored.count("\r\n") == 4,
+                  "restoring keeps the CRLF line endings");
+            QFile b2(backup.absoluteFilePath());
+            check(b2.open(QIODevice::ReadOnly), "can re-read the backup file");
+            check(b2.readAll() == before + tail,
+                  "the backup still holds the original, not the restore");
+            b2.close();
         }
     }
 

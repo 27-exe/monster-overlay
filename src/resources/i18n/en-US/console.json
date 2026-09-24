@@ -116,7 +116,15 @@
       "confirmRemoveReframework": "Remove the overlay Lua and managed REFramework files from:\n%1?",
       "fixMenuState": "Fix menu popup",
       "fixMenuStateTip": "Set RememberMenuState to true so REFramework remembers the menu state (no popup on launch). Every other setting is left alone.",
-      "confirmFixMenuState": "Modify this file?\n%1\n\nOnly RememberMenuState changes; the original is kept as re2_fw_config.txt.pre-monster-overlay so you can restore it."
+      "restoreMenuState": "Restore default (popup every launch)",
+      "restoreMenuStateTip": "Set RememberMenuState back to false, restoring REFramework's default behaviour: the menu shows on every launch.",
+      "menuStateHeader": "Menu popup behaviour",
+      "menuStateOverridden": "Current: state is remembered (no popup on launch)",
+      "menuStateDefault": "Current: default behaviour (popup on launch)",
+      "menuStateUnknown": "Current: no config file detected (created on first game run)",
+      "confirmFixMenuState": "Make REFramework remember the menu state?\nIt will be written to:\n%1\n\nOnly RememberMenuState changes. The first original of each file you modify is kept with a .pre-monster-overlay suffix so you can restore it by hand.",
+      "confirmRestoreMenuState": "Restore REFramework's default behaviour?\nIt will be written to:\n%1\n\nOnly RememberMenuState changes.",
+      "fixMenuStateFailed": "Could not write any config location. Check write permission for the game directory and %APPDATA%."
     },
     "canvas": {
       "header": "LIVE HUD CANVAS  ·  %1 × %2 PHYS  ·  %3 × %4 LOGICAL  ·  DPR ×%5  ·  %6",

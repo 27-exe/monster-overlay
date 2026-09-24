@@ -97,16 +97,16 @@ private:
 // ---------------------------------------------------------------------------
 // REFramework user-config overlay (re2_fw_config.txt)
 //
-// REFramework keeps its settings in the game directory as `re2_fw_config.txt`
-// (the historical RE2 filename, shared by every REFramework-supported game).
-// Out of the box `RememberMenuState` is false, so the ImGui menu pops up on
-// every launch even after the player closed it — the close is never persisted.
+// REFramework keeps its settings in `<game_dir>/re2_fw_config.txt` — the
+// historical RE2 filename, shared by every REFramework-supported game. Out of
+// the box `RememberMenuState` is false, so the ImGui menu pops up on every
+// launch even after the player closed it: the close is never persisted.
 //
-// A single pure function owns the rewrite so the console button, the installer
-// path and the unit tests all share one implementation. It is deliberately
-// additive and idempotent: unknown lines are preserved verbatim, and a key we
-// manage is replaced in place rather than appended, so repeated presses never
-// duplicate entries or grow the file.
+// Location matters. Upstream documents that when REFramework "cannot access
+// the current game directory for any reason" it uses `%APPDATA%/REFramework`
+// instead — a real case on a read-only game mount or a locked-down Proton
+// prefix. Writing only the game directory would silently do nothing there, so
+// every path REFramework might read is considered and written together.
 //
 // `re2_fw_config.txt` is a user file shared with ~80 unrelated settings
 // (Camera / VR / FreeCam ...); nothing here may touch a line it does not own.
@@ -124,12 +124,37 @@ struct ReFrameworkConfigSetting {
 [[nodiscard]] QString rewriteReFrameworkConfig(const QString &original,
                                                const QList<ReFrameworkConfigSetting> &settings);
 
-// Applies the menu-state fix to <gameDir>/re2_fw_config.txt, the REFramework
-// user config. A copy of the pre-existing file is kept next to it as
-// `re2_fw_config.txt.pre-monster-overlay` before any write, so the action is
-// reversible by hand. `detail` receives a short human summary on failure.
-// Returns false when the game directory cannot be written.
+// Every location REFramework may read its config from for one game install.
+// The game directory comes first because it is the one upstream prefers; the
+// AppData fallback is resolved through the running prefix when it can be, and
+// the plain user path otherwise. Duplicates are collapsed.
+[[nodiscard]] QStringList reframeworkConfigPaths(const QString &gameDir);
+
+// What the menu-state key currently holds, across all candidate paths.
+enum class ReFrameworkMenuState {
+    Unknown,      // nothing to read (no file, or unreadable)
+    Default,      // every readable copy says false (menu pops up on launch)
+    Overridden,   // at least one copy already says true
+};
+
+struct ReFrameworkMenuStateReport {
+    ReFrameworkMenuState state{ReFrameworkMenuState::Unknown};
+    QStringList paths;   // the candidate locations that were inspected
+    QStringList written; // the locations that were read-or-writable
+};
+
+// Inspects the candidate paths without writing anything, so the console can
+// show which action is currently in effect.
+[[nodiscard]] ReFrameworkMenuStateReport queryReFrameworkMenuState(
+    const QString &gameDir);
+
+// Applies (or reverts) the menu-state key across every candidate path so the
+// next launch sees it regardless of which directory REFramework ends up
+// using. Copies of any pre-existing file are kept alongside it as
+// `re2_fw_config.txt.pre-monster-overlay` before the first write, so the
+// action stays reversible by hand.
 [[nodiscard]] bool applyReFrameworkMenuStateFix(const QString &gameDir,
-                                               QString *detail = nullptr);
+                                                bool restoreDefault,
+                                                ReFrameworkMenuStateReport *report = nullptr);
 
 } // namespace mhw

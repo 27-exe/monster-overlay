@@ -12,6 +12,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <algorithm>
+#include <optional>
 #include <utility>
 
 namespace mhw {
@@ -1180,56 +1181,172 @@ QString rewriteReFrameworkConfig(const QString &original,
     return out;
 }
 
-bool applyReFrameworkMenuStateFix(const QString &gameDir, QString *detail)
+namespace {
+
+// The single key this feature owns. `true` makes REFramework persist the
+// menu open/closed state across launches; `false` is the upstream default and
+// the reason the menu reopens every time.
+constexpr const char *kMenuStateKey = "REFrameworkConfig_RememberMenuState";
+
+QByteArray readAllBytes(const QString &path)
 {
-    const QString configPath = QDir(gameDir).filePath(
-        QStringLiteral("re2_fw_config.txt"));
+    // Binary mode: QIODevice::Text would translate CRLF to LF on read and
+    // rewrite every line ending in the file, which is exactly the kind of
+    // unrelated change this feature must never make.
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return {};
+    return f.readAll();
+}
 
-    QString existing;
-    if (QFileInfo::exists(configPath)) {
-        QFile in(configPath);
-        // Binary mode on purpose: QIODevice::Text would translate CRLF to LF
-        // on read and rewrite every line ending in the file, which is exactly
-        // the kind of unrelated change this function must never make.
-        if (!in.open(QIODevice::ReadOnly)) {
-            if (detail)
-                *detail = QStringLiteral("Cannot read %1: %2")
-                              .arg(configPath, in.errorString());
-            return false;
+// Reads just our key out of one config file. Returns an empty optional when
+// the file does not exist or the key is absent, so "no file" and "file without
+// our key" can be told apart from "file says false".
+std::optional<bool> readMenuStateKey(const QString &path)
+{
+    const QByteArray bytes = readAllBytes(path);
+    if (bytes.isEmpty())
+        return std::nullopt;
+    const QStringList lines =
+        QString::fromUtf8(bytes).split(QLatin1Char('\n'));
+    for (const QString &raw : lines) {
+        const QString line = raw.trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+            continue;
+        const int eq = line.indexOf(QLatin1Char('='));
+        if (eq < 0)
+            continue;
+        if (line.left(eq).trimmed() == QLatin1String(kMenuStateKey)) {
+            const QString value = line.mid(eq + 1).trimmed();
+            return value.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0;
         }
-        existing = QString::fromUtf8(in.readAll());
-        in.close();
+    }
+    return std::nullopt;
+}
 
-        // Keep a copy before touching it. Only the first press creates one;
-        // a second press must not clobber the original with the already-fixed
-        // version, which would destroy the only rollback path.
+} // namespace
+
+QStringList reframeworkConfigPaths(const QString &gameDir)
+{
+    QStringList paths;
+    const QString primary = QDir(gameDir).filePath(
+        QStringLiteral("re2_fw_config.txt"));
+    paths.append(primary);
+
+    // Upstream fallback: %APPDATA%/REFramework, which under Proton lives in
+    // the game's own compat prefix. Steam exports that path to the process it
+    // launches, so read it from the environment rather than guessing a prefix.
+    const QString prefixRoot = qEnvironmentVariable("STEAM_COMPAT_DATA_PATH");
+    if (!prefixRoot.isEmpty()) {
+        const QDir users(prefixRoot + QStringLiteral("/drive_c/users"));
+        if (users.exists()) {
+            const QStringList entries =
+                users.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+            for (const QString &user : entries) {
+                const QString roaming = users.filePath(user)
+                    + QStringLiteral("/AppData/Roaming/REFramework/re2_fw_config.txt");
+                if (!paths.contains(roaming))
+                    paths.append(roaming);
+            }
+        }
+    }
+
+    // Native-ish fallback for a console started outside Steam, where no
+    // STEAM_COMPAT_DATA_PATH exists at all.
+    const QString local = QDir::home().filePath(
+        QStringLiteral(".local/share/REFramework/re2_fw_config.txt"));
+    if (!paths.contains(local))
+        paths.append(local);
+    return paths;
+}
+
+ReFrameworkMenuStateReport queryReFrameworkMenuState(const QString &gameDir)
+{
+    ReFrameworkMenuStateReport report;
+    report.paths = reframeworkConfigPaths(gameDir);
+
+    bool sawAny = false;
+    for (const QString &path : report.paths) {
+        const std::optional<bool> value = readMenuStateKey(path);
+        if (!value.has_value())
+            continue;
+        sawAny = true;
+        // Any copy already saying true wins: that is the file REFramework
+        // would read, so the fix is in effect regardless of the others.
+        if (*value) {
+            report.state = ReFrameworkMenuState::Overridden;
+            return report;
+        }
+    }
+    report.state = sawAny ? ReFrameworkMenuState::Default
+                          : ReFrameworkMenuState::Unknown;
+    return report;
+}
+
+bool applyReFrameworkMenuStateFix(const QString &gameDir, bool restoreDefault,
+                                  ReFrameworkMenuStateReport *report)
+{
+    const QList<ReFrameworkConfigSetting> settings{
+        {QLatin1String(kMenuStateKey),
+         restoreDefault ? QStringLiteral("false") : QStringLiteral("true")}};
+
+    if (report) {
+        report->paths = reframeworkConfigPaths(gameDir);
+        report->written.clear();
+    }
+
+    bool wroteAny = false;
+    bool allAlreadyCorrect = true;
+    for (const QString &configPath : reframeworkConfigPaths(gameDir)) {
+        const std::optional<bool> current = readMenuStateKey(configPath);
+        const bool target = !restoreDefault;
+        if (!QFileInfo::exists(configPath)) {
+            // Only create a file where REFramework would actually look, and
+            // only if that directory exists — do not litter the filesystem.
+            if (!QFileInfo::exists(QFileInfo(configPath).absolutePath()))
+                continue;
+        } else if (current.has_value() && *current == target) {
+            continue;   // already right; writing would only churn the file
+        }
+        allAlreadyCorrect = false;
+
+        const QString existing = QString::fromUtf8(readAllBytes(configPath));
+        if (QFileInfo::exists(configPath) && existing.isEmpty()) {
+            // Unreadable rather than empty: stop rather than clobber a file we
+            // cannot inspect.
+            continue;
+        }
+
+        // Keep a copy before touching it, so either direction can be undone
+        // by hand. Only the first write creates one: a later press must not
+        // overwrite the original with an already-modified version, which
+        // would destroy the only rollback path.
         const QString backupPath = configPath
             + QStringLiteral(".pre-monster-overlay");
-        if (!QFileInfo::exists(backupPath) && !QFile::copy(configPath, backupPath)) {
-            if (detail)
-                *detail = QStringLiteral("Cannot back up %1 before writing.")
-                              .arg(configPath);
-            return false;
+        if (QFileInfo::exists(configPath) && !QFileInfo::exists(backupPath)
+            && !QFile::copy(configPath, backupPath)) {
+            continue;   // could not make the change reversible
         }
+
+        const QString rewritten =
+            rewriteReFrameworkConfig(existing, settings);
+        if (rewritten == existing)
+            continue;
+        if (!writeBytesAtomically(configPath, rewritten.toUtf8(), nullptr))
+            continue;   // unwritable candidate: try the next one
+        wroteAny = true;
+        if (report)
+            report->written.append(configPath);
     }
 
-    const QString rewritten = rewriteReFrameworkConfig(
-        existing,
-        {{QStringLiteral("REFrameworkConfig_RememberMenuState"),
-          QStringLiteral("true")}});
-    if (rewritten == existing) {
-        if (detail)
-            *detail = QStringLiteral("%1 is already set.").arg(configPath);
-        return true;
+    if (report) {
+        const ReFrameworkMenuState target = restoreDefault
+            ? ReFrameworkMenuState::Default
+            : ReFrameworkMenuState::Overridden;
+        report->state = (wroteAny || allAlreadyCorrect) ? target
+                                                        : ReFrameworkMenuState::Unknown;
     }
-
-    if (!writeBytesAtomically(configPath, rewritten.toUtf8(), detail)) {
-        // writeBytesAtomically already filled in detail.
-        return false;
-    }
-    if (detail)
-        *detail = QStringLiteral("Wrote %1").arg(configPath);
-    return true;
+    return wroteAny || allAlreadyCorrect;
 }
 
 } // namespace mhw
