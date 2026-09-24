@@ -2098,21 +2098,40 @@ void ControlPanel::refreshRiseReframeworkStatus()
     const mhw::RiseReFrameworkManager::Status status = manager.status(riseGameDir_);
     const bool gameRunning = mhw::detectGame().has_value();
 
+    // Build the status as readable lines rather than appending whatever the
+    // installer happened to put in `detail`. `status.detail` is a technical
+    // summary meant for diagnostics ("core managed; Lua current; manifest
+    // valid"); showing it raw next to the path made the card read like a log.
+    // Derive a plain-language state from the fields, and keep the raw detail
+    // as a clearly-labelled secondary line.
     QStringList lines;
+    const bool corePresent = status.core == mhw::RiseReFrameworkManager::CoreState::Managed
+                             || status.core == mhw::RiseReFrameworkManager::CoreState::External;
     if (riseGameDir_.isEmpty()) {
         lines.append(mh::tr(QStringLiteral("console.reframework.notFound")));
-        if (!status.detail.isEmpty())
-            lines.append(status.detail);
+    } else if (!status.gameDirValid) {
+        lines.append(mh::tr(QStringLiteral("console.reframework.gameInvalid"))
+                         .arg(riseGameDir_));
+    } else if (!corePresent) {
+        lines.append(mh::tr(QStringLiteral("console.reframework.gameFound"))
+                         .arg(riseGameDir_));
+        lines.append(mh::tr(QStringLiteral("console.reframework.stateCoreMissing")));
     } else {
-        lines.append(status.gameDirValid
-                         ? mh::tr(QStringLiteral("console.reframework.gameFound"))
-                               .arg(riseGameDir_)
-                         : mh::tr(QStringLiteral("console.reframework.gameInvalid"))
-                               .arg(riseGameDir_));
-        if (!status.detail.isEmpty())
-            lines.append(status.detail);
-        if (status.lua == mhw::RiseReFrameworkManager::LuaState::Missing)
-            lines.append(mh::tr(QStringLiteral("console.reframework.luaMissing")));
+        lines.append(mh::tr(QStringLiteral("console.reframework.gameFound"))
+                         .arg(riseGameDir_));
+        const bool manifestBroken =
+            status.manifest == mhw::RiseReFrameworkManager::ManifestState::Invalid;
+        const bool installIncomplete =
+            manifestBroken
+            || status.lua == mhw::RiseReFrameworkManager::LuaState::Modified;
+        if (installIncomplete) {
+            lines.append(mh::tr(QStringLiteral(
+                "console.reframework.stateNeedsRepair")));
+        } else if (status.lua == mhw::RiseReFrameworkManager::LuaState::Missing) {
+            lines.append(mh::tr(QStringLiteral("console.reframework.stateLuaMissing")));
+        } else {
+            lines.append(mh::tr(QStringLiteral("console.reframework.stateReady")));
+        }
     }
     if (gameRunning)
         lines.append(mh::tr(QStringLiteral("console.reframework.gameRunning")));
@@ -2124,6 +2143,11 @@ void ControlPanel::refreshRiseReframeworkStatus()
                                 : QStringLiteral("console.reframework.failure"))
                          .arg(riseReframeworkResultDetail_));
     }
+    // The raw diagnostic string goes last and only when it adds something the
+    // state lines above do not already say.
+    if (!status.detail.isEmpty())
+        lines.append(mh::tr(QStringLiteral("console.reframework.detailRaw"))
+                         .arg(status.detail));
     riseReframeworkStatus_->setText(lines.join(QLatin1Char('\n')));
 
     // A missing/invalid locator result is not actionable. A running game or
@@ -2175,9 +2199,18 @@ void ControlPanel::refreshRiseReframeworkStatus()
                        : QStringLiteral("\n")
                          + mh::tr(QStringLiteral(
                              "console.reframework.menuStateNoCore"));
-        const QString pathText = menuReport.paths.join(QStringLiteral("\n"));
-        menuStateStatus_->setText(keyText + note + QStringLiteral("\n")
-                                  + pathText);
+        // Only name the paths when there is more than one: a single game-dir
+        // file needs no listing, while several mean the fallback locations are
+        // in play and the player should know which ones were touched.
+        QString pathText;
+        if (menuReport.paths.size() > 1) {
+            pathText = QStringLiteral("\n")
+                       + mh::tr(QStringLiteral("console.reframework.menuStatePaths"))
+                             .arg(menuReport.paths.size())
+                       + QStringLiteral("\n")
+                       + menuReport.paths.join(QStringLiteral("\n"));
+        }
+        menuStateStatus_->setText(keyText + note + pathText);
         menuStateRestoreButton_->setEnabled(
             canChange && usableCore
             && menuReport.state != mhw::ReFrameworkMenuState::Default);
