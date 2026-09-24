@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(monster_overlay VERSION 0.10.8 LANGUAGES CXX)
+project(monster_overlay VERSION 0.10.10 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -181,6 +181,38 @@ target_link_libraries(snap-world-mp PRIVATE
 target_include_directories(snap-world-mp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snap-world-mp PRIVATE -Wall -Wextra -Wpedantic)
 
+# v0.10.10 off-screen probe: part-gauge FILL COLOUR acceptance (broken must
+# be the #71717A Broken.Foreground grey, untouched #78909c, tenderize #f6a522
+# and the Row-1 flinch blue #4B8EEE untouched). One card per scenario so
+# every bar in the PNG is attributable. Diagnostic only — not built by
+# `cmake --build .`, not registered as a CTest.
+add_executable(snap-gauge-fill EXCLUDE_FROM_ALL
+    tests/snap_gauge_fill.cpp
+    src/mhw_reader.cpp
+    src/mhw_reader.h
+    src/player/player_reader.cpp
+    src/quest/quest_reader.cpp
+    src/world/world_reader.cpp
+    src/monster/monster_reader.cpp
+    src/monster/part_schemas.cpp
+    src/monster/target_selector.cpp
+    src/ui/formatters.cpp
+    src/ui/icon.cpp
+    src/ui/panel.cpp
+    src/ui/panel_player.cpp
+    src/ui/panel_damage.cpp
+    src/ui/panel_monster.cpp
+    src/world/world_types.cpp
+    src/resources/resources.qrc
+    assets/icons.qrc
+)
+target_link_libraries(snap-gauge-fill PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+    LayerShellQt::Interface
+    monster-core
+)
+target_include_directories(snap-gauge-fill PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(snap-gauge-fill PRIVATE -Wall -Wextra -Wpedantic)
 
 # Control console — standalone Qt window, no layer-shell. Reuses the same
 # panel paint code as the live overlay to preview section toggles.

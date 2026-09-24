@@ -103,7 +103,17 @@ constexpr float kHpAmberPct   = 0.50F;  // ≤50% flips to amber
 constexpr int kErBar1R = 230, kErBar1G =  74, kErBar1B = 25;  // --c
 constexpr int kErBar2R = 255, kErBar2G = 112, kErBar2B = 67;  // --c2
 constexpr int kStamR   = 246, kStamG   = 165, kStamB   =  34; // stamina:
-                                    // HunterPie Yellow #F6A522, Scheme.xaml
+                                   // HunterPie Yellow #F6A522, Scheme.xaml
+
+// ---- Part-gauge fill palette --------------------------------------------
+// Two states only: untouched keeps the legacy #78909c, broken takes
+// HunterPie Part.Broken.Foreground #71717A (Base.xaml:389-390) — for either
+// kind, the way BossMonsterBreakablePartView.xaml:115-118 and
+// BossMonsterSeverablePartView.xaml:93-95 do. Rationale and the full colour
+// mapping live on partGaugeFill() in monster/monster_types.h so the headless
+// reader tests can assert on it.
+constexpr int kPcGaugeR = 120, kPcGaugeG = 144, kPcGaugeB = 156; // #78909c
+// broken: mhw::kPartGaugeBroken (#71717A)
 
 constexpr int kPulsePeriodMs = 1600;  // .erpulse 1.6s
 
@@ -637,16 +647,20 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
         p.drawRect(miniRect);
         const float clamped = std::clamp(e.pct, 0.0F, 1.0F);
         if (clamped > 0.001F) {
-            // v0.8.4-r23: broken/severed parts paint the fill in the tag
-            // palette (brk pink / sev amber) — HunterPie swaps its gauge
-            // brush to Broken.Foreground on IsPartBroken/IsPartSevered.
-            QColor fill = QColor(120, 144, 156); // #78909c default
-            if (e.broken) {
-                fill = (e.tagKind == QLatin1String("sev"))
-                    ? QColor(246, 165, 34)   // #f6a522
-                    : QColor(244, 17, 98);   // #f41162
-            }
-            p.setBrush(fill);
+            // v0.10.10 — the fill has two states, not two per-tag hues.
+            // HunterPie's part brush switches to Part.Broken.Foreground
+            // (#71717A) on IsPartBroken/IsPartSevered, for either kind
+            // (BossMonsterBreakablePartView.xaml:115-118,
+            // BossMonsterSeverablePartView.xaml:93-95). The tag palette is
+            // NOT the gauge palette: Scheme.xaml binds #F6A522 to
+            // Part.Breakable.Foreground and #F41162 to
+            // Part.Severable.Foreground — the colour a HEALTHY part of that
+            // kind wears. Painting a finished part in it claimed "alive",
+            // and since a Teostra head (monster 18, thresholds "1") refills
+            // to 100% once broken (MHWMonsterPart.cs:165-166) the two
+            // together read as pristine HP.
+            const mhw::PartGaugeFill fillMhw = mhw::partGaugeFill(e.broken);
+            p.setBrush(QColor(fillMhw.r, fillMhw.g, fillMhw.b));
             p.drawRect(miniRect.x(), miniY,
                        miniRect.width() * clamped, miniRect.height());
         }

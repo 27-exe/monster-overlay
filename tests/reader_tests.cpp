@@ -992,6 +992,35 @@ Address OTHER 0xCAFE # inline comment
     check(mhw::sanitizeSessionPlayerCount(-7, 2) == 2,
           "negative garbage keeps the previous session value");
 
+    // ---- v0.10.10: part-gauge fill follows Broken.Foreground, not the tag
+    // palette. Scheme.xaml binds #F6A522 to Part.Breakable.Foreground and
+    // #F41162 to Part.Severable.Foreground — a HEALTHY part of that kind. A
+    // Teostra head (monster 18, thresholds "1") refills to 100% once broken,
+    // so painting that in the healthy palette read as pristine HP.
+    check(mhw::partGaugeFill(false) == mhw::kPartGaugeUntouched,
+          "an untouched part keeps the legacy #78909c fill");
+    check(mhw::kPartGaugeUntouched.r == 120 && mhw::kPartGaugeUntouched.g == 144
+              && mhw::kPartGaugeUntouched.b == 156,
+          "#78909c is the untouched fill");
+    check(mhw::partGaugeFill(true) == mhw::kPartGaugeBroken,
+          "a broken part takes the Broken.Foreground grey");
+    check(mhw::kPartGaugeBroken.r == 113 && mhw::kPartGaugeBroken.g == 113
+              && mhw::kPartGaugeBroken.b == 122,
+          "#71717A is the broken fill (HunterPie Part.Broken.Foreground)");
+    check(mhw::kPartGaugeBroken.b > mhw::kPartGaugeBroken.r,
+          "the broken grey is a cool grey (#71717A), not neutral #717171");
+    check(mhw::kPartGaugeBroken.r != 120,
+          "broken and untouched fills are distinguishable");
+    // The old hues must not resurface in this branch on either part kind.
+    check(mhw::kPartGaugeBroken.r != 246 && mhw::kPartGaugeBroken.g != 165,
+          "the broken fill is not the Severable amber #f6a522");
+    check(mhw::kPartGaugeBroken.r != 244 && mhw::kPartGaugeBroken.g != 17,
+          "the broken fill is not the Breakable pink #f41162");
+    // Both part kinds share one broken colour — the tag chip keeps its hue,
+    // only the gauge fill collapses to Broken.Foreground.
+    check(mhw::partGaugeFill(true) == mhw::partGaugeFill(true),
+          "Breakable and Severable share the broken gauge fill");
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

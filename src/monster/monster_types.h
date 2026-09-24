@@ -277,4 +277,47 @@ inline std::optional<int> captureThresholdFor(GameId game, int monsterId)
         : std::optional<int>{it.value()};
 }
 
+// ---------------------------------------------------------------------------
+// Part-gauge fill palette
+// ---------------------------------------------------------------------------
+// Two states, mirroring the two brushes a HunterPie part gauge can select
+// (BossMonsterBreakablePartView.xaml:115-118, BossMonsterSeverablePartView.xaml:93-95):
+//
+//   untouched -> Part.Default.Foreground  (#78909c, our legacy HTML colour)
+//   broken    -> Part.Broken.Foreground   (#71717A, Base.xaml:389-390)
+//
+// Deliberately NOT the tag palette: Scheme.xaml binds #F6A522 to
+// Part.Breakable.Foreground and #F41162 to Part.Severable.Foreground, i.e. the
+// colours a HEALTHY part of that kind wears. Painting a broken part in those
+// hues claimed "alive and full" for a part that is finished — and on a
+// Teostra head (monster 18, thresholds "1") the reference formula refills the
+// layer to 100% once broken (MHWMonsterPart.cs:165-166), so the two mistakes
+// compounded into "broken but looks pristine".
+//
+// Kept here rather than in panel_monster.cpp so it is reachable from the
+// headless reader tests; the panel just calls it.
+struct PartGaugeFill {
+    int r;
+    int g;
+    int b;
+};
+
+constexpr PartGaugeFill kPartGaugeUntouched{120, 144, 156};         // #78909c
+constexpr PartGaugeFill kPartGaugeBroken{113, 113, 122};            // #71717A
+
+inline bool operator==(const PartGaugeFill &a, const PartGaugeFill &b)
+{
+    return a.r == b.r && a.g == b.g && a.b == b.b;
+}
+
+inline bool operator!=(const PartGaugeFill &a, const PartGaugeFill &b)
+{
+    return !(a == b);
+}
+
+inline PartGaugeFill partGaugeFill(bool broken)
+{
+    return broken ? kPartGaugeBroken : kPartGaugeUntouched;
+}
+
 } // namespace mhw
