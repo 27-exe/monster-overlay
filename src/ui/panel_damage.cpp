@@ -202,7 +202,6 @@ void DamagePanel::updateRiseDamage(const mhw::RiseDamageSnapshot &dmg)
         lastElapsedSeconds_ = 0.0F;
         hasData_ = false;
         questEnded_ = false;
-        riseMode_ = true;
     };
 
     const mhw::RiseDamageLifecycleAction action =
@@ -297,14 +296,12 @@ void DamagePanel::updateRiseDamage(const mhw::RiseDamageSnapshot &dmg)
             left_.clear();
             riseKeys_.clear();
             hasData_ = false;
-            riseMode_ = true;
         }
         canvas()->update();
         return;
     }
 
     hasData_ = true;
-    riseMode_ = false;
 
     const int n = actors.size();
 
@@ -695,31 +692,9 @@ void DamagePanel::update(const mhw::GameSnapshot &snap)
 
 void DamagePanel::paintPanel(QPainter &p)
 {
-    if (riseMode_ && !hasData_) {
-        drawV03Chrome(p, Panel::Accent::Damage);
-        constexpr int kPlaceholderH = 36;
-        const int totalH = kMargin + 14 + 9 + kPlaceholderH + kMargin;
-        setContentSize(kPanelW, totalH);
-
-        p.setPen(QColor(255, 255, 255));
-        QFont hdrFont(QStringLiteral("Chakra Petch"), 9, QFont::Bold);
-        hdrFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
-        p.setFont(hdrFont);
-        const QRectF titleRect(kMargin, kMargin, kPanelW - 2 * kMargin, 14);
-        p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
-                   mh::tr("ui.damage_header"));
-
-        p.setPen(QColor(150, 150, 150));
-        QFont msgFont(QStringLiteral("Chakra Petch"), 9);
-        msgFont.setStyleStrategy(QFont::PreferAntialias);
-        p.setFont(msgFont);
-        const QRectF msgRect(kMargin, kMargin + 14 + 9,
-                             kPanelW - 2 * kMargin, kPlaceholderH);
-        p.drawText(msgRect, Qt::AlignCenter,
-                   mh::tr("ui.damage_waiting"));
-        return;
-    }
-
+    // 没有可用数据时整块不画：主循环依据 hasVisibleContent() 决定是否挂载，
+    // Rise 与 World 同一口径。这里保留早退，防止编辑/预览路径直接调用
+    // paintPanel 时画出空框。
     if (!hasData_)
         return;
 

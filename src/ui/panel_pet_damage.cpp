@@ -351,30 +351,16 @@ void PetDamagePanel::setupDemoData()
 
 void PetDamagePanel::paintPanel(QPainter &p)
 {
-    if (rows_.isEmpty()) {
-        constexpr int kPlaceholderH = 36;
-        const int totalH = kMargin + kTitleH + kTitleGap
-                         + kPlaceholderH + kMargin;
-        setContentSize(kPanelW, totalH);
-        drawV03Chrome(p, Panel::Accent::Damage);
-
-        QFont titleFont(QStringLiteral("Chakra Petch"), 9, QFont::Bold);
-        titleFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.8);
-        p.setFont(titleFont);
-        p.setPen(QColor(245, 246, 247));
-        p.drawText(QRectF(kMargin, kMargin,
-                          kPanelW - 2 * kMargin, kTitleH),
-                   Qt::AlignLeft | Qt::AlignVCenter, panelHeader());
-
-        p.setFont(QFont(QStringLiteral("Chakra Petch"), 9));
-        p.setPen(QColor(150, 153, 155));
-        p.drawText(QRectF(kMargin, kMargin + kTitleH + kTitleGap,
-                          kPanelW - 2 * kMargin, kPlaceholderH),
-                   Qt::AlignCenter,
-                   mhw::StringTable::instance().tr(
-                       QStringLiteral("ui.pet_damage_waiting")));
+    // 与 DamagePanel / MonsterPanel 同一口径：没有行数据就什么都不画。
+    // 主循环用 hasVisibleContent()（本类里 == !rows_.isEmpty()）决定是否
+    // 挂载，所以这段代码在正常流程中本就到不了；早退只为编辑/预览路径
+    // 直接调用 paintPanel 时不画出空框。
+    //
+    // 这里曾经有一个 36px 的「等待中」占位块（ui.pet_damage_waiting），
+    // 但因为这个面板的 hasContent() 从来都是按 rows 判定，占位永远不会
+    // 被画出来——是纯粹的死代码，已删除。
+    if (rows_.isEmpty())
         return;
-    }
 
     const int rowCount = static_cast<int>(rows_.size());
     const int rowsHeight = rowCount * kRowH

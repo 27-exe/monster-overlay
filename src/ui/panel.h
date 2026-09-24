@@ -123,6 +123,18 @@ public:
     // alpha, and lets HudCanvas apply srcOpac itself.
     void setCompositingEnabled(bool on);
 
+    // Public read of the panel's own "do I have anything to show" verdict.
+    //
+    // Every data-driven panel answers this differently — MonsterPanel from
+    // its monster id, DamagePanel from the party/chart, PetDamagePanel from
+    // its rebuilt rows — and the answer is what decides whether mounting the
+    // layer-shell surface produces a real frame or an empty one. Exposing it
+    // lets the main loop apply ONE rule to every panel (no data -> not
+    // visible) instead of each branch re-deriving its own, which is how the
+    // Rise damage panel ended up permanently mounted with a placeholder
+    // while the World one hid correctly.
+    [[nodiscard]] bool hasVisibleContent() const { return hasContent(); }
+
 protected:
     virtual void paintPanel(QPainter &p) = 0;
     virtual void paintDemo(QPainter &) {}

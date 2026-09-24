@@ -99,6 +99,21 @@ void checkContains(std::string_view haystack, std::string_view needle,
     }
 }
 
+// The inverse assertion, for guarding against a regression back to a rule we
+// deliberately removed (e.g. a branch that force-shows a panel regardless of
+// whether it has anything to draw).
+void checkNotContains(std::string_view haystack, std::string_view needle,
+                      std::string_view description)
+{
+    if (haystack.find(needle) == std::string_view::npos) {
+        std::cout << "PASS: " << description << '\n';
+    } else {
+        std::cerr << "FAIL: " << description << " (unexpected `" << needle
+                  << "`)\n";
+        ++failures;
+    }
+}
+
 } // namespace
 
 int main()
@@ -135,9 +150,23 @@ int main()
                   "main includes the fourth panel header");
     checkContains(mainSource, "petDamagePanel.updateRiseDamage(damageSnapshot);",
                   "main delivers Rise snapshots to the fourth panel");
+    // v0.10.10: Rise follows the World rule instead of staying mounted with a
+    // placeholder. The pets surface must not be shown just because the user
+    // enabled it — it needs rows to draw — so it gates on the same public
+    // content verdict the main panel uses. (mainSource is run through
+    // compact(), which strips every whitespace character, so these needles
+    // carry no newlines or indentation.)
     checkContains(mainSource,
-                  "petDamagePanel.setVisible(petDamagePanel.panelEnabled());",
-                  "Rise keeps the enabled pets surface mounted while waiting for data");
+                  "petDamagePanel.setVisible(petDamagePanel.panelEnabled()"
+                  "&&petDamagePanel.hasVisibleContent());",
+                  "Rise mounts the pets surface only when it has rows to draw");
+    checkContains(mainSource,
+                  "damagePanel.setVisible(damagePanel.panelEnabled()"
+                  "&&damagePanel.hasVisibleContent());",
+                  "Rise damage panel hides itself without data, like World");
+    checkNotContains(mainSource,
+                     "damagePanel.setVisible(true);",
+                     "no branch force-shows the damage panel without data");
     checkContains(mainSource, "diagnosticReader->lastErrorText()",
                   "main surfaces the selected Rise feed failure reason");
     checkContains(mainSource, "rise damage feed: available",

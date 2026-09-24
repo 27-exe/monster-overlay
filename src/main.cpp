@@ -31,19 +31,6 @@
 
 #include <cstdio>
 
-namespace {
-
-// The base contract keeps hasContent() protected for painting. Main only
-// exposes it to decide whether mounting the Rise-only surface would produce
-// an empty frame; quest/epoch ownership stays inside PetDamagePanel.
-class VisiblePetDamagePanel final : public PetDamagePanel {
-public:
-    using PetDamagePanel::PetDamagePanel;
-
-    [[nodiscard]] bool hasVisibleContent() const { return hasContent(); }
-};
-
-} // namespace
 
 void messageHandler(QtMsgType type, const QMessageLogContext &, const QString &msg)
 {
@@ -322,7 +309,7 @@ int main(int argc, char **argv)
     PlayerPanel playerPanel;
     MonsterPanel monsterPanel;
     DamagePanel damagePanel;
-    VisiblePetDamagePanel petDamagePanel;
+    PetDamagePanel petDamagePanel;
 
     playerPanel.setEditMode(editMode);
     monsterPanel.setEditMode(editMode);
@@ -605,13 +592,18 @@ int main(int argc, char **argv)
                         petDamagePanel.updateRiseDamage(feedLost);
                 }
             }
-            damagePanel.setVisible(true);
+            // Rise 与 World 同口径：没有可用数据就不挂载面板。
+            // 以前这里无条件 setVisible(true)，配合 DamagePanel 内部的
+            // `hasContent() == hasData_ || riseMode_` 画一个「等待伤害数据」
+            // 占位块。现在占位已删，改由面板自己回答“有没有东西可画”，
+            // 主循环只做同一个判断。
+            damagePanel.setVisible(damagePanel.panelEnabled()
+                                   && damagePanel.hasVisibleContent());
             damagePanel.triggerUpdate();
-            // Rise owns the companion surface. Keep it mounted whenever the
-            // user enabled it so missing-feed / waiting-for-first-hit states
-            // are visible instead of looking like a broken window. World
-            // still force-disables it at construction and in its branch.
-            petDamagePanel.setVisible(petDamagePanel.panelEnabled());
+            // Rise owns the companion surface. World still force-disables it
+            // at construction and in its branch.
+            petDamagePanel.setVisible(petDamagePanel.panelEnabled()
+                                      && petDamagePanel.hasVisibleContent());
             petDamagePanel.triggerUpdate();
         } else if (skipUpdate(damagePanel)) {
             petDamagePanel.setVisible(false);
