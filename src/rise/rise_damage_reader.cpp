@@ -337,6 +337,16 @@ bool RiseDamageReader::update()
 {
     snapshot_ = {};
 
+    // Symlink / missing / not-a-regular-file are decided by the open itself:
+    // O_NOFOLLOW turns a swapped symlink into ELOOP and a vanished file into
+    // ENOENT, each mapping to the verdict a stat pre-check would have given —
+    // without the TOCTOU window in between. fstat + S_ISREG still validate
+    // the inode the fd actually refers to, so a swap after the open cannot
+    // sneak a FIFO or a device through.
+    //
+    // The size pre-check stays a stat, deliberately: a feed that grew past
+    // kMaximumFeedBytes while its owner revoked read permission must still
+    // report TooLarge, and fstat's st_size needs an fd we can no longer open.
     const QFileInfo info(path_);
     if (info.isSymbolicLink()) {
         return fail(Error::Symlink,
@@ -372,6 +382,11 @@ bool RiseDamageReader::update()
         if (openError == ELOOP) {
             return fail(Error::Symlink,
                         QStringLiteral("Rise damage feed must not be a symbolic link: %1")
+                            .arg(path_));
+        }
+        if (openError == EISDIR || openError == ENOTDIR) {
+            return fail(Error::OpenDeniedOrFailed,
+                        QStringLiteral("Rise damage feed is not a readable regular file: %1")
                             .arg(path_));
         }
         return fail(Error::OpenDeniedOrFailed,

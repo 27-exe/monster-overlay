@@ -1156,8 +1156,10 @@ QString rewriteReFrameworkConfig(const QString &original,
         if (it == settings.cend())
             continue;                      // foreign setting: never touched
         // Replace the value, keep the line's own terminator.
-        const qsizetype crAt = line.lastIndexOf(QLatin1Char('\r'));
-        const QString terminator = crAt == line.size() - 1
+        // endsWith, not lastIndexOf: a stray CR in the middle of a line
+        // (malformed file, hand edit) must not be treated as a line
+        // terminator, or that CR would swallow everything before it.
+        const QString terminator = line.endsWith(QLatin1Char('\r'))
             ? QStringLiteral("\r")
             : QString();
         line = it->key + QLatin1Char('=') + it->value + terminator;
@@ -1188,14 +1190,18 @@ namespace {
 // the reason the menu reopens every time.
 constexpr const char *kMenuStateKey = "REFrameworkConfig_RememberMenuState";
 
-QByteArray readAllBytes(const QString &path)
+// Reads the whole file. Returns an empty optional when the open failed
+// (absent, unreadable, a directory, ...) so callers can tell "cannot
+// inspect this file" apart from "this file is legitimately zero bytes" —
+// conflating the two makes an emptied config file unwritable forever.
+std::optional<QByteArray> readAllBytes(const QString &path)
 {
     // Binary mode: QIODevice::Text would translate CRLF to LF on read and
     // rewrite every line ending in the file, which is exactly the kind of
     // unrelated change this feature must never make.
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly))
-        return {};
+        return std::nullopt;
     return f.readAll();
 }
 
@@ -1204,11 +1210,11 @@ QByteArray readAllBytes(const QString &path)
 // our key" can be told apart from "file says false".
 std::optional<bool> readMenuStateKey(const QString &path)
 {
-    const QByteArray bytes = readAllBytes(path);
-    if (bytes.isEmpty())
+    const std::optional<QByteArray> bytes = readAllBytes(path);
+    if (!bytes.has_value() || bytes->isEmpty())
         return std::nullopt;
     const QStringList lines =
-        QString::fromUtf8(bytes).split(QLatin1Char('\n'));
+        QString::fromUtf8(*bytes).split(QLatin1Char('\n'));
     for (const QString &raw : lines) {
         const QString line = raw.trimmed();
         if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
@@ -1300,7 +1306,14 @@ bool applyReFrameworkMenuStateFix(const QString &gameDir, bool restoreDefault,
     for (const QString &configPath : reframeworkConfigPaths(gameDir)) {
         const std::optional<bool> current = readMenuStateKey(configPath);
         const bool target = !restoreDefault;
-        if (!QFileInfo::exists(configPath)) {
+        const std::optional<QByteArray> existingBytes = readAllBytes(configPath);
+        if (!existingBytes.has_value()) {
+            // The file exists but we could not read it (permissions, a
+            // directory, ...): stop rather than clobber what we cannot
+            // inspect. A readable zero-byte file is NOT this case — it is
+            // handed to the rewriter below, which happily appends our key.
+            if (QFileInfo::exists(configPath))
+                continue;
             // Only create a file where REFramework would actually look, and
             // only if that directory exists — do not litter the filesystem.
             if (!QFileInfo::exists(QFileInfo(configPath).absolutePath()))
@@ -1309,13 +1322,6 @@ bool applyReFrameworkMenuStateFix(const QString &gameDir, bool restoreDefault,
             continue;   // already right; writing would only churn the file
         }
         allAlreadyCorrect = false;
-
-        const QString existing = QString::fromUtf8(readAllBytes(configPath));
-        if (QFileInfo::exists(configPath) && existing.isEmpty()) {
-            // Unreadable rather than empty: stop rather than clobber a file we
-            // cannot inspect.
-            continue;
-        }
 
         // Keep a copy before touching it, so either direction can be undone
         // by hand. Only the first write creates one: a later press must not
@@ -1328,6 +1334,10 @@ bool applyReFrameworkMenuStateFix(const QString &gameDir, bool restoreDefault,
             continue;   // could not make the change reversible
         }
 
+        // A readable-but-empty file is a valid starting point: the rewriter
+        // turns it into "our key only". An unreadable one was skipped above.
+        const QString existing =
+            QString::fromUtf8(existingBytes.value_or(QByteArray()));
         const QString rewritten =
             rewriteReFrameworkConfig(existing, settings);
         if (rewritten == existing)

@@ -531,6 +531,13 @@ int main(int argc, char **argv)
             const bool keepPetDemo = skipUpdate(petDamagePanel);
             if (!keepDamageDemo || !keepPetDemo) {
                 const mhw::RiseDamageReader *newestReader = nullptr;
+                // Report the most informative failure, not simply the first
+                // one. A Missing feed is the least interesting verdict (a
+                // producer that has not written yet looks like that), so it
+                // starts at the front and any peer holding a real error —
+                // TooLarge, Parse, Stale, Symlink ... — takes over. With two
+                // equally-informative errors the primary slot A wins, which
+                // is where the producer writes first.
                 const mhw::RiseDamageReader *diagnosticReader =
                     &riseDamageReaders.front();
                 for (auto &reader : riseDamageReaders) {
@@ -544,10 +551,17 @@ int main(int argc, char **argv)
                                        > newestReader->snapshot().timestampMs)) {
                             newestReader = &reader;
                         }
-                    } else if (diagnosticReader->lastError()
-                                   == mhw::RiseDamageReader::Error::Missing
-                               && reader.lastError()
-                                      != mhw::RiseDamageReader::Error::Missing) {
+                        continue;
+                    }
+                    // No reader succeeded so far: keep whichever failure is
+                    // most informative. Missing is the least interesting
+                    // (a producer that has not written yet looks exactly
+                    // like a working one), so a peer holding a real error
+                    // takes over from it; the first real error then sticks.
+                    if (diagnosticReader->lastError()
+                            == mhw::RiseDamageReader::Error::Missing
+                        && reader.lastError()
+                               != mhw::RiseDamageReader::Error::Missing) {
                         diagnosticReader = &reader;
                     }
                 }
