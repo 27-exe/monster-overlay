@@ -20,7 +20,7 @@ process from the outside — no DLL injection, no game files touched.
 
 - x86_64 Linux, Wayland session with a layer-shell compositor (KDE Plasma,
   Hyprland, niri, sway, …)
-- Qt 6.10 or newer (Widgets, Svg) and `layer-shell-qt` —
+- Qt 6.11 or newer (Widgets, Svg) and `layer-shell-qt` —
   `sudo ./install-deps.sh` installs both on Arch
 - Steam, with **GE-Proton 10-34** recommended (other Proton 9+ builds work)
 - No mods and no special permissions. World needs nothing else at all;
@@ -30,8 +30,8 @@ process from the outside — no DLL injection, no game files touched.
 ## Install
 
 ```bash
-tar -xzf monster-overlay-v0.9.1-linux-x86_64.tar.gz
-cd monster-overlay-v0.9.1
+tar -xzf monster-overlay-v0.10.10-linux-x86_64.tar.gz
+cd monster-overlay-v0.10.10-linux-x86_64
 sudo ./install-deps.sh      # one-time: Qt 6 + layer-shell-qt
 ./install.sh                # optional: installs to ~/.local/bin + XDG data dir
 ```
@@ -111,7 +111,10 @@ ctest --test-dir build          # 7 of 17 suites need a running game and skip
 ./build/monster-overlay         # run from the repo: maps resolve from data/
 ```
 
-Requires CMake ≥ 3.25, a C++20 compiler, Qt 6.10+ and `layer-shell-qt`.
+Requires CMake ≥ 3.25, a C++20 compiler, Qt 6.11+ and `layer-shell-qt`.
+The build path is only documented and exercised on **Arch Linux**; other
+distros need to source the Qt 6 and `LayerShellQt` packages themselves.
+Prebuilt tarballs are the supported route elsewhere — see §Install.
 
 ## License
 

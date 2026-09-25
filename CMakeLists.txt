@@ -17,7 +17,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Svg)
+find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Widgets Svg)
 find_package(LayerShellQt REQUIRED)
 find_package(Threads REQUIRED)
 

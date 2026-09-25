@@ -19,7 +19,7 @@
 
 - x86_64 Linux,Wayland 会话 + 支持 layer-shell 的合成器(KDE Plasma、
   Hyprland、niri、sway 等)
-- Qt 6.10 或更高(Widgets、Svg)与 `layer-shell-qt` —— Arch 上执行
+- Qt 6.11 或更高(Widgets、Svg)与 `layer-shell-qt` —— Arch 上执行
   `sudo ./install-deps.sh` 一次装好
 - Steam,推荐 **GE-Proton 10-34**(其他 Proton 9+ 也可)
 - 不需要 mod,默认不需要任何特殊权限。世界范畴零额外依赖;崛起的伤害
@@ -28,8 +28,8 @@
 ## 安装
 
 ```bash
-tar -xzf monster-overlay-v0.9.1-linux-x86_64.tar.gz
-cd monster-overlay-v0.9.1
+tar -xzf monster-overlay-v0.10.10-linux-x86_64.tar.gz
+cd monster-overlay-v0.10.10-linux-x86_64
 sudo ./install-deps.sh      # 一次性:Qt 6 + layer-shell-qt
 ./install.sh                # 可选:装到 ~/.local/bin 与 XDG 数据目录
 ```
@@ -103,7 +103,9 @@ ctest --test-dir build          # 17 个套件中 7 个需要游戏在跑,会跳
 ./build/monster-overlay         # 在仓库根目录运行:地图从 data/ 解析
 ```
 
-需要 CMake ≥ 3.25、C++20 编译器、Qt 6.10+ 与 `layer-shell-qt`。
+需要 CMake ≥ 3.25、C++20 编译器、Qt 6.11+ 与 `layer-shell-qt`。
+源码编译路径**仅在 Arch Linux 上验证过**;其他发行版需自行准备
+Qt 6 与 `LayerShellQt` 依赖。建议直接用上方预编译包(见「安装」)。
 
 ## 许可
 

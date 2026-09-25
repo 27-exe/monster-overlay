@@ -14,6 +14,6 @@ if command -v pacman >/dev/null 2>&1; then
     echo "OK: Qt 6 + layer-shell-qt installed."
 else
     echo "This installer only knows Arch. On other distros, install:"
-    echo "  - Qt 6.8+ (qtbase, qtdeclarative, qtwayland)"
+    echo "  - Qt 6.11+ (qtbase, qtdeclarative, qtwayland)"
     echo "  - layer-shell-qt (KDE's Qt wrapper around zwlr_layer_shell_v1)"
 fi
