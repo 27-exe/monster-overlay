@@ -1589,30 +1589,35 @@ void PlayerPanel::setupDemoData()
         // playerDebuffAccent() / playerBuffAccent() lookups — so the preview
         // and a live session can never disagree about a pill's family.
         //
-        // The offsets are the real memory offsets (not the synthetic 0..4 the
-        // demo used before): a synthetic offset resolves to
-        // AbnormalityAccent::None and would render every pill in the family
-        // default, which would make this preview useless as a demo of the
-        // accent logic. paralysis / sleep stay synthetic because World's
-        // kDebuffs has no row for either — see T6-REPORT.md.
+        // A synthetic row has no memory offset, so it cannot be resolved
+        // through the table. Passing offset < 0 with an explicit accent keeps
+        // the preview able to demo every family (paralysis / sleep have no
+        // World kDebuffs row) without inventing an offset that would silently
+        // map to the wrong family later.
         const auto seedDebuff = [this](int offset, const QString &name,
-                                       float timer, float maxTimer) {
+                                       float timer, float maxTimer,
+                                       mhw::AbnormalityAccent accent =
+                                           mhw::AbnormalityAccent::None) {
             PlayerAbnormality d;
             d.offset = offset;
             d.name = name;
             d.timer = timer;
             d.maxTimer = maxTimer;
-            d.accent = mhw::playerDebuffAccent(offset);
+            d.accent = offset >= 0 ? mhw::playerDebuffAccent(offset) : accent;
             player_.debuffs.append(d);
         };
         const auto seedBuff = [this](int offset, const QString &name,
-                                     float timer, float maxTimer) {
+                                     float timer, float maxTimer,
+                                     mhw::AbnormalityAccent accent =
+                                         mhw::AbnormalityAccent::None) {
             PlayerAbnormality b;
             b.offset = offset;
             b.name = name;
             b.timer = timer;
             b.maxTimer = maxTimer;
-            b.accent = mhw::playerBuffAccent(offset, 0, 0);
+            b.accent = offset >= 0
+                           ? mhw::playerBuffAccent(offset, 0, 0)
+                           : accent;
             player_.buffs.append(b);
         };
         seedDebuff(0x5DC, mh::tr("data.demo.debuff.poison"),
@@ -1620,10 +1625,13 @@ void PlayerPanel::setupDemoData()
         seedDebuff(0x620, mh::tr("data.demo.debuff.blast"),
                    41.0F, 60.0F);
         // Extra debuffs to demo the 3-per-row wrap into a second line.
-        seedDebuff(2, mh::tr("data.demo.debuff.paralysis"),
-                   17.0F, 30.0F);   // no World kDebuffs row -> default family
-        seedDebuff(3, mh::tr("data.demo.debuff.sleep"),
-                   28.0F, 45.0F);   // no World kDebuffs row -> default family
+        // Synthetic rows: no World kDebuffs entry exists for paralysis or
+        // sleep, so state their family explicitly instead of forging an
+        // offset. The colour matches what the pre-trait name matching gave.
+        seedDebuff(-1, mh::tr("data.demo.debuff.paralysis"),
+                   17.0F, 30.0F, mhw::AbnormalityAccent::Paralysis);
+        seedDebuff(-1, mh::tr("data.demo.debuff.sleep"),
+                   28.0F, 45.0F, mhw::AbnormalityAccent::Sleep);
         seedDebuff(0x60C, mh::tr("data.demo.debuff.defense_down"),
                    60.0F, 90.0F);
         // Demo buffs
