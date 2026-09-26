@@ -165,10 +165,10 @@ int main()
     const std::string readerSource =
         compact(readFile(root / "src/rise/rise_damage_reader.cpp"));
     const std::string cmakeSource = compact(readFile(root / "CMakeLists.txt"));
-    const std::string_view overlayTarget =
-        cmakeCall(cmakeSource, "add_executable(monster-overlay");
     const std::string_view coreTarget =
         cmakeCall(cmakeSource, "add_library(monster-core");
+    const std::string_view uiTarget =
+        cmakeCall(cmakeSource, "add_library(mhw-ui");
 
     checkContains(mainSource,
                   "QCommandLineOptionmaskPetsOption(QStringLiteral(\"mask-pets\")",
@@ -227,10 +227,12 @@ int main()
                   "reader validates the inode actually opened");
     checkContains(readerSource, "S_ISREG(",
                   "reader accepts only a regular opened inode");
-    checkContains(overlayTarget, "src/ui/panel_pet_damage.h",
-                  "product target tracks the fourth panel header");
-    checkContains(overlayTarget, "src/ui/panel_pet_damage.cpp",
-                  "product target compiles the fourth panel source");
+    // v0.11.1: the fourth panel moved into the mhw-ui library, so assert the
+    // library owns it rather than that the executable lists it directly.
+    checkContains(uiTarget, "src/ui/panel_pet_damage.h",
+                  "ui library tracks the fourth panel header");
+    checkContains(uiTarget, "src/ui/panel_pet_damage.cpp",
+                  "ui library compiles the fourth panel source");
     checkContains(coreTarget, "src/rise/rise_damage_types.h",
                   "core target tracks the shared Rise damage types");
 

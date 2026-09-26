@@ -79,17 +79,114 @@ target_include_directories(mhw-reader PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(mhw-reader PUBLIC Qt6::Core monster-core)
 target_compile_options(mhw-reader PRIVATE -Wall -Wextra -Wpedantic)
 
+# ---------------------------------------------------------------------------
+# mhw-ui: the whole GUI layer, compiled exactly once.
+#
+# Every src/ui/*.cpp used to be listed by the 12 targets that draw panels,
+# which meant the UI layer was compiled 12x over per build (6 core files —
+# formatters/icon/panel + the three panels that every GUI target renders —
+# literally 12 compiles each, 111 src/ui compiles in total) and any target
+# could silently drift by picking its own subset. The same argument reached
+# the reader layer in e513226; this is the UI half of that sink.
+#
+# Link this instead of listing UI sources. The private QtGui headers that
+# screen_query.cpp needs (qpa/qplatformscreen.h, for the backend-native
+# physical screen size) are PRIVATE to this library, so no consumer has to
+# carry them.
+#
+# src/ui is self-contained w.r.t. the other layers: it includes only
+# monster-core / mhw-reader headers (core/…, player/…, quest/…, world/…,
+# rise/…), never the reverse. That is what makes it safe to compile once
+# and link 12 ways.
+# ---------------------------------------------------------------------------
+add_library(mhw-ui STATIC
+    src/ui/control_panel.cpp
+    src/ui/control_panel.h
+    src/ui/formatters.cpp
+    src/ui/formatters.h
+    src/ui/hud_canvas.cpp
+    src/ui/hud_canvas.h
+    src/ui/icon.cpp
+    src/ui/icon.h
+    src/ui/panel.cpp
+    src/ui/panel.h
+    src/ui/panel_damage.cpp
+    src/ui/panel_damage.h
+    src/ui/panel_monster.cpp
+    src/ui/panel_monster.h
+    src/ui/panel_pet_damage.cpp
+    src/ui/panel_pet_damage.h
+    src/ui/panel_player.cpp
+    src/ui/panel_player.h
+    src/ui/panel_sections.h
+    src/ui/panel_source.cpp
+    src/ui/panel_source.h
+    src/ui/rise_reframework_bridge.cpp
+    src/ui/rise_reframework_bridge.h
+    src/ui/screen_query.cpp
+    src/ui/screen_query.h
+    src/ui/section_count_bar.cpp
+    src/ui/section_count_bar.h
+    src/ui/section_row.cpp
+    src/ui/section_row.h
+    src/ui/toggle_chip.cpp
+    src/ui/toggle_chip.h
+    src/ui/ui_theme.cpp
+    src/ui/ui_theme.h
+)
+target_include_directories(mhw-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(mhw-ui PUBLIC
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::Svg
+    LayerShellQt::Interface
+    monster-core
+    mhw-reader
+)
+target_compile_options(mhw-ui PRIVATE -Wall -Wextra -Wpedantic)
+
+# Private QtGui headers (qpa/qplatformscreen.h) live under
+# /usr/include/qt6/QtGui/<ver>/QtGui/qpa/. Locate the active
+# version's include root and expose it to mhw-ui so screen_query.cpp
+# can use QPlatformScreen::geometry() — the only public-ish way to get
+# the backend-native screen size in physical pixels without guessing from
+# QScreen::geometry() × devicePixelRatio(). It stays PRIVATE to mhw-ui:
+# a consumer only calls screen_query::detect()/listOutputs(), it does not
+# include qpa headers itself, so no consumer needs this path.
+file(GLOB _qt6_gui_version_dirs
+    LIST_DIRECTORIES true
+    "/usr/include/qt6/QtGui/*"
+)
+set(_QT6_GUI_PRIVATE_INCLUDE_DIR "")
+foreach(_d IN LISTS _qt6_gui_version_dirs)
+    if(IS_DIRECTORY ${_d}/QtGui/qpa)
+        set(_QT6_GUI_PRIVATE_INCLUDE_DIR ${_d}/QtGui)
+        break()
+    endif()
+endforeach()
+if(NOT _QT6_GUI_PRIVATE_INCLUDE_DIR)
+    message(FATAL_ERROR "Could not locate Qt6 qpa headers under /usr/include/qt6")
+endif()
+target_include_directories(mhw-ui PRIVATE
+    ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
+)
+
+# The UI layer is now one library. Keep the sink honest: a target that adds
+# a src/ui/* source directly alongside `mhw-ui` would compile that file
+# twice and risk duplicate symbols. tests/reader_tests.cpp deliberately
+# compiles src/ui/panel_player.cpp by hand (its wirebug-label helper with
+# MHW_WIREBUG_SLOT_LABEL_TEST), and pet-damage-panel-tests does the same
+# for panel_pet_damage.cpp under MHW_PET_DAMAGE_DATA_TEST — neither links
+# mhw-ui, so they are not duplicates. Everything else must link, not list.
+get_target_property(_mhw_ui_type mhw-ui TYPE)
+if(NOT _mhw_ui_type STREQUAL "STATIC_LIBRARY")
+    message(FATAL_ERROR "mhw-ui must be a STATIC library")
+endif()
+
 add_executable(monster-overlay
     src/main.cpp
     src/monster/part_schemas.cpp
-    src/ui/formatters.cpp
-    src/ui/icon.cpp
-    src/ui/panel.cpp
-    src/ui/panel_monster.cpp
-    src/ui/panel_player.cpp
-    src/ui/panel_damage.cpp
-    src/ui/panel_pet_damage.h
-    src/ui/panel_pet_damage.cpp
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -103,6 +200,7 @@ target_link_libraries(monster-overlay PRIVATE
     LayerShellQt::Interface
     monster-core
     mhw-reader
+    mhw-ui
 )
 
 target_compile_definitions(monster-overlay PRIVATE
@@ -118,12 +216,6 @@ target_compile_options(monster-overlay PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(snap-player-demo
     tests/snap_player_demo.cpp
     src/monster/part_schemas.cpp
-    src/ui/formatters.cpp
-    src/ui/icon.cpp
-    src/ui/panel.cpp
-    src/ui/panel_player.cpp
-    src/ui/panel_damage.cpp
-    src/ui/panel_monster.cpp
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -133,6 +225,7 @@ target_link_libraries(snap-player-demo PRIVATE
     LayerShellQt::Interface
     monster-core
     mhw-reader
+    mhw-ui
 )
 target_include_directories(snap-player-demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snap-player-demo PRIVATE -Wall -Wextra -Wpedantic)
@@ -140,14 +233,6 @@ target_compile_options(snap-player-demo PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(snap-all-demo
     tests/snap_all_demo.cpp
     src/monster/part_schemas.cpp
-    src/ui/formatters.cpp
-    src/ui/icon.cpp
-    src/ui/panel.cpp
-    src/ui/panel_player.cpp
-    src/ui/panel_damage.cpp
-    src/ui/panel_monster.cpp
-    src/ui/panel_pet_damage.h
-    src/ui/panel_pet_damage.cpp
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -157,6 +242,7 @@ target_link_libraries(snap-all-demo PRIVATE
     LayerShellQt::Interface
     monster-core
     mhw-reader
+    mhw-ui
 )
 target_include_directories(snap-all-demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snap-all-demo PRIVATE -Wall -Wextra -Wpedantic)
@@ -169,12 +255,6 @@ target_compile_options(snap-all-demo PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(snap-world-mp EXCLUDE_FROM_ALL
     tests/snap_world_mp.cpp
     src/monster/part_schemas.cpp
-    src/ui/formatters.cpp
-    src/ui/icon.cpp
-    src/ui/panel.cpp
-    src/ui/panel_player.cpp
-    src/ui/panel_damage.cpp
-    src/ui/panel_monster.cpp
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -184,6 +264,7 @@ target_link_libraries(snap-world-mp PRIVATE
     LayerShellQt::Interface
     monster-core
     mhw-reader
+    mhw-ui
 )
 target_include_directories(snap-world-mp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snap-world-mp PRIVATE -Wall -Wextra -Wpedantic)
@@ -196,12 +277,6 @@ target_compile_options(snap-world-mp PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(snap-gauge-fill EXCLUDE_FROM_ALL
     tests/snap_gauge_fill.cpp
     src/monster/part_schemas.cpp
-    src/ui/formatters.cpp
-    src/ui/icon.cpp
-    src/ui/panel.cpp
-    src/ui/panel_player.cpp
-    src/ui/panel_damage.cpp
-    src/ui/panel_monster.cpp
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -211,41 +286,19 @@ target_link_libraries(snap-gauge-fill PRIVATE
     LayerShellQt::Interface
     monster-core
     mhw-reader
+    mhw-ui
 )
 target_include_directories(snap-gauge-fill PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snap-gauge-fill PRIVATE -Wall -Wextra -Wpedantic)
 
 # Control console — standalone Qt window, no layer-shell. Reuses the same
 # panel paint code as the live overlay to preview section toggles.
+# The whole GUI layer now arrives via mhw-ui, so no src/ui/* source is
+# listed here (and the qpa/screen_query private include lives on mhw-ui).
 add_executable(monster-control
     src/main_control.cpp
-    src/ui/rise_reframework_bridge.h
-    src/ui/rise_reframework_bridge.cpp
     src/monster/part_schemas.cpp
     src/core/string_table.cpp
-    src/ui/formatters.cpp
-    src/ui/icon.cpp
-    src/ui/panel.cpp
-    src/ui/panel_player.cpp
-    src/ui/panel_damage.cpp
-    src/ui/panel_monster.cpp
-    src/ui/panel_pet_damage.h
-    src/ui/panel_pet_damage.cpp
-    src/ui/control_panel.cpp
-    src/ui/hud_canvas.cpp
-    src/ui/hud_canvas.h
-    src/ui/panel_source.cpp
-    src/ui/panel_source.h
-    src/ui/screen_query.cpp
-    src/ui/screen_query.h
-    src/ui/toggle_chip.cpp
-    src/ui/toggle_chip.h
-    src/ui/section_row.cpp
-    src/ui/section_row.h
-    src/ui/section_count_bar.cpp
-    src/ui/section_count_bar.h
-    src/ui/ui_theme.cpp
-    src/ui/ui_theme.h
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -255,32 +308,12 @@ target_link_libraries(monster-control PRIVATE
     LayerShellQt::Interface
     monster-core
     mhw-reader
+    mhw-ui
 )
 target_include_directories(monster-control PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-# Private QtGui headers (qpa/qplatformscreen.h) live under
-# /usr/include/qt6/QtGui/<ver>/QtGui/qpa/. Locate the active
-# version's include root and expose it to the monster-control target
-# so screen_query.cpp can use QPlatformScreen::geometry() — the
-# only public-ish way to get the backend-native screen size in
-# physical pixels without guessing from
-# QScreen::geometry() × devicePixelRatio().
-file(GLOB _qt6_gui_version_dirs
-    LIST_DIRECTORIES true
-    /usr/include/qt6/QtGui/*
-)
-set(_QT6_GUI_PRIVATE_INCLUDE_DIR "")
-foreach(_d IN LISTS _qt6_gui_version_dirs)
-    if(IS_DIRECTORY ${_d}/QtGui/qpa)
-        set(_QT6_GUI_PRIVATE_INCLUDE_DIR ${_d}/QtGui)
-        break()
-    endif()
-endforeach()
-if(NOT _QT6_GUI_PRIVATE_INCLUDE_DIR)
-    message(FATAL_ERROR "Could not locate Qt6 qpa headers under /usr/include/qt6")
-endif()
-target_include_directories(monster-control PRIVATE
-    ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
-)
+# _QT6_GUI_PRIVATE_INCLUDE_DIR is deliberately NOT re-added here: the only
+# consumer of qpa/qplatformscreen.h is screen_query.cpp, which mhw-ui owns
+# (PRIVATE). monster-control includes no qpa headers of its own.
 target_compile_definitions(monster-control PRIVATE
     MONSTER_VERSION="${PROJECT_VERSION}"
 )
@@ -294,29 +327,6 @@ add_executable(monster-control-l2-smoke
     tests/control_l2_smoke.cpp
     src/monster/part_schemas.cpp
     src/core/string_table.cpp
-    src/ui/formatters.cpp
-    src/ui/icon.cpp
-    src/ui/panel.cpp
-    src/ui/panel_player.cpp
-    src/ui/panel_damage.cpp
-    src/ui/panel_monster.cpp
-    src/ui/panel_pet_damage.h
-    src/ui/panel_pet_damage.cpp
-    src/ui/control_panel.cpp
-    src/ui/hud_canvas.cpp
-    src/ui/hud_canvas.h
-    src/ui/panel_source.cpp
-    src/ui/panel_source.h
-    src/ui/screen_query.cpp
-    src/ui/screen_query.h
-    src/ui/toggle_chip.cpp
-    src/ui/toggle_chip.h
-    src/ui/section_row.cpp
-    src/ui/section_row.h
-    src/ui/section_count_bar.cpp
-    src/ui/section_count_bar.h
-    src/ui/ui_theme.cpp
-    src/ui/ui_theme.h
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -326,11 +336,11 @@ target_link_libraries(monster-control-l2-smoke PRIVATE
     LayerShellQt::Interface
     monster-core
     mhw-reader
+    mhw-ui
 )
 target_include_directories(monster-control-l2-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_include_directories(monster-control-l2-smoke PRIVATE
-    ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
-)
+# No _QT6_GUI_PRIVATE_INCLUDE_DIR: screen_query.cpp (the only qpa consumer)
+# is inside mhw-ui and has it PRIVATE.
 target_compile_options(monster-control-l2-smoke PRIVATE -Wall -Wextra -Wpedantic)
 
 # Rise-only REFramework console smoke test: builds the full control console
@@ -341,29 +351,6 @@ add_executable(monster-control-rise-rf-smoke
     tests/control_reframework_smoke.cpp
     src/monster/part_schemas.cpp
     src/core/string_table.cpp
-    src/ui/formatters.cpp
-    src/ui/icon.cpp
-    src/ui/panel.cpp
-    src/ui/panel_player.cpp
-    src/ui/panel_damage.cpp
-    src/ui/panel_monster.cpp
-    src/ui/panel_pet_damage.h
-    src/ui/panel_pet_damage.cpp
-    src/ui/control_panel.cpp
-    src/ui/hud_canvas.cpp
-    src/ui/hud_canvas.h
-    src/ui/panel_source.cpp
-    src/ui/panel_source.h
-    src/ui/screen_query.cpp
-    src/ui/screen_query.h
-    src/ui/toggle_chip.cpp
-    src/ui/toggle_chip.h
-    src/ui/section_row.cpp
-    src/ui/section_row.h
-    src/ui/section_count_bar.cpp
-    src/ui/section_count_bar.h
-    src/ui/ui_theme.cpp
-    src/ui/ui_theme.h
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -373,40 +360,20 @@ target_link_libraries(monster-control-rise-rf-smoke PRIVATE
     LayerShellQt::Interface
     monster-core
     mhw-reader
+    mhw-ui
 )
 target_include_directories(monster-control-rise-rf-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_include_directories(monster-control-rise-rf-smoke PRIVATE
-    ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
-)
+# No _QT6_GUI_PRIVATE_INCLUDE_DIR: see monster-control-l2-smoke above.
 target_compile_options(monster-control-rise-rf-smoke PRIVATE -Wall -Wextra -Wpedantic)
 
 # v0.5 P0 invariant test: Panel setters + HudCanvas toggle + hit-test.
 # Builds without monster-control so it doesn't pull in the full GUI shell.
-# Drop the QPA-private include because Panel is purely Qt-public here.
+# The GUI layer now arrives whole via mhw-ui, so this target only contributes
+# its own test source plus the non-UI helpers.
 add_executable(monster-control-p0-test
     tests/control_panel_p0_test.cpp
     src/monster/part_schemas.cpp
     src/core/string_table.cpp
-    src/ui/formatters.cpp
-    src/ui/icon.cpp
-    src/ui/panel.cpp
-    src/ui/panel_player.cpp
-    src/ui/panel_damage.cpp
-    src/ui/panel_monster.cpp
-    src/ui/hud_canvas.cpp
-    src/ui/hud_canvas.h
-    src/ui/panel_source.cpp
-    src/ui/panel_source.h
-    src/ui/screen_query.cpp
-    src/ui/screen_query.h
-    src/ui/toggle_chip.cpp
-    src/ui/toggle_chip.h
-    src/ui/section_row.cpp
-    src/ui/section_row.h
-    src/ui/section_count_bar.cpp
-    src/ui/section_count_bar.h
-    src/ui/ui_theme.cpp
-    src/ui/ui_theme.h
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -416,11 +383,11 @@ target_link_libraries(monster-control-p0-test PRIVATE
     LayerShellQt::Interface
     monster-core
     mhw-reader
+    mhw-ui
 )
 target_include_directories(monster-control-p0-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_include_directories(monster-control-p0-test PRIVATE
-    ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
-)
+# No _QT6_GUI_PRIVATE_INCLUDE_DIR: screen_query.cpp (the only qpa consumer)
+# is inside mhw-ui and has it PRIVATE.
 target_compile_options(monster-control-p0-test PRIVATE -Wall -Wextra -Wpedantic)
 
 include(CTest)
@@ -433,13 +400,6 @@ if(BUILD_TESTING)
 add_executable(snapshot-regression-tests
     tests/snapshot_regression_tests.cpp
     src/monster/part_schemas.cpp
-    src/ui/formatters.cpp
-    src/ui/icon.cpp
-    src/ui/panel.cpp
-    src/ui/panel_player.cpp
-    src/ui/panel_monster.cpp
-    src/ui/panel_damage.cpp
-    src/ui/panel_pet_damage.cpp
     src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
@@ -449,6 +409,7 @@ target_link_libraries(snapshot-regression-tests PRIVATE
     LayerShellQt::Interface
     monster-core
     mhw-reader
+    mhw-ui
 )
 target_include_directories(snapshot-regression-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snapshot-regression-tests PRIVATE -Wall -Wextra -Wpedantic)
@@ -487,12 +448,6 @@ add_executable(world-severable-scan-tests
     add_executable(snap-empty-state EXCLUDE_FROM_ALL
         tests/snap_empty_state.cpp
         src/monster/part_schemas.cpp
-        src/ui/formatters.cpp
-        src/ui/icon.cpp
-        src/ui/panel.cpp
-        src/ui/panel_player.cpp
-        src/ui/panel_damage.cpp
-        src/ui/panel_monster.cpp
         src/world/world_types.cpp
         src/resources/resources.qrc
         assets/icons.qrc
@@ -502,6 +457,7 @@ add_executable(world-severable-scan-tests
         LayerShellQt::Interface
         monster-core
         mhw-reader
+        mhw-ui
     )
     target_include_directories(snap-empty-state PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(snap-empty-state PRIVATE -Wall -Wextra -Wpedantic)
@@ -513,12 +469,6 @@ add_executable(world-severable-scan-tests
     add_executable(snap-player-offline EXCLUDE_FROM_ALL
         tests/snap_player_offline.cpp
         src/monster/part_schemas.cpp
-        src/ui/formatters.cpp
-        src/ui/icon.cpp
-        src/ui/panel.cpp
-        src/ui/panel_player.cpp
-        src/ui/panel_damage.cpp
-        src/ui/panel_monster.cpp
         src/world/world_types.cpp
         src/resources/resources.qrc
         assets/icons.qrc
@@ -528,6 +478,7 @@ add_executable(world-severable-scan-tests
         LayerShellQt::Interface
         monster-core
         mhw-reader
+        mhw-ui
     )
     target_include_directories(snap-player-offline PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(snap-player-offline PRIVATE -Wall -Wextra -Wpedantic)
