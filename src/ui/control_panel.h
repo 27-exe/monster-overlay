@@ -33,6 +33,10 @@ class SectionRow;
 class SectionCountBar;
 class HudCanvas;
 
+namespace mhw {
+class OverlayProcessController;
+}
+
 // Standalone control console for Monster Overlay. NOT a layer-shell
 // surface — a plain QMainWindow the user can move, focus and close like
 // any app. It owns four real overlay panel instances rendered off-screen
@@ -122,14 +126,19 @@ private:
     QWidget *buildGameColumn();
     void selectPanel(int idx);
     void updatePanelSummary(int idx);
-    void launchOverlay(bool editMode);
-    void stopOverlay();
     void switchGame(mhw::GameId game);
-    void restartOverlayWithCurrentGame();
+    // v0.11: View half of the old launchOverlay() — saves mask/appearance
+    // and builds argv; the spawn/poll/hot-swap half is
+    // mhw::OverlayProcessController::launch().
+    void launchOverlayChild(bool editMode);
+    // Read-only forward to the controller's copy of the target game.
+    [[nodiscard]] mhw::GameId currentGame() const;
     void refreshAutoDetect();
-    void onOverlayExited();
-    void setOverlayRunning(bool running);
     void refreshRiseReframeworkStatus();
+    // v0.11: re-style the START/STOP toggle + status badge for a liveness
+    // state. Called from the controller's runningChanged signal and from
+    // retranslateUi().
+    void setOverlayRunning(bool running);
     void requestRiseReframeworkInstall();
     void requestRiseLuaRemoval();
     void requestRiseMenuStateFix(bool restoreDefault);
@@ -227,24 +236,21 @@ private:
 
     // L4: status badge in the top-right, shows "READY" by default and
     // flips to "RUNNING pid NNNN since HH:MM:SS" while the overlay is
-    // alive. Flipped back to "READY" by onOverlayExited().
+    // alive. Flipped back to "READY" when the controller emits exited().
+
     QLabel *statusBadge_ = nullptr;
 
-    // L3: state for the running monster-overlay subprocess. overlayPid_ is
-    // 0 when nothing is running; overlayWatch_ fires every 250ms while
-    // a process is alive, polling kill(pid,0) for liveness.
-    qint64       overlayPid_ = 0;
-    QTimer      *overlayWatch_ = nullptr;
-
-    // v0.6 Phase 4: currently selected game (drives the --game flag passed
-    // to the overlay subprocess). Pending restart: when the user switches
-    // game while the overlay is running we SIGTERM it and relaunch with the
-    // new --game once onOverlayExited() observes the exit.
-    mhw::GameId  currentGame_ = mhw::GameId::World;
-    bool         pendingRestart_ = false;
     // v0.6 Phase 5: most recent successful /proc scan (persisted under the
     // "detectedGame" QSettings key). Refreshed every 5s by the live badge.
     mhw::GameId  lastDetectedGame_ = mhw::GameId::World;
+
+    // Process lifecycle is owned by the controller (overlay pid, the
+    // 250 ms kill(pid,0) poll, the pending hot-swap restart and the
+    // --game value). The View keeps only what the argv needs: the argv of
+    // the last launch and whether it was an edit-mode launch.
+    mhw::OverlayProcessController *overlay_ = nullptr;
+    QStringList overlayArgv_;
+    bool        overlayEditMode_ = false;
 
     // Rise-only REFramework card. Install/removal is delegated through the
     // request signals above; these handles only own presentation/state.

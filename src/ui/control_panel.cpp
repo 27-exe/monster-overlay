@@ -13,6 +13,7 @@
 #include "ui/panel_source.h"
 #include "ui/screen_query.h"
 #include "ui/ui_theme.h"
+#include "ui/viewmodel/overlay_process_controller.h"
 #include "core/game_detector.h"
 #include "core/rise_reframework_manager.h"
 #include "core/steam_game_locator.h"
@@ -410,6 +411,10 @@ ControlPanel::ControlPanel(QWidget *parent)
         if (fromConf.isEmpty() || !mhw::StringTable::instance().load(fromConf))
             mhw::StringTable::instance().load(fallback);
     }
+
+    // Owned here — before any build*() call reads currentGame() — but
+    // wired to the launcher buttons further down, once those exist.
+    overlay_ = new mhw::OverlayProcessController(this);
 
     setObjectName("monster-control-panel");
     setStyleSheet(qssBase());
@@ -939,14 +944,54 @@ ControlPanel::ControlPanel(QWidget *parent)
         animStageTo(checked);
     });
 
-    // v0.5 P1: startBtn toggles between launch and stop. The same
-    // handler does the right thing whether ready or running.
+    // ---- overlay subprocess lifecycle ---------------------------------
+    // v0.11: extracted into mhw::OverlayProcessController (the same
+    // MVVM split DamagePanel got for its statistics engine). The
+    // controller owns the child pid, the 250 ms kill(pid,0) poll, the
+    // pending hot-swap restart and the --game value; this file keeps the
+    // widget-styling half and reacts to its signals.
+    connect(overlay_, &mhw::OverlayProcessController::launched, this,
+            [this](const QStringList &argv, bool editMode){
+        overlayArgv_ = argv;
+        overlayEditMode_ = editMode;
+        // L4: flip the status badge so the user can tell at a glance which
+        // mode the console is in. We're hiding next, so this label only
+        // matters when the overlay exits and the console re-shows.
+        if (statusBadge_) {
+            const QString stamp = QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
+            statusBadge_->setText(
+                mh::tr(QStringLiteral("console.status.running_since"))
+                    .arg(overlay_->overlayPid()).arg(stamp));
+        }
+        // Disable both launcher buttons while running so the user can't
+        // accidentally spawn a second overlay.
+        if (startBtn_) startBtn_->setEnabled(false);
+        if (editBtn_)  editBtn_->setEnabled(false);
+        hide();   // the overlay owns the screen now
+    });
+    // runningChanged replays setOverlayRunning() so the START/STOP caption
+    // and the badge's `state` property (which drive the QSS) are reset on
+    // every liveness flip — the exit half of the old onOverlayExited().
+    connect(overlay_, &mhw::OverlayProcessController::runningChanged, this,
+            [this](bool running, qint64){ setOverlayRunning(running); });
+    connect(overlay_, &mhw::OverlayProcessController::exited, this, [this]{
+        if (startBtn_) startBtn_->setEnabled(true);
+        if (editBtn_)  editBtn_->setEnabled(true);
+        if (statusBadge_)
+            statusBadge_->setText(mh::tr(QStringLiteral("console.status.plain_ready")));
+        show();
+        raise();
+        activateWindow();
+    });
+
+    // v0.5 P1: startBtn toggles between launch and stop. The controller
+    // owns the child's pid, so the View just asks it whether one is alive.
     connect(startBtn_, &QPushButton::clicked, this, [this]{
-        if (overlayPid_ == 0) launchOverlay(/*editMode=*/false);
-        else                  stopOverlay();
+        if (overlay_->isRunning()) overlay_->stop();
+        else                       launchOverlayChild(/*editMode=*/false);
     });
     connect(editBtn_, &QPushButton::clicked, this,
-            [this]{ launchOverlay(/*editMode=*/true); });
+            [this]{ launchOverlayChild(/*editMode=*/true); });
 
     loadMaskFromDisk();
     for (int i = 0; i < mhw::kPanelCount; ++i)
@@ -971,9 +1016,9 @@ ControlPanel::ControlPanel(QWidget *parent)
             auto *row = ctl_[0].subs[b];
             if (!row) continue;
             const uint32_t rowBit = (1u << b);
-            const bool hideForWorld = (currentGame_ == mhw::GameId::World)
+            const bool hideForWorld = (currentGame() == mhw::GameId::World)
                                       && (rowBit == wirebugBit);
-            const bool hideForRise  = (currentGame_ == mhw::GameId::Rise)
+            const bool hideForRise  = (currentGame() == mhw::GameId::Rise)
                                       && (rowBit == mantlesBit);
             const bool hide = hideForWorld || hideForRise;
             row->setVisible(!hide);
@@ -1012,7 +1057,7 @@ ControlPanel::ControlPanel(QWidget *parent)
                 autoDetectBadge_->setProperty("state", "gray");
             } else {
                 const QString name = gameName(detected->game);
-                if (detected->game == currentGame_) {
+                if (detected->game == currentGame()) {
                     autoDetectBadge_->setText(
                         mh::tr(QStringLiteral("console.detect.startup_running"))
                             .arg(name).arg(detected->pid));
@@ -1129,7 +1174,9 @@ void ControlPanel::retranslateUi()
     // Phase 2 — dynamic elements. Re-running the existing refresh paths
     // (instead of duplicating their format strings here) is what keeps a
     // language flip consistent with what the live timers write 5s later.
-    setOverlayRunning(overlayPid_ != 0);          // rail START/STOP + badge
+    // The overlay START/STOP + badge re-style lives in the runningChanged
+    // slot; replaying it here re-applies the current copy.
+    setOverlayRunning(overlay_->isRunning());  // rail START/STOP + badge
     for (int i = 0; i < mhw::kPanelCount; ++i)
         updatePanelSummary(i);                    // counts + nav summaries
     for (int i = 0; i < mhw::kPanelCount; ++i)
@@ -1358,7 +1405,7 @@ void ControlPanel::selectPanel(int idx)
     if (!mhw::isPanelIndex(idx)) return;
     // v0.10.1: the pets inspector is Rise-only; it cannot be reached while
     // World is selected (the rail card is hidden; hot-keys land here).
-    if (idx == 3 && currentGame_ == mhw::GameId::World) return;
+    if (idx == 3 && currentGame() == mhw::GameId::World) return;
     selectedPanel_ = idx;
     syncAppearance(idx);
     updatePosLabel(idx);
@@ -1396,7 +1443,7 @@ void ControlPanel::updatePanelSummary(int idx)
     if (ctl_[idx].countBar)
         ctl_[idx].countBar->setRatio(total > 0 ? qreal(on) / total : 1.0);
     if (ctl_[idx].navSummary) {
-        if (idx == 3 && currentGame_ == mhw::GameId::World) {
+        if (idx == 3 && currentGame() == mhw::GameId::World) {
             ctl_[idx].navSummary->setText(
                 consoleText(QStringLiteral("console.panel.pets_rise_only")));
         } else {
@@ -1407,9 +1454,14 @@ void ControlPanel::updatePanelSummary(int idx)
     }
 }
 
-// i18n: `titleKey` / `summaryKey` are StringTable keys (console.nav.*), not
-// pre-translated copy — the labels register through trSet() so a later
-// language switch re-queries them instead of replaying frozen text.
+// v0.11: the selected target game lives in mhw::OverlayProcessController
+// (it appends the child's --game flag). Read-only convenience for the
+// several View consumers that only branch on it.
+mhw::GameId ControlPanel::currentGame() const
+{
+    return overlay_ ? overlay_->currentGame() : mhw::GameId::World;
+}
+
 QWidget *ControlPanel::buildObjectButton(const QString &letter,
                                          const QString &titleKey,
                                          const QString &summaryKey, int idx)
@@ -1650,7 +1702,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
 
         cardLayout->addLayout(actions);
         riseReframeworkCard_ = card;
-        riseReframeworkCard_->setVisible(currentGame_ == mhw::GameId::Rise);
+        riseReframeworkCard_->setVisible(currentGame() == mhw::GameId::Rise);
         vl->addWidget(riseReframeworkCard_);
         vl->addSpacing(12);
     }
@@ -1972,17 +2024,17 @@ QWidget *ControlPanel::buildEditModeBlock()
     editBtn_  = editBtn;
 
     connect(startBtn, &QPushButton::clicked, this, [this]{
-        launchOverlay(/*editMode=*/false);
+        launchOverlayChild(/*editMode=*/false);
     });
     connect(editBtn,  &QPushButton::clicked, this, [this]{
-        launchOverlay(/*editMode=*/true);
+        launchOverlayChild(/*editMode=*/true);
     });
     return box;
 }
 
 // v0.6 Phase 4: select the target game. Highlights the matching rail
 // button and persists the choice (read back at construction); the next
-// launchOverlay() passes it to the overlay via --game.
+// launch passes it to the overlay via --game.
 //
 // v0.6 Phase 5: hot-swap. Clicking the OTHER game while the overlay is
 // running SIGTERMs it and arms pendingRestart_; the 250ms PID-poll in
@@ -1991,8 +2043,12 @@ QWidget *ControlPanel::buildEditModeBlock()
 // SIGTERM, no log noise.
 void ControlPanel::switchGame(mhw::GameId game)
 {
-    const bool changed = (game != currentGame_);
-    currentGame_ = game;
+    const bool changed = (game != currentGame());
+    // The controller owns the game value (it drives the child's --game
+    // flag) and runs the hot-swap itself, so this half is pure View.
+    // Guarded: currentGame() above reads overlay_, and switchGame() is
+    // reachable from the rail buttons during teardown.
+    if (overlay_) overlay_->setCurrentGame(game);
     const bool isRise = (game == mhw::GameId::Rise);
     refreshRiseReframeworkStatus();
 
@@ -2065,18 +2121,15 @@ void ControlPanel::switchGame(mhw::GameId game)
                    isRise ? QStringLiteral("rise") : QStringLiteral("world"));
     }
 
-    if (changed && overlayPid_ != 0) {
-        pendingRestart_ = true;
+    if (changed && overlay_->isRunning()) {
         if (statusBadge_) {
             statusBadge_->setText(
                 mh::tr(QStringLiteral("console.status.switching"))
                     .arg(gameName(isRise ? mhw::GameId::Rise
                                          : mhw::GameId::World)));
         }
-        stopOverlay();
-        // stopOverlay() pauses the poll timer; the hot-swap needs it
-        // alive to observe the exit and trigger the relaunch.
-        if (overlayWatch_) overlayWatch_->start();
+        // The hot-swap itself (SIGTERM + pendingRelunch + poll restart)
+        // lives in the controller's setCurrentGame() above.
     }
 }
 
@@ -2085,7 +2138,7 @@ void ControlPanel::refreshRiseReframeworkStatus()
     if (!riseReframeworkCard_)
         return;
 
-    const bool riseSelected = currentGame_ == mhw::GameId::Rise;
+    const bool riseSelected = currentGame() == mhw::GameId::Rise;
     riseReframeworkCard_->setVisible(riseSelected);
     if (!riseSelected)
         return;
@@ -2219,7 +2272,7 @@ void ControlPanel::refreshRiseReframeworkStatus()
 
 void ControlPanel::requestRiseReframeworkInstall()
 {
-    if (currentGame_ != mhw::GameId::Rise || riseGameDir_.isEmpty()
+    if (currentGame() != mhw::GameId::Rise || riseGameDir_.isEmpty()
         || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
         refreshRiseReframeworkStatus();
         return;
@@ -2247,7 +2300,7 @@ void ControlPanel::requestRiseReframeworkInstall()
 
 void ControlPanel::requestRiseLuaRemoval()
 {
-    if (currentGame_ != mhw::GameId::Rise || riseGameDir_.isEmpty()
+    if (currentGame() != mhw::GameId::Rise || riseGameDir_.isEmpty()
         || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
         refreshRiseReframeworkStatus();
         return;
@@ -2285,7 +2338,7 @@ void ControlPanel::requestRiseMenuStateFix(bool restoreDefault)
         rfStatus.core == mhw::RiseReFrameworkManager::CoreState::Managed
         || rfStatus.core == mhw::RiseReFrameworkManager::CoreState::External;
 
-    if (currentGame_ != mhw::GameId::Rise || riseGameDir_.isEmpty()
+    if (currentGame() != mhw::GameId::Rise || riseGameDir_.isEmpty()
         || riseReframeworkOperationPending_ || !rfCorePresent
         || mhw::detectGame().has_value()) {
         refreshRiseReframeworkStatus();
@@ -2328,7 +2381,7 @@ void ControlPanel::requestRiseMenuStateFix(bool restoreDefault)
 
 void ControlPanel::requestRiseReframeworkRemoval()
 {
-    if (currentGame_ != mhw::GameId::Rise || riseGameDir_.isEmpty()
+    if (currentGame() != mhw::GameId::Rise || riseGameDir_.isEmpty()
         || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
         refreshRiseReframeworkStatus();
         return;
@@ -2374,11 +2427,14 @@ void ControlPanel::finishRiseReframeworkOperation(bool ok, const QString &detail
 // gives us clean ownership: the overlay owns its own lifetime, and we
 // just watch from outside.
 //
-// The mask state on disk is rewritten synchronously here so the overlay
-// sees the user's *current* toggles, not the snapshot from console boot.
-void ControlPanel::launchOverlay(bool editMode)
+// v0.11: cold start, View half. The mask state on disk is rewritten
+// synchronously here so the overlay sees the user's *current* toggles, not
+// the snapshot from console boot; the pid/poll/hot-swap half now lives in
+// mhw::OverlayProcessController (its `launched`/`exited` signals run the
+// widget half of each).
+void ControlPanel::launchOverlayChild(bool editMode)
 {
-    if (overlayPid_ != 0) {
+    if (overlay_->isRunning()) {
         // Already running — refuse to launch a second copy. The user
         // can press ESC in the overlay to bring the console back, then
         // click again.
@@ -2409,7 +2465,7 @@ void ControlPanel::launchOverlay(bool editMode)
 
     // v0.10.1: the companion (pets) surface is Rise-only — in World its mask
     // is not passed and the panel is force-disabled below.
-    const bool petsAvailable = (currentGame_ == mhw::GameId::Rise);
+    const bool petsAvailable = (currentGame() == mhw::GameId::Rise);
     QStringList args;
     args << QStringLiteral("--mask-player=%1").arg(mp, 0, 16)
          << QStringLiteral("--mask-monster=%1").arg(mm, 0, 16)
@@ -2443,13 +2499,6 @@ void ControlPanel::launchOverlay(bool editMode)
             args << QStringLiteral("--locale=%1").arg(loc);
     }
 
-    // Target game selected in the rail (switchGame persists it). The
-    // overlay would otherwise auto-detect, which can pick the wrong
-    // process when both World and Rise are installed/running.
-    args << QStringLiteral("--game=%1")
-                .arg(currentGame_ == mhw::GameId::Rise
-                         ? QStringLiteral("rise") : QStringLiteral("world"));
-
     // v0.8: per-panel screen selection. Empty outputName == "<PRIMARY>"
     // pseudo-entry in the console, which means "follow OS primary" —
     // we omit the flag in that case so the overlay's loadConfig() can
@@ -2467,89 +2516,9 @@ void ControlPanel::launchOverlay(bool editMode)
     appendOutput(2, "--output-damage");
     appendOutput(3, "--output-pets");
 
-    // monster-overlay lives next to monster-control in the same build dir.
-    const QString overlay = QCoreApplication::applicationDirPath()
-                          + QStringLiteral("/monster-overlay");
-
-    qint64 pid = 0;
-    if (!QProcess::startDetached(overlay, args,
-                                 QCoreApplication::applicationDirPath(),
-                                 &pid)) {
-        qWarning("monster-control: failed to launch %s", qPrintable(overlay));
-        return;
-    }
-    overlayPid_ = pid;
-
-    // L4: flip the status badge so the user can tell at a glance which
-    // mode the console is in. We're hiding next, so this label only
-    // matters when the overlay exits and the console re-shows.
-    if (statusBadge_) {
-        const QString stamp = QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
-        statusBadge_->setText(
-            mh::tr(QStringLiteral("console.status.running_since"))
-                .arg(overlayPid_).arg(stamp));
-    }
-
-    // Disable both launcher buttons while running so the user can't
-    // accidentally spawn a second overlay.
-    if (startBtn_) startBtn_->setEnabled(false);
-    if (editBtn_)  editBtn_->setEnabled(false);
-
-    // Poll the PID. 250ms feels live but stays well under one paint frame
-    // — the console re-shows within a quarter second of overlay death.
-    overlayWatch_ = new QTimer(this);
-    overlayWatch_->setInterval(250);
-    connect(overlayWatch_, &QTimer::timeout, this, [this]{
-        if (overlayPid_ == 0) return;
-        // kill(pid, 0) is POSIX's "does this PID exist?" — no signal sent.
-        // ESRCH means the process is gone.
-        if (kill(static_cast<pid_t>(overlayPid_), 0) != 0) {
-            onOverlayExited();
-        }
-    });
-    overlayWatch_->start();
-    setOverlayRunning(true);
-
-    hide();   // the overlay owns the screen now
-}
-
-void ControlPanel::onOverlayExited()
-{
-    overlayPid_ = 0;
-    if (overlayWatch_) {
-        overlayWatch_->stop();
-        overlayWatch_->deleteLater();
-        overlayWatch_ = nullptr;
-    }
-    if (startBtn_) startBtn_->setEnabled(true);
-    if (editBtn_)  editBtn_->setEnabled(true);
-    if (statusBadge_)
-        statusBadge_->setText(mh::tr(QStringLiteral("console.status.plain_ready")));
-    setOverlayRunning(false);
-    // v0.6 Phase 5: hot-swap — the user switched game while running, so
-    // relaunch with the freshly-updated currentGame_. If the launch
-    // fails (missing binary, permission denied) launchOverlay() returns
-    // without setting overlayPid_; the console reappears in the READY
-    // state, which is the right fallback.
-    if (pendingRestart_) {
-        pendingRestart_ = false;
-        restartOverlayWithCurrentGame();
-    }
-    show();
-    raise();
-    activateWindow();
-}
-
-// v0.6 Phase 5: relaunch used by the hot-swap path. Saves mask +
-// appearance first (same pattern as launchOverlay's cold start) so the
-// restarted overlay sees the user's latest toggles and sliders.
-void ControlPanel::restartOverlayWithCurrentGame()
-{
-    saveMaskToDisk();
-    for (int i = 0; i < mhw::kPanelCount; ++i)
-        if (Panel *panel = panelAt(i))
-            panel->saveAppearance();
-    launchOverlay(/*editMode=*/false);
+    // Spawn, poll, pid bookkeeping and the hide() all live in the
+    // controller; `launched` runs the widget half of each of them.
+    overlay_->launch(args, editMode);
 }
 
 // v0.6 Phase 5: live auto-detect badge. Rescans /proc and repaints the
@@ -2567,7 +2536,7 @@ void ControlPanel::refreshAutoDetect()
                    detected->game == mhw::GameId::Rise ? QStringLiteral("rise")
                                                        : QStringLiteral("world"));
         const QString name = gameName(detected->game);
-        const bool match = (detected->game == currentGame_);
+        const bool match = (detected->game == currentGame());
         detectedShort = mh::tr(QStringLiteral("console.detect.short"))
                             .arg(name).arg(detected->pid);
         autoDetectBadge_->setText(
@@ -2786,7 +2755,7 @@ void ControlPanel::rebuildAndRender(int idx)
     }
 
     const bool riseOnlyUnavailable =
-        idx == 3 && currentGame_ == mhw::GameId::World;
+        idx == 3 && currentGame() == mhw::GameId::World;
     if (riseOnlyUnavailable || !ctl_[idx].master->isChecked()) {
         if (canvas_)
             canvas_->setPanelPixmap(idx, QPixmap(), false);
@@ -2849,20 +2818,6 @@ QPixmap ControlPanel::renderPreview(Panel *p)
     return pix;
 }
 
-// v0.5 P1: kill the overlay subprocess and let onOverlayExited()
-// do the cleanup. Safe to call when no overlay is running.
-void ControlPanel::stopOverlay()
-{
-    if (overlayPid_ == 0) return;
-    if (overlayWatch_) overlayWatch_->stop();
-    // SIGTERM = gentle. The overlay's own ESC handler will run
-    // saveConfig() and quit cleanly. SIGKILL would skip that.
-    kill(static_cast<pid_t>(overlayPid_), SIGTERM);
-    // Don't zero overlayPid_ here — the 250ms PID-poll timer will
-    // observe the exit and call onOverlayExited() which does the
-    // teardown. Setting it to 0 now would block a re-launch.
-}
-
 // v0.5 P1: switch the START button between launch and stop modes and
 // re-style the status badge. Safe to call repeatedly; cheap idempotent
 // state flip.
@@ -2875,7 +2830,7 @@ void ControlPanel::setOverlayRunning(bool running)
         if (statusBadge_) {
             statusBadge_->setText(
                 mh::tr(QStringLiteral("console.status.running_pid"))
-                    .arg(overlayPid_));
+                    .arg(overlay_->overlayPid()));
             statusBadge_->setProperty("state", "running");
         }
     } else {
