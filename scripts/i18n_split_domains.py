@@ -247,6 +247,11 @@ def main(argv=None) -> int:
             if not re.match(r"\s*<file>i18n/.*\.json</file>", ln)]
     entries = "".join(f"        <file>i18n/{loc}/{dom}.json</file>\n"
                       for loc in LOCALES for dom in DOMAINS)
+    # NOTE (v0.11.0): this script already ran and its job is done. The
+    # anchor below was the qrc layout of that time — monsters/parts.json has
+    # since been deleted, so a fresh run now fails at the anchor check below.
+    # That is expected: do NOT re-run this against the current tree. The
+    # four-domain i18n layout it produced is the shipped state.
     anchor = "        <file>monsters/parts.json</file>\n"
     text2 = "".join(kept)
     if anchor not in text2:
