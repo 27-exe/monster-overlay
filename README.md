@@ -30,8 +30,8 @@ process from the outside — no DLL injection, no game files touched.
 ## Install
 
 ```bash
-tar -xzf monster-overlay-v0.10.10-linux-x86_64.tar.gz
-cd monster-overlay-v0.10.10-linux-x86_64
+tar -xzf monster-overlay-v0.11.0-linux-x86_64.tar.gz
+cd monster-overlay-v0.11.0-linux-x86_64
 sudo ./install-deps.sh      # one-time: Qt 6 + layer-shell-qt
 ./install.sh                # optional: installs to ~/.local/bin + XDG data dir
 ```
