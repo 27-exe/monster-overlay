@@ -14,6 +14,7 @@
 #include "ui/screen_query.h"
 #include "ui/ui_theme.h"
 #include "ui/viewmodel/overlay_process_controller.h"
+#include "ui/viewmodel/rise_reframework_status.h"
 #include "core/game_detector.h"
 #include "core/rise_reframework_manager.h"
 #include "core/steam_game_locator.h"
@@ -2151,56 +2152,21 @@ void ControlPanel::refreshRiseReframeworkStatus()
     const mhw::RiseReFrameworkManager::Status status = manager.status(riseGameDir_);
     const bool gameRunning = mhw::detectGame().has_value();
 
-    // Build the status as readable lines rather than appending whatever the
-    // installer happened to put in `detail`. `status.detail` is a technical
-    // summary meant for diagnostics ("core managed; Lua current; manifest
-    // valid"); showing it raw next to the path made the card read like a log.
-    // Derive a plain-language state from the fields, and keep the raw detail
-    // as a clearly-labelled secondary line.
-    QStringList lines;
-    const bool corePresent = status.core == mhw::RiseReFrameworkManager::CoreState::Managed
-                             || status.core == mhw::RiseReFrameworkManager::CoreState::External;
-    if (riseGameDir_.isEmpty()) {
-        lines.append(mh::tr(QStringLiteral("console.reframework.not_found")));
-    } else if (!status.gameDirValid) {
-        lines.append(mh::tr(QStringLiteral("console.reframework.game_invalid"))
-                         .arg(riseGameDir_));
-    } else if (!corePresent) {
-        lines.append(mh::tr(QStringLiteral("console.reframework.game_found"))
-                         .arg(riseGameDir_));
-        lines.append(mh::tr(QStringLiteral("console.reframework.state_core_missing")));
-    } else {
-        lines.append(mh::tr(QStringLiteral("console.reframework.game_found"))
-                         .arg(riseGameDir_));
-        const bool manifestBroken =
-            status.manifest == mhw::RiseReFrameworkManager::ManifestState::Invalid;
-        const bool installIncomplete =
-            manifestBroken
-            || status.lua == mhw::RiseReFrameworkManager::LuaState::Modified;
-        if (installIncomplete) {
-            lines.append(mh::tr(QStringLiteral(
-                "console.reframework.state_needs_repair")));
-        } else if (status.lua == mhw::RiseReFrameworkManager::LuaState::Missing) {
-            lines.append(mh::tr(QStringLiteral("console.reframework.state_lua_missing")));
-        } else {
-            lines.append(mh::tr(QStringLiteral("console.reframework.state_ready")));
-        }
-    }
-    if (gameRunning)
-        lines.append(mh::tr(QStringLiteral("console.reframework.game_running")));
-    if (riseReframeworkOperationPending_)
-        lines.append(mh::tr(QStringLiteral("console.reframework.pending")));
-    if (riseReframeworkHasResult_) {
-        lines.append(mh::tr(riseReframeworkResultOk_
-                                ? QStringLiteral("console.reframework.success")
-                                : QStringLiteral("console.reframework.failure"))
-                         .arg(riseReframeworkResultDetail_));
-    }
-    // The raw diagnostic string goes last and only when it adds something the
-    // state lines above do not already say.
-    if (!status.detail.isEmpty())
-        lines.append(mh::tr(QStringLiteral("console.reframework.detail_raw"))
-                         .arg(status.detail));
+    // The readable status lines are derived by the widget-free view model
+    // (src/ui/viewmodel/rise_reframework_status.cpp), which carries the
+    // derivation rules and their i18n keys so the REFramework state machine
+    // is reachable from a plain logic test. The query above, the console's
+    // operation flags and the game-process check are the model's whole input;
+    // the join and the write below are still this panel's job.
+    mhw::RiseReframeworkStatusInput statusInput;
+    statusInput.gameDir = riseGameDir_;
+    statusInput.status = status;
+    statusInput.gameRunning = gameRunning;
+    statusInput.operationPending = riseReframeworkOperationPending_;
+    statusInput.hasResult = riseReframeworkHasResult_;
+    statusInput.resultOk = riseReframeworkResultOk_;
+    statusInput.resultDetail = riseReframeworkResultDetail_;
+    const QStringList lines = mhw::riseReframeworkStatusLines(statusInput);
     riseReframeworkStatus_->setText(lines.join(QLatin1Char('\n')));
 
     // A missing/invalid locator result is not actionable. A running game or

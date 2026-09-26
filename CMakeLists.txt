@@ -118,6 +118,8 @@ add_library(mhw-ui STATIC
     src/ui/viewmodel/monster_view_model.h
     src/ui/viewmodel/overlay_process_controller.cpp
     src/ui/viewmodel/overlay_process_controller.h
+    src/ui/viewmodel/rise_reframework_status.cpp
+    src/ui/viewmodel/rise_reframework_status.h
     src/ui/panel_monster.cpp
     src/ui/panel_monster.h
     src/ui/panel_pet_damage.cpp
@@ -739,6 +741,24 @@ add_executable(world-severable-scan-tests
     target_include_directories(damage-view-model-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(damage-view-model-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME damage-view-model-tests COMMAND damage-view-model-tests)
+
+    # Pure-logic coverage for the REFramework status-line derivation
+    # (mhw::riseReframeworkStatusLines): the state machine that used to be
+    # unreachable inside ControlPanel::refreshRiseReframeworkStatus(). Links
+    # mhw-ui for the model plus the two data-table translation units that
+    # library's other targets need (same pair as damage-view-model-tests);
+    # compiles the real qrc so the console.reframework.* strings are
+    # exercised as packaged and the assertions see translated text.
+    add_executable(rise-reframework-status-tests
+        tests/rise_reframework_status_tests.cpp
+        src/monster/part_schemas.cpp
+        src/world/world_types.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(rise-reframework-status-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(rise-reframework-status-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(rise-reframework-status-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-reframework-status-tests COMMAND rise-reframework-status-tests)
 
     # Source-level CLI/build contract: catches an option that is declared but
     # not registered, or a fourth panel omitted from the product target.
