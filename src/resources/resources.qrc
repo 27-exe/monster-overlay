@@ -9,7 +9,5 @@
         <file>i18n/en-US/console.json</file>
         <file>i18n/en-US/reader.json</file>
         <file>i18n/en-US/data.json</file>
-        <file>monsters/parts.json</file>
-        <file>monsters/ailments.json</file>
     </qresource>
 </RCC>
