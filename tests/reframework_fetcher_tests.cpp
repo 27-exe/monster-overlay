@@ -30,15 +30,46 @@ int failures = 0;
 //   * a key that does not exist (detail would be the raw dot-path),
 //   * the wrong key being used for this code path,
 //   * a placeholder-count or ordering change in the JSON.
+// Turn a locale template (one of the reader.reframework.* values) into an
+// anchored regex source with each %N placeholder replaced by a non-empty
+// wildcard. Escaping first means the JSON's own punctuation — colons in
+// zh-CN, ASCII commas in en-US, sha strings, '..' — cannot widen or narrow
+// the match.
+QString templatePattern(const QString &templateText)
+{
+    return QRegularExpression::escape(templateText)
+        .replace(QStringLiteral("\\%1"), QStringLiteral(".+"))
+        .replace(QStringLiteral("\\%2"), QStringLiteral(".+"));
+}
+
 bool detailMatchesTemplate(const QString &detail, const QString &key)
 {
     if (detail.isEmpty())
         return false;
-    const QString pattern = QRegularExpression::escape(
-                                mhw::StringTable::instance().tr(key))
-                                .replace(QStringLiteral("\\%1"), QStringLiteral(".+"))
-                                .replace(QStringLiteral("\\%2"), QStringLiteral(".+"));
-    return QRegularExpression(QStringLiteral("^") + pattern + QStringLiteral("$"))
+    return QRegularExpression(QStringLiteral("^")
+                              + templatePattern(mhw::StringTable::instance().tr(key))
+                              + QStringLiteral("$"))
+        .match(detail)
+        .hasMatch();
+}
+
+// A detail that is composed: an outer wrapped key whose %1 holds the inner
+// key's own template. prepareArchive() reports a failed download as
+// tr("download_verification_failed").arg(<verifyArchive reason>), so the outer
+// key must be asserted, not the inner one — the inner detail is a substring
+// that can never match an anchored pattern against the inner template alone.
+bool detailMatchesTemplateChain(const QString &detail, const QString &outerKey,
+                                const QString &innerKey)
+{
+    if (detail.isEmpty())
+        return false;
+    const QString inner = innerKey.isEmpty()
+        ? QStringLiteral(".+")
+        : templatePattern(mhw::StringTable::instance().tr(innerKey));
+    const QString outer = templatePattern(
+                              mhw::StringTable::instance().tr(outerKey))
+                              .replace(QStringLiteral("\\%1"), inner);
+    return QRegularExpression(QStringLiteral("^") + outer + QStringLiteral("$"))
         .match(detail)
         .hasMatch();
 }
@@ -325,10 +356,14 @@ void archiveIdentityRejectionAndMissingToolsAreErrors()
     else qunsetenv("FAKE_CURL_SOURCE");
     if (logWasSet) qputenv("FAKE_CURL_LOG", oldLog);
     else qunsetenv("FAKE_CURL_LOG");
+    // The download failure is a composite: prepareArchive() wraps the
+    // verifyArchive() reason in tr("download_verification_failed").arg(<reason>),
+    // so the outer key must be asserted with the inner key as its %1.
     check(!result.ok && result.source == mhw::ReFrameworkFetcher::Source::Download
-              && detailMatchesTemplate(
+              && detailMatchesTemplateChain(
                      result.detail,
-                     QStringLiteral("reader.reframework.download_verification_failed")),
+                     QStringLiteral("reader.reframework.download_verification_failed"),
+                     QStringLiteral("reader.reframework.archive_size_mismatch")),
           QStringLiteral("downloaded size/hash mismatch is rejected before extraction"));
 
     auto missingTar = fixtureOptions(good, QStringLiteral("/definitely/missing/bsdtar"));

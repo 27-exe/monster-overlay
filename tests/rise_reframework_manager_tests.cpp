@@ -28,15 +28,45 @@ int failures = 0;
 // %N placeholder becomes a non-empty wildcard and the whole string must match.
 // This catches a missing key (detail would be the raw dot-path), the wrong
 // key for this code path, and any placeholder-count change in the JSON.
+QString templatePattern(const QString &templateText)
+{
+    return QRegularExpression::escape(templateText)
+        .replace(QStringLiteral("\\%1"), QStringLiteral(".+"))
+        .replace(QStringLiteral("\\%2"), QStringLiteral(".+"));
+}
+
 bool detailMatchesTemplate(const QString &detail, const QString &key)
 {
     if (detail.isEmpty())
         return false;
-    const QString pattern = QRegularExpression::escape(
-                                mhw::StringTable::instance().tr(key))
-                                .replace(QStringLiteral("\\%1"), QStringLiteral(".+"))
-                                .replace(QStringLiteral("\\%2"), QStringLiteral(".+"));
-    return QRegularExpression(QStringLiteral("^") + pattern + QStringLiteral("$"))
+    return QRegularExpression(QStringLiteral("^")
+                              + templatePattern(mhw::StringTable::instance().tr(key))
+                              + QStringLiteral("$"))
+        .match(detail)
+        .hasMatch();
+}
+
+// Some diagnostics are wrapped rather than emitted bare. removeManaged()
+// refuses with tr("remove_refused_detail").arg(<manifest reason>), so the
+// detail is the OUTER key's template with %1 standing for the INNER key's
+// own template. Matching a wrapped detail against only the inner template can
+// never succeed — the wrapper's literal prefix is part of the string — so a
+// composite is asserted as a chain: the outer template's %1 is replaced by
+// the inner template (which keeps %1/%2 as wildcards). A wrong wrapper key,
+// a wrong inner key, or a placeholder-count change in either JSON entry still
+// fails, so this is stricter than matching the bare inner key.
+bool detailMatchesTemplateChain(const QString &detail, const QString &outerKey,
+                                const QString &innerKey)
+{
+    if (detail.isEmpty())
+        return false;
+    const QString inner = innerKey.isEmpty()
+        ? QStringLiteral(".+")
+        : templatePattern(mhw::StringTable::instance().tr(innerKey));
+    const QString outer = templatePattern(
+                              mhw::StringTable::instance().tr(outerKey))
+                              .replace(QStringLiteral("\\%1"), inner);
+    return QRegularExpression(QStringLiteral("^") + outer + QStringLiteral("$"))
         .match(detail)
         .hasMatch();
 }
@@ -403,8 +433,10 @@ int main(int argc, char **argv)
                       == mhw::RiseReFrameworkManager::ManifestState::Invalid,
                   QStringLiteral("hostile manifest %1 has invalid status").arg(i));
             const auto result = manager.removeManaged(gameDir);
-            check(!result.ok && detailMatchesTemplate(result.detail,
-                                                      QStringLiteral("reader.reframework.manifest_unsafe_path")),
+            check(!result.ok && detailMatchesTemplateChain(
+                                   result.detail,
+                                   QStringLiteral("reader.reframework.remove_refused_detail"),
+                                   QStringLiteral("reader.reframework.manifest_unsafe_path")),
                   QStringLiteral("hostile manifest path %1 is rejected as unsafe").arg(i));
             check(QFileInfo::exists(outside),
                   QStringLiteral("hostile manifest %1 cannot delete outside file").arg(i));

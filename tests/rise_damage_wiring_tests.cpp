@@ -29,6 +29,33 @@ std::string readFile(const std::filesystem::path &path)
     return out.str();
 }
 
+// True when the '#' at `at` starts a C/C++ preprocessor directive
+// (#include / #if / #else / #endif / #define / #pragma / …). Their bodies are
+// live source text for every caller that scans a .cpp, so they must never be
+// treated as a comment; a CMake '#' comment line never begins with one of these
+// keywords, so the exclusion cannot swallow a real comment either.
+bool isPreprocessorDirective(std::size_t at, std::string_view source)
+{
+    static constexpr std::string_view kDirectivePrefixes[]{
+        "include", "import", "if", "ifdef", "ifndef", "else", "elif",
+        "endif", "define", "undef", "pragma", "line", "warning", "error",
+        "embed", "assert", "unassert",
+    };
+    // Bounded to avoid an O(n^2) scan on pathological input.
+    const std::size_t maxKeyword = 16;
+    const std::size_t limit = std::min(at + maxKeyword, source.size());
+    for (const std::string_view prefix : kDirectivePrefixes) {
+        if (at + prefix.size() > limit) continue;
+        if (source.substr(at + 1, prefix.size()) == prefix
+            && (at + 1 + prefix.size() == source.size()
+                || !std::isalnum(static_cast<unsigned char>(
+                       source[at + 1 + prefix.size()])))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string compact(std::string_view source)
 {
     std::string out;
@@ -52,16 +79,20 @@ std::string compact(std::string_view source)
             }
             continue;
         }
-        // CMake's own comment marker has no C++ counterpart: without this,
-        // a '#' comment containing parentheses (e.g. a note about
-        // StringTable::tr()) corrupts the paren-balanced target slicing.
-        if (!inString && c == '#') {
-            inLineComment = true;
-            continue;
-        }
-        if (!inString && c == '#') {
-            inLineComment = true;
-            continue;
+        // CMake's comment marker has no C++ counterpart, and CMake comments may
+        // carry parens (e.g. a note about StringTable::tr()), which would throw
+        // off cmakeCall()'s paren-balanced target slicing if they survived into
+        // the compressed text. Only a '#' at the start of a line (leading
+        // whitespace allowed) begins a comment — but the same code path also
+        // scans C++ sources, where a leading '#' is normally a preprocessor
+        // directive whose text matters, so the directive families are excluded.
+        if (!inString && (i == 0 || source[i - 1] == '\n')) {
+            std::size_t j = i;
+            while (j < source.size() && (source[j] == ' ' || source[j] == '\t')) ++j;
+            if (j < source.size() && source[j] == '#' && !isPreprocessorDirective(j, source)) {
+                inLineComment = true;
+                continue;
+            }
         }
         if (!inString && c == '/' && next == '/') {
             inLineComment = true;
