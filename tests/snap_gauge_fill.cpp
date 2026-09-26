@@ -30,6 +30,7 @@
 
 #include "ui/panel_monster.h"
 #include "ui/panel_sections.h"
+#include "ui/viewmodel/monster_view_model.h"
 #include "core/string_table.h"
 #include "monster/monster_types.h"
 
@@ -135,8 +136,8 @@ void reportScenario(const char *key, const PartSpec &spec,
 {
     MonsterSnapshot snap = worldTeostra({spec});
 
-    // Fresh panel per scenario: buildPcList() MUTATES partTrack_ (15 s
-    // AutoHide), so reusing one panel across scenarios pin or hide cards.
+    // Fresh panel per scenario: the builder MUTATES its PartAutoHide table
+    // (15 s), so reusing one panel across scenarios would pin or hide cards.
     MonsterPanel panel;
     panel.setScale(1.0, false);
     panel.setOpacity(1.0, false);
@@ -153,10 +154,18 @@ void reportScenario(const char *key, const PartSpec &spec,
                     outPath.toLocal8Bit().constData());
 
     // Post-render: the PcEntry the painter actually consumed. Called AFTER
-    // the render so the partTrack_ mutation it performs cannot change what
+    // the render so the PartAutoHide mutation it performs cannot change what
     // was painted above.
+    //
+    // v0.11 (T16): buildPcList() became mhw::MonsterPartListBuilder::build(),
+    // which takes the three panel inputs it used to borrow through the friend
+    // declaration (editMode / game / multiplayer). A FRESH builder per call
+    // keeps the original intent of the comment above: this diagnostic read
+    // must not pin or hide cards in the render it follows.
+    mhw::MonsterPartListBuilder builder;
     const QVector<PcEntry> entries =
-        buildPcList(panel, snap.parts, 0, true);
+        builder.build(snap.parts, 0, true, panel.editMode(),
+                      snap.game, /* multiplayer */ false);
     QString ent;
     if (!entries.isEmpty()) {
         const PcEntry &e = entries.first();

@@ -114,6 +114,8 @@ add_library(mhw-ui STATIC
     src/ui/panel_damage.h
     src/ui/viewmodel/damage_view_model.cpp
     src/ui/viewmodel/damage_view_model.h
+    src/ui/viewmodel/monster_view_model.cpp
+    src/ui/viewmodel/monster_view_model.h
     src/ui/viewmodel/overlay_process_controller.cpp
     src/ui/viewmodel/overlay_process_controller.h
     src/ui/panel_monster.cpp
