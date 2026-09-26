@@ -737,6 +737,7 @@ add_executable(world-severable-scan-tests
 
     add_executable(rise-reframework-manager-tests
         tests/rise_reframework_manager_tests.cpp
+        src/resources/resources.qrc
     )
     target_link_libraries(rise-reframework-manager-tests PRIVATE monster-core)
     target_include_directories(rise-reframework-manager-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -745,6 +746,7 @@ add_executable(world-severable-scan-tests
 
     add_executable(reframework-fetcher-tests
         tests/reframework_fetcher_tests.cpp
+        src/resources/resources.qrc
     )
     target_link_libraries(reframework-fetcher-tests PRIVATE monster-core)
     target_include_directories(reframework-fetcher-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

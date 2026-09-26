@@ -1735,7 +1735,7 @@ void MonsterPanel::setupDemoData()
     MonsterSnapshot m;
     m.address = 0xDEADBEEFULL;
     m.id = 1;                                 // 火龙
-    m.internalName = mh::tr("ui.demo.monster_name");
+    m.internalName = mh::tr("data.demo.monster_name");
     m.size = 1.25F;                           // Gold
     m.maxHealth = 25800.0F;
     m.health = 18420.0F;                      // 71%
@@ -1761,10 +1761,10 @@ void MonsterPanel::setupDemoData()
     struct Ail { int id; QString name; float timer; float maxT;
                 float bu; float maxB; int cnt; bool active; };
     const Ail demoAil[] = {
-        { 2, mh::tr("ui.demo.ail.paralysis"), 12.0F, 20.0F,  0.0F,   0.0F, 1, true },
-        {14, mh::tr("ui.demo.ail.shock_trap"), 8.0F,  8.0F,  0.0F,   0.0F, 0, true },
-        {15, mh::tr("ui.demo.ail.pitfall"),   60.0F, 60.0F,  0.0F,   0.0F, 0, true },
-        { 1, mh::tr("ui.demo.ail.poison"),     0.0F,  0.0F, 30.0F, 100.0F, 2, false},
+        { 2, mh::tr("data.demo.ail.paralysis"), 12.0F, 20.0F,  0.0F,   0.0F, 1, true },
+        {14, mh::tr("data.demo.ail.shock_trap"), 8.0F,  8.0F,  0.0F,   0.0F, 0, true },
+        {15, mh::tr("data.demo.ail.pitfall"),   60.0F, 60.0F,  0.0F,   0.0F, 0, true },
+        { 1, mh::tr("data.demo.ail.poison"),     0.0F,  0.0F, 30.0F, 100.0F, 2, false},
     };
     for (const auto &a : demoAil) {
         MonsterAilmentSnapshot ail;
@@ -1785,12 +1785,12 @@ void MonsterPanel::setupDemoData()
                    float hp; float maxHp;
                    int counter; bool breakable; bool severable; };
     const DPart dparts[] = {
-        { 0, mh::tr("ui.demo.part.head"),  80.0F, 100.0F, 0, true,  false},
-        { 1, mh::tr("ui.demo.part.l_wing"), 45.0F, 100.0F, 1, true,  true },
-        { 2, mh::tr("ui.demo.part.r_wing"), 20.0F, 100.0F, 2, true,  true },
-        { 3, mh::tr("ui.demo.part.tail"),  90.0F, 100.0F, 0, false, true },
-        { 4, mh::tr("ui.demo.part.l_leg"), 60.0F, 100.0F, 0, false, false},
-        { 5, mh::tr("ui.demo.part.r_leg"), 35.0F, 100.0F, 0, false, false},
+        { 0, mh::tr("data.demo.part.head"),  80.0F, 100.0F, 0, true,  false},
+        { 1, mh::tr("data.demo.part.l_wing"), 45.0F, 100.0F, 1, true,  true },
+        { 2, mh::tr("data.demo.part.r_wing"), 20.0F, 100.0F, 2, true,  true },
+        { 3, mh::tr("data.demo.part.tail"),  90.0F, 100.0F, 0, false, true },
+        { 4, mh::tr("data.demo.part.l_leg"), 60.0F, 100.0F, 0, false, false},
+        { 5, mh::tr("data.demo.part.r_leg"), 35.0F, 100.0F, 0, false, false},
     };
     for (const auto &dp : dparts) {
         PartSnapshot ps;

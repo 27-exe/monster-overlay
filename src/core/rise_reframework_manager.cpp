@@ -2,6 +2,8 @@
 
 #include "core/rise_reframework_manager.h"
 
+#include "core/string_table.h"
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -28,6 +30,24 @@ constexpr int kManifestSchema = 1;
 constexpr auto kGameExe = "MonsterHunterRise.exe";
 constexpr auto kLuaRelative = "reframework/autorun/mhr-overlay-damage.lua";
 constexpr auto kManifestRelative = "reframework/monster-overlay-install.json";
+
+// i18n: the installer diagnostics reach the console UI verbatim (they end up
+// in `detail` and are printed by rise_reframework_bridge.cpp), so they must
+// flip with the active locale. Lookup happens at the point of production —
+// never cached — so a locale change shows up in the next status refresh.
+// Mirrors the pattern in src/mhw_reader.cpp / src/rise/mhr_reader.cpp.
+inline QString trMessage(const QString &key) { return StringTable::instance().tr(key); }
+
+// Joins the state pins that `status()` reports ("core managed; Lua current;
+// ..."). Localised because the whole string it builds is displayed raw.
+inline QString detailPinSeparator() { return trMessage("reader.reframework.pin_separator"); }
+
+// The rollback outcome word reported by the install/repair failure details.
+inline QString rollbackStateText(bool complete)
+{
+    return trMessage(complete ? "reader.reframework.rollback_completed"
+                              : "reader.reframework.rollback_incomplete");
+}
 
 const QStringList &coreRelativePaths()
 {
@@ -87,13 +107,13 @@ bool resolveDirectory(const QString &directory, QString *root, QString *error)
     const QString resolved = absoluteRoot(directory);
     if (resolved.isEmpty()) {
         if (error)
-            *error = QStringLiteral("Game directory is empty.");
+            *error = trMessage("reader.reframework.game_dir_empty");
         return false;
     }
     const QFileInfo info(resolved);
     if (!info.exists() || !info.isDir()) {
         if (error)
-            *error = QStringLiteral("Game directory does not exist or is not a directory: %1").arg(resolved);
+            *error = trMessage("reader.reframework.game_dir_not_directory").arg(resolved);
         return false;
     }
     *root = resolved;
@@ -116,7 +136,7 @@ bool hasSymlinkComponent(const QString &root, const QString &relative, bool incl
         const QFileInfo info(current);
         if (info.isSymLink()) {
             if (error)
-                *error = QStringLiteral("Refusing symlinked managed path component: %1").arg(current);
+                *error = trMessage("reader.reframework.symlinked_path_component").arg(current);
             return true;
         }
     }
@@ -131,7 +151,8 @@ QByteArray fileSha256(const QString &path, bool *ok = nullptr, QString *error = 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
         if (error)
-            *error = QStringLiteral("Cannot open %1: %2").arg(path, file.errorString());
+            *error = trMessage("reader.reframework.file_open_failed")
+                         .arg(path, file.errorString());
         return {};
     }
 
@@ -142,7 +163,8 @@ QByteArray fileSha256(const QString &path, bool *ok = nullptr, QString *error = 
         const qint64 count = file.read(buffer.data(), buffer.size());
         if (count < 0) {
             if (error)
-                *error = QStringLiteral("Cannot read %1: %2").arg(path, file.errorString());
+                *error = trMessage("reader.reframework.file_read_failed")
+                             .arg(path, file.errorString());
             return {};
         }
         if (count == 0)
@@ -222,7 +244,7 @@ ManifestLoadState loadManifest(const QString &root, ManifestData *manifest, QStr
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
         if (error)
-            *error = QStringLiteral("Cannot read install manifest: %1").arg(file.errorString());
+            *error = trMessage("reader.reframework.manifest_read_failed").arg(file.errorString());
         return ManifestLoadState::Invalid;
     }
     const QByteArray bytes = file.readAll();
@@ -230,7 +252,8 @@ ManifestLoadState loadManifest(const QString &root, ManifestData *manifest, QStr
     const QJsonDocument document = QJsonDocument::fromJson(bytes, &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
         if (error)
-            *error = QStringLiteral("Install manifest is not valid JSON: %1").arg(parseError.errorString());
+            *error = trMessage("reader.reframework.manifest_not_json")
+                     .arg(parseError.errorString());
         return ManifestLoadState::Invalid;
     }
 
@@ -251,7 +274,7 @@ ManifestLoadState loadManifest(const QString &root, ManifestData *manifest, QStr
             != QString::fromLatin1(kArchiveSha256)
         || !object.value(QStringLiteral("owned")).isArray()) {
         if (error)
-            *error = QStringLiteral("Install manifest identity or schema is invalid.");
+            *error = trMessage("reader.reframework.manifest_identity_invalid");
         return ManifestLoadState::Invalid;
     }
 
@@ -262,7 +285,7 @@ ManifestLoadState loadManifest(const QString &root, ManifestData *manifest, QStr
     for (const QJsonValue &entryValue : entries) {
         if (!entryValue.isObject()) {
             if (error)
-                *error = QStringLiteral("Install manifest contains a non-object ownership entry.");
+                *error = trMessage("reader.reframework.manifest_entry_not_object");
             return ManifestLoadState::Invalid;
         }
         const QJsonObject entry = entryValue.toObject();
@@ -270,13 +293,13 @@ ManifestLoadState loadManifest(const QString &root, ManifestData *manifest, QStr
         const QString sha = entry.value(QStringLiteral("sha256")).toString();
         if (!jsonHasExactKeys(entry, entryKeys) || !isSafeOwnedPath(relativePath)) {
             if (error)
-                *error = QStringLiteral("Install manifest contains an unsafe or unowned path: %1")
+                *error = trMessage("reader.reframework.manifest_unsafe_path")
                              .arg(relativePath);
             return ManifestLoadState::Invalid;
         }
         if (!isLowerHexSha256(sha) || seen.contains(relativePath)) {
             if (error)
-                *error = QStringLiteral("Install manifest contains a duplicate path or invalid SHA-256.");
+                *error = trMessage("reader.reframework.manifest_duplicate_or_bad_hash");
             return ManifestLoadState::Invalid;
         }
         seen.insert(relativePath);
@@ -285,7 +308,7 @@ ManifestLoadState loadManifest(const QString &root, ManifestData *manifest, QStr
 
     if (!ownershipShapeIsValid(owned)) {
         if (error)
-            *error = QStringLiteral("Install manifest ownership set is incomplete or invalid.");
+            *error = trMessage("reader.reframework.manifest_ownership_incomplete");
         return ManifestLoadState::Invalid;
     }
 
@@ -321,7 +344,7 @@ bool ensureParentDirectory(const QString &path, QString *error)
     if (QDir().mkpath(parent))
         return true;
     if (error)
-        *error = QStringLiteral("Cannot create destination directory: %1").arg(parent);
+        *error = trMessage("reader.reframework.destination_mkdir_failed").arg(parent);
     return false;
 }
 
@@ -334,20 +357,20 @@ bool writeBytesAtomically(const QString &target, const QByteArray &bytes, QStrin
     output.setDirectWriteFallback(false);
     if (!output.open(QIODevice::WriteOnly)) {
         if (error)
-            *error = QStringLiteral("Cannot open atomic destination %1: %2")
+            *error = trMessage("reader.reframework.destination_open_failed")
                          .arg(target, output.errorString());
         return false;
     }
     if (output.write(bytes) != bytes.size()) {
         if (error)
-            *error = QStringLiteral("Cannot write atomic destination %1: %2")
+            *error = trMessage("reader.reframework.destination_write_failed")
                          .arg(target, output.errorString());
         output.cancelWriting();
         return false;
     }
     if (!output.commit()) {
         if (error)
-            *error = QStringLiteral("Cannot commit atomic destination %1: %2")
+            *error = trMessage("reader.reframework.destination_commit_failed")
                          .arg(target, output.errorString());
         return false;
     }
@@ -359,7 +382,8 @@ bool copyFileAtomically(const QString &source, const QString &target, QString *e
     QFile input(source);
     if (!input.open(QIODevice::ReadOnly)) {
         if (error)
-            *error = QStringLiteral("Cannot open staging file %1: %2").arg(source, input.errorString());
+            *error = trMessage("reader.reframework.staging_open_failed")
+                         .arg(source, input.errorString());
         return false;
     }
     if (!ensureParentDirectory(target, error))
@@ -369,7 +393,7 @@ bool copyFileAtomically(const QString &source, const QString &target, QString *e
     output.setDirectWriteFallback(false);
     if (!output.open(QIODevice::WriteOnly)) {
         if (error)
-            *error = QStringLiteral("Cannot open atomic destination %1: %2")
+            *error = trMessage("reader.reframework.destination_open_failed")
                          .arg(target, output.errorString());
         return false;
     }
@@ -380,7 +404,7 @@ bool copyFileAtomically(const QString &source, const QString &target, QString *e
         const qint64 count = input.read(buffer.data(), buffer.size());
         if (count < 0) {
             if (error)
-                *error = QStringLiteral("Cannot read staging file %1: %2")
+                *error = trMessage("reader.reframework.staging_read_failed")
                              .arg(source, input.errorString());
             output.cancelWriting();
             return false;
@@ -389,7 +413,7 @@ bool copyFileAtomically(const QString &source, const QString &target, QString *e
             break;
         if (output.write(buffer.constData(), count) != count) {
             if (error)
-                *error = QStringLiteral("Cannot write atomic destination %1: %2")
+                *error = trMessage("reader.reframework.destination_write_failed")
                              .arg(target, output.errorString());
             output.cancelWriting();
             return false;
@@ -398,7 +422,7 @@ bool copyFileAtomically(const QString &source, const QString &target, QString *e
 
     if (!output.commit()) {
         if (error)
-            *error = QStringLiteral("Cannot commit atomic destination %1: %2")
+            *error = trMessage("reader.reframework.destination_commit_failed")
                          .arg(target, output.errorString());
         return false;
     }
@@ -416,41 +440,41 @@ QString coreStateText(RiseReFrameworkManager::CoreState state)
 {
     switch (state) {
     case RiseReFrameworkManager::CoreState::Absent:
-        return QStringLiteral("core absent");
+        return trMessage("reader.reframework.core_absent");
     case RiseReFrameworkManager::CoreState::External:
-        return QStringLiteral("core external");
+        return trMessage("reader.reframework.core_external");
     case RiseReFrameworkManager::CoreState::Managed:
-        return QStringLiteral("core managed");
+        return trMessage("reader.reframework.core_managed");
     case RiseReFrameworkManager::CoreState::Conflict:
-        return QStringLiteral("core conflict");
+        return trMessage("reader.reframework.core_conflict");
     }
-    return QStringLiteral("core unknown");
+    return trMessage("reader.reframework.core_unknown");
 }
 
 QString luaStateText(RiseReFrameworkManager::LuaState state)
 {
     switch (state) {
     case RiseReFrameworkManager::LuaState::Missing:
-        return QStringLiteral("Lua missing");
+        return trMessage("reader.reframework.lua_missing");
     case RiseReFrameworkManager::LuaState::Current:
-        return QStringLiteral("Lua current");
+        return trMessage("reader.reframework.lua_current");
     case RiseReFrameworkManager::LuaState::Modified:
-        return QStringLiteral("Lua modified");
+        return trMessage("reader.reframework.lua_modified");
     }
-    return QStringLiteral("Lua unknown");
+    return trMessage("reader.reframework.lua_unknown");
 }
 
 QString manifestStateText(RiseReFrameworkManager::ManifestState state)
 {
     switch (state) {
     case RiseReFrameworkManager::ManifestState::Missing:
-        return QStringLiteral("manifest missing");
+        return trMessage("reader.reframework.manifest_missing");
     case RiseReFrameworkManager::ManifestState::Valid:
-        return QStringLiteral("manifest valid");
+        return trMessage("reader.reframework.manifest_valid");
     case RiseReFrameworkManager::ManifestState::Invalid:
-        return QStringLiteral("manifest invalid");
+        return trMessage("reader.reframework.manifest_invalid");
     }
-    return QStringLiteral("manifest unknown");
+    return trMessage("reader.reframework.manifest_unknown");
 }
 
 const OwnedFile *findOwned(const ManifestData &manifest, const QString &relative)
@@ -547,14 +571,14 @@ RiseReFrameworkManager::Status RiseReFrameworkManager::status(const QString &gam
 
     QStringList details;
     details.append(status.gameDirValid
-                       ? QStringLiteral("MonsterHunterRise.exe found")
-                       : QStringLiteral("MonsterHunterRise.exe missing"));
+                       ? trMessage("reader.reframework.game_exe_found")
+                       : trMessage("reader.reframework.game_exe_missing"));
     details.append(coreStateText(status.core));
     details.append(luaStateText(status.lua));
     details.append(manifestStateText(status.manifest));
     if (!manifestError.isEmpty())
         details.append(manifestError);
-    status.detail = details.join(QStringLiteral("; "));
+    status.detail = details.join(detailPinSeparator());
     return status;
 }
 
@@ -569,7 +593,7 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::installFromStaging(
         return result;
     }
     if (!QFileInfo(joinedPath(root, QString::fromLatin1(kGameExe))).isFile()) {
-        result.detail = QStringLiteral("Refusing install: MonsterHunterRise.exe is missing.");
+        result.detail = trMessage("reader.reframework.install_refused_exe_missing");
         return result;
     }
 
@@ -578,8 +602,9 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::installFromStaging(
     const ManifestLoadState manifestState = loadManifest(root, &existingManifest, &manifestError);
     if (manifestState != ManifestLoadState::Missing) {
         result.detail = manifestState == ManifestLoadState::Valid
-            ? QStringLiteral("Refusing install: a managed installation already exists.")
-            : QStringLiteral("Refusing install: existing manifest is invalid: %1").arg(manifestError);
+            ? trMessage("reader.reframework.install_refused_managed_exists")
+            : trMessage("reader.reframework.install_refused_manifest_invalid")
+                      .arg(manifestError);
         return result;
     }
 
@@ -596,14 +621,14 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::installFromStaging(
         ? QByteArray{}
         : fileSha256(sourceLua, &luaHashOk, &error);
     if (!sourceLuaInfo.isFile() || sourceLuaInfo.isSymLink() || !luaHashOk) {
-        result.detail = QStringLiteral("Packaged overlay Lua is unavailable: %1").arg(error);
+        result.detail = trMessage("reader.reframework.packaged_lua_unavailable").arg(error);
         return result;
     }
 
     const QString stagingRoot = absoluteRoot(stagingDir);
     const QFileInfo stagingInfo(stagingRoot);
     if (stagingRoot.isEmpty() || !stagingInfo.exists() || !stagingInfo.isDir()) {
-        result.detail = QStringLiteral("Extracted staging directory is unavailable.");
+        result.detail = trMessage("reader.reframework.staging_dir_unavailable");
         return result;
     }
 
@@ -618,11 +643,13 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::installFromStaging(
             const QString target = joinedPath(root, relative);
             const QFileInfo sourceInfo(source);
             if (!sourceInfo.exists() || !sourceInfo.isFile() || sourceInfo.isSymLink()) {
-                result.detail = QStringLiteral("Staging payload is missing regular file: %1").arg(relative);
+                result.detail =
+                    trMessage("reader.reframework.staging_missing_file").arg(relative);
                 return result;
             }
             if (pathEntryExists(target)) {
-                result.detail = QStringLiteral("Refusing to overwrite existing core file: %1").arg(relative);
+                result.detail =
+                    trMessage("reader.reframework.install_refused_core_exists").arg(relative);
                 return result;
             }
             if (hasSymlinkComponent(root, relative, false, &error)) {
@@ -650,7 +677,7 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::installFromStaging(
             ? QByteArray{}
             : fileSha256(targetLua, &targetHashOk, &error);
         if (!targetHashOk || targetHash != luaHash) {
-            result.detail = QStringLiteral("Refusing to overwrite modified overlay Lua.");
+            result.detail = trMessage("reader.reframework.install_refused_lua_modified");
             return result;
         }
         luaAlreadyCurrent = true;
@@ -677,9 +704,8 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::installFromStaging(
         if (!copyFileAtomically(copy.first, copy.second, &error)) {
             const bool rolledBack = rollback();
             result.changed.clear();
-            result.detail = QStringLiteral("Install failed: %1; rollback %2.")
-                                .arg(error, rolledBack ? QStringLiteral("completed")
-                                                       : QStringLiteral("incomplete"));
+            result.detail = trMessage("reader.reframework.install_failed_rollback")
+                                .arg(error, rollbackStateText(rolledBack));
             return result;
         }
         created.append(copy.second);
@@ -693,9 +719,8 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::installFromStaging(
         if (!hashOk || installedHash != file.sha256) {
             const bool rolledBack = rollback();
             result.changed.clear();
-            result.detail = QStringLiteral("Install verification failed for %1; rollback %2.")
-                                .arg(file.path, rolledBack ? QStringLiteral("completed")
-                                                          : QStringLiteral("incomplete"));
+            result.detail = trMessage("reader.reframework.install_verification_failed")
+                                .arg(file.path, rollbackStateText(rolledBack));
             return result;
         }
     }
@@ -704,16 +729,15 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::installFromStaging(
     if (!writeBytesAtomically(manifestPath, serializeManifest(owned), &error)) {
         const bool rolledBack = rollback();
         result.changed.clear();
-        result.detail = QStringLiteral("Install failed while writing manifest: %1; rollback %2.")
-                            .arg(error, rolledBack ? QStringLiteral("completed")
-                                                   : QStringLiteral("incomplete"));
+        result.detail = trMessage("reader.reframework.install_manifest_write_failed")
+                            .arg(error, rollbackStateText(rolledBack));
         return result;
     }
     result.changed.append(manifestRelative);
     result.ok = true;
     result.detail = externalCore
-        ? QStringLiteral("Installed overlay Lua without modifying the external REFramework core.")
-        : QStringLiteral("Installed managed REFramework core and overlay Lua.");
+        ? trMessage("reader.reframework.install_lua_only_external_core")
+        : trMessage("reader.reframework.install_managed_core_and_lua");
     return result;
 }
 
@@ -728,7 +752,7 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::repairManagedLua(
         return result;
     }
     if (!QFileInfo(joinedPath(root, QString::fromLatin1(kGameExe))).isFile()) {
-        result.detail = QStringLiteral("Refusing repair: MonsterHunterRise.exe is missing.");
+        result.detail = trMessage("reader.reframework.repair_refused_exe_missing");
         return result;
     }
 
@@ -737,9 +761,9 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::repairManagedLua(
     const ManifestLoadState manifestState = loadManifest(root, &manifest, &manifestError);
     if (manifestState != ManifestLoadState::Valid) {
         result.detail = manifestState == ManifestLoadState::Missing
-            ? QStringLiteral("Refusing repair: managed-core manifest is missing.")
-            : QStringLiteral("Refusing repair: existing manifest is invalid: %1")
-                  .arg(manifestError);
+            ? trMessage("reader.reframework.repair_refused_manifest_missing")
+            : trMessage("reader.reframework.repair_refused_manifest_invalid")
+                      .arg(manifestError);
         return result;
     }
 
@@ -755,16 +779,16 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::repairManagedLua(
         if (!owned || hasSymlinkComponent(root, relative, false, &symlinkError)
             || targetInfo.isSymLink() || !targetInfo.isFile()) {
             result.detail = owned
-                ? QStringLiteral("Refusing repair: managed core file is missing or unsafe: %1")
-                      .arg(relative)
-                : QStringLiteral("Refusing repair: manifest does not own the complete core.");
+                ? trMessage("reader.reframework.repair_refused_core_missing_unsafe")
+                          .arg(relative)
+                : trMessage("reader.reframework.repair_refused_manifest_not_owning_core");
             return result;
         }
         bool hashOk = false;
         const QByteArray currentHash = fileSha256(target, &hashOk, &error);
         if (!hashOk || currentHash != owned->sha256) {
-            result.detail = QStringLiteral("Refusing repair: managed core file was modified: %1")
-                                .arg(relative);
+            result.detail =
+                trMessage("reader.reframework.repair_refused_core_modified").arg(relative);
             return result;
         }
     }
@@ -776,7 +800,7 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::repairManagedLua(
         ? QByteArray{}
         : fileSha256(sourceLua, &sourceHashOk, &error);
     if (!sourceInfo.isFile() || sourceInfo.isSymLink() || !sourceHashOk) {
-        result.detail = QStringLiteral("Packaged overlay Lua is unavailable: %1").arg(error);
+        result.detail = trMessage("reader.reframework.packaged_lua_unavailable").arg(error);
         return result;
     }
 
@@ -798,24 +822,24 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::repairManagedLua(
             ? QByteArray{}
             : fileSha256(targetLua, &targetHashOk, &error);
         if (!targetInfo.isFile() || targetInfo.isSymLink() || !targetHashOk) {
-            result.detail = QStringLiteral("Refusing repair: overlay Lua is not a safe regular file.");
+            result.detail = trMessage("reader.reframework.repair_refused_lua_unsafe");
             return result;
         }
         if (targetHash != sourceHash) {
             // Package upgrade: replace only when the on-disk Lua still equals
             // the old ownership hash. Any user edit remains protected.
             if (!ownedLua || targetHash != ownedLua->sha256) {
-                result.detail = QStringLiteral("Refusing repair: overlay Lua was modified outside the installer.");
+                result.detail = trMessage("reader.reframework.repair_refused_lua_modified");
                 return result;
             }
             QFile oldLua(targetLua);
             if (!oldLua.open(QIODevice::ReadOnly)) {
-                result.detail = QStringLiteral("Cannot preserve the old managed Lua for rollback.");
+                result.detail = trMessage("reader.reframework.rollback_preserve_failed");
                 return result;
             }
             previousLua = oldLua.readAll();
             if (!copyFileAtomically(sourceLua, targetLua, &error)) {
-                result.detail = QStringLiteral("Lua upgrade failed: %1").arg(error);
+                result.detail = trMessage("reader.reframework.lua_upgrade_failed").arg(error);
                 return result;
             }
             luaChanged = true;
@@ -823,7 +847,7 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::repairManagedLua(
         }
     } else {
         if (!copyFileAtomically(sourceLua, targetLua, &error)) {
-            result.detail = QStringLiteral("Lua repair failed: %1").arg(error);
+            result.detail = trMessage("reader.reframework.lua_repair_failed").arg(error);
             return result;
         }
         luaChanged = true;
@@ -853,9 +877,8 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::repairManagedLua(
                     : QFile::remove(targetLua);
             }
             result.changed.clear();
-            result.detail = QStringLiteral("Lua repair could not update the manifest: %1; rollback %2.")
-                                .arg(error, rolledBack ? QStringLiteral("completed")
-                                                       : QStringLiteral("incomplete"));
+            result.detail = trMessage("reader.reframework.lua_repair_manifest_failed")
+                                .arg(error, rollbackStateText(rolledBack));
             return result;
         }
         result.changed.append(QString::fromLatin1(kManifestRelative));
@@ -863,13 +886,13 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::repairManagedLua(
 
     result.ok = true;
     if (luaChanged && targetExisted) {
-        result.detail = QStringLiteral("Upgraded the unchanged managed overlay Lua and ownership hash.");
+        result.detail = trMessage("reader.reframework.lua_upgraded_unchanged");
     } else if (luaChanged) {
-        result.detail = QStringLiteral("Restored the managed overlay Lua and its ownership record.");
+        result.detail = trMessage("reader.reframework.lua_restored");
     } else if (manifestNeedsUpdate) {
-        result.detail = QStringLiteral("Updated ownership of the current overlay Lua.");
+        result.detail = trMessage("reader.reframework.lua_ownership_updated");
     } else {
-        result.detail = QStringLiteral("Managed overlay Lua is already current.");
+        result.detail = trMessage("reader.reframework.lua_already_current");
     }
     return result;
 }
@@ -904,7 +927,7 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::removeLua(const QString &
         const bool modified = !sourceOk || !targetOk || sourceHash != targetHash;
         if (modified && !force) {
             result.preserved.append(relative);
-            result.detail = QStringLiteral("Overlay Lua differs from the packaged source; use force to remove it.");
+            result.detail = trMessage("reader.reframework.lua_remove_refused_differs");
             return result;
         }
     }
@@ -928,11 +951,12 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::removeLua(const QString &
     if (manifestOwnedLua) {
         if (remaining.isEmpty()) {
             if (!QFile::remove(manifestPath)) {
-                result.detail = QStringLiteral("Cannot remove Lua ownership manifest.");
+                result.detail = trMessage("reader.reframework.lua_manifest_remove_failed");
                 return result;
             }
         } else if (!writeBytesAtomically(manifestPath, serializeManifest(remaining), &error)) {
-            result.detail = QStringLiteral("Cannot update Lua ownership manifest: %1").arg(error);
+            result.detail =
+                trMessage("reader.reframework.lua_manifest_update_failed").arg(error);
             return result;
         }
         manifestChanged = true;
@@ -940,10 +964,10 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::removeLua(const QString &
 
     if (targetExists && !QFile::remove(target)) {
         if (manifestChanged && !writeBytesAtomically(manifestPath, manifest.originalBytes, &error)) {
-            result.detail = QStringLiteral("Cannot remove overlay Lua and could not restore its manifest: %1")
-                                .arg(error);
+            result.detail =
+                trMessage("reader.reframework.lua_remove_unrestorable").arg(error);
         } else {
-            result.detail = QStringLiteral("Cannot remove overlay Lua.");
+            result.detail = trMessage("reader.reframework.lua_remove_failed");
         }
         return result;
     }
@@ -955,8 +979,8 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::removeLua(const QString &
     removeEmptyManagedDirectories(root);
     result.ok = true;
     result.detail = targetExists
-        ? QStringLiteral("Removed overlay Lua.")
-        : QStringLiteral("Overlay Lua was already absent.");
+        ? trMessage("reader.reframework.lua_removed")
+        : trMessage("reader.reframework.lua_already_absent");
     return result;
 }
 
@@ -975,8 +999,8 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::removeManaged(const QStri
     const ManifestLoadState state = loadManifest(root, &manifest, &manifestError);
     if (state != ManifestLoadState::Valid) {
         result.detail = state == ManifestLoadState::Missing
-            ? QStringLiteral("Refusing managed removal: install manifest is missing.")
-            : QStringLiteral("Refusing managed removal: %1").arg(manifestError);
+            ? trMessage("reader.reframework.remove_refused_manifest_missing")
+            : trMessage("reader.reframework.remove_refused_detail").arg(manifestError);
         return result;
     }
 
@@ -1010,14 +1034,14 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::removeManaged(const QStri
     }
 
     if (!deletionFailures.isEmpty()) {
-        result.detail = QStringLiteral("Some owned files could not be removed; manifest retained: %1")
-                            .arg(deletionFailures.join(QStringLiteral(", ")));
+        result.detail = trMessage("reader.reframework.remove_partially_failed")
+                            .arg(deletionFailures.join(trMessage("reader.reframework.list_separator")));
         return result;
     }
 
     const QString manifestRelative = QString::fromLatin1(kManifestRelative);
     if (!QFile::remove(joinedPath(root, manifestRelative))) {
-        result.detail = QStringLiteral("Owned files were processed but the install manifest could not be removed.");
+        result.detail = trMessage("reader.reframework.remove_manifest_left");
         return result;
     }
     result.changed.append(manifestRelative);
@@ -1025,9 +1049,9 @@ RiseReFrameworkManager::Result RiseReFrameworkManager::removeManaged(const QStri
 
     result.ok = true;
     result.detail = result.preserved.isEmpty()
-        ? QStringLiteral("Removed all unchanged managed files.")
-        : QStringLiteral("Removed unchanged managed files; preserved modified files: %1")
-              .arg(result.preserved.join(QStringLiteral(", ")));
+        ? trMessage("reader.reframework.remove_all_unchanged")
+        : trMessage("reader.reframework.remove_unchanged_preserved")
+              .arg(result.preserved.join(trMessage("reader.reframework.list_separator")));
     return result;
 }
 
@@ -1036,12 +1060,12 @@ bool RiseReFrameworkManager::verifyArchive(const QString &archivePath, QString *
     const QFileInfo info(archivePath);
     if (!info.exists() || !info.isFile()) {
         if (detail)
-            *detail = QStringLiteral("Archive does not exist or is not a regular file.");
+            *detail = trMessage("reader.reframework.archive_missing");
         return false;
     }
     if (info.size() != kExpectedArchiveSize) {
         if (detail) {
-            *detail = QStringLiteral("Archive size mismatch: expected %1 bytes, got %2 bytes.")
+            *detail = trMessage("reader.reframework.archive_size_mismatch")
                           .arg(kExpectedArchiveSize)
                           .arg(info.size());
         }
@@ -1058,14 +1082,14 @@ bool RiseReFrameworkManager::verifyArchive(const QString &archivePath, QString *
     }
     if (hash != QByteArray(kArchiveSha256)) {
         if (detail) {
-            *detail = QStringLiteral("Archive SHA-256 mismatch: expected %1, got %2.")
+            *detail = trMessage("reader.reframework.archive_sha_mismatch")
                           .arg(QString::fromLatin1(kArchiveSha256), QString::fromLatin1(hash));
         }
         return false;
     }
 
     if (detail)
-        *detail = QStringLiteral("Archive size and SHA-256 match REFramework %1.")
+        *detail = trMessage("reader.reframework.archive_verified")
                       .arg(QString::fromLatin1(kTag));
     return true;
 }

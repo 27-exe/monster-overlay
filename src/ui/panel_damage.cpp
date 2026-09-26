@@ -1082,9 +1082,9 @@ void DamagePanel::setupDemoData()
     // locale for the process lifetime — see DamagePanel::retranslateUi).
     const struct { QString name; QString ellipsisName; int weaponId; int masterRank; int slot; } kDemoParty[kDemoPlayers] = {
         {QStringLiteral("A27exe"),        QStringLiteral("A27exe"),  0,  247, 0},
-        {mh::tr("ui.demo.party.a"), mh::tr("ui.demo.party.a"),      1,  500, 1},
-        {mh::tr("ui.demo.party.b"), mh::tr("ui.demo.party.b_short"), 12, 300, 2},
-        {mh::tr("ui.demo.party.c"), mh::tr("ui.demo.party.c"),      4,  250, 3},
+        {mh::tr("data.demo.party.a"), mh::tr("data.demo.party.a"),      1,  500, 1},
+        {mh::tr("data.demo.party.b"), mh::tr("data.demo.party.b_short"), 12, 300, 2},
+        {mh::tr("data.demo.party.c"), mh::tr("data.demo.party.c"),      4,  250, 3},
     };
     // MHW realistic: 总伤害 ≤999,999 (6 位+逗号), DPS ≤999.
     const int kFinalDmg[kDemoPlayers] = {184220, 96240, 71030, 40510};

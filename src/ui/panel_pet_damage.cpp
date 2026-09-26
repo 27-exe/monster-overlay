@@ -334,15 +334,15 @@ void PetDamagePanel::setupDemoData()
                true, 0, 0, 30820);
     appendDemo(QStringLiteral("demo-pet-owner-1"),
                mhw::StringTable::instance().tr(
-                   QStringLiteral("ui.demo.party.a")),
+                   QStringLiteral("data.demo.party.a")),
                false, 1, 1, 7210);
     appendDemo(QStringLiteral("demo-pet-owner-2"),
                mhw::StringTable::instance().tr(
-                   QStringLiteral("ui.demo.party.b_short")),
+                   QStringLiteral("data.demo.party.b_short")),
                false, 2, 2, 4960);
     appendDemo(QStringLiteral("demo-pet-owner-3"),
                mhw::StringTable::instance().tr(
-                   QStringLiteral("ui.demo.party.c")),
+                   QStringLiteral("data.demo.party.c")),
                false, 3, 3, 3350);
 
     rebuildRows();

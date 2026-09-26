@@ -1,77 +1,79 @@
 {
   "_meta": "数据名与演示数据：mantle.*（衣装名）/ abnormality.*（异常别名）/ ui.demo.*（console 舞台预览种子）。纯 id→string；占位符只在 ui.demo.* 出现，router 侧会 tr() 后 .arg()。",
-  "ui": {
+  "data": {
+    "mantle": {
+      "id": {
+        "0": "隐匿",
+        "1": "转身",
+        "10": "龙耐",
+        "11": "净化",
+        "12": "翔虫",
+        "13": "回避",
+        "14": "免疫",
+        "15": "调和",
+        "16": "耐异常",
+        "17": "达人",
+        "18": "强盗",
+        "19": "刺客",
+        "2": "生命",
+        "3": "不动",
+        "4": "挑拨",
+        "5": "耐属",
+        "6": "火耐",
+        "7": "水耐",
+        "8": "冰耐",
+        "9": "雷耐",
+        "default": "衣装"
+      }
+    },
     "demo": {
-      "status": "示例 Demo",
-      "player_name": "苍蓝星",
-      "monster_name": "火龙",
-      "debuff": {
-        "poison": "毒",
-        "blast": "爆破",
-        "paralysis": "麻",
-        "sleep": "眠",
-        "defense_down": "防御DOWN"
-      },
-      "buff": {
-        "attack_up": "攻击强化",
-        "demon_drug": "鬼人药",
+      "abn": {
         "armor_skin": "硬化药",
-        "dash_juice": "急奔饮料"
+        "blast": "爆炸异常",
+        "bleed": "裂伤",
+        "butterflame": "炎火蝶",
+        "demon_drug": "鬼人药",
+        "frenzy": "狂龙症（增长中）",
+        "might_seed": "怪力种子",
+        "poison": "中毒",
+        "spiribird_call": "提供"
       },
       "ail": {
         "paralysis": "麻痹",
-        "shock_trap": "麻痹陷阱",
         "pitfall": "落穴",
-        "poison": "毒"
+        "poison": "毒",
+        "shock_trap": "麻痹陷阱"
       },
+      "buff": {
+        "armor_skin": "硬化药",
+        "attack_up": "攻击强化",
+        "dash_juice": "急奔饮料",
+        "demon_drug": "鬼人药"
+      },
+      "debuff": {
+        "blast": "爆破",
+        "defense_down": "防御DOWN",
+        "paralysis": "麻",
+        "poison": "毒",
+        "sleep": "眠"
+      },
+      "monster_name": "火龙",
       "part": {
         "head": "头",
-        "l_wing": "左翼",
-        "r_wing": "右翼",
-        "tail": "尾巴",
         "l_leg": "左脚",
-        "r_leg": "右脚"
-      },
-      "abn": {
-        "poison": "中毒",
-        "blast": "爆炸异常",
-        "frenzy": "狂龙症（增长中）",
-        "bleed": "裂伤",
-        "demon_drug": "鬼人药",
-        "might_seed": "怪力种子",
-        "spiribird_call": "提供",
-        "butterflame": "炎火蝶",
-        "armor_skin": "硬化药"
+        "l_wing": "左翼",
+        "r_leg": "右脚",
+        "r_wing": "右翼",
+        "tail": "尾巴"
       },
       "party": {
         "a": "队友A",
         "b": "队友B_长昵称测试",
         "b_short": "队友B…",
         "c": "队友C"
-      }
+      },
+      "player_name": "苍蓝星",
+      "status": "示例 Demo"
     }
-  },
-  "mantle": {
-    "0": "隐匿",
-    "1": "转身",
-    "2": "生命",
-    "3": "不动",
-    "4": "挑拨",
-    "5": "耐属",
-    "6": "火耐",
-    "7": "水耐",
-    "8": "冰耐",
-    "9": "雷耐",
-    "10": "龙耐",
-    "11": "净化",
-    "12": "翔虫",
-    "13": "回避",
-    "14": "免疫",
-    "15": "调和",
-    "16": "耐异常",
-    "17": "达人",
-    "18": "强盗",
-    "19": "刺客",
-    "default": "衣装"
   }
 }

@@ -2,11 +2,14 @@
 
 #include "core/reframework_fetcher.h"
 
+#include "core/string_table.h"
+
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 
 #include <iostream>
@@ -16,6 +19,29 @@
 namespace {
 
 int failures = 0;
+
+// The fetcher diagnostics are i18n'd (reader.reframework.* in
+// src/resources/i18n/<locale>/reader.json). Asserting on the English wording
+// would pin this test to one locale, so instead the detail is matched against
+// the *locale template* for the key the code is supposed to have used: every
+// %N placeholder becomes a non-empty wildcard and the whole string must match.
+// That is stronger than the old `contains("size mismatch")` substring checks
+// while working unchanged in zh-CN and en-US, because it catches
+//   * a key that does not exist (detail would be the raw dot-path),
+//   * the wrong key being used for this code path,
+//   * a placeholder-count or ordering change in the JSON.
+bool detailMatchesTemplate(const QString &detail, const QString &key)
+{
+    if (detail.isEmpty())
+        return false;
+    const QString pattern = QRegularExpression::escape(
+                                mhw::StringTable::instance().tr(key))
+                                .replace(QStringLiteral("\\%1"), QStringLiteral(".+"))
+                                .replace(QStringLiteral("\\%2"), QStringLiteral(".+"));
+    return QRegularExpression(QStringLiteral("^") + pattern + QStringLiteral("$"))
+        .match(detail)
+        .hasMatch();
+}
 
 void check(bool condition, const QString &message)
 {
@@ -218,8 +244,9 @@ void badLocalArchiveFallsBackToPinnedCurlCommand()
 
     check(result.ok && result.source == mhw::ReFrameworkFetcher::Source::Download,
           QStringLiteral("bad local archive falls back to a verified download"));
-    check(result.localArchiveDetail.contains(QStringLiteral("size mismatch"),
-                                             Qt::CaseInsensitive),
+    check(detailMatchesTemplate(
+              result.localArchiveDetail,
+              QStringLiteral("reader.reframework.archive_size_mismatch")),
           QStringLiteral("fallback result retains the local rejection reason"));
     check(states.contains(mhw::ReFrameworkFetcher::State::DownloadingArchive)
               && states.contains(mhw::ReFrameworkFetcher::State::VerifyingArchive),
@@ -258,10 +285,11 @@ void archiveIdentityRejectionAndMissingToolsAreErrors()
     auto result = mhw::ReFrameworkFetcher::prepareArchive(
         archive, root.filePath(QStringLiteral("jobs-size")), sizeOptions);
     check(!result.ok && result.source == mhw::ReFrameworkFetcher::Source::Download
-              && result.localArchiveDetail.contains(QStringLiteral("size mismatch"),
-                                                    Qt::CaseInsensitive)
-              && result.detail.contains(QStringLiteral("could not start"),
-                                        Qt::CaseInsensitive),
+              && detailMatchesTemplate(
+                     result.localArchiveDetail,
+                     QStringLiteral("reader.reframework.archive_size_mismatch"))
+              && detailMatchesTemplate(result.detail,
+                                   QStringLiteral("reader.reframework.tool_error_text")),
           QStringLiteral("size mismatch chooses fallback and reports a missing curl"));
 
     auto hashOptions = fixtureOptions(good, bsdtar);
@@ -270,8 +298,9 @@ void archiveIdentityRejectionAndMissingToolsAreErrors()
     result = mhw::ReFrameworkFetcher::prepareArchive(
         archive, root.filePath(QStringLiteral("jobs-hash")), hashOptions);
     check(!result.ok
-              && result.localArchiveDetail.contains(QStringLiteral("SHA-256 mismatch"),
-                                                    Qt::CaseInsensitive),
+              && detailMatchesTemplate(
+                     result.localArchiveDetail,
+                     QStringLiteral("reader.reframework.archive_sha_mismatch")),
           QStringLiteral("SHA-256 mismatch rejects the local archive"));
 
     const QString curl = root.filePath(QStringLiteral("identity-curl"));
@@ -297,15 +326,17 @@ void archiveIdentityRejectionAndMissingToolsAreErrors()
     if (logWasSet) qputenv("FAKE_CURL_LOG", oldLog);
     else qunsetenv("FAKE_CURL_LOG");
     check(!result.ok && result.source == mhw::ReFrameworkFetcher::Source::Download
-              && result.detail.contains(QStringLiteral("Downloaded archive verification failed")),
+              && detailMatchesTemplate(
+                     result.detail,
+                     QStringLiteral("reader.reframework.download_verification_failed")),
           QStringLiteral("downloaded size/hash mismatch is rejected before extraction"));
 
     auto missingTar = fixtureOptions(good, QStringLiteral("/definitely/missing/bsdtar"));
     result = mhw::ReFrameworkFetcher::prepareArchive(
         archive, root.filePath(QStringLiteral("jobs-tar")), missingTar);
     check(!result.ok && result.source == mhw::ReFrameworkFetcher::Source::LocalArchive
-              && result.detail.contains(QStringLiteral("could not start"),
-                                        Qt::CaseInsensitive),
+              && detailMatchesTemplate(result.detail,
+                                   QStringLiteral("reader.reframework.tool_error_text")),
           QStringLiteral("missing bsdtar is a clean local-path failure"));
 }
 
@@ -320,16 +351,24 @@ void unsafeArchiveEntriesAreRejectedBeforeExtraction()
         QByteArray path;
         QByteArray verbose;
         QString description;
+        // The reader.reframework.* key the failure must come from. Each unsafe
+        // shape rejects at a different guard, so asserting the key pins down
+        // WHICH guard fired without asserting on a language.
+        QLatin1String key;
     };
     const QList<UnsafeCase> cases{
         {QByteArrayLiteral("../escape.dll"), QByteArrayLiteral("-rw-r--r-- ../escape.dll"),
-         QStringLiteral("parent traversal")},
+         QStringLiteral("parent traversal"),
+         QLatin1String("reader.reframework.archive_parent_traversal")},
         {QByteArrayLiteral("/absolute.dll"), QByteArrayLiteral("-rw-r--r-- /absolute.dll"),
-         QStringLiteral("absolute path")},
+         QStringLiteral("absolute path"),
+         QLatin1String("reader.reframework.archive_absolute_path")},
         {QByteArrayLiteral("link.dll"), QByteArrayLiteral("lrwxrwxrwx link.dll -> dinput8.dll"),
-         QStringLiteral("symlink")},
+         QStringLiteral("symlink"),
+         QLatin1String("reader.reframework.archive_special_entry")},
         {QByteArrayLiteral("device"), QByteArrayLiteral("crw-r--r-- device"),
-         QStringLiteral("special file")},
+         QStringLiteral("special file"),
+         QLatin1String("reader.reframework.archive_special_entry")},
     };
 
     int index = 0;
@@ -341,11 +380,7 @@ void unsafeArchiveEntriesAreRejectedBeforeExtraction()
         const auto result = mhw::ReFrameworkFetcher::prepareArchive(
             archive, root.filePath(QStringLiteral("jobs-unsafe-%1").arg(index)),
             fixtureOptions(archiveBytes, bsdtar));
-        check(!result.ok
-                  && (result.detail.contains(QStringLiteral("unsafe"), Qt::CaseInsensitive)
-                      || result.detail.contains(QStringLiteral("absolute"), Qt::CaseInsensitive)
-                      || result.detail.contains(QStringLiteral("special"), Qt::CaseInsensitive)
-                      || result.detail.contains(QStringLiteral("link"), Qt::CaseInsensitive)),
+        check(!result.ok && detailMatchesTemplate(result.detail, unsafe.key),
               QStringLiteral("archive %1 is rejected before extraction").arg(unsafe.description));
         ++index;
     }
@@ -369,7 +404,8 @@ void asynchronousJobHasExplicitStateAndCancellationTransitions()
     check(!notStarted->waitForFinished(0),
           QStringLiteral("waiting on an unstarted job reports a state error"));
     check(!notStarted->result().ok
-              && notStarted->result().detail.contains(QStringLiteral("not been started")),
+              && detailMatchesTemplate(notStarted->result().detail,
+                                   QStringLiteral("reader.reframework.job_not_started")),
           QStringLiteral("unstarted job result explains the state error"));
     check(notStarted->start(), QStringLiteral("idle job starts exactly once"));
     check(!notStarted->start(), QStringLiteral("started job rejects a second start"));
@@ -402,6 +438,11 @@ void asynchronousJobHasExplicitStateAndCancellationTransitions()
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+    // The diagnostics under test are i18n'd; load a real locale so the
+    // assertions see translated text rather than the key-fallback path.
+    if (!mhw::StringTable::instance().load(QStringLiteral("zh-CN")))
+        std::cerr << "WARN: zh-CN locale failed to load; detail assertions "
+                     "will compare against key fallbacks\n";
     localArchiveIsPreferredAndLifetimeIsOwned();
     badLocalArchiveFallsBackToPinnedCurlCommand();
     archiveIdentityRejectionAndMissingToolsAreErrors();

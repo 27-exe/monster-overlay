@@ -266,7 +266,7 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
         clearRisePartCaches();
         memory_.detach();
         imageBase_ = 0;
-        snapshot.status = trMessage(QStringLiteral("ui.reader.rise_waiting"));
+        snapshot.status = trMessage(QStringLiteral("reader.rise_waiting"));
         return false;
     }
 
@@ -278,7 +278,7 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
         if (!memory_.attach(*pid, &error)) {
             clearRisePartCaches();
             snapshot.pid = *pid;
-            snapshot.status = trMessage(QStringLiteral("ui.reader.rise_attach_failed"))
+            snapshot.status = trMessage(QStringLiteral("reader.rise_attach_failed"))
                                   .arg(*pid).arg(error);
             return false;
         }
@@ -298,7 +298,7 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
             memory_.detach();
             imageBase_ = 0;
             snapshot.pid = *pid;
-            snapshot.status = trMessage(QStringLiteral("ui.reader.rise_attach_failed"))
+            snapshot.status = trMessage(QStringLiteral("reader.rise_attach_failed"))
                                   .arg(*pid)
                                   .arg(error);
             return false;
@@ -308,7 +308,7 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
     snapshot.attached = true;
     snapshot.pid = *pid;
     snapshot.imageBase = imageBase_;
-    snapshot.status = trMessage(QStringLiteral("ui.reader.rise_connected"))
+    snapshot.status = trMessage(QStringLiteral("reader.rise_connected"))
                           .arg(*pid)
                           .arg(static_cast<qulonglong>(imageBase_), 0, 16);
     return true;
@@ -1418,7 +1418,7 @@ GameSnapshot MhrReader::poll()
     snapshot.isMultiplayer = realPlayerCount > 1;
 
     if (!error.isEmpty() && snapshot.monsters.isEmpty())
-        snapshot.status += trMessage(QStringLiteral("ui.reader.partial_read_failed")).arg(error);
+        snapshot.status += trMessage(QStringLiteral("reader.partial_read_failed")).arg(error);
     return snapshot;
 }
 

@@ -67,7 +67,7 @@ bool AddressMap::load(const QString &path, QString *error)
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         if (error)
-            *error = trMessage("ui.reader.address_table_open_failed").arg(path, file.errorString());
+            *error = trMessage("reader.address_table_open_failed").arg(path, file.errorString());
         return false;
     }
 
@@ -95,7 +95,7 @@ bool AddressMap::load(const QString &path, QString *error)
             const qulonglong value = tokens[2].toULongLong(&ok, 0);
             if (!ok) {
                 if (error)
-                    *error = trMessage("ui.reader.address_table_bad_address").arg(lineNumber);
+                    *error = trMessage("reader.address_table_bad_address").arg(lineNumber);
                 return false;
             }
             addresses_[key] = static_cast<std::uintptr_t>(value);
@@ -107,7 +107,7 @@ bool AddressMap::load(const QString &path, QString *error)
                 const qulonglong value = part.trimmed().toULongLong(&ok, 0);
                 if (!ok) {
                     if (error)
-                        *error = trMessage("ui.reader.address_table_bad_chain").arg(lineNumber);
+                        *error = trMessage("reader.address_table_bad_chain").arg(lineNumber);
                     return false;
                 }
                 values.push_back(static_cast<std::uintptr_t>(value));
@@ -118,7 +118,7 @@ bool AddressMap::load(const QString &path, QString *error)
 
     if (addresses_.empty()) {
         if (error)
-            *error = trMessage("ui.reader.address_table_no_address");
+            *error = trMessage("reader.address_table_no_address");
         return false;
     }
     return true;
@@ -194,7 +194,7 @@ std::uintptr_t ProcessMemory::imageBase(QString *error, const QString &exeName) 
     QFile maps(QStringLiteral("/proc/%1/maps").arg(pid_));
     if (!maps.open(QIODevice::ReadOnly)) {
         if (error)
-            *error = trMessage("ui.reader.maps_read_failed").arg(maps.errorString());
+            *error = trMessage("reader.maps_read_failed").arg(maps.errorString());
         return 0;
     }
 
@@ -224,7 +224,7 @@ std::uintptr_t ProcessMemory::imageBase(QString *error, const QString &exeName) 
     }
 
     if (fallback == 0 && error)
-        *error = trMessage("ui.reader.maps_no_mapping").arg(exeName);
+        *error = trMessage("reader.maps_no_mapping").arg(exeName);
     return fallback;
 }
 
@@ -232,7 +232,7 @@ bool ProcessMemory::readBytes(std::uintptr_t address, void *destination, std::si
 {
     if (!attached() || !isSanePointer(address) || destination == nullptr || size == 0) {
         if (error)
-            *error = trMessage("ui.reader.invalid_read_request")
+            *error = trMessage("reader.invalid_read_request")
                          .arg(static_cast<qulonglong>(address), 0, 16)
                          .arg(size);
         return false;
@@ -253,7 +253,7 @@ bool ProcessMemory::readBytes(std::uintptr_t address, void *destination, std::si
                                  .arg(pid_)
                                  .arg(static_cast<qulonglong>(address), 0, 16);
         if (result > 0)
-            *error = what + trMessage(QStringLiteral("ui.reader.partial_read_failed"))
+            *error = what + trMessage(QStringLiteral("reader.partial_read_failed"))
                                  .arg(static_cast<qlonglong>(result));
         else
             *error = errnoMessage(what, savedErrno);
@@ -388,7 +388,7 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
     if (!pid) {
         memory_.detach();
         imageBase_ = 0;
-        snapshot.status = trMessage("ui.reader.waiting_exe").arg(exeName_);
+        snapshot.status = trMessage("reader.waiting_exe").arg(exeName_);
         return false;
     }
 
@@ -396,7 +396,7 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
         QString error;
         if (!memory_.attach(*pid, &error)) {
             snapshot.pid = *pid;
-            snapshot.status = trMessage("ui.reader.ptrace_denied")
+            snapshot.status = trMessage("reader.ptrace_denied")
                                   .arg(*pid)
                                   .arg(error);
             return false;
@@ -419,7 +419,7 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
             memory_.detach();
             imageBase_ = 0;
             snapshot.pid = *pid;
-            snapshot.status = trMessage(QStringLiteral("ui.reader.ptrace_denied"))
+            snapshot.status = trMessage(QStringLiteral("reader.ptrace_denied"))
                                   .arg(*pid)
                                   .arg(error);
             return false;
@@ -429,7 +429,7 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
     snapshot.attached = true;
     snapshot.pid = *pid;
     snapshot.imageBase = imageBase_;
-    snapshot.status = trMessage("ui.reader.world_connected")
+    snapshot.status = trMessage("reader.world_connected")
                           .arg(*pid)
                           .arg(static_cast<qulonglong>(imageBase_), 0, 16);
     return true;
@@ -516,7 +516,7 @@ GameSnapshot MhwReader::poll()
         previousPlayerCount_ = rawPlayerCount;
     snapshot.isMultiplayer = (snapshot.playerCount > 1);
     if (!error.isEmpty() && snapshot.monsters.isEmpty())
-        snapshot.status += trMessage("ui.reader.partial_read_failed").arg(error);
+        snapshot.status += trMessage("reader.partial_read_failed").arg(error);
     return snapshot;
 }
 

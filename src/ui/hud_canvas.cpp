@@ -106,10 +106,10 @@ QString cornerName(Corner c)
     // i18n: corner labels (console.corner.*) with an ASCII fallback.
     struct Entry { Corner corner; const char *key; const char *ascii; };
     static const Entry kCorners[] = {
-        {Corner::TopLeft,     "console.corner.topLeft",     "TOP LEFT"},
-        {Corner::TopRight,    "console.corner.topRight",    "TOP RIGHT"},
-        {Corner::BottomLeft,  "console.corner.bottomLeft",  "BOTTOM LEFT"},
-        {Corner::BottomRight, "console.corner.bottomRight", "BOTTOM RIGHT"},
+        {Corner::TopLeft,     "console.corner.top_left",     "TOP LEFT"},
+        {Corner::TopRight,    "console.corner.top_right",    "TOP RIGHT"},
+        {Corner::BottomLeft,  "console.corner.bottom_left",  "BOTTOM LEFT"},
+        {Corner::BottomRight, "console.corner.bottom_right", "BOTTOM RIGHT"},
     };
     for (const Entry &e : kCorners) {
         if (e.corner != c)
@@ -475,7 +475,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
 
             p.setFont(QFont(QStringLiteral("Chakra Petch"), 8, QFont::Medium));
             p.setPen(ring);
-            const QString tag = mh::tr(QStringLiteral("console.canvas.selectedTag"))
+            const QString tag = mh::tr(QStringLiteral("console.canvas.selected_tag"))
                 .arg(panelName(i))
                 .arg(int(z * cs.width()));
             const QFontMetrics fm(p.font());
@@ -508,7 +508,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.setPen(QColor(96, 100, 102));
     p.drawText(QRectF(22, height() - 24, width() - 44, 16),
                Qt::AlignRight | Qt::AlignVCenter,
-               mh::tr(QStringLiteral("console.canvas.footerRight"))
+               mh::tr(QStringLiteral("console.canvas.footer_right"))
                    .arg(screenLabel())
                    .arg(QString::number(zoom_, 'f', 1)));
 }

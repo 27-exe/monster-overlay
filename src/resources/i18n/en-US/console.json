@@ -1,29 +1,27 @@
 {
   "_meta": "Console chrome: console.*, replayed by ControlPanel::retranslateUi() across the trPairs_/trTips_/trHooks_ registries.",
   "console": {
-    "windowTitle": "Monster Overlay Control",
     "brand": "MONSTER  OVERLAY",
-    "brandSub": "CONTROL CONSOLE  ·  %1",
     "status": {
       "ready": "●   OVERLAY READY",
-      "plainReady": "READY",
-      "runningSince": "RUNNING pid %1 since %2",
-      "runningPid": "●   RUNNING pid %1",
-      "switching": "●   SWITCHING TO %1…"
+      "switching": "●   SWITCHING TO %1…",
+      "plain_ready": "READY",
+      "running_pid": "●   RUNNING pid %1",
+      "running_since": "RUNNING pid %1 since %2"
     },
     "rail": {
-      "hideStage": "⌄   HIDE STAGE",
-      "showStage": "⌃   SHOW STAGE",
-      "hudObjects": "HUD OBJECTS",
       "workspace": "WORKSPACE",
-      "layoutMode": "◇   LAYOUT MODE",
       "presets": "▱   PRESETS",
-      "startOverlay": "▶   START OVERLAY",
-      "stopOverlay": "■   STOP OVERLAY",
       "hint": "ESC BACK · 1/2/3/4 SELECT",
       "game": "GAME",
       "detected": "DETECTED",
-      "none": "--"
+      "none": "--",
+      "hide_stage": "⌄   HIDE STAGE",
+      "hud_objects": "HUD OBJECTS",
+      "layout_mode": "◇   LAYOUT MODE",
+      "show_stage": "⌃   SHOW STAGE",
+      "start_overlay": "▶   START OVERLAY",
+      "stop_overlay": "■   STOP OVERLAY"
     },
     "game": {
       "world": "WORLD",
@@ -34,31 +32,27 @@
       "monster": "MONSTER",
       "damage": "DAMAGE",
       "pets": "PET DAMAGE",
-      "playerSummary": "Player status",
-      "monsterSummary": "Monster HP",
-      "damageSummary": "DPS / share",
-      "petsSummary": "Pet damage grouped by owner"
+      "damage_summary": "DPS / share",
+      "monster_summary": "Monster HP",
+      "pets_summary": "Pet damage grouped by owner",
+      "player_summary": "Player status"
     },
     "panel": {
       "player": "PLAYER",
       "monster": "MONSTER",
       "damage": "DAMAGE",
       "pets": "PET DAMAGE",
-      "petsRiseOnly": "AVAILABLE IN RISE ONLY",
-      "disabled": "PANEL DISABLED"
+      "disabled": "PANEL DISABLED",
+      "pets_rise_only": "AVAILABLE IN RISE ONLY"
     },
     "inspector": {
-      "selectedObject": "SELECTED OBJECT  /  0%1",
       "content": "CONTENT",
       "appearance": "APPEARANCE",
       "scale": "SCALE",
       "opacity": "OPACITY",
-      "bgAlpha": "BG ALPHA",
       "screen": "SCREEN",
       "primary": "<PRIMARY>",
-      "primaryTag": "  (primary)",
       "reset": "↶  RESET %1",
-      "autoSaved": "AUTO-SAVED  ●",
       "count": "%1 OF %2 SECTIONS VISIBLE",
       "sections": "%1 / %2 SECTIONS",
       "sub": {
@@ -66,7 +60,11 @@
         "monster": "Monster status panel",
         "damage": "Team damage panel",
         "pets": "Owner-grouped pet damage panel"
-      }
+      },
+      "auto_saved": "AUTO-SAVED  ●",
+      "bg_alpha": "BG ALPHA",
+      "primary_tag": "  (primary)",
+      "selected_object": "SELECTED OBJECT  /  0%1"
     },
     "edit": {
       "title": "EDIT MODE",
@@ -76,11 +74,11 @@
     },
     "detect": {
       "none": "● NO GAME RUNNING",
-      "startupNone": "AUTO-DETECT: NONE — start MHW or MHR",
-      "startupRunning": "AUTO-DETECT: %1 RUNNING (pid %2)",
-      "startupSwitch": "AUTO-DETECT: %1 RUNNING — click %1 to switch",
       "badge": "● DETECTED %1 · pid %2 · switch →",
-      "short": "%1 (pid %2)"
+      "short": "%1 (pid %2)",
+      "startup_none": "AUTO-DETECT: NONE — start MHW or MHR",
+      "startup_running": "AUTO-DETECT: %1 RUNNING (pid %2)",
+      "startup_switch": "AUTO-DETECT: %1 RUNNING — click %1 to switch"
     },
     "theme": {
       "light": "☀  LIGHT",
@@ -94,59 +92,59 @@
     "reframework": {
       "title": "RISE · REFRAMEWORK",
       "subtitle": "Rise-only REFramework management",
-      "notFound": "RISE INSTALL NOT FOUND IN STEAM LIBRARIES",
-      "gameFound": "STEAM INSTALL: %1",
-      "gameInvalid": "RISE INSTALL IS NOT VALID: %1",
-      "stateReady": "STATUS: READY",
-      "stateCoreMissing": "STATUS: REFRAMEWORK NOT INSTALLED",
-      "stateLuaMissing": "STATUS: LUA NOT INSTALLED (no damage tracking)",
-      "stateNeedsRepair": "STATUS: INSTALLATION INCOMPLETE — REINSTALL RECOMMENDED",
-      "detailRaw": "(detail: %1)",
-      "gameRunning": "CLOSE THE GAME BEFORE CHANGING REFRAMEWORK FILES",
       "pending": "OPERATION IN PROGRESS…",
       "success": "SUCCESS: %1",
       "failure": "FAILED: %1",
-      "noWorker": "No REFramework worker is connected.",
       "install": "INSTALL REFRAMEWORK + LUA",
-      "removeLua": "REMOVE LUA",
-      "removeReframework": "REMOVE REFRAMEWORK + LUA",
-      "confirmTitle": "Confirm REFramework change",
-      "confirmInstall": "Install REFramework and the overlay Lua into:\n%1?",
-      "confirmRemoveLua": "Remove the managed overlay Lua from:\n%1?",
-      "confirmRemoveReframework": "Remove the overlay Lua and managed REFramework files from:\n%1?",
-      "fixMenuState": "Fix menu popup",
-      "fixMenuStateTip": "Set RememberMenuState to true so REFramework remembers the menu state (no popup on launch). Every other setting is left alone.",
-      "restoreMenuState": "Restore default (popup every launch)",
-      "restoreMenuStateTip": "Set RememberMenuState back to false, restoring REFramework's default behaviour: the menu shows on every launch.",
-      "menuStateHeader": "Menu popup behaviour",
-      "menuStateOverridden": "Current: state is remembered (no popup on launch)",
-      "menuStateDefault": "Current: default behaviour (popup on launch)",
-      "menuStateUnknown": "Current: no config file detected (created on first game run)",
-      "menuStateNoCore": "(REFramework is uninstalled — nothing reads this setting)",
-      "menuStatePaths": "Applied to %1 location(s):",
-      "confirmFixMenuState": "Make REFramework remember the menu state?\nIt will be written to:\n%1\n\nOnly RememberMenuState changes. The first original of each file you modify is kept with a .pre-monster-overlay suffix so you can restore it by hand.",
-      "confirmRestoreMenuState": "Restore REFramework's default behaviour?\nIt will be written to:\n%1\n\nOnly RememberMenuState changes.",
-      "fixMenuStateFailed": "Could not write any config location. Check write permission for the game directory and %APPDATA%."
+      "confirm_fix_menu_state": "Make REFramework remember the menu state?\nIt will be written to:\n%1\n\nOnly RememberMenuState changes. The first original of each file you modify is kept with a .pre-monster-overlay suffix so you can restore it by hand.",
+      "confirm_install": "Install REFramework and the overlay Lua into:\n%1?",
+      "confirm_remove_lua": "Remove the managed overlay Lua from:\n%1?",
+      "confirm_remove_reframework": "Remove the overlay Lua and managed REFramework files from:\n%1?",
+      "confirm_restore_menu_state": "Restore REFramework's default behaviour?\nIt will be written to:\n%1\n\nOnly RememberMenuState changes.",
+      "confirm_title": "Confirm REFramework change",
+      "detail_raw": "(detail: %1)",
+      "fix_menu_state": "Fix menu popup",
+      "fix_menu_state_failed": "Could not write any config location. Check write permission for the game directory and %APPDATA%.",
+      "fix_menu_state_tip": "Set RememberMenuState to true so REFramework remembers the menu state (no popup on launch). Every other setting is left alone.",
+      "game_found": "STEAM INSTALL: %1",
+      "game_invalid": "RISE INSTALL IS NOT VALID: %1",
+      "game_running": "CLOSE THE GAME BEFORE CHANGING REFRAMEWORK FILES",
+      "menu_state_default": "Current: default behaviour (popup on launch)",
+      "menu_state_header": "Menu popup behaviour",
+      "menu_state_no_core": "(REFramework is uninstalled — nothing reads this setting)",
+      "menu_state_overridden": "Current: state is remembered (no popup on launch)",
+      "menu_state_paths": "Applied to %1 location(s):",
+      "menu_state_unknown": "Current: no config file detected (created on first game run)",
+      "no_worker": "No REFramework worker is connected.",
+      "not_found": "RISE INSTALL NOT FOUND IN STEAM LIBRARIES",
+      "remove_lua": "REMOVE LUA",
+      "remove_reframework": "REMOVE REFRAMEWORK + LUA",
+      "restore_menu_state": "Restore default (popup every launch)",
+      "restore_menu_state_tip": "Set RememberMenuState back to false, restoring REFramework's default behaviour: the menu shows on every launch.",
+      "state_core_missing": "STATUS: REFRAMEWORK NOT INSTALLED",
+      "state_lua_missing": "STATUS: LUA NOT INSTALLED (no damage tracking)",
+      "state_needs_repair": "STATUS: INSTALLATION INCOMPLETE — REINSTALL RECOMMENDED",
+      "state_ready": "STATUS: READY"
     },
     "canvas": {
       "header": "LIVE HUD CANVAS  ·  %1 × %2 PHYS  ·  %3 × %4 LOGICAL  ·  DPR ×%5  ·  %6",
       "disabled": "%1 · DISABLED",
-      "selectedTag": "SELECTED · %1  ·  %2 PX",
       "footer": "SELECTED: %1  ·  ANCHORED: %2  ·  ←→↑↓ MOVE",
-      "footerRight": "SCREEN %1  ·  ZOOM ×%2  ·  DEMO DATA",
       "zoom": "ZOOM ×%1",
-      "primary": "primary"
+      "primary": "primary",
+      "footer_right": "SCREEN %1  ·  ZOOM ×%2  ·  DEMO DATA",
+      "selected_tag": "SELECTED · %1  ·  %2 PX"
     },
     "stage": {
-      "safeArea": "SAFE AREA",
-      "grid": "GRID"
+      "grid": "GRID",
+      "safe_area": "SAFE AREA"
     },
     "corner": {
-      "topLeft": "TOP LEFT",
-      "topRight": "TOP RIGHT",
-      "bottomLeft": "BOTTOM LEFT",
-      "bottomRight": "BOTTOM RIGHT",
-      "unknown": "UNKNOWN"
+      "unknown": "UNKNOWN",
+      "bottom_left": "BOTTOM LEFT",
+      "bottom_right": "BOTTOM RIGHT",
+      "top_left": "TOP LEFT",
+      "top_right": "TOP RIGHT"
     },
     "pos": {
       "label": "POSITION: %1  ·  L%2 T%3 R%4 B%5"
@@ -174,12 +172,14 @@
         "rows": "Player rows",
         "share": "Share bars",
         "chart": "Chart",
-        "otherMembers": "Other players / followers"
+        "other_members": "Other players / followers"
       },
       "pets": {
-        "localPets": "Your pet damage",
-        "otherPets": "Other owners' pet damage"
+        "local_pets": "Your pet damage",
+        "other_pets": "Other owners' pet damage"
       }
-    }
+    },
+    "brand_sub": "CONTROL CONSOLE  ·  %1",
+    "window_title": "Monster Overlay Control"
   }
 }

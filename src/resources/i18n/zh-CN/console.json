@@ -1,29 +1,27 @@
 {
   "_meta": "控制台 chrome：console.*，由 ControlPanel::retranslateUi() 重放 trPairs_/trTips_/trHooks_ 注册表。",
   "console": {
-    "windowTitle": "Monster Overlay Control",
     "brand": "MONSTER  OVERLAY",
-    "brandSub": "控制台  ·  %1",
     "status": {
       "ready": "●   悬浮窗就绪",
-      "plainReady": "就绪",
-      "runningSince": "运行中 pid %1 起始 %2",
-      "runningPid": "●   运行中 pid %1",
-      "switching": "●   正在切换到 %1…"
+      "switching": "●   正在切换到 %1…",
+      "plain_ready": "就绪",
+      "running_pid": "●   运行中 pid %1",
+      "running_since": "运行中 pid %1 起始 %2"
     },
     "rail": {
-      "hideStage": "⌄   收起舞台",
-      "showStage": "⌃   展开舞台",
-      "hudObjects": "HUD 对象",
       "workspace": "工作区",
-      "layoutMode": "◇   布局模式",
       "presets": "▱   预设",
-      "startOverlay": "▶   启动悬浮窗",
-      "stopOverlay": "■   停止悬浮窗",
       "hint": "ESC 返回 · 1/2/3/4 选择",
       "game": "游戏",
       "detected": "检测到",
-      "none": "--"
+      "none": "--",
+      "hide_stage": "⌄   收起舞台",
+      "hud_objects": "HUD 对象",
+      "layout_mode": "◇   布局模式",
+      "show_stage": "⌃   展开舞台",
+      "start_overlay": "▶   启动悬浮窗",
+      "stop_overlay": "■   停止悬浮窗"
     },
     "game": {
       "world": "世界",
@@ -34,31 +32,27 @@
       "monster": "怪物",
       "damage": "伤害",
       "pets": "伙伴伤害",
-      "playerSummary": "玩家状态",
-      "monsterSummary": "怪物 HP",
-      "damageSummary": "DPS / 占比",
-      "petsSummary": "按主人汇总的伙伴伤害"
+      "damage_summary": "DPS / 占比",
+      "monster_summary": "怪物 HP",
+      "pets_summary": "按主人汇总的伙伴伤害",
+      "player_summary": "玩家状态"
     },
     "panel": {
       "player": "玩家",
       "monster": "怪物",
       "damage": "伤害",
       "pets": "伙伴伤害",
-      "petsRiseOnly": "仅在 RISE 模式下可用",
-      "disabled": "面板已禁用"
+      "disabled": "面板已禁用",
+      "pets_rise_only": "仅在 RISE 模式下可用"
     },
     "inspector": {
-      "selectedObject": "当前对象  /  0%1",
       "content": "内容",
       "appearance": "外观",
       "scale": "缩放",
       "opacity": "不透明度",
-      "bgAlpha": "背景透明度",
       "screen": "屏幕",
       "primary": "<主屏>",
-      "primaryTag": "  (主屏)",
       "reset": "↶  重置 %1",
-      "autoSaved": "自动保存  ●",
       "count": "可见分区 %1 / %2",
       "sections": "%1 / %2 分区",
       "sub": {
@@ -66,7 +60,11 @@
         "monster": "怪物状态面板",
         "damage": "队伍伤害面板",
         "pets": "按主人汇总的伙伴伤害面板"
-      }
+      },
+      "auto_saved": "自动保存  ●",
+      "bg_alpha": "背景透明度",
+      "primary_tag": "  (主屏)",
+      "selected_object": "当前对象  /  0%1"
     },
     "edit": {
       "title": "编辑模式",
@@ -76,11 +74,11 @@
     },
     "detect": {
       "none": "● 未检测到游戏",
-      "startupNone": "自动检测：无 — 请启动 MHW 或 MHR",
-      "startupRunning": "自动检测：%1 运行中 (pid %2)",
-      "startupSwitch": "自动检测：%1 运行中 — 点击 %1 切换",
       "badge": "● 检测到 %1 · pid %2 · 切换 →",
-      "short": "%1 (pid %2)"
+      "short": "%1 (pid %2)",
+      "startup_none": "自动检测：无 — 请启动 MHW 或 MHR",
+      "startup_running": "自动检测：%1 运行中 (pid %2)",
+      "startup_switch": "自动检测：%1 运行中 — 点击 %1 切换"
     },
     "theme": {
       "light": "☀  浅色",
@@ -94,59 +92,59 @@
     "reframework": {
       "title": "崛起 · REFRAMEWORK",
       "subtitle": "仅用于《怪物猎人：崛起》的 REFramework 管理",
-      "notFound": "STEAM 库中未找到《崛起》安装",
-      "gameFound": "STEAM 安装目录：%1",
-      "gameInvalid": "《崛起》安装目录无效：%1",
-      "stateReady": "状态：已就绪",
-      "stateCoreMissing": "状态：REFramework 未安装",
-      "stateLuaMissing": "状态：Lua 未安装（伤害统计不可用）",
-      "stateNeedsRepair": "状态：安装不完整，建议重新安装",
-      "detailRaw": "（技术细节：%1）",
-      "gameRunning": "请先关闭游戏，再修改 REFRAMEWORK 文件",
       "pending": "操作进行中…",
       "success": "成功：%1",
       "failure": "失败：%1",
-      "noWorker": "没有连接 REFramework 工作器。",
       "install": "安装 REFRAMEWORK + LUA",
-      "removeLua": "卸载 LUA",
-      "removeReframework": "卸载 REFRAMEWORK + LUA",
-      "confirmTitle": "确认 REFramework 操作",
-      "confirmInstall": "要将 REFramework 和悬浮窗 Lua 安装到：\n%1？",
-      "confirmRemoveLua": "要从以下目录移除受管理的悬浮窗 Lua 吗？\n%1？",
-      "confirmRemoveReframework": "要从以下目录移除悬浮窗 Lua 与受管理的 REFramework 文件吗？\n%1？",
-      "fixMenuState": "修复菜单弹窗",
-      "fixMenuStateTip": "把 RememberMenuState 设为 true，让 REFramework 记住菜单开关状态（启动时不再自动弹出）。其余设置原样保留。",
-      "restoreMenuState": "还原默认（每次启动都弹出）",
-      "restoreMenuStateTip": "把 RememberMenuState 设回 false，恢复 REFramework 的默认行为：每次启动都显示菜单。",
-      "menuStateHeader": "菜单弹窗设置",
-      "menuStateOverridden": "当前：已记住状态（启动时不弹菜单）",
-      "menuStateDefault": "当前：默认行为（启动时弹出菜单）",
-      "menuStateUnknown": "当前：未检测到配置文件（首次运行游戏后生成）",
-      "menuStateNoCore": "（REFramework 已卸载，此设置当前无人读取）",
-      "menuStatePaths": "已同步写入 %1 个位置：",
-      "confirmFixMenuState": "要让 REFramework 记住菜单开关状态吗？\n会写入以下位置：\n%1\n\n只会改动 RememberMenuState 一项；每个被修改文件的首份原文件会以 .pre-monster-overlay 后缀保留，可手动还原。",
-      "confirmRestoreMenuState": "要恢复 REFramework 默认行为吗？\n会写入以下位置：\n%1\n\n只会改动 RememberMenuState 一项。",
-      "fixMenuStateFailed": "无法写入任何配置位置，请检查游戏目录与 %APPDATA% 的写权限。"
+      "confirm_fix_menu_state": "要让 REFramework 记住菜单开关状态吗？\n会写入以下位置：\n%1\n\n只会改动 RememberMenuState 一项；每个被修改文件的首份原文件会以 .pre-monster-overlay 后缀保留，可手动还原。",
+      "confirm_install": "要将 REFramework 和悬浮窗 Lua 安装到：\n%1？",
+      "confirm_remove_lua": "要从以下目录移除受管理的悬浮窗 Lua 吗？\n%1？",
+      "confirm_remove_reframework": "要从以下目录移除悬浮窗 Lua 与受管理的 REFramework 文件吗？\n%1？",
+      "confirm_restore_menu_state": "要恢复 REFramework 默认行为吗？\n会写入以下位置：\n%1\n\n只会改动 RememberMenuState 一项。",
+      "confirm_title": "确认 REFramework 操作",
+      "detail_raw": "（技术细节：%1）",
+      "fix_menu_state": "修复菜单弹窗",
+      "fix_menu_state_failed": "无法写入任何配置位置，请检查游戏目录与 %APPDATA% 的写权限。",
+      "fix_menu_state_tip": "把 RememberMenuState 设为 true，让 REFramework 记住菜单开关状态（启动时不再自动弹出）。其余设置原样保留。",
+      "game_found": "STEAM 安装目录：%1",
+      "game_invalid": "《崛起》安装目录无效：%1",
+      "game_running": "请先关闭游戏，再修改 REFRAMEWORK 文件",
+      "menu_state_default": "当前：默认行为（启动时弹出菜单）",
+      "menu_state_header": "菜单弹窗设置",
+      "menu_state_no_core": "（REFramework 已卸载，此设置当前无人读取）",
+      "menu_state_overridden": "当前：已记住状态（启动时不弹菜单）",
+      "menu_state_paths": "已同步写入 %1 个位置：",
+      "menu_state_unknown": "当前：未检测到配置文件（首次运行游戏后生成）",
+      "no_worker": "没有连接 REFramework 工作器。",
+      "not_found": "STEAM 库中未找到《崛起》安装",
+      "remove_lua": "卸载 LUA",
+      "remove_reframework": "卸载 REFRAMEWORK + LUA",
+      "restore_menu_state": "还原默认（每次启动都弹出）",
+      "restore_menu_state_tip": "把 RememberMenuState 设回 false，恢复 REFramework 的默认行为：每次启动都显示菜单。",
+      "state_core_missing": "状态：REFramework 未安装",
+      "state_lua_missing": "状态：Lua 未安装（伤害统计不可用）",
+      "state_needs_repair": "状态：安装不完整，建议重新安装",
+      "state_ready": "状态：已就绪"
     },
     "canvas": {
       "header": "LIVE HUD 画布  ·  %1 × %2 物理  ·  %3 × %4 逻辑  ·  DPR ×%5  ·  %6",
       "disabled": "%1 · 已禁用",
-      "selectedTag": "选中 · %1  ·  %2 PX",
       "footer": "选中: %1  ·  锚点: %2  ·  ←→↑↓ 移动",
-      "footerRight": "屏幕 %1  ·  缩放 ×%2  ·  演示数据",
       "zoom": "缩放 ×%1",
-      "primary": "主屏"
+      "primary": "主屏",
+      "footer_right": "屏幕 %1  ·  缩放 ×%2  ·  演示数据",
+      "selected_tag": "选中 · %1  ·  %2 PX"
     },
     "stage": {
-      "safeArea": "安全区",
-      "grid": "网格"
+      "grid": "网格",
+      "safe_area": "安全区"
     },
     "corner": {
-      "topLeft": "左上",
-      "topRight": "右上",
-      "bottomLeft": "左下",
-      "bottomRight": "右下",
-      "unknown": "未知"
+      "unknown": "未知",
+      "bottom_left": "左下",
+      "bottom_right": "右下",
+      "top_left": "左上",
+      "top_right": "右上"
     },
     "pos": {
       "label": "位置: %1  ·  L%2 T%3 R%4 B%5"
@@ -174,12 +172,14 @@
         "rows": "玩家行",
         "share": "占比条",
         "chart": "折线图",
-        "otherMembers": "其他玩家 / 盟友"
+        "other_members": "其他玩家 / 盟友"
       },
       "pets": {
-        "localPets": "自己的伙伴伤害",
-        "otherPets": "其他成员的伙伴伤害"
+        "local_pets": "自己的伙伴伤害",
+        "other_pets": "其他成员的伙伴伤害"
       }
-    }
+    },
+    "brand_sub": "控制台  ·  %1",
+    "window_title": "Monster Overlay Control"
   }
 }

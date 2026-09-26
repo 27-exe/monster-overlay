@@ -541,7 +541,7 @@ void PlayerPanel::retranslateUi()
     // refreshes it from GameSnapshot.status on every poll instead).
     setWindowTitle(mh::tr("ui.player_title"));
     if (editMode()) {
-        status_ = mh::tr("ui.demo.status");
+        status_ = mh::tr("data.demo.status");
         // Drop the one-shot demo seed so the next paint re-runs
         // setupDemoData() and rebuilds the demo labels (player name,
         // ailment names, wirebug capsules) in the new locale.
@@ -1475,7 +1475,7 @@ void PlayerPanel::setupDemoData()
     // rank, state, category, deaths, maxDeaths, timeLeftSeconds,
     // maxTimerSeconds, elapsedSeconds, active.
     quest_     = {66801, 6, false, 2, 2, 0, 0, 3, 2497.0F, 0.0F, 0.0F, true};
-    status_    = mh::tr("ui.demo.status");
+    status_    = mh::tr("data.demo.status");
     // v0.7.1: game_ now reflects the rail selection (set by switchGame
     // → setGameForDemo). Below we seed Rise-flavoured (wirebug) demo
     // state only when game_ == Rise; World stays with the original
@@ -1501,7 +1501,7 @@ void PlayerPanel::setupDemoData()
     }
     weaponId_ = 0;                // Great Sword
     playerMR_ = 247;
-    playerName_ = mh::tr("ui.demo.player_name");   // demo local player name
+    playerName_ = mh::tr("data.demo.player_name");   // demo local player name
     partyCount_ = 4;                         // demo party size
 
     // v0.7.1: demo state branched by game. World seeds mantles
@@ -1586,78 +1586,78 @@ void PlayerPanel::setupDemoData()
         using Kind = mhw::AbnormalityKind;
         // i18n: labels come from ui.demo.abn.* so the preview follows the
         // active locale; the ids stay the schema-table ids.
-        seedRise("ABN_POISON", mh::tr("ui.demo.abn.poison"),
+        seedRise("ABN_POISON", mh::tr("data.demo.abn.poison"),
                  23.0F, 0.0F, Kind::Debuff, false, false);
-        seedRise("ABN_BLAST", mh::tr("ui.demo.abn.blast"),
+        seedRise("ABN_BLAST", mh::tr("data.demo.abn.blast"),
                  41.0F, 0.0F, Kind::Debuff, false, false);
-        seedRise("ABN_FRENZY_BUILDUP", mh::tr("ui.demo.abn.frenzy"),
+        seedRise("ABN_FRENZY_BUILDUP", mh::tr("data.demo.abn.frenzy"),
                  43.0F, 120.0F, Kind::Debuff, false, true);
-        seedRise("ABN_BLEED", mh::tr("ui.demo.abn.bleed"),
+        seedRise("ABN_BLEED", mh::tr("data.demo.abn.bleed"),
                  12.0F, 0.0F, Kind::Debuff, false, false);
-        seedRise("ABN_DEMONDRUG", mh::tr("ui.demo.abn.demon_drug"),
+        seedRise("ABN_DEMONDRUG", mh::tr("data.demo.abn.demon_drug"),
                  1.0F, 0.0F, Kind::Buff, true, false);
-        seedRise("ABN_MIGHT_SEED", mh::tr("ui.demo.abn.might_seed"),
+        seedRise("ABN_MIGHT_SEED", mh::tr("data.demo.abn.might_seed"),
                  142.0F, 0.0F, Kind::Buff, false, false);
-        seedRise("ABN_SPIRIBIRDS_CALL", mh::tr("ui.demo.abn.spiribird_call"),
+        seedRise("ABN_SPIRIBIRDS_CALL", mh::tr("data.demo.abn.spiribird_call"),
                  58.0F, 60.0F, Kind::Buff, false, false);
-        seedRise("ABN_BUTTERFLAME", mh::tr("ui.demo.abn.butterflame"),
+        seedRise("ABN_BUTTERFLAME", mh::tr("data.demo.abn.butterflame"),
                  95.0F, 0.0F, Kind::Buff, false, false);
-        seedRise("ABN_ARMORSKIN", mh::tr("ui.demo.abn.armor_skin"),
+        seedRise("ABN_ARMORSKIN", mh::tr("data.demo.abn.armor_skin"),
                  1.0F, 0.0F, Kind::Buff, true, false);
     } else {
         {
             PlayerAbnormality d1;
-            d1.offset = 0; d1.name = mh::tr("ui.demo.debuff.poison");
+            d1.offset = 0; d1.name = mh::tr("data.demo.debuff.poison");
             d1.timer = 12.0F; d1.maxTimer = 60.0F;
             player_.debuffs.append(d1);
         }
         {
             PlayerAbnormality d2;
-            d2.offset = 1; d2.name = mh::tr("ui.demo.debuff.blast");
+            d2.offset = 1; d2.name = mh::tr("data.demo.debuff.blast");
             d2.timer = 41.0F; d2.maxTimer = 60.0F;
             player_.debuffs.append(d2);
         }
         // Extra debuffs to demo the 3-per-row wrap into a second line.
         {
             PlayerAbnormality d3;
-            d3.offset = 2; d3.name = mh::tr("ui.demo.debuff.paralysis");
+            d3.offset = 2; d3.name = mh::tr("data.demo.debuff.paralysis");
             d3.timer = 17.0F; d3.maxTimer = 30.0F;
             player_.debuffs.append(d3);
         }
         {
             PlayerAbnormality d4;
-            d4.offset = 3; d4.name = mh::tr("ui.demo.debuff.sleep");
+            d4.offset = 3; d4.name = mh::tr("data.demo.debuff.sleep");
             d4.timer = 28.0F; d4.maxTimer = 45.0F;
             player_.debuffs.append(d4);
         }
         {
             PlayerAbnormality d5;
-            d5.offset = 4; d5.name = mh::tr("ui.demo.debuff.defense_down");
+            d5.offset = 4; d5.name = mh::tr("data.demo.debuff.defense_down");
             d5.timer = 60.0F; d5.maxTimer = 90.0F;
             player_.debuffs.append(d5);
         }
         // Demo buffs
         {
             PlayerAbnormality b1;
-            b1.offset = 0x3C; b1.name = mh::tr("ui.demo.buff.attack_up");
+            b1.offset = 0x3C; b1.name = mh::tr("data.demo.buff.attack_up");
             b1.timer = 90.0F; b1.maxTimer = 180.0F;
             player_.buffs.append(b1);
         }
         {
             PlayerAbnormality b2;
-            b2.offset = 0x6CC; b2.name = mh::tr("ui.demo.buff.demon_drug");
+            b2.offset = 0x6CC; b2.name = mh::tr("data.demo.buff.demon_drug");
             b2.timer = 300.0F; b2.maxTimer = 300.0F;
             player_.buffs.append(b2);
         }
         {
             PlayerAbnormality b3;
-            b3.offset = 0x6D0; b3.name = mh::tr("ui.demo.buff.armor_skin");
+            b3.offset = 0x6D0; b3.name = mh::tr("data.demo.buff.armor_skin");
             b3.timer = 300.0F; b3.maxTimer = 300.0F;
             player_.buffs.append(b3);
         }
         {
             PlayerAbnormality b4;
-            b4.offset = 0x690; b4.name = mh::tr("ui.demo.buff.dash_juice");
+            b4.offset = 0x690; b4.name = mh::tr("data.demo.buff.dash_juice");
             b4.timer = 45.0F; b4.maxTimer = 180.0F;
             player_.buffs.append(b4);
         }

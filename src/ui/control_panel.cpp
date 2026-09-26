@@ -415,7 +415,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     setStyleSheet(qssBase());
     // i18n: the window title is not a widget text property, so it has its
     // own replay hook.
-    trWindowTitle(QStringLiteral("console.windowTitle"));
+    trWindowTitle(QStringLiteral("console.window_title"));
     // v0.5.6: top row consumes rail+inspector height (~600-700px);
     // stage must keep at least canvas's 360px minimum + stagebar padding.
     // Bump default height so the canvas is usable on first open.
@@ -513,7 +513,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     // The version is substituted at runtime: writing it into the translation
     // string is how the console shipped "控制台 · 0.5" for four releases.
     trHook([brandSub] {
-        brandSub->setText(mh::tr(QStringLiteral("console.brandSub"))
+        brandSub->setText(mh::tr(QStringLiteral("console.brand_sub"))
                               .arg(QCoreApplication::applicationVersion()));
     });
     railLayout->addWidget(brand);
@@ -568,23 +568,23 @@ ControlPanel::ControlPanel(QWidget *parent)
     scrollLayout->addSpacing(20);
 
     auto *objectsTitle = new QLabel();
-    trSet(objectsTitle, QStringLiteral("console.rail.hudObjects"));
+    trSet(objectsTitle, QStringLiteral("console.rail.hud_objects"));
     objectsTitle->setObjectName("sectionCap");
     scrollLayout->addWidget(objectsTitle);
     // i18n: the factory takes translation KEYS (not pre-translated text) so
     // retranslateUi() can re-query them on a language switch.
     scrollLayout->addWidget(buildObjectButton(QStringLiteral("P"),
                                               QStringLiteral("console.nav.player"),
-                                              QStringLiteral("console.nav.playerSummary"), 0));
+                                              QStringLiteral("console.nav.player_summary"), 0));
     scrollLayout->addWidget(buildObjectButton(QStringLiteral("M"),
                                               QStringLiteral("console.nav.monster"),
-                                              QStringLiteral("console.nav.monsterSummary"), 1));
+                                              QStringLiteral("console.nav.monster_summary"), 1));
     scrollLayout->addWidget(buildObjectButton(QStringLiteral("D"),
                                               QStringLiteral("console.nav.damage"),
-                                              QStringLiteral("console.nav.damageSummary"), 2));
+                                              QStringLiteral("console.nav.damage_summary"), 2));
     scrollLayout->addWidget(buildObjectButton(QStringLiteral("C"),
                                               QStringLiteral("console.nav.pets"),
-                                              QStringLiteral("console.nav.petsSummary"), 3));
+                                              QStringLiteral("console.nav.pets_summary"), 3));
     scrollLayout->addSpacing(20);
 
     auto *workspaceTitle = new QLabel();
@@ -592,7 +592,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     workspaceTitle->setObjectName("sectionCap");
     scrollLayout->addWidget(workspaceTitle);
     editBtn_ = new QPushButton();
-    trSet(editBtn_, QStringLiteral("console.rail.layoutMode"));
+    trSet(editBtn_, QStringLiteral("console.rail.layout_mode"));
     editBtn_->setObjectName("railAction");
     editBtn_->setCursor(Qt::PointingHandCursor);
     scrollLayout->addWidget(editBtn_);
@@ -612,7 +612,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     // re-points startBtn_ at the EDIT-MODE block's START button, so this
     // rail button is display-only. It still registers for retranslation.
     startBtn_ = new QPushButton();
-    trSet(startBtn_, QStringLiteral("console.rail.startOverlay"));
+    trSet(startBtn_, QStringLiteral("console.rail.start_overlay"));
     startBtn_->setObjectName("startBtn");
     startBtn_->setCursor(Qt::PointingHandCursor);
     railLayout->addWidget(startBtn_);
@@ -684,7 +684,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     stagebar->setSpacing(8);
     stagebar->addStretch(1);
     safeAreaBtn_ = new QPushButton();
-    trSet(safeAreaBtn_, QStringLiteral("console.stage.safeArea"));
+    trSet(safeAreaBtn_, QStringLiteral("console.stage.safe_area"));
     safeAreaBtn_->setObjectName("stageToggle");
     safeAreaBtn_->setCheckable(true);
     safeAreaBtn_->setChecked(true);
@@ -1008,18 +1008,18 @@ ControlPanel::ControlPanel(QWidget *parent)
         if (autoDetectBadge_) {
             if (!detected) {
                 autoDetectBadge_->setText(
-                    mh::tr(QStringLiteral("console.detect.startupNone")));
+                    mh::tr(QStringLiteral("console.detect.startup_none")));
                 autoDetectBadge_->setProperty("state", "gray");
             } else {
                 const QString name = gameName(detected->game);
                 if (detected->game == currentGame_) {
                     autoDetectBadge_->setText(
-                        mh::tr(QStringLiteral("console.detect.startupRunning"))
+                        mh::tr(QStringLiteral("console.detect.startup_running"))
                             .arg(name).arg(detected->pid));
                     autoDetectBadge_->setProperty("state", "cyan");
                 } else {
                     autoDetectBadge_->setText(
-                        mh::tr(QStringLiteral("console.detect.startupSwitch")).arg(name));
+                        mh::tr(QStringLiteral("console.detect.startup_switch")).arg(name));
                     autoDetectBadge_->setProperty("state", "amber");
                 }
             }
@@ -1212,8 +1212,8 @@ void ControlPanel::updateStageToggleText()
         return;
     stageToggleBtn_->setText(
         stageToggleBtn_->isChecked()
-            ? mh::tr(QStringLiteral("console.rail.hideStage"))
-            : mh::tr(QStringLiteral("console.rail.showStage")));
+            ? mh::tr(QStringLiteral("console.rail.hide_stage"))
+            : mh::tr(QStringLiteral("console.rail.show_stage")));
 }
 
 void ControlPanel::updateZoomLabel()
@@ -1398,7 +1398,7 @@ void ControlPanel::updatePanelSummary(int idx)
     if (ctl_[idx].navSummary) {
         if (idx == 3 && currentGame_ == mhw::GameId::World) {
             ctl_[idx].navSummary->setText(
-                consoleText(QStringLiteral("console.panel.petsRiseOnly")));
+                consoleText(QStringLiteral("console.panel.pets_rise_only")));
         } else {
             ctl_[idx].navSummary->setText(ctl_[idx].master->isChecked()
                 ? mh::tr(QStringLiteral("console.inspector.sections")).arg(on).arg(total)
@@ -1487,7 +1487,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     // plain (widget, key) pair.
     auto *eyebrow = new QLabel();
     trHook([eyebrow, idx]{
-        eyebrow->setText(mh::tr(QStringLiteral("console.inspector.selectedObject"))
+        eyebrow->setText(mh::tr(QStringLiteral("console.inspector.selected_object"))
                              .arg(idx + 1));
     });
     eyebrow->setObjectName("sectionCap");
@@ -1569,7 +1569,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         cardLayout->addWidget(cardSubtitle);
 
         auto *status = new QLabel();
-        trSet(status, QStringLiteral("console.reframework.notFound"));
+        trSet(status, QStringLiteral("console.reframework.not_found"));
         status->setObjectName(QStringLiteral("riseReframeworkStatus"));
         status->setWordWrap(true);
         riseReframeworkStatus_ = status;
@@ -1587,7 +1587,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         installRiseReframeworkButton_ = install;
 
         auto *removeLua = new QPushButton();
-        trSet(removeLua, QStringLiteral("console.reframework.removeLua"));
+        trSet(removeLua, QStringLiteral("console.reframework.remove_lua"));
         removeLua->setObjectName(QStringLiteral("removeRiseLuaButton"));
         removeLua->setCursor(Qt::PointingHandCursor);
         connect(removeLua, &QPushButton::clicked, this,
@@ -1601,7 +1601,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         // because the point is to give the player control, not to force one
         // behaviour; the label under them reflects what the files say now.
         auto *menuHeader = new QLabel();
-        trSet(menuHeader, QStringLiteral("console.reframework.menuStateHeader"));
+        trSet(menuHeader, QStringLiteral("console.reframework.menu_state_header"));
         menuHeader->setObjectName(QStringLiteral("riseReframeworkSubtitle"));
         menuHeader->setWordWrap(true);
         actions->addWidget(menuHeader);
@@ -1613,13 +1613,13 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         menuStateStatus_ = menuState;
 
         auto *menuFix = new QPushButton();
-        trSet(menuFix, QStringLiteral("console.reframework.fixMenuState"));
+        trSet(menuFix, QStringLiteral("console.reframework.fix_menu_state"));
         menuFix->setObjectName(QStringLiteral("fixMenuStateButton"));
         menuFix->setCursor(Qt::PointingHandCursor);
         // trTip, not setToolTip: only trTip registers the widget with the
         // locale switcher, so a plain setToolTip would freeze it in whatever
         // language the panel happened to be built in.
-        trTip(menuFix, QStringLiteral("console.reframework.fixMenuStateTip"));
+        trTip(menuFix, QStringLiteral("console.reframework.fix_menu_state_tip"));
         connect(menuFix, &QPushButton::clicked, this,
                 [this]{ requestRiseMenuStateFix(false); });
         actions->addWidget(menuFix);
@@ -1627,11 +1627,11 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
 
         auto *menuRestore = new QPushButton();
         trSet(menuRestore,
-              QStringLiteral("console.reframework.restoreMenuState"));
+              QStringLiteral("console.reframework.restore_menu_state"));
         menuRestore->setObjectName(QStringLiteral("restoreMenuStateButton"));
         menuRestore->setCursor(Qt::PointingHandCursor);
         trTip(menuRestore,
-              QStringLiteral("console.reframework.restoreMenuStateTip"));
+              QStringLiteral("console.reframework.restore_menu_state_tip"));
         connect(menuRestore, &QPushButton::clicked, this,
                 [this]{ requestRiseMenuStateFix(true); });
         actions->addWidget(menuRestore);
@@ -1639,7 +1639,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
 
         auto *removeReframework = new QPushButton();
         trSet(removeReframework,
-              QStringLiteral("console.reframework.removeReframework"));
+              QStringLiteral("console.reframework.remove_reframework"));
         removeReframework->setObjectName(
             QStringLiteral("removeRiseReframeworkButton"));
         removeReframework->setCursor(Qt::PointingHandCursor);
@@ -1720,7 +1720,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     auto *bgRow = new QHBoxLayout();
     bgRow->setSpacing(8);
     auto *bgLab = new QLabel();
-    trSet(bgLab, QStringLiteral("console.inspector.bgAlpha"));
+    trSet(bgLab, QStringLiteral("console.inspector.bg_alpha"));
     bgLab->setObjectName("sliderLabel");
     auto *bgVal = new QLabel();
     bgVal->setObjectName("sliderValue");
@@ -1767,7 +1767,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         for (const auto &o : outs) {
             QString label = o.name;
             if (o.primary)
-                label += mh::tr(QStringLiteral("console.inspector.primaryTag"));
+                label += mh::tr(QStringLiteral("console.inspector.primary_tag"));
             // Append the geometry so the user can tell two same-named
             // outputs apart (rare on Niri, common on X11 multi-GPU).
             label += QStringLiteral("  ·  %1×%2 @%3,%4")
@@ -1835,7 +1835,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     foot->addWidget(reset);
     foot->addStretch(1);
     auto *modified = new QLabel();
-    trSet(modified, QStringLiteral("console.inspector.autoSaved"));
+    trSet(modified, QStringLiteral("console.inspector.auto_saved"));
     modified->setObjectName("modified");
     foot->addWidget(modified);
     vl->addLayout(foot);
@@ -2108,16 +2108,16 @@ void ControlPanel::refreshRiseReframeworkStatus()
     const bool corePresent = status.core == mhw::RiseReFrameworkManager::CoreState::Managed
                              || status.core == mhw::RiseReFrameworkManager::CoreState::External;
     if (riseGameDir_.isEmpty()) {
-        lines.append(mh::tr(QStringLiteral("console.reframework.notFound")));
+        lines.append(mh::tr(QStringLiteral("console.reframework.not_found")));
     } else if (!status.gameDirValid) {
-        lines.append(mh::tr(QStringLiteral("console.reframework.gameInvalid"))
+        lines.append(mh::tr(QStringLiteral("console.reframework.game_invalid"))
                          .arg(riseGameDir_));
     } else if (!corePresent) {
-        lines.append(mh::tr(QStringLiteral("console.reframework.gameFound"))
+        lines.append(mh::tr(QStringLiteral("console.reframework.game_found"))
                          .arg(riseGameDir_));
-        lines.append(mh::tr(QStringLiteral("console.reframework.stateCoreMissing")));
+        lines.append(mh::tr(QStringLiteral("console.reframework.state_core_missing")));
     } else {
-        lines.append(mh::tr(QStringLiteral("console.reframework.gameFound"))
+        lines.append(mh::tr(QStringLiteral("console.reframework.game_found"))
                          .arg(riseGameDir_));
         const bool manifestBroken =
             status.manifest == mhw::RiseReFrameworkManager::ManifestState::Invalid;
@@ -2126,15 +2126,15 @@ void ControlPanel::refreshRiseReframeworkStatus()
             || status.lua == mhw::RiseReFrameworkManager::LuaState::Modified;
         if (installIncomplete) {
             lines.append(mh::tr(QStringLiteral(
-                "console.reframework.stateNeedsRepair")));
+                "console.reframework.state_needs_repair")));
         } else if (status.lua == mhw::RiseReFrameworkManager::LuaState::Missing) {
-            lines.append(mh::tr(QStringLiteral("console.reframework.stateLuaMissing")));
+            lines.append(mh::tr(QStringLiteral("console.reframework.state_lua_missing")));
         } else {
-            lines.append(mh::tr(QStringLiteral("console.reframework.stateReady")));
+            lines.append(mh::tr(QStringLiteral("console.reframework.state_ready")));
         }
     }
     if (gameRunning)
-        lines.append(mh::tr(QStringLiteral("console.reframework.gameRunning")));
+        lines.append(mh::tr(QStringLiteral("console.reframework.game_running")));
     if (riseReframeworkOperationPending_)
         lines.append(mh::tr(QStringLiteral("console.reframework.pending")));
     if (riseReframeworkHasResult_) {
@@ -2146,7 +2146,7 @@ void ControlPanel::refreshRiseReframeworkStatus()
     // The raw diagnostic string goes last and only when it adds something the
     // state lines above do not already say.
     if (!status.detail.isEmpty())
-        lines.append(mh::tr(QStringLiteral("console.reframework.detailRaw"))
+        lines.append(mh::tr(QStringLiteral("console.reframework.detail_raw"))
                          .arg(status.detail));
     riseReframeworkStatus_->setText(lines.join(QLatin1Char('\n')));
 
@@ -2187,10 +2187,10 @@ void ControlPanel::refreshRiseReframeworkStatus()
             mhw::queryReFrameworkMenuState(riseGameDir_);
         const char *stateKey =
             menuReport.state == mhw::ReFrameworkMenuState::Overridden
-                ? "console.reframework.menuStateOverridden"
+                ? "console.reframework.menu_state_overridden"
                 : menuReport.state == mhw::ReFrameworkMenuState::Default
-                    ? "console.reframework.menuStateDefault"
-                    : "console.reframework.menuStateUnknown";
+                    ? "console.reframework.menu_state_default"
+                    : "console.reframework.menu_state_unknown";
         const QString keyText = mh::tr(QString::fromLatin1(stateKey));
         // With the core gone the key is real but inert — say so rather than
         // leaving the player to read an "active" state that nothing consumes.
@@ -2198,14 +2198,14 @@ void ControlPanel::refreshRiseReframeworkStatus()
             usableCore ? QString()
                        : QStringLiteral("\n")
                          + mh::tr(QStringLiteral(
-                             "console.reframework.menuStateNoCore"));
+                             "console.reframework.menu_state_no_core"));
         // Only name the paths when there is more than one: a single game-dir
         // file needs no listing, while several mean the fallback locations are
         // in play and the player should know which ones were touched.
         QString pathText;
         if (menuReport.paths.size() > 1) {
             pathText = QStringLiteral("\n")
-                       + mh::tr(QStringLiteral("console.reframework.menuStatePaths"))
+                       + mh::tr(QStringLiteral("console.reframework.menu_state_paths"))
                              .arg(menuReport.paths.size())
                        + QStringLiteral("\n")
                        + menuReport.paths.join(QStringLiteral("\n"));
@@ -2226,8 +2226,8 @@ void ControlPanel::requestRiseReframeworkInstall()
     }
     const auto answer = QMessageBox::question(
         this,
-        mh::tr(QStringLiteral("console.reframework.confirmTitle")),
-        mh::tr(QStringLiteral("console.reframework.confirmInstall")).arg(riseGameDir_),
+        mh::tr(QStringLiteral("console.reframework.confirm_title")),
+        mh::tr(QStringLiteral("console.reframework.confirm_install")).arg(riseGameDir_),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
     if (answer != QMessageBox::Yes)
@@ -2239,7 +2239,7 @@ void ControlPanel::requestRiseReframeworkInstall()
     refreshRiseReframeworkStatus();
     if (receivers(SIGNAL(installRiseReframeworkRequested(QString))) == 0) {
         finishRiseReframeworkOperation(
-            false, mh::tr(QStringLiteral("console.reframework.noWorker")));
+            false, mh::tr(QStringLiteral("console.reframework.no_worker")));
         return;
     }
     emit installRiseReframeworkRequested(riseGameDir_);
@@ -2254,8 +2254,8 @@ void ControlPanel::requestRiseLuaRemoval()
     }
     const auto answer = QMessageBox::question(
         this,
-        mh::tr(QStringLiteral("console.reframework.confirmTitle")),
-        mh::tr(QStringLiteral("console.reframework.confirmRemoveLua")).arg(riseGameDir_),
+        mh::tr(QStringLiteral("console.reframework.confirm_title")),
+        mh::tr(QStringLiteral("console.reframework.confirm_remove_lua")).arg(riseGameDir_),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
     if (answer != QMessageBox::Yes)
@@ -2267,7 +2267,7 @@ void ControlPanel::requestRiseLuaRemoval()
     refreshRiseReframeworkStatus();
     if (receivers(SIGNAL(removeRiseLuaRequested(QString))) == 0) {
         finishRiseReframeworkOperation(
-            false, mh::tr(QStringLiteral("console.reframework.noWorker")));
+            false, mh::tr(QStringLiteral("console.reframework.no_worker")));
         return;
     }
     emit removeRiseLuaRequested(riseGameDir_);
@@ -2298,11 +2298,11 @@ void ControlPanel::requestRiseMenuStateFix(bool restoreDefault)
         mhw::reframeworkConfigPaths(riseGameDir_);
     const QString pathList = configPaths.join(QStringLiteral("\n"));
     const char *confirmKey = restoreDefault
-        ? "console.reframework.confirmRestoreMenuState"
-        : "console.reframework.confirmFixMenuState";
+        ? "console.reframework.confirm_restore_menu_state"
+        : "console.reframework.confirm_fix_menu_state";
     const auto answer = QMessageBox::question(
         this,
-        mh::tr(QStringLiteral("console.reframework.confirmTitle")),
+        mh::tr(QStringLiteral("console.reframework.confirm_title")),
         mh::tr(QString::fromLatin1(confirmKey)).arg(pathList),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
@@ -2320,7 +2320,7 @@ void ControlPanel::requestRiseMenuStateFix(bool restoreDefault)
     mhw::ReFrameworkMenuStateReport report;
     if (!mhw::applyReFrameworkMenuStateFix(riseGameDir_, restoreDefault, &report)) {
         finishRiseReframeworkOperation(
-            false, mh::tr(QStringLiteral("console.reframework.fixMenuStateFailed")));
+            false, mh::tr(QStringLiteral("console.reframework.fix_menu_state_failed")));
         return;
     }
     finishRiseReframeworkOperation(true, QString());
@@ -2335,8 +2335,8 @@ void ControlPanel::requestRiseReframeworkRemoval()
     }
     const auto answer = QMessageBox::question(
         this,
-        mh::tr(QStringLiteral("console.reframework.confirmTitle")),
-        mh::tr(QStringLiteral("console.reframework.confirmRemoveReframework"))
+        mh::tr(QStringLiteral("console.reframework.confirm_title")),
+        mh::tr(QStringLiteral("console.reframework.confirm_remove_reframework"))
             .arg(riseGameDir_),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
@@ -2349,7 +2349,7 @@ void ControlPanel::requestRiseReframeworkRemoval()
     refreshRiseReframeworkStatus();
     if (receivers(SIGNAL(removeRiseReframeworkRequested(QString))) == 0) {
         finishRiseReframeworkOperation(
-            false, mh::tr(QStringLiteral("console.reframework.noWorker")));
+            false, mh::tr(QStringLiteral("console.reframework.no_worker")));
         return;
     }
     emit removeRiseReframeworkRequested(riseGameDir_);
@@ -2486,7 +2486,7 @@ void ControlPanel::launchOverlay(bool editMode)
     if (statusBadge_) {
         const QString stamp = QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
         statusBadge_->setText(
-            mh::tr(QStringLiteral("console.status.runningSince"))
+            mh::tr(QStringLiteral("console.status.running_since"))
                 .arg(overlayPid_).arg(stamp));
     }
 
@@ -2524,7 +2524,7 @@ void ControlPanel::onOverlayExited()
     if (startBtn_) startBtn_->setEnabled(true);
     if (editBtn_)  editBtn_->setEnabled(true);
     if (statusBadge_)
-        statusBadge_->setText(mh::tr(QStringLiteral("console.status.plainReady")));
+        statusBadge_->setText(mh::tr(QStringLiteral("console.status.plain_ready")));
     setOverlayRunning(false);
     // v0.6 Phase 5: hot-swap — the user switched game while running, so
     // relaunch with the freshly-updated currentGame_. If the launch
@@ -2802,7 +2802,7 @@ void ControlPanel::rebuildAndRender(int idx)
         p.setFont(f);
         p.drawText(ph.rect(), Qt::AlignCenter,
                    riseOnlyUnavailable
-                       ? consoleText(QStringLiteral("console.panel.petsRiseOnly"))
+                       ? consoleText(QStringLiteral("console.panel.pets_rise_only"))
                        : mh::tr(QStringLiteral("console.panel.disabled")));
         p.end();
         if (lab)
@@ -2870,16 +2870,16 @@ void ControlPanel::setOverlayRunning(bool running)
 {
     if (!startBtn_) return;
     if (running) {
-        startBtn_->setText(mh::tr(QStringLiteral("console.rail.stopOverlay")));
+        startBtn_->setText(mh::tr(QStringLiteral("console.rail.stop_overlay")));
         startBtn_->setObjectName(QStringLiteral("stopBtn"));
         if (statusBadge_) {
             statusBadge_->setText(
-                mh::tr(QStringLiteral("console.status.runningPid"))
+                mh::tr(QStringLiteral("console.status.running_pid"))
                     .arg(overlayPid_));
             statusBadge_->setProperty("state", "running");
         }
     } else {
-        startBtn_->setText(mh::tr(QStringLiteral("console.rail.startOverlay")));
+        startBtn_->setText(mh::tr(QStringLiteral("console.rail.start_overlay")));
         startBtn_->setObjectName(QStringLiteral("startBtn"));
         if (statusBadge_) {
             statusBadge_->setText(mh::tr(QStringLiteral("console.status.ready")));
@@ -2980,10 +2980,10 @@ void ControlPanel::updatePosLabel(int idx)
     const bool left = center.x() < g.center().x();
     const bool top = center.y() < g.center().y();
     const QString corner = top
-        ? (left ? mh::tr(QStringLiteral("console.corner.topLeft"))
-                : mh::tr(QStringLiteral("console.corner.topRight")))
-        : (left ? mh::tr(QStringLiteral("console.corner.bottomLeft"))
-                : mh::tr(QStringLiteral("console.corner.bottomRight")));
+        ? (left ? mh::tr(QStringLiteral("console.corner.top_left"))
+                : mh::tr(QStringLiteral("console.corner.top_right")))
+        : (left ? mh::tr(QStringLiteral("console.corner.bottom_left"))
+                : mh::tr(QStringLiteral("console.corner.bottom_right")));
     ctl_[idx].posLabel->setText(
         mh::tr(QStringLiteral("console.pos.label"))
             .arg(corner).arg(m.left()).arg(m.top())

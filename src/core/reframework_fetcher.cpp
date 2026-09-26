@@ -4,6 +4,8 @@
 
 #include "core/rise_reframework_manager.h"
 
+#include "core/string_table.h"
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
@@ -22,6 +24,19 @@ namespace {
 
 constexpr qsizetype kMaximumToolOutput = 16 * 1024 * 1024;
 
+// i18n: every string this file puts into `detail` (or hands to the progress
+// callback) is shown by the console UI verbatim, so they all go through the
+// StringTable. Mirrors the pattern in src/mhw_reader.cpp / mhr_reader.cpp.
+inline QString trMessage(const QString &key) { return StringTable::instance().tr(key); }
+
+// The stderr passthrough in toolErrorText() appends this fragment around the
+// captured tail; localised because the full sentence is displayed.
+inline QString detailStderrWrapper(bool empty)
+{
+    return trMessage(empty ? "reader.reframework.tool_stderr_wrapper_empty"
+                           : "reader.reframework.tool_stderr_wrapper");
+}
+
 struct ProcessResult {
     bool ok{false};
     bool cancelled{false};
@@ -33,10 +48,11 @@ struct ProcessResult {
 QString toolErrorText(const QString &program, const QString &reason,
                       const QByteArray &standardError = {})
 {
-    QString detail = QStringLiteral("%1: %2").arg(program, reason);
+    QString detail = trMessage("reader.reframework.tool_error_text")
+                        .arg(program, reason);
     const QString stderrText = QString::fromLocal8Bit(standardError).trimmed();
-    if (!stderrText.isEmpty())
-        detail += QStringLiteral(" (%1)").arg(stderrText.left(1000));
+    detail += detailStderrWrapper(stderrText.isEmpty())
+                  .arg(stderrText.left(1000));
     return detail;
 }
 
@@ -46,7 +62,7 @@ ProcessResult runProcess(const QString &program, const QStringList &arguments,
 {
     ProcessResult result;
     if (program.trimmed().isEmpty()) {
-        result.detail = QStringLiteral("Required executable path is empty.");
+        result.detail = trMessage("reader.reframework.process_path_empty");
         return result;
     }
 
@@ -68,18 +84,21 @@ ProcessResult runProcess(const QString &program, const QStringList &arguments,
             process.kill();
             process.waitForFinished(1000);
             result.cancelled = true;
-            result.detail = QStringLiteral("Operation cancelled while starting %1.").arg(program);
+            result.detail =
+                trMessage("reader.reframework.cancelled_while_starting").arg(program);
             return result;
         }
         if (process.state() == QProcess::NotRunning) {
             result.detail = toolErrorText(
-                program, QStringLiteral("could not start: %1").arg(process.errorString()));
+                program, trMessage("reader.reframework.could_not_start")
+                             .arg(process.errorString()));
             return result;
         }
         if (timer.elapsed() >= 5000) {
             process.kill();
             process.waitForFinished(1000);
-            result.detail = toolErrorText(program, QStringLiteral("start timed out"));
+            result.detail =
+                toolErrorText(program, trMessage("reader.reframework.start_timed_out"));
             return result;
         }
     }
@@ -92,7 +111,8 @@ ProcessResult runProcess(const QString &program, const QStringList &arguments,
             result.standardOutput += process.readAllStandardOutput();
             result.standardError += process.readAllStandardError();
             result.cancelled = true;
-            result.detail = QStringLiteral("Operation cancelled; killed %1.").arg(program);
+            result.detail =
+                trMessage("reader.reframework.cancelled_killed").arg(program);
             return result;
         }
 
@@ -102,13 +122,15 @@ ProcessResult runProcess(const QString &program, const QStringList &arguments,
         if (result.standardOutput.size() + result.standardError.size() > kMaximumToolOutput) {
             process.kill();
             process.waitForFinished(1000);
-            result.detail = toolErrorText(program, QStringLiteral("produced excessive output"));
+            result.detail =
+                toolErrorText(program, trMessage("reader.reframework.excessive_output"));
             return result;
         }
         if (timeoutMs > 0 && timer.elapsed() >= timeoutMs) {
             process.kill();
             process.waitForFinished(1000);
-            result.detail = toolErrorText(program, QStringLiteral("timed out"),
+            result.detail = toolErrorText(program,
+                                          trMessage("reader.reframework.process_timed_out"),
                                           result.standardError);
             return result;
         }
@@ -120,8 +142,8 @@ ProcessResult runProcess(const QString &program, const QStringList &arguments,
         result.detail = toolErrorText(
             program,
             process.exitStatus() == QProcess::CrashExit
-                ? QStringLiteral("crashed")
-                : QStringLiteral("exited with code %1").arg(process.exitCode()),
+                ? trMessage("reader.reframework.process_crashed")
+                : trMessage("reader.reframework.process_exit_code").arg(process.exitCode()),
             result.standardError);
         return result;
     }
@@ -135,7 +157,8 @@ QByteArray sha256(const QString &path, bool *ok, QString *detail)
     *ok = false;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        *detail = QStringLiteral("Cannot open archive for SHA-256: %1").arg(file.errorString());
+        *detail = trMessage("reader.reframework.archive_open_for_sha_failed")
+                      .arg(file.errorString());
         return {};
     }
 
@@ -144,7 +167,8 @@ QByteArray sha256(const QString &path, bool *ok, QString *detail)
     while (true) {
         const qint64 count = file.read(buffer.data(), buffer.size());
         if (count < 0) {
-            *detail = QStringLiteral("Cannot read archive for SHA-256: %1").arg(file.errorString());
+            *detail = trMessage("reader.reframework.archive_read_for_sha_failed")
+                          .arg(file.errorString());
             return {};
         }
         if (count == 0)
@@ -162,23 +186,23 @@ bool verifyArchive(const QString &path, const ReFrameworkFetcher::Options &optio
     const bool customHash = !options.expectedArchiveSha256.isEmpty();
     const QFileInfo pathInfo(path);
     if (pathInfo.isSymLink()) {
-        *detail = QStringLiteral("Archive must be a regular file, not a symbolic link.");
+        *detail = trMessage("reader.reframework.archive_must_be_regular_file");
         return false;
     }
     if (!customSize && !customHash)
         return RiseReFrameworkManager::verifyArchive(path, detail);
     if (customSize != customHash) {
-        *detail = QStringLiteral("Archive expectation must provide both size and SHA-256.");
+        *detail = trMessage("reader.reframework.archive_identity_incomplete");
         return false;
     }
 
     const QFileInfo info(path);
     if (!info.exists() || !info.isFile() || info.isSymLink()) {
-        *detail = QStringLiteral("Archive does not exist or is not a regular file.");
+        *detail = trMessage("reader.reframework.archive_missing");
         return false;
     }
     if (info.size() != options.expectedArchiveSize) {
-        *detail = QStringLiteral("Archive size mismatch: expected %1 bytes, got %2 bytes.")
+        *detail = trMessage("reader.reframework.archive_size_mismatch")
                       .arg(options.expectedArchiveSize)
                       .arg(info.size());
         return false;
@@ -194,7 +218,7 @@ bool verifyArchive(const QString &path, const ReFrameworkFetcher::Options &optio
                       .arg(QString::fromLatin1(expected), QString::fromLatin1(actual));
         return false;
     }
-    *detail = QStringLiteral("Archive size and SHA-256 match the configured identity.");
+    *detail = trMessage("reader.reframework.archive_verified_identity");
     return true;
 }
 

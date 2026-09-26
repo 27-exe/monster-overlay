@@ -78,7 +78,7 @@ private:
 // Falls back to "Mantle #<id>" if the key is missing.
 inline QString mantleName(int id)
 {
-    const QString key = QStringLiteral("mantle.%1").arg(id);
+    const QString key = QStringLiteral("data.mantle.id.%1").arg(id);
     const QString val = StringTable::instance().tr(key);
     if (val != key)
         return val;

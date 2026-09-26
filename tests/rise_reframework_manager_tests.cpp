@@ -2,6 +2,8 @@
 
 #include "core/rise_reframework_manager.h"
 
+#include "core/string_table.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -10,6 +12,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 
 #include <iostream>
@@ -17,6 +20,26 @@
 namespace {
 
 int failures = 0;
+
+// The installer diagnostics are i18n'd (reader.reframework.* in
+// src/resources/i18n/<locale>/reader.json), so an assertion on the English
+// wording would pin this test to one locale. Instead the detail is matched
+// against the *locale template* for the key the code must have used: every
+// %N placeholder becomes a non-empty wildcard and the whole string must match.
+// This catches a missing key (detail would be the raw dot-path), the wrong
+// key for this code path, and any placeholder-count change in the JSON.
+bool detailMatchesTemplate(const QString &detail, const QString &key)
+{
+    if (detail.isEmpty())
+        return false;
+    const QString pattern = QRegularExpression::escape(
+                                mhw::StringTable::instance().tr(key))
+                                .replace(QStringLiteral("\\%1"), QStringLiteral(".+"))
+                                .replace(QStringLiteral("\\%2"), QStringLiteral(".+"));
+    return QRegularExpression(QStringLiteral("^") + pattern + QStringLiteral("$"))
+        .match(detail)
+        .hasMatch();
+}
 
 void check(bool condition, const QString &message)
 {
@@ -85,6 +108,11 @@ QByteArray manifestWithOwnedPath(const QString &path)
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+    // The diagnostics under test are i18n'd; load a real locale so the
+    // assertions see translated text rather than the key-fallback path.
+    if (!mhw::StringTable::instance().load(QStringLiteral("zh-CN")))
+        std::cerr << "WARN: zh-CN locale failed to load; detail assertions "
+                     "will compare against key fallbacks\n";
 
     check(mhw::RiseReFrameworkManager::upstreamTag() == QStringLiteral("v1.5.9.1"),
           "upstream tag is pinned");
@@ -303,7 +331,8 @@ int main(int argc, char **argv)
         QString detail;
         check(!mhw::RiseReFrameworkManager::verifyArchive(wrongArchive, &detail),
               "wrong archive hash/size is rejected");
-        check(!detail.isEmpty(), "wrong archive rejection explains failure");
+        check(detailMatchesTemplate(detail, QStringLiteral("reader.reframework.archive_size_mismatch")),
+              "wrong archive rejection explains failure through a resolved i18n key");
 
         const QString wrongHashArchive = root.path() + QStringLiteral("/MHRISE-right-size.zip");
         QFile sizedArchive(wrongHashArchive);
@@ -314,8 +343,9 @@ int main(int argc, char **argv)
         detail.clear();
         check(!mhw::RiseReFrameworkManager::verifyArchive(wrongHashArchive, &detail),
               "exact-size archive with wrong SHA-256 is rejected");
-        check(detail.contains(QStringLiteral("SHA-256")),
-              "exact-size archive rejection identifies SHA-256 mismatch");
+        check(detailMatchesTemplate(
+                  detail, QStringLiteral("reader.reframework.archive_sha_mismatch")),
+              "exact-size archive rejection is the SHA-256 mismatch message");
     }
 
     {
@@ -373,7 +403,8 @@ int main(int argc, char **argv)
                       == mhw::RiseReFrameworkManager::ManifestState::Invalid,
                   QStringLiteral("hostile manifest %1 has invalid status").arg(i));
             const auto result = manager.removeManaged(gameDir);
-            check(!result.ok && result.detail.contains(QStringLiteral("unsafe")),
+            check(!result.ok && detailMatchesTemplate(result.detail,
+                                                      QStringLiteral("reader.reframework.manifest_unsafe_path")),
                   QStringLiteral("hostile manifest path %1 is rejected as unsafe").arg(i));
             check(QFileInfo::exists(outside),
                   QStringLiteral("hostile manifest %1 cannot delete outside file").arg(i));

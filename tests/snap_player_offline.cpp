@@ -83,14 +83,14 @@ int main(int argc, char *argv[])
     }
 
     const QString waiting = mhw::StringTable::instance().tr(
-        QStringLiteral("ui.reader.waiting_exe")).arg(QStringLiteral("monsterhunterworld.exe"));
+        QStringLiteral("reader.waiting_exe")).arg(QStringLiteral("monsterhunterworld.exe"));
     const QString denied = mhw::StringTable::instance().tr(
-        QStringLiteral("ui.reader.ptrace_denied"))
+        QStringLiteral("reader.ptrace_denied"))
         .arg(12345)
         .arg(QStringLiteral("process_vm_readv PID 12345 @ 0x140000000: "
                             "Operation not permitted (1)"));
     const QString mapError = mhw::StringTable::instance().tr(
-        QStringLiteral("ui.reader.address_table_open_failed"))
+        QStringLiteral("reader.address_table_open_failed"))
         .arg(QStringLiteral("/home/someone/else/data/MonsterHunterWorld.421810.map"),
              QStringLiteral("No such file or directory"));
 

@@ -52,6 +52,17 @@ std::string compact(std::string_view source)
             }
             continue;
         }
+        // CMake's own comment marker has no C++ counterpart: without this,
+        // a '#' comment containing parentheses (e.g. a note about
+        // StringTable::tr()) corrupts the paren-balanced target slicing.
+        if (!inString && c == '#') {
+            inLineComment = true;
+            continue;
+        }
+        if (!inString && c == '#') {
+            inLineComment = true;
+            continue;
+        }
         if (!inString && c == '/' && next == '/') {
             inLineComment = true;
             ++i;

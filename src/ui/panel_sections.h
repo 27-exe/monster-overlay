@@ -77,21 +77,10 @@ inline QString displayName(int index)
         "console.section.player.buff",
         "console.section.player.wirebug",
     };
-    static const QStringList kFallback = {
-        QStringLiteral("连接状态"),
-        QStringLiteral("任务块"),
-        QStringLiteral("武器 + 锋利度"),
-        QStringLiteral("HP / ST"),
-        QStringLiteral("衣装"),
-        QStringLiteral("异常状态"),
-        QStringLiteral("正面状态"),
-        QStringLiteral("翔虫"),
-    };
     if (index < 0 || index >= kCount)
         return {};
     const QString key = QString::fromLatin1(kKeys[index]);
-    const QString val = StringTable::instance().tr(key);
-    return val == key ? kFallback.value(index) : val;
+    return StringTable::instance().tr(key);
 }
 
 inline QStringList displayNames()
@@ -140,20 +129,11 @@ inline QString displayName(int index)
         "console.section.monster.ail",
         "console.section.monster.parts",
         "console.section.monster.tenderize",
-    };
-    static const QStringList kFallback = {
-        QStringLiteral("六角肖像"),
-        QStringLiteral("HP 条"),
-        QStringLiteral("怒气"),
-        QStringLiteral("异常"),
-        QStringLiteral("部位"),
-        QStringLiteral("软化"),
-    };
-    if (index < 0 || index >= kCount)
+    };    if (index < 0 || index >= kCount)
         return {};
     const QString key = QString::fromLatin1(kKeys[index]);
     const QString val = StringTable::instance().tr(key);
-    return val == key ? kFallback.value(index) : val;
+    return StringTable::instance().tr(key);
 }
 
 inline QStringList displayNames()
@@ -195,19 +175,12 @@ inline QString displayName(int index)
         "console.section.damage.rows",
         "console.section.damage.share",
         "console.section.damage.chart",
-        "console.section.damage.otherMembers",
-    };
-    static const QStringList kFallback = {
-        QStringLiteral("玩家行"),
-        QStringLiteral("占比条"),
-        QStringLiteral("折线图"),
-        QStringLiteral("其他玩家 / 盟友"),
-    };
-    if (index < 0 || index >= kCount)
+        "console.section.damage.other_members",
+    };    if (index < 0 || index >= kCount)
         return {};
     const QString key = QString::fromLatin1(kKeys[index]);
     const QString val = StringTable::instance().tr(key);
-    return val == key ? kFallback.value(index) : val;
+    return StringTable::instance().tr(key);
 }
 
 inline QStringList displayNames()
@@ -242,18 +215,13 @@ constexpr int kCount = 2;
 inline QString displayName(int index)
 {
     static const char *const kKeys[kCount] = {
-        "console.section.pets.localPets",
-        "console.section.pets.otherPets",
-    };
-    static const QStringList kFallback = {
-        QStringLiteral("自己的猫狗"),
-        QStringLiteral("其他成员的猫狗"),
-    };
-    if (index < 0 || index >= kCount)
+        "console.section.pets.local_pets",
+        "console.section.pets.other_pets",
+    };    if (index < 0 || index >= kCount)
         return {};
     const QString key = QString::fromLatin1(kKeys[index]);
     const QString val = StringTable::instance().tr(key);
-    return val == key ? kFallback.value(index) : val;
+    return StringTable::instance().tr(key);
 }
 
 inline QStringList displayNames()
