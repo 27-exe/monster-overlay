@@ -458,9 +458,51 @@ target_compile_options(monster-control-p0-test PRIVATE -Wall -Wextra -Wpedantic)
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(world-severable-scan-tests
-        tests/world_severable_scan_tests.cpp
-    )
+# Pixel-regression suite for the overlay panels: renders the panel code
+# paths the snap_* diagnostics cover and asserts every pixel against the
+# committed baselines in tests/baseline/. Added in v0.11 because the
+# snap_* tools were a visual aid with no assertion behind them, so GUI
+# refactors had nothing to fail on.
+add_executable(snapshot-regression-tests
+    tests/snapshot_regression_tests.cpp
+    src/mhw_reader.cpp
+    src/mhw_reader.h
+    src/player/player_reader.cpp
+    src/quest/quest_reader.cpp
+    src/world/world_reader.cpp
+    src/monster/monster_reader.cpp
+    src/monster/part_schemas.cpp
+    src/monster/target_selector.cpp
+    src/ui/formatters.cpp
+    src/ui/icon.cpp
+    src/ui/panel.cpp
+    src/ui/panel_player.cpp
+    src/ui/panel_monster.cpp
+    src/ui/panel_damage.cpp
+    src/ui/panel_pet_damage.cpp
+    src/world/world_types.cpp
+    src/resources/resources.qrc
+    assets/icons.qrc
+)
+target_link_libraries(snapshot-regression-tests PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+    LayerShellQt::Interface
+    monster-core
+)
+target_include_directories(snapshot-regression-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(snapshot-regression-tests PRIVATE -Wall -Wextra -Wpedantic)
+# Baseline PNGs live in the SOURCE tree; ctest runs this from build/, so
+# resolve the directory at compile time instead of relative to cwd.
+target_compile_definitions(snapshot-regression-tests PRIVATE
+    MHW_BASELINE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/baseline")
+add_test(NAME snapshot-regression-tests COMMAND snapshot-regression-tests)
+# Must resolve its baselines through the source tree whatever the cwd is.
+set_tests_properties(snapshot-regression-tests PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(world-severable-scan-tests
+    tests/world_severable_scan_tests.cpp
+)
     target_include_directories(world-severable-scan-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(world-severable-scan-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME world-severable-scan-tests COMMAND world-severable-scan-tests)

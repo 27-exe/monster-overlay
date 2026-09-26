@@ -17,7 +17,6 @@
 #include <array>
 #include <algorithm>
 #include <cerrno>
-#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fcntl.h>
@@ -467,18 +466,9 @@ GameSnapshot MhwReader::poll()
         cachedArrayBase_ = 0;
         lastZone = snapshot.zone;
     }
-    static int callCount = 0;
-    if (++callCount % 10 == 0)
-        qDebug("poll #%d: zone=%d", callCount, static_cast<int>(snapshot.zone));
     QString error;
     if (isHuntingZone(snapshot.zone)) {
-        const auto t0 = std::chrono::steady_clock::now();
         snapshot.monsters = readMonsters(&error);
-        const auto t1 = std::chrono::steady_clock::now();
-        if (callCount % 10 == 0)
-            qDebug("poll: monsters=%lld in %lldus",
-                     static_cast<long long>(snapshot.monsters.size()),
-                     static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()));
     }
     snapshot.player = readPlayer(nullptr);
     // HunterPie: persistent identity (name, MR) comes from the save
