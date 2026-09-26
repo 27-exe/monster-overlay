@@ -58,16 +58,30 @@ target_include_directories(monster-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(monster-core PUBLIC Qt6::Core Threads::Threads)
 target_compile_options(monster-core PRIVATE -Wall -Wextra -Wpedantic)
 
-add_executable(monster-overlay
-    src/main.cpp
-    src/mhw_reader.cpp
+# Reader library: the process-memory readers for the World build (MhwReader
+# itself plus the five per-domain readers that define its member functions).
+# These files used to be listed directly by 20 targets, which meant the whole
+# reader layer was compiled 20 times over per build and every new target had
+# a silent way to drift from the rest by picking the wrong subset. The five
+# domain readers are internally decoupled (each includes only mhw_reader.h
+# and its own types header), so they share one library safely; this is the
+# World counterpart of monster-core's Rise reader.
+add_library(mhw-reader STATIC
     src/mhw_reader.h
-    src/monster/part_schemas.cpp
+    src/mhw_reader.cpp
     src/monster/monster_reader.cpp
     src/monster/target_selector.cpp
     src/player/player_reader.cpp
     src/quest/quest_reader.cpp
     src/world/world_reader.cpp
+)
+target_include_directories(mhw-reader PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(mhw-reader PUBLIC Qt6::Core monster-core)
+target_compile_options(mhw-reader PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(monster-overlay
+    src/main.cpp
+    src/monster/part_schemas.cpp
     src/ui/formatters.cpp
     src/ui/icon.cpp
     src/ui/panel.cpp
@@ -88,6 +102,7 @@ target_link_libraries(monster-overlay PRIVATE
     Qt6::Svg
     LayerShellQt::Interface
     monster-core
+    mhw-reader
 )
 
 target_compile_definitions(monster-overlay PRIVATE
@@ -102,14 +117,7 @@ target_compile_options(monster-overlay PRIVATE -Wall -Wextra -Wpedantic)
 # desktop — see ~/.hermes/memory KDE/overlay testing note).
 add_executable(snap-player-demo
     tests/snap_player_demo.cpp
-    src/mhw_reader.cpp
-    src/mhw_reader.h
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
-    src/world/world_reader.cpp
-    src/monster/monster_reader.cpp
     src/monster/part_schemas.cpp
-    src/monster/target_selector.cpp
     src/ui/formatters.cpp
     src/ui/icon.cpp
     src/ui/panel.cpp
@@ -124,20 +132,14 @@ target_link_libraries(snap-player-demo PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
+    mhw-reader
 )
 target_include_directories(snap-player-demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snap-player-demo PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(snap-all-demo
     tests/snap_all_demo.cpp
-    src/mhw_reader.cpp
-    src/mhw_reader.h
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
-    src/world/world_reader.cpp
-    src/monster/monster_reader.cpp
     src/monster/part_schemas.cpp
-    src/monster/target_selector.cpp
     src/ui/formatters.cpp
     src/ui/icon.cpp
     src/ui/panel.cpp
@@ -154,6 +156,7 @@ target_link_libraries(snap-all-demo PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
+    mhw-reader
 )
 target_include_directories(snap-all-demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snap-all-demo PRIVATE -Wall -Wextra -Wpedantic)
@@ -165,14 +168,7 @@ target_compile_options(snap-all-demo PRIVATE -Wall -Wextra -Wpedantic)
 # `cmake --build .`, never registered as a CTest.
 add_executable(snap-world-mp EXCLUDE_FROM_ALL
     tests/snap_world_mp.cpp
-    src/mhw_reader.cpp
-    src/mhw_reader.h
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
-    src/world/world_reader.cpp
-    src/monster/monster_reader.cpp
     src/monster/part_schemas.cpp
-    src/monster/target_selector.cpp
     src/ui/formatters.cpp
     src/ui/icon.cpp
     src/ui/panel.cpp
@@ -187,6 +183,7 @@ target_link_libraries(snap-world-mp PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
+    mhw-reader
 )
 target_include_directories(snap-world-mp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snap-world-mp PRIVATE -Wall -Wextra -Wpedantic)
@@ -198,14 +195,7 @@ target_compile_options(snap-world-mp PRIVATE -Wall -Wextra -Wpedantic)
 # `cmake --build .`, not registered as a CTest.
 add_executable(snap-gauge-fill EXCLUDE_FROM_ALL
     tests/snap_gauge_fill.cpp
-    src/mhw_reader.cpp
-    src/mhw_reader.h
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
-    src/world/world_reader.cpp
-    src/monster/monster_reader.cpp
     src/monster/part_schemas.cpp
-    src/monster/target_selector.cpp
     src/ui/formatters.cpp
     src/ui/icon.cpp
     src/ui/panel.cpp
@@ -220,6 +210,7 @@ target_link_libraries(snap-gauge-fill PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
+    mhw-reader
 )
 target_include_directories(snap-gauge-fill PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snap-gauge-fill PRIVATE -Wall -Wextra -Wpedantic)
@@ -230,14 +221,7 @@ add_executable(monster-control
     src/main_control.cpp
     src/ui/rise_reframework_bridge.h
     src/ui/rise_reframework_bridge.cpp
-    src/mhw_reader.cpp
-    src/mhw_reader.h
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
-    src/world/world_reader.cpp
-    src/monster/monster_reader.cpp
     src/monster/part_schemas.cpp
-    src/monster/target_selector.cpp
     src/core/string_table.cpp
     src/ui/formatters.cpp
     src/ui/icon.cpp
@@ -270,6 +254,7 @@ target_link_libraries(monster-control PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
+    mhw-reader
 )
 target_include_directories(monster-control PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Private QtGui headers (qpa/qplatformscreen.h) live under
@@ -307,14 +292,7 @@ target_compile_options(monster-control PRIVATE -Wall -Wextra -Wpedantic)
 # then re-opens and verifies the load applied the same state.
 add_executable(monster-control-l2-smoke
     tests/control_l2_smoke.cpp
-    src/mhw_reader.cpp
-    src/mhw_reader.h
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
-    src/world/world_reader.cpp
-    src/monster/monster_reader.cpp
     src/monster/part_schemas.cpp
-    src/monster/target_selector.cpp
     src/core/string_table.cpp
     src/ui/formatters.cpp
     src/ui/icon.cpp
@@ -347,6 +325,7 @@ target_link_libraries(monster-control-l2-smoke PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
+    mhw-reader
 )
 target_include_directories(monster-control-l2-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(monster-control-l2-smoke PRIVATE
@@ -360,14 +339,7 @@ target_compile_options(monster-control-l2-smoke PRIVATE -Wall -Wextra -Wpedantic
 # Steam tree; config writes go to a redirected XDG_CONFIG_HOME.
 add_executable(monster-control-rise-rf-smoke
     tests/control_reframework_smoke.cpp
-    src/mhw_reader.cpp
-    src/mhw_reader.h
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
-    src/world/world_reader.cpp
-    src/monster/monster_reader.cpp
     src/monster/part_schemas.cpp
-    src/monster/target_selector.cpp
     src/core/string_table.cpp
     src/ui/formatters.cpp
     src/ui/icon.cpp
@@ -400,6 +372,7 @@ target_link_libraries(monster-control-rise-rf-smoke PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
+    mhw-reader
 )
 target_include_directories(monster-control-rise-rf-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(monster-control-rise-rf-smoke PRIVATE
@@ -412,14 +385,7 @@ target_compile_options(monster-control-rise-rf-smoke PRIVATE -Wall -Wextra -Wped
 # Drop the QPA-private include because Panel is purely Qt-public here.
 add_executable(monster-control-p0-test
     tests/control_panel_p0_test.cpp
-    src/mhw_reader.cpp
-    src/mhw_reader.h
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
-    src/world/world_reader.cpp
-    src/monster/monster_reader.cpp
     src/monster/part_schemas.cpp
-    src/monster/target_selector.cpp
     src/core/string_table.cpp
     src/ui/formatters.cpp
     src/ui/icon.cpp
@@ -449,6 +415,7 @@ target_link_libraries(monster-control-p0-test PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
+    mhw-reader
 )
 target_include_directories(monster-control-p0-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(monster-control-p0-test PRIVATE
@@ -465,14 +432,7 @@ if(BUILD_TESTING)
 # refactors had nothing to fail on.
 add_executable(snapshot-regression-tests
     tests/snapshot_regression_tests.cpp
-    src/mhw_reader.cpp
-    src/mhw_reader.h
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
-    src/world/world_reader.cpp
-    src/monster/monster_reader.cpp
     src/monster/part_schemas.cpp
-    src/monster/target_selector.cpp
     src/ui/formatters.cpp
     src/ui/icon.cpp
     src/ui/panel.cpp
@@ -488,6 +448,7 @@ target_link_libraries(snapshot-regression-tests PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
+    mhw-reader
 )
 target_include_directories(snapshot-regression-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(snapshot-regression-tests PRIVATE -Wall -Wextra -Wpedantic)
@@ -525,14 +486,7 @@ add_executable(world-severable-scan-tests
     # builds without pulling it into the default build.
     add_executable(snap-empty-state EXCLUDE_FROM_ALL
         tests/snap_empty_state.cpp
-        src/mhw_reader.cpp
-        src/mhw_reader.h
-        src/player/player_reader.cpp
-        src/quest/quest_reader.cpp
-        src/world/world_reader.cpp
-        src/monster/monster_reader.cpp
         src/monster/part_schemas.cpp
-        src/monster/target_selector.cpp
         src/ui/formatters.cpp
         src/ui/icon.cpp
         src/ui/panel.cpp
@@ -547,6 +501,7 @@ add_executable(world-severable-scan-tests
         Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
         LayerShellQt::Interface
         monster-core
+        mhw-reader
     )
     target_include_directories(snap-empty-state PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(snap-empty-state PRIVATE -Wall -Wextra -Wpedantic)
@@ -557,14 +512,7 @@ add_executable(world-severable-scan-tests
     # is a visual aid and needs a QPA platform.
     add_executable(snap-player-offline EXCLUDE_FROM_ALL
         tests/snap_player_offline.cpp
-        src/mhw_reader.cpp
-        src/mhw_reader.h
-        src/player/player_reader.cpp
-        src/quest/quest_reader.cpp
-        src/world/world_reader.cpp
-        src/monster/monster_reader.cpp
         src/monster/part_schemas.cpp
-        src/monster/target_selector.cpp
         src/ui/formatters.cpp
         src/ui/icon.cpp
         src/ui/panel.cpp
@@ -579,87 +527,76 @@ add_executable(world-severable-scan-tests
         Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
         LayerShellQt::Interface
         monster-core
+        mhw-reader
     )
     target_include_directories(snap-player-offline PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(snap-player-offline PRIVATE -Wall -Wextra -Wpedantic)
 
-    # All reader-dependent targets need these sources since MhwReader member
-    # functions are defined across multiple .cpp files (one per domain).
-    set(MHW_READER_SOURCES
-        src/mhw_reader.cpp
-        src/mhw_reader.h
-        src/monster/part_schemas.cpp
-        src/monster/monster_reader.cpp
-        src/monster/target_selector.cpp
-        src/player/player_reader.cpp
-        src/quest/quest_reader.cpp
-        src/world/world_reader.cpp
-    )
     add_executable(monster-reader-tests
         tests/reader_tests.cpp
-        ${MHW_READER_SOURCES}
+        src/monster/part_schemas.cpp
         # qrc: the tests flip StringTable between zh-CN / en-US to assert
         # both columns of the data-name tables.
         src/resources/resources.qrc
     )
-    target_link_libraries(monster-reader-tests PRIVATE Qt6::Core monster-core)
+    target_link_libraries(monster-reader-tests PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-reader-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-reader-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME monster-reader-tests COMMAND monster-reader-tests)
 
     add_executable(monster-probe
         tests/monster_probe.cpp
-        ${MHW_READER_SOURCES}
+        src/monster/part_schemas.cpp
     )
-    target_link_libraries(monster-probe PRIVATE Qt6::Core monster-core)
+    target_link_libraries(monster-probe PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-scan
         tests/monster_scan.cpp
-        ${MHW_READER_SOURCES}
+        src/monster/part_schemas.cpp
     )
-    target_link_libraries(monster-scan PRIVATE Qt6::Core monster-core)
+    target_link_libraries(monster-scan PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-scan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-scan PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-probe-parts
         tests/monster_probe_parts.cpp
-        ${MHW_READER_SOURCES}
+        src/monster/part_schemas.cpp
     )
-    target_link_libraries(monster-probe-parts PRIVATE Qt6::Core monster-core)
+    target_link_libraries(monster-probe-parts PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe-parts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-parts PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-probe-ailments
         tests/monster_probe_ailments.cpp
-        ${MHW_READER_SOURCES}
+        src/monster/part_schemas.cpp
     )
-    target_link_libraries(monster-probe-ailments PRIVATE Qt6::Core monster-core)
+    target_link_libraries(monster-probe-ailments PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe-ailments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-ailments PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-probe-ailments-watch
         tests/monster_probe_ailments_watch.cpp
-        ${MHW_READER_SOURCES}
+        src/monster/part_schemas.cpp
     )
-    target_link_libraries(monster-probe-ailments-watch PRIVATE Qt6::Core monster-core)
+    target_link_libraries(monster-probe-ailments-watch PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe-ailments-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-ailments-watch PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-probe-mantles
         tests/monster_probe_mantles.cpp
-        ${MHW_READER_SOURCES}
+        src/monster/part_schemas.cpp
     )
-    target_link_libraries(monster-probe-mantles PRIVATE Qt6::Core monster-core)
+    target_link_libraries(monster-probe-mantles PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe-mantles PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-mantles PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-probe-mantles-wide
         tests/monster_probe_mantles_wide.cpp
-        ${MHW_READER_SOURCES}
+        src/monster/part_schemas.cpp
     )
-    target_link_libraries(monster-probe-mantles-wide PRIVATE Qt6::Core monster-core)
+    target_link_libraries(monster-probe-mantles-wide PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe-mantles-wide PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-mantles-wide PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
@@ -900,18 +837,9 @@ endif()
 # overlay's. Default target on purpose: the packaging step must find it built.
 add_executable(monster-doctor
     tests/monster_doctor.cpp
-    # Same reader sources as rise-probe: MhwReader spans per-domain .cpp files
-    # and monster-core only ships the Rise reader.
-    src/mhw_reader.cpp
-    src/mhw_reader.h
     src/monster/part_schemas.cpp
-    src/monster/monster_reader.cpp
-    src/monster/target_selector.cpp
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
-    src/world/world_reader.cpp
 )
-target_link_libraries(monster-doctor PRIVATE Qt6::Core monster-core)
+target_link_libraries(monster-doctor PRIVATE Qt6::Core monster-core mhw-reader)
 target_include_directories(monster-doctor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(monster-doctor PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(monster-doctor PRIVATE
@@ -920,19 +848,8 @@ target_compile_definitions(monster-doctor PRIVATE
 
 add_executable(rise-probe EXCLUDE_FROM_ALL
     tests/rise_probe.cpp
-    # MhwReader is defined across per-domain .cpp files (see
-    # MHW_READER_SOURCES); the probe needs them because monster-core only
-    # ships the Rise reader. Keeping the list here keeps this target
-    # independent of BUILD_TESTING.
-    src/mhw_reader.cpp
-    src/mhw_reader.h
     src/monster/part_schemas.cpp
-    src/monster/monster_reader.cpp
-    src/monster/target_selector.cpp
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
-    src/world/world_reader.cpp
 )
-target_link_libraries(rise-probe PRIVATE Qt6::Core monster-core)
+target_link_libraries(rise-probe PRIVATE Qt6::Core monster-core mhw-reader)
 target_include_directories(rise-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(rise-probe PRIVATE -Wall -Wextra -Wpedantic)
