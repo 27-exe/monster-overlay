@@ -214,7 +214,7 @@ bool verifyArchive(const QString &path, const ReFrameworkFetcher::Options &optio
         return false;
     const QByteArray expected = options.expectedArchiveSha256.toLower();
     if (actual != expected) {
-        *detail = QStringLiteral("Archive SHA-256 mismatch: expected %1, got %2.")
+        *detail = trMessage("reader.reframework.archive_sha_mismatch")
                       .arg(QString::fromLatin1(expected), QString::fromLatin1(actual));
         return false;
     }
@@ -225,7 +225,7 @@ bool verifyArchive(const QString &path, const ReFrameworkFetcher::Options &optio
 QList<QByteArray> outputLines(const QByteArray &output, QString *detail)
 {
     if (output.contains('\0')) {
-        *detail = QStringLiteral("Archive listing contains a NUL byte.");
+        *detail = trMessage("reader.reframework.archive_listing_nul");
         return {};
     }
     QList<QByteArray> lines = output.split('\n');
@@ -235,7 +235,7 @@ QList<QByteArray> outputLines(const QByteArray &output, QString *detail)
         if (line.endsWith('\r'))
             line.chop(1);
         if (line.isEmpty()) {
-            *detail = QStringLiteral("Archive listing contains an empty entry.");
+            *detail = trMessage("reader.reframework.archive_listing_empty_entry");
             return {};
         }
     }
@@ -253,7 +253,7 @@ bool safeRelativeArchivePath(QByteArray path, QString *detail,
                 || (path.at(0) >= 'A' && path.at(0) <= 'Z'))
             && path.at(1) == ':')
         || path.contains('\\')) {
-        *detail = QStringLiteral("Archive contains an absolute or non-portable path: %1")
+        *detail = trMessage("reader.reframework.archive_absolute_path")
                       .arg(QString::fromLocal8Bit(path));
         return false;
     }
@@ -264,17 +264,17 @@ bool safeRelativeArchivePath(QByteArray path, QString *detail,
         for (const char byte : component) {
             const unsigned char value = static_cast<unsigned char>(byte);
             if (value < 0x20 || value == 0x7f || byte == ':') {
-                *detail = QStringLiteral("Archive path contains a control character or colon.");
+                *detail = trMessage("reader.reframework.archive_control_character");
                 return false;
             }
         }
         if (component.isEmpty()) {
-            *detail = QStringLiteral("Archive contains an unsafe relative path: %1")
+            *detail = trMessage("reader.reframework.archive_unsafe_relative_path")
                           .arg(QString::fromLocal8Bit(path));
             return false;
         }
         if (component == "..") {
-            *detail = QStringLiteral("Archive contains an unsafe relative path: %1")
+            *detail = trMessage("reader.reframework.archive_parent_traversal")
                           .arg(QString::fromLocal8Bit(path));
             return false;
         }
@@ -306,7 +306,8 @@ bool inspectArchive(const QString &bsdtar, const QString &archive, int timeoutMs
     QString parseError;
     const QList<QByteArray> paths = outputLines(names.standardOutput, &parseError);
     if (paths.isEmpty()) {
-        *detail = parseError.isEmpty() ? QStringLiteral("Archive has no entries.") : parseError;
+        *detail = parseError.isEmpty() ? trMessage("reader.reframework.archive_no_entries")
+                                       : parseError;
         return false;
     }
 
@@ -316,7 +317,7 @@ bool inspectArchive(const QString &bsdtar, const QString &archive, int timeoutMs
         if (!safeRelativeArchivePath(path, detail, &normalized))
             return false;
         if (seen.contains(normalized)) {
-            *detail = QStringLiteral("Archive contains duplicate entry: %1")
+            *detail = trMessage("reader.reframework.archive_duplicate_entry")
                           .arg(QString::fromLocal8Bit(normalized));
             return false;
         }
@@ -334,14 +335,14 @@ bool inspectArchive(const QString &bsdtar, const QString &archive, int timeoutMs
     const QList<QByteArray> modes = outputLines(verbose.standardOutput, &parseError);
     if (modes.size() != paths.size()) {
         *detail = parseError.isEmpty()
-            ? QStringLiteral("Archive type listing does not match its path listing.")
+            ? trMessage("reader.reframework.archive_type_listing_mismatch")
             : parseError;
         return false;
     }
     for (qsizetype i = 0; i < modes.size(); ++i) {
         const char type = modes.at(i).isEmpty() ? '\0' : modes.at(i).at(0);
         if (type != '-' && type != 'd') {
-            *detail = QStringLiteral("Archive entry is a link or special file: %1")
+            *detail = trMessage("reader.reframework.archive_special_entry")
                           .arg(QString::fromLocal8Bit(paths.at(i)));
             return false;
         }
@@ -360,12 +361,12 @@ bool validateStagingTree(const QString &staging, QString *detail)
         const QString portableRelative = QDir::fromNativeSeparators(relative);
         QString pathError;
         if (!safeRelativeArchivePath(portableRelative.toLocal8Bit(), &pathError)) {
-            *detail = QStringLiteral("Extracted staging contains an unsafe path: %1")
+            *detail = trMessage("reader.reframework.staging_unsafe_path")
                           .arg(pathError);
             return false;
         }
         if (info.isSymLink() || (!info.isFile() && !info.isDir())) {
-            *detail = QStringLiteral("Extracted staging contains a link or special file: %1")
+            *detail = trMessage("reader.reframework.staging_special_file")
                           .arg(relative);
             return false;
         }
@@ -381,7 +382,7 @@ bool validateStagingTree(const QString &staging, QString *detail)
     for (const QString &relative : required) {
         const QFileInfo info(QDir(staging).filePath(relative));
         if (!info.exists() || !info.isFile() || info.isSymLink()) {
-            *detail = QStringLiteral("Extracted staging is missing regular file: %1").arg(relative);
+            *detail = trMessage("reader.reframework.staging_missing_required_file").arg(relative);
             return false;
         }
     }
@@ -424,32 +425,34 @@ ReFrameworkFetcher::Result ReFrameworkFetcher::prepareArchive(
     if (hasCustomExpectedIdentity
         && (options.expectedArchiveSize < 0 || options.expectedArchiveSha256.isEmpty())) {
         return failure(result, progress,
-                       QStringLiteral("Archive expectation must provide both size and SHA-256."));
+                       trMessage("reader.reframework.archive_identity_incomplete"));
     }
     report(progress, State::CheckingLocalArchive,
-           QStringLiteral("Checking the caller-provided REFramework archive."));
+           trMessage("reader.reframework.step_checking_local_archive"));
     if (cancelled && cancelled())
-        return failure(result, progress, QStringLiteral("Operation cancelled."), true);
+        return failure(result, progress,
+                       trMessage("reader.reframework.operation_cancelled"), true);
 
     QString localDetail;
     const bool localValid = verifyArchive(localArchive, options, &localDetail);
     result.localArchiveDetail = localDetail;
     if (cancelled && cancelled())
-        return failure(result, progress, QStringLiteral("Operation cancelled."), true);
+        return failure(result, progress,
+                       trMessage("reader.reframework.operation_cancelled"), true);
 
     if (!localValid)
         report(progress, State::VerifyingArchive,
-               QStringLiteral("Local archive failed verification; trying the pinned download."));
+               trMessage("reader.reframework.local_archive_failed_fallback_download"));
 
     const QString root = tempRoot.trimmed().isEmpty() ? QDir::tempPath() : tempRoot;
     if (!QDir().mkpath(root))
         return failure(result, progress,
-                       QStringLiteral("Cannot create temporary root: %1").arg(root));
+                       trMessage("reader.reframework.temp_root_create_failed").arg(root));
     auto workspace = std::make_shared<QTemporaryDir>(
         QDir(root).filePath(QStringLiteral("monster-overlay-reframework-XXXXXX")));
     if (!workspace->isValid())
         return failure(result, progress,
-                       QStringLiteral("Cannot create temporary REFramework workspace in %1.")
+                       trMessage("reader.reframework.temp_workspace_failed")
                            .arg(root));
 
     const QString archive = QDir(workspace->path()).filePath(QStringLiteral("MHRISE.zip"));
@@ -457,16 +460,16 @@ ReFrameworkFetcher::Result ReFrameworkFetcher::prepareArchive(
         result.source = Source::LocalArchive;
         if (!QFile::copy(localArchive, archive))
             return failure(result, progress,
-                           QStringLiteral("Cannot snapshot the verified local archive."));
+                           trMessage("reader.reframework.local_archive_snapshot_failed"));
         QString snapshotDetail;
         if (!verifyArchive(archive, options, &snapshotDetail))
             return failure(result, progress,
-                           QStringLiteral("Local archive changed while it was being snapshotted: %1")
+                           trMessage("reader.reframework.local_snapshot_mismatch")
                                .arg(snapshotDetail));
     } else {
         result.source = Source::Download;
         report(progress, State::DownloadingArchive,
-               QStringLiteral("Local archive was rejected; downloading the pinned REFramework asset."));
+               trMessage("reader.reframework.local_rejected_downloading"));
         const ProcessResult downloaded = runProcess(
             options.curlExecutable,
             {QStringLiteral("--fail"),
@@ -481,19 +484,20 @@ ReFrameworkFetcher::Result ReFrameworkFetcher::prepareArchive(
             return failure(result, progress, downloaded.detail, downloaded.cancelled);
 
         report(progress, State::VerifyingArchive,
-               QStringLiteral("Verifying the downloaded archive size and SHA-256."));
+               trMessage("reader.reframework.step_verifying_download"));
         QString downloadDetail;
         if (!verifyArchive(archive, options, &downloadDetail))
             return failure(result, progress,
-                           QStringLiteral("Downloaded archive verification failed: %1")
+                           trMessage("reader.reframework.download_verification_failed")
                                .arg(downloadDetail));
     }
 
     if (cancelled && cancelled())
-        return failure(result, progress, QStringLiteral("Operation cancelled."), true);
+        return failure(result, progress,
+                       trMessage("reader.reframework.operation_cancelled"), true);
 
     report(progress, State::InspectingArchive,
-           QStringLiteral("Inspecting archive paths and entry types."));
+           trMessage("reader.reframework.step_inspecting_archive"));
     bool wasCancelled = false;
     QString detail;
     if (!inspectArchive(options.bsdtarExecutable, archive, options.processTimeoutMs,
@@ -501,15 +505,16 @@ ReFrameworkFetcher::Result ReFrameworkFetcher::prepareArchive(
         return failure(result, progress, detail, wasCancelled);
     }
     if (cancelled && cancelled())
-        return failure(result, progress, QStringLiteral("Operation cancelled."), true);
+        return failure(result, progress,
+                       trMessage("reader.reframework.operation_cancelled"), true);
 
     const QString staging = QDir(workspace->path()).filePath(QStringLiteral("staging"));
     if (!QDir().mkpath(staging))
         return failure(result, progress,
-                       QStringLiteral("Cannot create archive staging directory."));
+                       trMessage("reader.reframework.staging_dir_create_failed"));
 
     report(progress, State::ExtractingArchive,
-           QStringLiteral("Extracting the verified archive to temporary staging."));
+           trMessage("reader.reframework.step_extracting_archive"));
     const ProcessResult extracted = runProcess(
         options.bsdtarExecutable,
         {QStringLiteral("-xf"), archive, QStringLiteral("-C"), staging},
@@ -517,7 +522,8 @@ ReFrameworkFetcher::Result ReFrameworkFetcher::prepareArchive(
     if (!extracted.ok)
         return failure(result, progress, extracted.detail, extracted.cancelled);
     if (cancelled && cancelled())
-        return failure(result, progress, QStringLiteral("Operation cancelled."), true);
+        return failure(result, progress,
+                       trMessage("reader.reframework.operation_cancelled"), true);
     if (!validateStagingTree(staging, &detail))
         return failure(result, progress, detail);
 
@@ -526,8 +532,8 @@ ReFrameworkFetcher::Result ReFrameworkFetcher::prepareArchive(
     result.stagingDir = staging;
     result.workspace = std::move(workspace);
     result.detail = result.source == Source::LocalArchive
-        ? QStringLiteral("Prepared the verified local REFramework archive.")
-        : QStringLiteral("Downloaded and prepared the verified REFramework archive.");
+        ? trMessage("reader.reframework.prepared_local_archive")
+        : trMessage("reader.reframework.prepared_downloaded_archive");
     report(progress, State::Ready, result.detail);
     return result;
 }
@@ -582,7 +588,7 @@ void ReFrameworkFetcher::Job::cancel()
     m_cancelRequested = true;
     if (m_state == State::Idle && !m_threadStarted) {
         m_result.cancelled = true;
-        m_result.detail = QStringLiteral("Operation was cancelled before it started.");
+        m_result.detail = trMessage("reader.reframework.job_cancelled_before_start");
         m_state = State::Cancelled;
         m_finished.notify_all();
     } else {
@@ -594,7 +600,7 @@ bool ReFrameworkFetcher::Job::waitForFinished(int timeoutMs)
 {
     std::unique_lock lock(m_mutex);
     if (m_state == State::Idle) {
-        m_result.detail = QStringLiteral("Job has not been started.");
+        m_result.detail = trMessage("reader.reframework.job_not_started");
         return false;
     }
     if (timeoutMs < 0) {
@@ -651,7 +657,7 @@ void ReFrameworkFetcher::Job::run()
             m_result.archivePath.clear();
             m_result.stagingDir.clear();
             m_result.workspace.reset();
-            m_result.detail = QStringLiteral("Operation cancelled.");
+            m_result.detail = trMessage("reader.reframework.operation_cancelled");
         }
         if (m_result.cancelled || m_cancelRequested)
             m_state = State::Cancelled;
