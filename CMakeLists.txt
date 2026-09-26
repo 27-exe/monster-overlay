@@ -112,6 +112,8 @@ add_library(mhw-ui STATIC
     src/ui/panel.h
     src/ui/panel_damage.cpp
     src/ui/panel_damage.h
+    src/ui/viewmodel/damage_view_model.cpp
+    src/ui/viewmodel/damage_view_model.h
     src/ui/panel_monster.cpp
     src/ui/panel_monster.h
     src/ui/panel_pet_damage.cpp
@@ -718,6 +720,21 @@ add_executable(world-severable-scan-tests
     target_include_directories(pet-damage-panel-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(pet-damage-panel-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME pet-damage-panel-tests COMMAND pet-damage-panel-tests)
+
+    add_executable(damage-view-model-tests
+        tests/damage_view_model_tests.cpp
+        # The ViewModel lives in the mhw-ui sink, so linking the library
+        # drags in the whole GUI layer. These two translation units supply
+        # the data tables / zone names that layer references (the same pair
+        # snapshot-regression-tests lists for the same reason); they are not
+        # src/ui sources, so nothing is compiled twice.
+        src/monster/part_schemas.cpp
+        src/world/world_types.cpp
+    )
+    target_link_libraries(damage-view-model-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(damage-view-model-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(damage-view-model-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME damage-view-model-tests COMMAND damage-view-model-tests)
 
     # Source-level CLI/build contract: catches an option that is declared but
     # not registered, or a fourth panel omitted from the product target.

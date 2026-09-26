@@ -153,8 +153,13 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 } // namespace mh
 
 DamagePanel::DamagePanel(QWidget *parent)
-    : Panel(QStringLiteral("dps"), Corner::TopRight, parent)
+    : Panel(QStringLiteral("dps"), Corner::TopRight, parent),
+      m_vm(this)
 {
+    // The ViewModel's "data changed" signal replaces the five
+    // canvas()->update() calls the statistic used to make itself.
+    connect(&m_vm, &mhw::DamageViewModel::changed,
+            this, [this] { QWidget::update(); });
     setWindowTitle(mh::tr("ui.damage_title"));
 }
 
@@ -172,522 +177,24 @@ void DamagePanel::retranslateUi()
 void DamagePanel::setRiseDisplayOptions(
     const mhw::RiseDamageDisplayOptions &options)
 {
-    riseDisplayOptions_ = options;
-    canvas()->update();
+    m_vm.setRiseDisplayOptions(options);
 }
 
 void DamagePanel::updateRiseDamage(
     const mhw::RiseDamageSnapshot &dmg,
     const mhw::RiseDamageDisplayOptions &options)
 {
-    riseDisplayOptions_ = options;
-    updateRiseDamage(dmg);
+    m_vm.updateRise(dmg, options);
 }
 
 void DamagePanel::updateRiseDamage(const mhw::RiseDamageSnapshot &dmg)
 {
-    auto clearRiseState = [this] {
-        history_.clear();
-        tick_ = 0;
-        firstHitTick_.clear();
-        baselineDamage_.clear();
-        rawDamage_.clear();
-        names_.clear();
-        weaponIds_.clear();
-        masterRanks_.clear();
-        slots_.clear();
-        locals_.clear();
-        left_.clear();
-        riseKeys_.clear();
-        lastElapsedSeconds_ = 0.0F;
-        hasData_ = false;
-        questEnded_ = false;
-    };
-
-    const mhw::RiseDamageLifecycleAction action =
-        mhw::riseDamageLifecycleAction(dmg);
-    if (action == mhw::RiseDamageLifecycleAction::Keep) {
-        canvas()->update();
-        return;
-    }
-    if (action == mhw::RiseDamageLifecycleAction::Clear) {
-        clearRiseState();
-        hasRiseQuestEpoch_ = false;
-        canvas()->update();
-        return;
-    }
-
-    const bool epochChanged = hasRiseQuestEpoch_
-                           && dmg.questEpoch != riseQuestEpoch_;
-    riseQuestEpoch_ = dmg.questEpoch;
-    hasRiseQuestEpoch_ = true;
-
-    if (epochChanged) {
-        // Epoch is the authoritative hunt identity for v2. Reset even when
-        // the producer does not expose an inactive frame between two hunts.
-        clearRiseState();
-        riseQuestEpoch_ = dmg.questEpoch;
-        hasRiseQuestEpoch_ = true;
-    }
-
-    if (action == mhw::RiseDamageLifecycleAction::Freeze) {
-        if (hasData_)
-            questEnded_ = true;
-        canvas()->update();
-        return;
-    }
-
-    if (questEnded_) {
-        questEnded_ = false;
-        history_.clear();
-        tick_ = 0;
-        firstHitTick_.clear();
-        baselineDamage_.clear();
-        rawDamage_.clear();
-        lastElapsedSeconds_ = 0.0F;
-    }
-
-    // The main damage table intentionally contains hunters and NPC
-    // companions only. Pet/Palico/Palamute rows belong to their own display,
-    // while Unknown is never promoted into a user-facing row. Disabling
-    // "other members" is stricter still: only the local Player survives;
-    // even a locally-owned Companion is an other member for this option.
-    QVector<const mhw::RiseDamageActor *> actors;
-    actors.reserve(dmg.actors.size());
-    QSet<QString> seenKeys;
-    for (const auto &actor : dmg.actors) {
-        const bool supportedKind = actor.kind == mhw::RiseDamageActorKind::Player
-                                || actor.kind == mhw::RiseDamageActorKind::Companion;
-        if (!supportedKind || actor.key.isEmpty() || seenKeys.contains(actor.key))
-            continue;
-        if (!riseDisplayOptions_.showOtherMembers
-            && !(actor.kind == mhw::RiseDamageActorKind::Player && actor.local)) {
-            continue;
-        }
-        seenKeys.insert(actor.key);
-        actors.append(&actor);
-    }
-
-    std::sort(actors.begin(), actors.end(),
-              [](const mhw::RiseDamageActor *lhs,
-                 const mhw::RiseDamageActor *rhs) {
-        if (lhs->local != rhs->local)
-            return lhs->local > rhs->local;
-        if (lhs->displaySlot != rhs->displaySlot)
-            return lhs->displaySlot < rhs->displaySlot;
-        return lhs->key < rhs->key;
-    });
-
-    if (actors.isEmpty()) {
-        // Preserve the startup placeholder until a supported actor has ever
-        // arrived. Once rows existed, however, an authoritative empty/filter
-        // result must remove them rather than leave disallowed stale members.
-        if (!riseKeys_.isEmpty()) {
-            history_.clear();
-            tick_ = 0;
-            firstHitTick_.clear();
-            baselineDamage_.clear();
-            rawDamage_.clear();
-            names_.clear();
-            weaponIds_.clear();
-            masterRanks_.clear();
-            slots_.clear();
-            locals_.clear();
-            left_.clear();
-            riseKeys_.clear();
-            hasData_ = false;
-        }
-        canvas()->update();
-        return;
-    }
-
-    hasData_ = true;
-
-    const int n = actors.size();
-
-    // Every positional vector and every historical sample is remapped through
-    // actor.key before the sorted order is installed. Thus a producer may
-    // reorder its JSON array (or a display slot may change) without assigning
-    // one actor another actor's chart, baseline, or DPS history.
-    QHash<QString, int> oldIndexByKey;
-    oldIndexByKey.reserve(riseKeys_.size() * 2);
-    for (int i = 0; i < riseKeys_.size(); ++i)
-        oldIndexByKey.insert(riseKeys_[i], i);
-
-    QVector<int> oldIndexes(n, -1);
-    QVector<QString> nextKeys(n);
-    QVector<QString> nextNames(n);
-    QVector<int> nextWeaponIds(n, -1);
-    QVector<int> nextMasterRanks(n, 0);
-    QVector<int> nextSlots(n, -1);
-    QVector<bool> nextLocals(n, false);
-    QVector<int> nextFirstHitTicks(n, 0);
-    QVector<int> nextBaselines(n, 0);
-    QVector<int> nextRawDamage(n, 0);
-
-    for (int i = 0; i < n; ++i) {
-        const auto &actor = *actors[i];
-        nextKeys[i] = actor.key;
-        nextNames[i] = actor.name;
-        nextWeaponIds[i] = actor.weaponId;
-        nextMasterRanks[i] = actor.masterRank;
-        nextSlots[i] = actor.displaySlot;
-        nextLocals[i] = actor.local;
-
-        const int oldIndex = oldIndexByKey.value(actor.key, -1);
-        oldIndexes[i] = oldIndex;
-        if (oldIndex >= 0) {
-            nextFirstHitTicks[i] = firstHitTick_.value(oldIndex, 0);
-            nextBaselines[i] = baselineDamage_.value(oldIndex, 0);
-            nextRawDamage[i] = rawDamage_.value(oldIndex, 0);
-        }
-
-        const int total = actor.total >= std::numeric_limits<int>::max()
-            ? std::numeric_limits<int>::max()
-            : static_cast<int>(actor.total);
-        if (nextFirstHitTicks[i] == 0 && total > 0) {
-            nextFirstHitTicks[i] = tick_;
-            nextBaselines[i] = total;
-        }
-    }
-
-    for (Sample &sample : history_) {
-        const QVector<int> oldDamage = sample.damage;
-        sample.damage.fill(0, n);
-        for (int i = 0; i < n; ++i) {
-            if (oldIndexes[i] >= 0)
-                sample.damage[i] = oldDamage.value(oldIndexes[i], 0);
-        }
-    }
-
-    riseKeys_ = std::move(nextKeys);
-    names_ = std::move(nextNames);
-    weaponIds_ = std::move(nextWeaponIds);
-    masterRanks_ = std::move(nextMasterRanks);
-    slots_ = std::move(nextSlots);
-    locals_ = std::move(nextLocals);
-    firstHitTick_ = std::move(nextFirstHitTicks);
-    baselineDamage_ = std::move(nextBaselines);
-    rawDamage_ = std::move(nextRawDamage);
-    left_.fill(false, n);
-
-    Sample s;
-    s.tick = tick_++;
-    s.damage.resize(n);
-    for (int i = 0; i < n; ++i) {
-        const qint64 total = actors[i]->total;
-        s.damage[i] = total >= std::numeric_limits<int>::max()
-            ? std::numeric_limits<int>::max()
-            : static_cast<int>(total);
-        rawDamage_[i] = s.damage[i];
-    }
-    history_.append(s);
-    if (history_.size() > kMaxSamples)
-        history_.removeFirst();
-
-    canvas()->update();
+    m_vm.updateRise(dmg);
 }
 
 void DamagePanel::update(const mhw::GameSnapshot &snap)
 {
-    // HunterPie: capture the real quest elapsed time before any
-    // quest-end early-return so the title-row timer stays correct
-    // after the freeze kicks in. The in-game timer pointer is
-    // typically invalid in the settlement screen.
-    if (snap.quest.maxTimerSeconds > 0.0F)
-        lastElapsedSeconds_ = snap.quest.elapsedSeconds;
-
-    // 3-state quest lifecycle keyed off snap.quest.state.
-    //
-    //   state == 2 (InQuest)  → record samples, DPS live
-    //   state 3/4/5/6/7       → FREEZE: 60s settlement / abandon screen
-    //                            where zone is still a hunting zone but
-    //                            damage counters must NOT advance
-    //   state ≤ 1             → CLEAR: back at lobby / mission select,
-    //                            wipe chart and reset baselines
-    //
-    // The previous inHuntingZone()-only gate (v0.5.x) ran into the
-    // 60-second settlement window: zone stays a hunting zone, so we
-    // kept appending samples and ticking DPS for a full minute after
-    // the quest had already finished. Authoritative reference: project
-    // L2 page mhw-hunterpie-dps-algorithm.md.
-    const int qstate = snap.quest.state;
-    const bool inQuest = (qstate == 2) && (snap.quest.id > 0);
-    const bool inResultScreen = (qstate >= 3 && qstate <= 7);
-    const bool atLobby = (qstate <= 1);
-
-    if (inQuest && questEnded_) {
-        // New quest started while the old one was frozen → full reset.
-        // All row identity vectors must clear too, otherwise the drop-out
-        // carry-over block below would mistake leftover names from the
-        // previous quest for a still-present row in this one.
-        questEnded_ = false;
-        history_.clear();
-        tick_ = 0;
-        firstHitTick_.clear();
-        baselineDamage_.clear();
-        rawDamage_.clear();
-        lastElapsedSeconds_ = 0.0F;
-        names_.clear();
-        weaponIds_.clear();
-        masterRanks_.clear();
-        slots_.clear();
-        locals_.clear();
-        left_.clear();
-    } else if (inResultScreen && !questEnded_) {
-        // Quest finished (Success/Completed/Failed/Abandon/Quit) —
-        // freeze immediately. Keep the chart and per-row damage
-        // visible; stop appending new samples.
-        questEnded_ = true;
-        canvas()->update();
-        return;
-    } else if (questEnded_ && atLobby) {
-        // Back at lobby / Ready state — fully clear and unhide.
-        questEnded_ = false;
-        history_.clear();
-        tick_ = 0;
-        firstHitTick_.clear();
-        baselineDamage_.clear();
-        rawDamage_.clear();
-        lastElapsedSeconds_ = 0.0F;
-        names_.clear();
-        weaponIds_.clear();
-        masterRanks_.clear();
-        slots_.clear();
-        locals_.clear();
-        left_.clear();
-        hasData_ = false;
-        canvas()->update();
-        return;
-    } else if (questEnded_) {
-        // Still in the 60s settlement screen — keep frozen data
-        // visible; do NOT record, do NOT bump tick_. The party
-        // pointer may have shrunk if a member disconnected, so we
-        // intentionally don't touch the chart and let the per-row
-        // "left" markers handle the visual gap (see readParty).
-        canvas()->update();
-        return;
-    }
-
-    // Below this point we're guaranteed !questEnded_ && inQuest, so we
-    // can safely record new samples. If party is empty the engine
-    // simply has no one to track (single-player / pre-quest), but we
-    // still want the placeholder off-screen until first damage.
-    hasData_ = !snap.party.isEmpty();
-    if (!hasData_) {
-        history_.clear();
-        tick_ = 0;
-        firstHitTick_.clear();
-        baselineDamage_.clear();
-        rawDamage_.clear();
-        // Keep names_/left_ in place: a brief party-empty dip in
-        // multiplayer (lobby reassembly, host reconnect) must not wipe
-        // carry-over rows. The next tick where party.size() > 0 will
-        // re-evaluate.
-        canvas()->update();
-        return;
-    }
-
-    const int n = std::min(static_cast<int>(snap.party.size()), kMaxPlayers);
-
-    // MHW keeps party damage counters alive across the result screen and can
-    // repopulate the party before the zone transition is observable. Treat a
-    // counter rollback as the authoritative new-hunt boundary; otherwise the
-    // old chart/ticks continue and DPS is divided by multiple hunts' time.
-    //
-    // The carry-over drop-out detection (below) can retire a row whose
-    // rawDamage_ carries over a non-zero value from the pre-drop era. That
-    // rejoin tick must NOT trip this detector — the counter legitimately
-    // "rolls back" when a returning member's engine-side slot starts
-    // accumulating damage from 0 again. To avoid that false-positive we
-    // *defer* the reset check until after the carry-over rebaseline has
-    // already aligned rawDamage_[i] for i < liveN. See the deferred block
-    // at the end of this function.
-    const bool deferDamageCounterReset = rawDamage_.size() == n
-                                     && !history_.isEmpty();
-
-    // --- Drop-out / party-shrink handling ---
-    //
-    // v0.5.x bug: when a non-host member dropped out mid-quest, the engine
-    // zeroed their damage counter (DAMAGE_ADDRESS + index*0x2A0 → 0).
-    // The overlay happily reflected that as "this player did 0 damage",
-    // wiping their cumulative total and their entire row in the chart.
-    //
-    // Strategy: never shrink the visible party mid-quest. The layout
-    // size `n` is the max of (live party size, number of previously-seen
-    // names that are still !left_). Drop-outs move into a `left_` flag;
-    // rejoins with the same name clear the flag and resume normal
-    // tracking. The panel resets `left_` to all-false on every new
-    // quest (3-state lifecycle above already handles that path).
-    const int liveN = n;
-    int prevSeen = 0;
-    for (int i = 0; i < names_.size(); ++i)
-        if (!names_.value(i).isEmpty()) ++prevSeen;
-
-    // `n` already holds liveN. Bump it up to absorb rows for players
-    // who used to be present but dropped this tick. Existing rows are
-    // preserved via their index; their `left_` flag flips below.
-    if (liveN < prevSeen) {
-        // We can't simply extend n past the live party because the
-        // row indices below are positional — index i maps to
-        // snap.party[i] for i < liveN, and to a frozen history row for
-        // i >= liveN. Track a "carry-over" list of frozen names keyed
-        // by their original snap-party index (0..3), so the loop can
-        // process them after the live block.
-        for (int i = liveN; i < prevSeen; ++i) {
-            if (left_.value(i, false))      continue;
-            if (names_.value(i).isEmpty())  continue;
-            if (i >= left_.size()) left_.resize(i + 1);
-            left_[i] = true;
-        }
-    }
-    // Final layout size: max of live party + previously-seen players
-    // (the frozen carry-over rows live at indices [liveN, prevSeen)).
-    const int layoutN = std::max(liveN, prevSeen);
-
-    // `left_` index parity: the flag at index i corresponds to row i,
-    // which equals snap.party[i] when i < liveN, and a frozen carry-over
-    // row when i >= liveN. The per-player loop below handles both.
-    left_.resize(layoutN);
-
-    // Map: name → live party index (-1 if absent from this tick's snap).
-    QHash<QString, int> liveByName;
-    liveByName.reserve(liveN * 2);
-    for (int i = 0; i < liveN; ++i)
-        liveByName.insert(snap.party[i].name, i);
-
-    // Per-name rejoin detection: if a name reappears in the live party
-    // after being marked `left_`, the corresponding row's flag clears
-    // here so the loop can rebaseline it as a fresh player.
-    for (int i = 0; i < layoutN; ++i) {
-        if (!left_.value(i, false))     continue;
-        if (names_.value(i).isEmpty())  continue;
-        if (liveByName.contains(names_[i])) {
-            left_[i] = false;
-            // Force rebaseline so post-rejoin damage isn't blended
-            // with pre-disconnect damage — this also matches the
-            // "playerChanged" semantics in the original loop.
-            firstHitTick_[i] = 0;
-            baselineDamage_[i] = 0;
-        }
-    }
-
-    names_.resize(layoutN);
-    weaponIds_.resize(layoutN);
-    masterRanks_.resize(layoutN);
-    slots_.resize(layoutN);
-    locals_.resize(layoutN);
-
-    // Per-player first-hit tracking. Resize on party-size change.
-    firstHitTick_.resize(layoutN);
-    baselineDamage_.resize(layoutN);
-    rawDamage_.resize(layoutN);
-
-    for (int i = 0; i < layoutN; ++i) {
-        const bool isCarryOver = (i >= liveN);
-        const QString previousName = names_.value(i);
-        const int previousWeaponId = weaponIds_.value(i, -1);
-
-        // Live slot: pull fresh data from snap.party. Carry-over
-        // slot (i >= liveN): keep the frozen name/weapon/etc, the
-        // player is no longer in the live party array.
-        if (!isCarryOver) {
-            names_[i]       = snap.party[i].name;
-            weaponIds_[i]   = snap.party[i].weaponId;
-            masterRanks_[i] = snap.party[i].masterRank;
-            slots_[i]       = snap.party[i].slot;
-            locals_[i]      = snap.party[i].local;
-        } else {
-            // Make sure the row renders even if resize left a hole.
-            if (names_.value(i).isEmpty()) names_[i] = QString();
-            if (slots_.value(i, -1) < 0)   slots_[i] = i;  // stable color
-            if (!locals_.value(i, false))  locals_[i] = false;
-        }
-
-        // HunterPie: baseline captured when THIS player first deals damage.
-        // Reset the baseline if the player joined fresh (slot/signature
-        // changed) so we don't blend pre-join damage with post-join.
-        const bool playerChanged = !isCarryOver
-            && firstHitTick_[i] != 0
-            && (previousWeaponId != snap.party[i].weaponId
-             || previousName     != snap.party[i].name);
-        if (playerChanged) {
-            firstHitTick_[i] = 0;
-            baselineDamage_[i] = 0;
-        }
-        if (!isCarryOver && firstHitTick_[i] == 0 && snap.party[i].damage > 0) {
-            firstHitTick_[i] = tick_;
-            baselineDamage_[i] = snap.party[i].damage;
-        }
-    }
-
-    // Record sample
-    Sample s;
-    s.tick = tick_++;
-    s.damage.resize(layoutN);
-    for (int i = 0; i < layoutN; ++i) {
-        const bool isCarryOver = (i >= liveN);
-        if (isCarryOver) {
-            // Frozen row — preserve the last recorded cumulative
-            // damage. Don't touch rawDamage_ either, so the
-            // damageCounterReset detector above stays stable across
-            // drops (the engine zeroes the live counter which is no
-            // longer indexed by us at this slot anyway).
-            s.damage[i] = history_.isEmpty() ? 0 : history_.last().damage.value(i, 0);
-            continue;
-        }
-        const int raw = static_cast<int>(snap.party[i].damage);
-        if (firstHitTick_[i] > 0) {
-            if (raw >= baselineDamage_[i]) {
-                s.damage[i] = raw - baselineDamage_[i];
-            } else {
-                // raw dropped below baseline — memory reset
-                // (quest cleared, party updated, etc). Rebaseline
-                // so the next samples start fresh at 0 instead of
-                // producing a giant negative spike in the chart.
-                baselineDamage_[i] = raw;
-                s.damage[i] = 0;
-            }
-        } else {
-            s.damage[i] = 0;
-        }
-        rawDamage_[i] = raw;
-    }
-    history_.append(s);
-    if (history_.size() > kMaxSamples)
-        history_.removeFirst();
-
-    // Deferred damageCounterReset check (v0.7.5 carry-over fix).
-    //
-    // We delayed the original reset detector past the carry-over block so
-    // rawDamage_[i] for rejoin rows (i < liveN, formerly carry-over at
-    // index >= prev-liveN) is aligned to the engine's live counter before
-    // we compare. If a rollback survives that alignment across ALL live
-    // members, it's a genuine new hunt boundary and we reset the chart.
-    if (deferDamageCounterReset) {
-        bool rollback = false;
-        bool comparedActiveCounter = false;
-        for (int i = 0; i < liveN; ++i) {
-            if (rawDamage_[i] > 0) {
-                comparedActiveCounter = true;
-                if (snap.party[i].damage < rawDamage_[i]) {
-                    rollback = true;
-                    break;
-                }
-            }
-        }
-        if (rollback && comparedActiveCounter) {
-            // Genuine new-hunt boundary: clear the chart but keep identity
-            // rows (so the first sample of the new hunt still maps by slot).
-            history_.clear();
-            tick_ = 0;
-            firstHitTick_.fill(0, liveN);
-            baselineDamage_.fill(0, liveN);
-            lastElapsedSeconds_ = snap.quest.elapsedSeconds;
-        }
-    }
-
-    canvas()->update();
+    m_vm.updateWorld(snap);
 }
 
 void DamagePanel::paintPanel(QPainter &p)
@@ -695,12 +202,13 @@ void DamagePanel::paintPanel(QPainter &p)
     // 没有可用数据时整块不画：主循环依据 hasVisibleContent() 决定是否挂载，
     // Rise 与 World 同一口径。这里保留早退，防止编辑/预览路径直接调用
     // paintPanel 时画出空框。
-    if (!hasData_)
+    const auto &vm = m_vm;
+    if (!vm.hasData())
         return;
 
     drawV03Chrome(p, Panel::Accent::Damage);
 
-    const int n = names_.size();
+    const int n = vm.rowCount();
     // ---- Section mask (ui/panel_sections.h) ----
     const uint32_t smask   = sectionMask();
     const bool onRows     = smask & mhw::DamageSection::Rows;
@@ -729,9 +237,9 @@ void DamagePanel::paintPanel(QPainter &p)
     p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
                mh::tr("ui.damage_header"));
     // Right-aligned quest timer (HTML spec: <i>任务计时 06:41</i>)
-    if (lastElapsedSeconds_ > 0.0F) {
-        const int mm = static_cast<int>(lastElapsedSeconds_ / 60);
-        const int ss = static_cast<int>(lastElapsedSeconds_) % 60;
+    if (vm.lastElapsedSeconds() > 0.0F) {
+        const int mm = static_cast<int>(vm.lastElapsedSeconds() / 60);
+        const int ss = static_cast<int>(vm.lastElapsedSeconds()) % 60;
         p.setFont(QFont(QStringLiteral("Chakra Petch"), 8));
         p.setPen(QColor(150, 150, 150));
         p.drawText(titleRect, Qt::AlignRight | Qt::AlignVCenter,
@@ -747,21 +255,21 @@ void DamagePanel::paintPanel(QPainter &p)
     // total party damage, so all player contributions sum to 100%.
     // This deliberately differs from the chart's max-DPS axis below.
     qint64 partyDamage = 0;
-    if (!history_.isEmpty()) {
+    if (!vm.history().isEmpty()) {
         for (int i = 0; i < n; ++i)
-            partyDamage += history_.last().damage.value(i, 0);
+            partyDamage += vm.history().last().damage.value(i, 0);
     }
     if (partyDamage == 0)
         partyDamage = 1;
 
     for (int i = 0; i < n; ++i) {
         if (!onRows) break;   // skip row drawing; y not advanced
-        const int dmg = history_.isEmpty() ? 0 : history_.last().damage.value(i, 0);
+        const int dmg = vm.history().isEmpty() ? 0 : vm.history().last().damage.value(i, 0);
         // The demo early-path sets kDemoDps[] below to match the user's
         // realistic MHW DPS range (~300 down to ~100). Real updates use
         // computeDps() from history_.
-        int dps = computeDps(i);
-        if (history_.size() <= 8 && i < 4) {
+        int dps = vm.computeDps(i);
+        if (vm.history().size() <= 8 && i < 4) {
             static const int kDemoDps[4] = {311, 240, 177, 101};
             dps = kDemoDps[i];
         }
@@ -773,9 +281,9 @@ void DamagePanel::paintPanel(QPainter &p)
         p.setBrush(QColor(29, 32, 34));                // --bg-cell
         p.drawRoundedRect(row, 3, 3);
 
-        const QColor dc = colorForRow(slots_.value(i, i),
-                                  locals_.value(i, false));
-        const bool isSelf = locals_.value(i, false);   // HunterPie name match
+        const QColor dc = colorForRow(vm.partySlots().value(i, i),
+                                  vm.locals().value(i, false));
+        const bool isSelf = vm.locals().value(i, false);   // HunterPie name match
 
         // Contribution gradient bar behind everything else.
         drawContribBar(p, row,
@@ -783,8 +291,8 @@ void DamagePanel::paintPanel(QPainter &p)
 
         // Weapon icon slot.
         QPixmap wp;
-        if (weaponIds_.value(i, -1) >= 0)
-            wp = Icon::render(Icon::weaponPath(weaponIds_[i], 1), kIconSize);
+        if (vm.weaponIds().value(i, -1) >= 0)
+            wp = Icon::render(Icon::weaponPath(vm.weaponIds()[i], 1), kIconSize);
         drawIconSlot(p, static_cast<int>(row.left()) + 4,
                      static_cast<int>(row.top()) + 3, wp);
 
@@ -822,7 +330,7 @@ void DamagePanel::paintPanel(QPainter &p)
         nmFont.setLetterSpacing(QFont::AbsoluteSpacing, 0);
         p.setFont(nmFont);
         const QFontMetrics nmFm(nmFont);
-        const QString rawName = names_.value(i);
+        const QString rawName = vm.names().value(i);
         const QString nameShown = nmFm.elidedText(rawName, Qt::ElideRight, nameClipW);
         p.drawText(QRectF(nameDrawX, row.top(), nameClipW, row.height()),
                    Qt::AlignLeft | Qt::AlignVCenter, nameShown);
@@ -832,7 +340,7 @@ void DamagePanel::paintPanel(QPainter &p)
         QFont mrFont(QStringLiteral("Chakra Petch"), 9);
         mrFont.setStyleStrategy(QFont::PreferAntialias);
         p.setFont(mrFont);
-        const QString mrStr = QStringLiteral("MR %1").arg(masterRanks_.value(i));
+        const QString mrStr = QStringLiteral("MR %1").arg(vm.masterRanks().value(i));
         const QFontMetrics mrFm(mrFont);
         // Right-align within its kMrW column.
         const int mrW = std::min(mrFm.horizontalAdvance(mrStr), kMrW);
@@ -899,13 +407,14 @@ void DamagePanel::paintPanel(QPainter &p)
 
 void DamagePanel::drawShareBar(QPainter &p, const QRectF &barRect)
 {
-    const int n = names_.size();
+    const auto &vm = m_vm;
+    const int n = vm.rowCount();
     if (n == 0) return;
 
     qint64 total = 0;
     QVector<int> dmgs(n, 0);
-    if (!history_.isEmpty()) {
-        const auto &last = history_.last();
+    if (!vm.history().isEmpty()) {
+        const auto &last = vm.history().last();
         for (int i = 0; i < n && i < last.damage.size(); ++i) {
             dmgs[i] = last.damage[i];
             total += dmgs[i];
@@ -929,8 +438,8 @@ void DamagePanel::drawShareBar(QPainter &p, const QRectF &barRect)
         if (xCursor >= trackRight) break;
         const int segWidth = std::min(segW, trackRight - xCursor);
         const QRectF seg(xCursor, barRect.y(), segWidth, barRect.height());
-        const QColor segColor = colorForRow(slots_.value(i, i),
-                                             locals_.value(i, false));
+        const QColor segColor = colorForRow(vm.partySlots().value(i, i),
+                                             vm.locals().value(i, false));
         p.setBrush(segColor);
         p.drawRect(seg);
         xCursor += segWidth;
@@ -946,8 +455,9 @@ void DamagePanel::drawChart(QPainter &p, const QRectF &chartRect)
     p.setBrush(QColor(30, 30, 30, 15));
     p.drawRoundedRect(chartRect, 4, 4);
 
-    const int n = names_.size();
-    if (history_.size() < 2 || n == 0) {
+    const auto &vm = m_vm;
+    const int n = vm.rowCount();
+    if (vm.history().size() < 2 || n == 0) {
         p.setPen(QColor(150, 150, 150));
         p.setFont(QFont(QStringLiteral("Chakra Petch"), 8));
         p.drawText(chartRect, Qt::AlignCenter, mh::tr("ui.damage_chart_waiting"));
@@ -956,13 +466,13 @@ void DamagePanel::drawChart(QPainter &p, const QRectF &chartRect)
 
     // Compute global max across history.
     int maxDmg = 0;
-    for (const auto &s : history_)
+    for (const auto &s : vm.history())
         for (int i = 0; i < s.damage.size() && i < n; ++i)
             maxDmg = std::max(maxDmg, s.damage[i]);
     if (maxDmg == 0) maxDmg = 1;
 
-    const int firstTick = history_.first().tick;
-    const int lastTick  = history_.last().tick;
+    const int firstTick = vm.history().first().tick;
+    const int lastTick  = vm.history().last().tick;
     const int tickSpan  = lastTick - firstTick;
     if (tickSpan <= 0) return;
 
@@ -1032,13 +542,13 @@ void DamagePanel::drawChart(QPainter &p, const QRectF &chartRect)
     // slots_/locals_ at draw time; the chart does the same here so the
     // line and the row header are visually linked.
     for (int pi = 0; pi < n; ++pi) {
-        const QColor c = colorForRow(slots_.value(pi, pi),
-                                      locals_.value(pi, false));
+        const QColor c = colorForRow(vm.partySlots().value(pi, pi),
+                                      vm.locals().value(pi, false));
         p.setPen(QPen(c, 1.6));
         p.setBrush(Qt::NoBrush);
         QPainterPath path;
         bool first = true;
-        for (const auto &s : history_) {
+        for (const auto &s : vm.history()) {
             const float x = plotRect.left()
                 + static_cast<float>(s.tick - firstTick) / tickSpan * plotRect.width();
             const float d = static_cast<float>(s.damage.value(pi, 0));
@@ -1054,78 +564,23 @@ void DamagePanel::drawChart(QPainter &p, const QRectF &chartRect)
     // collided with the top y-axis value on transparent backgrounds.
 }
 
-int DamagePanel::computeDps(int playerIdx) const
-{
-    if (history_.isEmpty() || playerIdx < 0) return 0;
-    if (playerIdx >= firstHitTick_.size()) return 0;
-    if (firstHitTick_[playerIdx] <= 0 || tick_ <= firstHitTick_[playerIdx])
-        return 0;
-    const int dmg = history_.last().damage.value(playerIdx, 0);
-    const int elapsedTicks = history_.last().tick - firstHitTick_[playerIdx];
-    if (elapsedTicks <= 0) return 0;
-    const qint64 dps = static_cast<qint64>(dmg) * 4 / elapsedTicks;
-    return dps >= std::numeric_limits<int>::max()
-        ? std::numeric_limits<int>::max()
-        : static_cast<int>(dps);       // 250ms poll → ×4 per second
-}
-
 void DamagePanel::setupDemoData()
 {
-    // Edit-mode demo: seed mock party identity (used for label rows
-    // and per-row weapon icons) plus a synthetic 8-sample cumulative
-    // damage history per player — enough for the line chart to show
-    // visible curves and DPS to be non-zero. Sets private fields
-    // directly to avoid the per-tick work of update().
-    constexpr int kDemoPlayers = 4;
+    // Edit-mode demo: the identity rows and the synthetic 8-sample history
+    // live in the ViewModel now (DamageViewModel::seedDemoData). The View
+    // only resolves the localized labels — the model receives plain data so
+    // it never needs a string table. The damage values, the tick spacing and
+    // the seeded quest timer are unchanged from the pre-MVVM version, so the
+    // demo rendering is byte-identical.
+    QVector<mhw::DamageViewModel::DemoRow> demoParty;
     // NOT static: the demo labels are localized, so the table must be
     // rebuilt on every seed (a function-local static would freeze the first
     // locale for the process lifetime — see DamagePanel::retranslateUi).
-    const struct { QString name; QString ellipsisName; int weaponId; int masterRank; int slot; } kDemoParty[kDemoPlayers] = {
-        {QStringLiteral("A27exe"),        QStringLiteral("A27exe"),  0,  247, 0},
-        {mh::tr("data.demo.party.a"), mh::tr("data.demo.party.a"),      1,  500, 1},
-        {mh::tr("data.demo.party.b"), mh::tr("data.demo.party.b_short"), 12, 300, 2},
-        {mh::tr("data.demo.party.c"), mh::tr("data.demo.party.c"),      4,  250, 3},
-    };
-    // MHW realistic: 总伤害 ≤999,999 (6 位+逗号), DPS ≤999.
-    const int kFinalDmg[kDemoPlayers] = {184220, 96240, 71030, 40510};
-
-    names_.clear();       weaponIds_.clear();
-    masterRanks_.clear(); slots_.clear();
-    firstHitTick_.clear(); baselineDamage_.clear(); rawDamage_.clear();
-    history_.clear();     tick_ = 0;
-    left_.clear();        // v0.7.5: drop-out carry-over flag must
-                           // reset alongside the identity rows. If a
-                           // future change re-enables setupDemoData
-                           // in a fresh live-mode path, missing this
-                           // would cause the drop-out branch to flag
-                           // demo players as "previously seen" and
-                           // re-create the v0.5.x phantom-row bug.
-    for (int i = 0; i < kDemoPlayers; ++i) {
-        names_.append(kDemoParty[i].name);
-        weaponIds_.append(kDemoParty[i].weaponId);
-        masterRanks_.append(kDemoParty[i].masterRank);
-        slots_.append(kDemoParty[i].slot);
-        firstHitTick_.append(1);  // all started hitting on tick 1
-        baselineDamage_.append(0);
-    }
-    // 8 samples at 0..7 ticks, growing monotonic curve (matches HunterPie).
-    for (int t = 0; t < 8; ++t) {
-        Sample s;
-        s.tick = tick_++;
-        s.damage.resize(kDemoPlayers);
-        const float f = static_cast<float>(t) / 7.0F;  // 0..1
-        for (int i = 0; i < kDemoPlayers; ++i) {
-            // super-linear growth so the chart has a visible curve.
-            const int d = static_cast<int>(kFinalDmg[i] * (0.10F + 0.90F * f * f));
-            s.damage[i] = std::max(0, d - baselineDamage_[i]);
-            if (t == 7 && i == 0)
-                baselineDamage_[i] = 0; // already 0
-        }
-        history_.append(s);
-    }
-    // Seed the title-row quest timer with a representative value so
-    // the new "任务计时 mm:ss" is visible in demo / edit mode (no
-    // real game running → no snap.quest data).
-    lastElapsedSeconds_ = 411.0F;     // 6:51 (matches HTML mockup)
-    hasData_ = true;
+    demoParty.append({QStringLiteral("A27exe"), 0, 247, 0});
+    demoParty.append({mh::tr("data.demo.party.a"), 1, 500, 1});
+    demoParty.append({mh::tr("data.demo.party.b"), 12, 300, 2});
+    demoParty.append({mh::tr("data.demo.party.c"), 4, 250, 3});
+    // 6:51 (matches HTML mockup) — seeds the title-row quest timer in
+    // edit mode, where there is no real game to read snap.quest from.
+    m_vm.seedDemoData(demoParty, 411.0F);
 }

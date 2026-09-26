@@ -3,6 +3,8 @@
 #include "panel.h"
 #include "core/game_snapshot.h"
 #include "rise/rise_damage_reader.h"
+#include "ui/viewmodel/damage_view_model.h"
+
 #include <QPainter>
 #include <QRectF>
 #include <QVector>
@@ -10,6 +12,13 @@
 // Damage statistics panel: per-player rows (name, MR, weapon icon,
 // cumulative damage, DPS) + a line chart of damage accumulation
 // and percentage share over time.
+//
+// MVVM (v0.11 pilot): every statistic this panel used to keep as a private
+// member now lives in mhw::DamageViewModel (m_vm). The panel is a pure
+// consumer: update*/setRiseDisplayOptions() forward to the VM and schedule
+// one repaint, and paintPanel()/drawChart()/drawShareBar() read the VM's
+// read-only views. The ViewModel carries no widget or painter dependency,
+// so the statistic itself is now testable without a QApplication.
 class DamagePanel : public Panel {
     Q_OBJECT
 public:
@@ -44,47 +53,12 @@ protected:
     // REFramework Lua 时，那块占位会一直挂着，比隐藏更容易被当成故障。
     // 现在与 World 分支（main.cpp 的 `!party.isEmpty() || showAll`）以及
     // MonsterPanel 的 `hasData_` 口径一致。
-    bool hasContent() const override { return hasData_; }
+    bool hasContent() const override { return m_vm.hasData(); }
 
 private:
-    struct Sample {
-        int tick;
-        QVector<int> damage;
-    };
-
-    QVector<Sample> history_;
-    int tick_{0};
-    QVector<int>  firstHitTick_;     // poll tick when this player first dealt damage
-    QVector<int>  baselineDamage_;   // damage at first-hit tick
-    QVector<int>  rawDamage_;        // latest raw counter, used to detect a new hunt
-    QVector<QString> names_;
-    QVector<int> weaponIds_;
-    QVector<int>  masterRanks_;
-    QVector<int>  slots_;            // party slot (0-3) for color assignment
-    QVector<bool> locals_;           // self flag (HunterPie name match)
-    QVector<QString> riseKeys_;      // stable Rise row identity (never array index)
-    mhw::RiseDamageDisplayOptions riseDisplayOptions_;
-    int riseQuestEpoch_{0};
-    bool hasRiseQuestEpoch_{false};
-    QVector<bool> left_;             // true once a previously-seen player
-                                     // disappears from snap.party (party
-                                     // shrink, drop-out, kick). Their row
-                                     // freezes at the last recorded damage
-                                     // until the quest resets the panel.
-                                     // Fixes the v0.5.x bug where a member
-                                     // dropping out zeroed their total
-                                     // damage mid-chart.
-    bool hasData_{false};
-    bool questEnded_{false};         // freeze after quest completes (Success/Completed/Failed)
-    // HunterPie: real quest elapsed time = max(0, maxTimer - timeLeft).
-    // We cache the last non-zero value so the title-row timer keeps
-    // showing the correct "task complete" time after the freeze kicks
-    // in (the in-game timer pointer is no longer valid in the
-    // settlement screen).
-    float lastElapsedSeconds_{0.0F};
-
     // paintPanel helpers — extracted to keep the main layout short.
     void drawChart(QPainter &p, const QRectF &chartRect);
     void drawShareBar(QPainter &p, const QRectF &barRect);
-    int  computeDps(int playerIdx) const;
+
+    mhw::DamageViewModel m_vm;
 };
