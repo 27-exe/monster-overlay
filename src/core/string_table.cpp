@@ -51,19 +51,26 @@ bool StringTable::load(const QString& locale)
         }
 
         // Recursive flatten: any object becomes a dot-path key, any string
-        // becomes a value. _meta and other metadata keys land as regular
-        // entries; that's fine — they're not looked up by callers.
-        auto visit = [&](auto&& self, const QJsonObject &obj, const QString &prefix) -> void {
+        // becomes a value. `_meta` is a top-level maintenance block (notes for
+        // the person editing the file), not a translation — the header
+        // documents it as such and the gate scripts agree. Skipping it here
+        // keeps zh/en `_meta` asymmetry out of the table (the two locales say
+        // different things in prose) and stops `_meta.note` from becoming a
+        // reachable key someone could tr() by accident.
+        auto visit = [&](auto&& self, const QJsonObject &obj, const QString &prefix,
+                         bool top) -> void {
             for (auto it = obj.begin(); it != obj.end(); ++it) {
+                if (top && it.key() == QLatin1String("_meta"))
+                    continue;
                 const QString key = prefix.isEmpty() ? it.key()
                                                      : prefix + QLatin1Char('.') + it.key();
                 if (it.value().isObject())
-                    self(self, it.value().toObject(), key);
+                    self(self, it.value().toObject(), key, false);
                 else if (it.value().isString())
                     flat.insert(key, it.value().toString());
             }
         };
-        visit(visit, doc.object(), QString());
+        visit(visit, doc.object(), QString(), true);
         ++loadedFiles;
     }
     if (loadedFiles == 0)

@@ -1,9 +1,5 @@
 {
-  "_meta": {
-    "locale": "en-US",
-    "domain": "console",
-    "note": "Control console UI strings (monster-control). Key namespace console.* mirrors zh-CN/console.json exactly (ws-d/check_key_parity.py validates key parity)."
-  },
+  "_meta": "Console chrome: console.*, replayed by ControlPanel::retranslateUi() across the trPairs_/trTips_/trHooks_ registries.",
   "console": {
     "windowTitle": "Monster Overlay Control",
     "brand": "MONSTER  OVERLAY",
@@ -106,7 +102,6 @@
       "stateLuaMissing": "STATUS: LUA NOT INSTALLED (no damage tracking)",
       "stateNeedsRepair": "STATUS: INSTALLATION INCOMPLETE — REINSTALL RECOMMENDED",
       "detailRaw": "(detail: %1)",
-      "luaMissing": "DAMAGE STATS UNAVAILABLE: overlay Lua producer is not installed",
       "gameRunning": "CLOSE THE GAME BEFORE CHANGING REFRAMEWORK FILES",
       "pending": "OPERATION IN PROGRESS…",
       "success": "SUCCESS: %1",

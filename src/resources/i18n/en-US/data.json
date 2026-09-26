@@ -1,0 +1,77 @@
+{
+  "_meta": "Data names and demo seed data: mantle.* / abnormality.* / ui.demo.*. Mostly pure id->string; ui.demo.* entries carry %N placeholders and are .arg()'d at the call site.",
+  "ui": {
+    "demo": {
+      "status": "Demo Preview",
+      "player_name": "Sapphire Star",
+      "monster_name": "Rathalos",
+      "debuff": {
+        "poison": "Poison",
+        "blast": "Blast",
+        "paralysis": "Paralysis",
+        "sleep": "Sleep",
+        "defense_down": "Def. Down"
+      },
+      "buff": {
+        "attack_up": "Attack Up",
+        "demon_drug": "Demondrug",
+        "armor_skin": "Armorskin",
+        "dash_juice": "Dash Juice"
+      },
+      "ail": {
+        "paralysis": "Paralysis",
+        "shock_trap": "Shock Trap",
+        "pitfall": "Pitfall Trap",
+        "poison": "Poison"
+      },
+      "part": {
+        "head": "Head",
+        "l_wing": "L Wing",
+        "r_wing": "R Wing",
+        "tail": "Tail",
+        "l_leg": "L Leg",
+        "r_leg": "R Leg"
+      },
+      "abn": {
+        "poison": "Poison",
+        "blast": "Blastblight",
+        "frenzy": "Frenzy (building)",
+        "bleed": "Bleeding",
+        "demon_drug": "Demondrug",
+        "might_seed": "Might Seed",
+        "spiribird_call": "Spiribird Call",
+        "butterflame": "Butterflame",
+        "armor_skin": "Armorskin"
+      },
+      "party": {
+        "a": "Teammate A",
+        "b": "Teammate B_LongNameTest",
+        "b_short": "Teammate B…",
+        "c": "Teammate C"
+      }
+    }
+  },
+  "mantle": {
+    "0": "Ghillie",
+    "1": "Temporal",
+    "2": "Health Booster",
+    "3": "Rocksteady",
+    "4": "Challenger",
+    "5": "Elem. Resistance",
+    "6": "Fire Resistance",
+    "7": "Water Resistance",
+    "8": "Ice Resistance",
+    "9": "Thunder Resistance",
+    "10": "Dragon Resistance",
+    "11": "Cleanser",
+    "12": "Glider",
+    "13": "Evasion",
+    "14": "Immunity",
+    "15": "Apothecary",
+    "16": "Blight Resistance",
+    "17": "Affinity Booster",
+    "18": "Bandit",
+    "19": "Assassin",
+    "default": "Mantle"
+  }
+}

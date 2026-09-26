@@ -21,12 +21,21 @@ namespace mhw {
 // are visible during development rather than silently rendering blank.
 //
 // Since v0.9 each locale is a DIRECTORY of domain files under the qrc:
-//   :/i18n/<locale>/overlay.json    overlay panel chrome strings
-//   :/i18n/<locale>/console.json    control-console strings
-// load() merges every *.json found in the directory into one flat table,
-// so domains can be edited independently; later files win on a key clash
-// (namespaces are disjoint in practice). Adding a new domain later only
-// means dropping another <domain>.json into each locale directory.
+//   :/i18n/<locale>/overlay.json    overlay panel chrome strings (ui.*)
+//   :/i18n/<locale>/console.json    control-console strings (console.*)
+//   :/i18n/<locale>/reader.json     reader status / diagnostics (ui.reader.*)
+//   :/i18n/<locale>/data.json       data names + demo seeds
+//                                    (mantle.* / abnormality.* / ui.demo.*)
+// load() merges every *.json found in the directory into one flat table, so
+// domains can be edited independently; later files win on a key clash
+// (namespaces are disjoint in practice). The split criterion is WHO REPAINTS
+// the string, not which process reads it — see docs/I18N.md §2.
+//
+// `_meta` at the top level of a domain file is maintenance prose and is
+// SKIPPED by load() (see string_table.cpp); it never lands in the table.
+//
+// Adding a new domain later only means dropping another <domain>.json into
+// each locale directory AND listing it in src/resources/resources.qrc.
 //
 // Runtime language switching: load() may be called again at any time with
 // a different locale; the table is swapped in place. Callers that cached

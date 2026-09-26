@@ -1,0 +1,21 @@
+{
+  "_meta": "reader 上屏状态 / 诊断文案：snapshot.status 每个 poll tick 自然刷新，不依赖任何注册表。key 暂留 ui.reader.* 前缀，改名批次会改成 reader.*。",
+  "ui": {
+    "reader": {
+      "address_table_open_failed": "无法打开地址表 %1: %2",
+      "address_table_bad_address": "地址表第 %1 行不是合法地址",
+      "address_table_bad_chain": "地址表第 %1 行不是合法偏移链",
+      "address_table_no_address": "地址表中没有 Address 项",
+      "maps_read_failed": "无法读取 maps: %1",
+      "maps_no_mapping": "maps 中没有 %1 映射",
+      "invalid_read_request": "无效内存读取请求: 0x%1, %2 bytes",
+      "waiting_exe": "等待 %1",
+      "ptrace_denied": "已发现 PID %1，但读取其内存被拒绝：%2。ptrace_scope=1 且进程非子孙时需要 CAP_SYS_PTRACE：给覆盖层二进制设 sudo setcap cap_sys_ptrace+ep <路径>，或临时 sudo sysctl kernel.yama.ptrace_scope=0。",
+      "world_connected": "MHW 已连接 · PID %1 · BASE 0x%2",
+      "rise_waiting": "等待 MonsterHunterRise.exe",
+      "rise_attach_failed": "已发现 PID %1，但读取其内存失败：%2。ptrace_scope=1 且进程非子孙时需要 CAP_SYS_PTRACE：给覆盖层二进制设 sudo setcap cap_sys_ptrace+ep <路径>，或临时 sudo sysctl kernel.yama.ptrace_scope=0。",
+      "rise_connected": "MHR 已连接 · PID %1 · BASE 0x%2",
+      "partial_read_failed": " · 部分读取失败: %1"
+    }
+  }
+}

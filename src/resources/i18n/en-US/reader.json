@@ -1,0 +1,21 @@
+{
+  "_meta": "Reader on-screen status / diagnostics: snapshot.status is refreshed on every poll tick, no registry involved. Keys keep the ui.reader.* prefix until the rename batch.",
+  "ui": {
+    "reader": {
+      "address_table_open_failed": "Cannot open address map %1: %2",
+      "address_table_bad_address": "Address map line %1 is not a valid address",
+      "address_table_bad_chain": "Address map line %1 is not a valid pointer chain",
+      "address_table_no_address": "Address map has no Address entry",
+      "maps_read_failed": "Cannot read maps: %1",
+      "maps_no_mapping": "maps has no %1 mapping",
+      "invalid_read_request": "Invalid memory read request: 0x%1, %2 bytes",
+      "waiting_exe": "Waiting for %1",
+      "ptrace_denied": "Found PID %1 but reading its memory was denied: %2. With ptrace_scope=1 a same-user non-descendant needs CAP_SYS_PTRACE: sudo setcap cap_sys_ptrace+ep <overlay path>, or temporarily sudo sysctl kernel.yama.ptrace_scope=0.",
+      "world_connected": "MHW connected · PID %1 · BASE 0x%2",
+      "rise_waiting": "Waiting for MonsterHunterRise.exe",
+      "rise_attach_failed": "Found PID %1 but reading its memory failed: %2. With ptrace_scope=1 a same-user non-descendant needs CAP_SYS_PTRACE: sudo setcap cap_sys_ptrace+ep <overlay path>, or temporarily sudo sysctl kernel.yama.ptrace_scope=0.",
+      "rise_connected": "MHR connected · PID %1 · BASE 0x%2",
+      "partial_read_failed": " · partial read failed: %1"
+    }
+  }
+}

@@ -1,9 +1,5 @@
 {
-  "_meta": {
-    "locale": "zh-CN",
-    "domain": "console",
-    "note": "控制台 UI 文案 (monster-control)。键空间 console.*；由 control_panel 等通过 mh::tr() 读取。en-US/console.json 的键集合必须与本文档完全一致（ws-d/check_key_parity.py 校验）。"
-  },
+  "_meta": "控制台 chrome：console.*，由 ControlPanel::retranslateUi() 重放 trPairs_/trTips_/trHooks_ 注册表。",
   "console": {
     "windowTitle": "Monster Overlay Control",
     "brand": "MONSTER  OVERLAY",
@@ -106,7 +102,6 @@
       "stateLuaMissing": "状态：Lua 未安装（伤害统计不可用）",
       "stateNeedsRepair": "状态：安装不完整，建议重新安装",
       "detailRaw": "（技术细节：%1）",
-      "luaMissing": "伤害统计不可用：悬浮窗 Lua producer 尚未安装",
       "gameRunning": "请先关闭游戏，再修改 REFRAMEWORK 文件",
       "pending": "操作进行中…",
       "success": "成功：%1",

@@ -3,8 +3,12 @@
     <qresource prefix="/">
         <file>i18n/zh-CN/overlay.json</file>
         <file>i18n/zh-CN/console.json</file>
+        <file>i18n/zh-CN/reader.json</file>
+        <file>i18n/zh-CN/data.json</file>
         <file>i18n/en-US/overlay.json</file>
         <file>i18n/en-US/console.json</file>
+        <file>i18n/en-US/reader.json</file>
+        <file>i18n/en-US/data.json</file>
         <file>monsters/parts.json</file>
         <file>monsters/ailments.json</file>
     </qresource>
