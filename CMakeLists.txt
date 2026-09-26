@@ -114,6 +114,8 @@ add_library(mhw-ui STATIC
     src/ui/panel_damage.h
     src/ui/viewmodel/damage_view_model.cpp
     src/ui/viewmodel/damage_view_model.h
+    src/ui/viewmodel/monster_view_model.cpp
+    src/ui/viewmodel/monster_view_model.h
     src/ui/panel_monster.cpp
     src/ui/panel_monster.h
     src/ui/panel_pet_damage.cpp
