@@ -248,6 +248,45 @@ def collect_ailment_labels(monster_data: Path, zh_labels: dict[int, str],
     return labels
 
 
+# v0.11.0: pill colour family, keyed by the schema's stable Id.
+#
+# Driven by game-mechanics semantics (what the effect does), NOT by the
+# display name — the name is localised and used to be substring-matched by
+# the panel, which is exactly the bug this table fixes. Rows absent from
+# this map keep AbnormalityAccent::None and render in the family default,
+# which is the correct outcome for an entry that has no colour family.
+ACCENT_BY_ID = {
+    # Debuffs
+    "ABN_FIRE": "Fire",          # 火属性异常 Fireblight
+    "ABN_BLAST": "Blast",        # 爆炸异常 Blastblight
+    "ABN_DEF_DOWN": "Defense",   # 防御力下降 Defense Down
+    "ABN_SLEEP": "Sleep",        # 睡眠 Sleep
+    "ABN_PARALYSIS": "Paralysis",  # 麻痹 Paralysis
+
+    # Consumables
+    "ABN_DEMONDRUG": "Attack",       # 鬼人药 — attack up
+    "ABN_MEGA_DEMONDRUG": "Attack",  # 鬼人药·大 — attack up
+    "ABN_DEMON_POWDER": "Attack",    # 鬼人粉尘 — attack up
+    "ABN_MIGHT_SEED": "Attack",      # 怪力种子 — might / attack up
+    "ABN_DEMON_AMMO": "Attack",      # 鬼人弹 — attack up ammo
+    "ABN_ARMORSKIN": "Defense",      # 硬化药 — defense up
+    "ABN_MEGA_ARMORSKIN": "Defense",  # 硬化药·大 — defense up
+    "ABN_HARDSHELL_POWDER": "Defense",  # 硬化粉尘 — defense up
+    "ABN_ARMOR_AMMO": "Defense",     # 硬化弹 — defense up ammo
+    "ABN_DASH_JUICE": "Drink",       # 强走药 Dash Juice — drink family
+    "ABN_BUTTERFLAME": "Fire",       # 炎火蝶 — fire consumable
+}
+
+
+
+def accent_of(schema_id: str) -> str:
+    """Accent family for `schema_id`, defaulting to None. Fails loudly on a
+    typo'd map key so a regeneration can never silently drop a family."""
+    if schema_id in ACCENT_BY_ID:
+        return ACCENT_BY_ID[schema_id]
+    return "None"
+
+
 def emit_row(row: dict) -> str:
     notes = []
     if row["flagType"] != "None":
@@ -269,7 +308,8 @@ def emit_row(row: dict) -> str:
         f'      {row["withValue"]}, {row["maxBuildup"]}, {row["maxTimer"]}.0F,\n'
         f'      {"true" if row["isInfinite"] else "false"}, '
         f'{"true" if row["isInteger"] else "false"}, '
-        f'{"true" if row["isBuildup"] else "false"} }},{note}\n')
+        f'{"true" if row["isBuildup"] else "false"}, '
+        f'mhw::AbnormalityAccent::{accent_of(row["id"])} }},{note}\n')
 
 
 def emit_ailment_table(labels: list[tuple[int, str, str, str]]) -> str:

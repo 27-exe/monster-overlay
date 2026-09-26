@@ -27,11 +27,36 @@ struct SharpnessSnapshot {
                             // and the memory read succeeded
 };
 
+// v0.11.0: colour family of a player-abnormality pill, resolved ONCE by the
+// data table from a stable id (World memory offset, Rise schema id) instead
+// of by substring-matching the display name. The old
+// debuffAccent(name) / buffAccent(name) helpers matched zh needles ("爆破")
+// against the zh column and silently lost the colour family the day the UI
+// switched to English — name.contains("blast") never matches "爆破" and the
+// reverse, so a translated label left every pill in the default colour.
+//
+// The values are presentation-only: they NEVER change which abnormality is
+// detected, only which family colour accentFor() paints.
+enum class AbnormalityAccent {
+    None,        // family default (debuff purple / buff green)
+    Blast,       // blast blight / blastscourge / blast affliction
+    Fire,        // fireblight / fire ailments
+    Defense,     // defense down, armor/defense buffs
+    Sleep,       // sleep
+    Paralysis,   // paralysis
+    Attack,      // demon / might / attack buffs
+    Drink,       // dash juice / cool / hot drink / elemental res
+};
+
 struct PlayerAbnormality {
     int offset;          // memory offset for identification
     QString name;        // Chinese display name
     float timer{0.0F};   // remaining seconds (>0 = active)
     float maxTimer{0.0F};// tracked max for progress bar scaling
+    // v0.11.0: colour family resolved from the stable id/offset by the data
+    // table, never from the (translated) display name. See accentFor() in
+    // panel_player.cpp.
+    AbnormalityAccent accent{AbnormalityAccent::None};
 };
 
 // v0.8.4-r18 player-abnormalities: Rise-only. One *active* abnormality from
@@ -52,6 +77,10 @@ struct PlayerAbnormalitySnapshot {
     AbnormalityKind kind{AbnormalityKind::Buff};
     bool    isBuildup{false};
     bool    isInfinite{false};
+    // v0.11.0: colour family, copied straight from the generating schema
+    // (RiseAbnormalitySchema.accent) so the panel never infers it from the
+    // translated name.
+    AbnormalityAccent accent{AbnormalityAccent::None};
 };
 
 // v0.7.1: wirebug (翔虫) snapshot. Rise-specific — World has no wirebug
@@ -177,6 +206,16 @@ inline QVector<PartyMemberSnapshot> visibleDamageParty(
 QString playerDebuffName(int offset);
 QString playerSongName(int id);
 QString playerBuffName(int offset, int dependsOn, int withValue);
+
+// v0.11.0: the colour family for the same keys, resolved by the same tables
+// so a pill's accent comes from a stable id rather than from a substring
+// test against the (translated) display name. Declared here (not in the
+// UI) so both the reader and PlayerPanel::setupDemoData() — which seeds
+// hand-written PlayerAbnormality structs the reader never sees — resolve
+// accents from one place. Parameter counts differ from the *Name helpers
+// above so neither overload ever needs a default argument.
+AbnormalityAccent playerDebuffAccent(int offset);
+AbnormalityAccent playerBuffAccent(int offset, int dependsOn, int withValue);
 
 // ---------------------------------------------------------------------------
 // v0.10.8: session player-count normalisation.

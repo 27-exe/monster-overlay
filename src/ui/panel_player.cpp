@@ -391,55 +391,29 @@ void drawPill(QPainter &p, const QRectF &box, const QColor &pc,
                Qt::AlignRight | Qt::AlignVCenter, timer);
 }
 
-// Buff / debuff pill accents. Kept here (and not inline at each call site) so
-// the World pill rows and the Rise 状态 block can never drift apart: both
-// feed the same names through the same rules.
+// v0.11.0: pill accent colour by TRAIT, never by display name.
 //
-//   debuffAccent — default purple, overridden per ailment family.
-//   buffAccent   — default green (songs), overridden per consumable family.
-//
-// i18n: the tested value is the snapshot `name`, which comes from the
-// data-name tables and therefore flips language with the locale. Every rule
-// carries both columns: the original zh needles (unchanged) plus their EN
-// counterparts from the WS-A/B English tables. Matching is
-// case-insensitive so the EN column's capitalisation ("Blastblight",
-// "Paralysis") does not matter; the zh needles contain no ASCII letters, so
-// their matching behaviour is bit-identical to the pre-i18n code.
-bool nameHas(const QString &name, const char *needle)
+// debuffAccent(name) / buffAccent(name) used to substring-match zh and en
+// needles against the row's label ("爆破"/"blast", "鬼人"/"demon"). The day
+// the i18n work shipped, the zh lookup matched nothing and every pill fell
+// back to the family default — the colour carried no information in either
+// locale. The family is now resolved once by the data table (memory offset
+// for World, schema id for Rise) and travels with the row, so it cannot be
+// lost by a translation. accentFor() is the single place a trait becomes a
+// colour, shared by the World pill rows and the Rise 状态 block.
+QColor accentFor(mhw::AbnormalityAccent accent)
 {
-    return name.contains(QString::fromUtf8(needle), Qt::CaseInsensitive);
-}
-
-QColor debuffAccent(const QString &name)
-{
-    QColor pc(167, 79, 255);     // default purple
-    if (nameHas(name, "爆破") || nameHas(name, "blast"))
-        pc = QColor(255, 87, 34);
-    else if (nameHas(name, "火") || nameHas(name, "fire"))
-        pc = QColor(255, 87, 34);
-    else if (nameHas(name, "防御") || nameHas(name, "defen"))
-        pc = QColor(255, 193, 7);
-    else if (nameHas(name, "眠") || nameHas(name, "sleep"))
-        pc = QColor(120, 120, 220);
-    else if (nameHas(name, "麻") || nameHas(name, "paralys"))
-        pc = QColor(180, 130, 220);
-    return pc;
-}
-
-QColor buffAccent(const QString &name)
-{
-    QColor pc(76, 175, 80);      // default green (songs)
-    if (nameHas(name, "鬼人") || nameHas(name, "攻击") || nameHas(name, "怪力")
-        || nameHas(name, "demon") || nameHas(name, "attack") || nameHas(name, "might"))
-        pc = QColor(244, 67, 54);   // red — attack buffs
-    else if (nameHas(name, "硬化") || nameHas(name, "防御") || nameHas(name, "忍耐")
-             || nameHas(name, "armor") || nameHas(name, "defen") || nameHas(name, "adamant"))
-        pc = QColor(33, 150, 243);  // blue — defense buffs
-    else if (nameHas(name, "冷饮") || nameHas(name, "热饮") || nameHas(name, "耐")
-             || nameHas(name, "cool drink") || nameHas(name, "hot drink")
-             || nameHas(name, "resist"))
-        pc = QColor(0, 188, 212);   // cyan — elemental res
-    return pc;
+    switch (accent) {
+    case mhw::AbnormalityAccent::Blast:     return QColor(255, 87, 34);
+    case mhw::AbnormalityAccent::Fire:      return QColor(255, 87, 34);
+    case mhw::AbnormalityAccent::Defense:   return QColor(255, 193, 7);
+    case mhw::AbnormalityAccent::Sleep:     return QColor(120, 120, 220);
+    case mhw::AbnormalityAccent::Paralysis: return QColor(180, 130, 220);
+    case mhw::AbnormalityAccent::Attack:    return QColor(244, 67, 54);
+    case mhw::AbnormalityAccent::Drink:     return QColor(0, 188, 212);
+    case mhw::AbnormalityAccent::None:      break;
+    }
+    return QColor(167, 79, 255);
 }
 
 // v0.7.1: wirebug (翔虫) capsule. Visually similar to .pill but the
@@ -1366,8 +1340,8 @@ void PlayerPanel::paintPanel(QPainter &p)
     // ---- 状态: Rise consumable buffs + debuffs (v0.8.4-r18) ----
     // Debuffs first, then buffs; name on the left and the value on the right
     // (remaining seconds, "∞" for IsInfinite entries, "43/120" for buildup
-    // counters). The accent colour separates the two families (see
-    // debuffAccent / buffAccent). v0.8.4-r22 status-grid: pills flow
+    // counters). The accent colour comes from the row's trait (see
+    // accentFor). v0.8.4-r22 status-grid: pills flow
     // kRiseStatusPillsPerRow per row, wrapping exactly like the World
     // debuff/buff rows (a partial final row stretches to fill); when more
     // entries are active than kRiseStatusMaxEntries, the final pill shows "+N".
@@ -1404,10 +1378,7 @@ void PlayerPanel::paintPanel(QPainter &p)
                 continue;
             }
             const mhw::PlayerAbnormalitySnapshot &a = *riseStatusRows[i];
-            drawPill(p, pillRect,
-                     a.kind == mhw::AbnormalityKind::Debuff
-                         ? debuffAccent(a.name)
-                         : buffAccent(a.name),
+            drawPill(p, pillRect, accentFor(a.accent),
                      a.name,
                      mhw::riseAbnormalityTimerText(a.timer, a.isInfinite,
                                                    a.isBuildup, a.maxTimer));
@@ -1434,7 +1405,7 @@ void PlayerPanel::paintPanel(QPainter &p)
             const QString n = d.name.isEmpty() ? mh::tr("ui.player_status_section") : d.name;
             const QString t = QStringLiteral("%1s").arg(static_cast<int>(d.timer));
             // Accent colour per ailment family (shared with the Rise block).
-            drawPill(p, pillRect, debuffAccent(n), n, t);
+            drawPill(p, pillRect, accentFor(d.accent), n, t);
         }
         y += rows * kPillH + (rows - 1) * 4;
     }
@@ -1457,7 +1428,7 @@ void PlayerPanel::paintPanel(QPainter &p)
             const QString n = b.name.isEmpty() ? mh::tr("ui.player_buff_fallback") : b.name;
             const QString t = QStringLiteral("%1s").arg(static_cast<int>(b.timer));
             // Accent colour per consumable family (shared with the Rise block).
-            drawPill(p, pillRect, buffAccent(n), n, t);
+            drawPill(p, pillRect, accentFor(b.accent), n, t);
         }
         y += rows * kPillH + (rows - 1) * 4;
     }
@@ -1569,6 +1540,11 @@ void PlayerPanel::setupDemoData()
         // print identical strings. Nine entries is one past
         // kRiseStatusMaxEntries on purpose: the preview also exercises the
         // "+N" overflow pill of the status grid.
+        // v0.11.0: the Rise demo rows carry a schema id, so the pill's
+        // accent is resolved from the SAME table the reader reads
+        // (riseFindAbnormality(id)->accent). Keeping a second mapping inside
+        // the UI is exactly the class of change that silently rots; an
+        // unknown id falls back to the family default, like the reader.
         const auto seedRise = [this](const char *id, const QString &name,
                                      float timer, float maxTimer,
                                      mhw::AbnormalityKind kind, bool infinite,
@@ -1581,6 +1557,9 @@ void PlayerPanel::setupDemoData()
             a.kind = kind;
             a.isInfinite = infinite;
             a.isBuildup = buildup;
+            if (const mhw::RiseAbnormalitySchema *schema =
+                    mhw::riseFindAbnormality(id))
+                a.accent = schema->accent;
             player_.abnormalities.append(a);
         };
         using Kind = mhw::AbnormalityKind;
@@ -1605,62 +1584,57 @@ void PlayerPanel::setupDemoData()
         seedRise("ABN_ARMORSKIN", mh::tr("data.demo.abn.armor_skin"),
                  1.0F, 0.0F, Kind::Buff, true, false);
     } else {
-        {
-            PlayerAbnormality d1;
-            d1.offset = 0; d1.name = mh::tr("data.demo.debuff.poison");
-            d1.timer = 12.0F; d1.maxTimer = 60.0F;
-            player_.debuffs.append(d1);
-        }
-        {
-            PlayerAbnormality d2;
-            d2.offset = 1; d2.name = mh::tr("data.demo.debuff.blast");
-            d2.timer = 41.0F; d2.maxTimer = 60.0F;
-            player_.debuffs.append(d2);
-        }
+        // v0.11.0: the World demo rows resolve their accent from the SAME
+        // kDebuffs / kBuffs tables the reader reads, through the exported
+        // playerDebuffAccent() / playerBuffAccent() lookups — so the preview
+        // and a live session can never disagree about a pill's family.
+        //
+        // The offsets are the real memory offsets (not the synthetic 0..4 the
+        // demo used before): a synthetic offset resolves to
+        // AbnormalityAccent::None and would render every pill in the family
+        // default, which would make this preview useless as a demo of the
+        // accent logic. paralysis / sleep stay synthetic because World's
+        // kDebuffs has no row for either — see T6-REPORT.md.
+        const auto seedDebuff = [this](int offset, const QString &name,
+                                       float timer, float maxTimer) {
+            PlayerAbnormality d;
+            d.offset = offset;
+            d.name = name;
+            d.timer = timer;
+            d.maxTimer = maxTimer;
+            d.accent = mhw::playerDebuffAccent(offset);
+            player_.debuffs.append(d);
+        };
+        const auto seedBuff = [this](int offset, const QString &name,
+                                     float timer, float maxTimer) {
+            PlayerAbnormality b;
+            b.offset = offset;
+            b.name = name;
+            b.timer = timer;
+            b.maxTimer = maxTimer;
+            b.accent = mhw::playerBuffAccent(offset, 0, 0);
+            player_.buffs.append(b);
+        };
+        seedDebuff(0x5DC, mh::tr("data.demo.debuff.poison"),
+                   12.0F, 60.0F);
+        seedDebuff(0x620, mh::tr("data.demo.debuff.blast"),
+                   41.0F, 60.0F);
         // Extra debuffs to demo the 3-per-row wrap into a second line.
-        {
-            PlayerAbnormality d3;
-            d3.offset = 2; d3.name = mh::tr("data.demo.debuff.paralysis");
-            d3.timer = 17.0F; d3.maxTimer = 30.0F;
-            player_.debuffs.append(d3);
-        }
-        {
-            PlayerAbnormality d4;
-            d4.offset = 3; d4.name = mh::tr("data.demo.debuff.sleep");
-            d4.timer = 28.0F; d4.maxTimer = 45.0F;
-            player_.debuffs.append(d4);
-        }
-        {
-            PlayerAbnormality d5;
-            d5.offset = 4; d5.name = mh::tr("data.demo.debuff.defense_down");
-            d5.timer = 60.0F; d5.maxTimer = 90.0F;
-            player_.debuffs.append(d5);
-        }
+        seedDebuff(2, mh::tr("data.demo.debuff.paralysis"),
+                   17.0F, 30.0F);   // no World kDebuffs row -> default family
+        seedDebuff(3, mh::tr("data.demo.debuff.sleep"),
+                   28.0F, 45.0F);   // no World kDebuffs row -> default family
+        seedDebuff(0x60C, mh::tr("data.demo.debuff.defense_down"),
+                   60.0F, 90.0F);
         // Demo buffs
-        {
-            PlayerAbnormality b1;
-            b1.offset = 0x3C; b1.name = mh::tr("data.demo.buff.attack_up");
-            b1.timer = 90.0F; b1.maxTimer = 180.0F;
-            player_.buffs.append(b1);
-        }
-        {
-            PlayerAbnormality b2;
-            b2.offset = 0x6CC; b2.name = mh::tr("data.demo.buff.demon_drug");
-            b2.timer = 300.0F; b2.maxTimer = 300.0F;
-            player_.buffs.append(b2);
-        }
-        {
-            PlayerAbnormality b3;
-            b3.offset = 0x6D0; b3.name = mh::tr("data.demo.buff.armor_skin");
-            b3.timer = 300.0F; b3.maxTimer = 300.0F;
-            player_.buffs.append(b3);
-        }
-        {
-            PlayerAbnormality b4;
-            b4.offset = 0x690; b4.name = mh::tr("data.demo.buff.dash_juice");
-            b4.timer = 45.0F; b4.maxTimer = 180.0F;
-            player_.buffs.append(b4);
-        }
+        seedBuff(0x3C, mh::tr("data.demo.buff.attack_up"),
+                 90.0F, 180.0F);
+        seedBuff(0x6CC, mh::tr("data.demo.buff.demon_drug"),
+                 300.0F, 300.0F);
+        seedBuff(0x6D0, mh::tr("data.demo.buff.armor_skin"),
+                 300.0F, 300.0F);
+        seedBuff(0x690, mh::tr("data.demo.buff.dash_juice"),
+                 45.0F, 180.0F);
     }
 
     hasData_ = true;

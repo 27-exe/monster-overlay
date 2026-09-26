@@ -20,21 +20,21 @@ const char *localizedAbnormalityName(const char *zh, const char *en)
 
 } // namespace
 
-struct DebuffDef { int offset; const char *name; int dependsOn; int withValue; const char *nameEn; };
+struct DebuffDef { int offset; const char *name; int dependsOn; int withValue; const char *nameEn; mhw::AbnormalityAccent accent; };
 static const DebuffDef kDebuffs[] = {
-    {0x5DC, "毒",       0, 0, "Poison"},
-    {0x5E0, "猛毒",     0, 0, "Venom"},
-    {0x5EC, "火异常",   0, 0, "Fireblight"},
-    {0x5F0, "雷异常",   0, 0, "Thunderblight"},
-    {0x5F4, "水异常",   0, 0, "Waterblight"},
-    {0x5F8, "冰异常",   0, 0, "Iceblight"},
-    {0x5FC, "龙异常",   0, 0, "Dragonblight"},
-    {0x600, "裂伤",     0, 0, "Bleed"},
-    {0x608, "瘴气",     0, 0, "Effluvia"},
-    {0x60C, "防御↓",   0, 0, "Defense Down"},
-    {0x614, "耐性↓",   0, 0, "Resistance Down"},
-    {0x620, "爆破",     0, 0, "Blastblight"},
-    {0x63C, "爆破灾祸", 0x62C, 1, "Blastscourge"},
+    {0x5DC, "毒",       0, 0, "Poison",        mhw::AbnormalityAccent::None},
+    {0x5E0, "猛毒",     0, 0, "Venom",         mhw::AbnormalityAccent::None},
+    {0x5EC, "火异常",   0, 0, "Fireblight",    mhw::AbnormalityAccent::Fire},
+    {0x5F0, "雷异常",   0, 0, "Thunderblight", mhw::AbnormalityAccent::None},
+    {0x5F4, "水异常",   0, 0, "Waterblight",   mhw::AbnormalityAccent::None},
+    {0x5F8, "冰异常",   0, 0, "Iceblight",     mhw::AbnormalityAccent::None},
+    {0x5FC, "龙异常",   0, 0, "Dragonblight",  mhw::AbnormalityAccent::None},
+    {0x600, "裂伤",     0, 0, "Bleed",         mhw::AbnormalityAccent::None},
+    {0x608, "瘴气",     0, 0, "Effluvia",      mhw::AbnormalityAccent::None},
+    {0x60C, "防御↓",   0, 0, "Defense Down",  mhw::AbnormalityAccent::Defense},
+    {0x614, "耐性↓",   0, 0, "Resistance Down", mhw::AbnormalityAccent::None},
+    {0x620, "爆破",     0, 0, "Blastblight",   mhw::AbnormalityAccent::Blast},
+    {0x63C, "爆破灾祸", 0x62C, 1, "Blastscourge", mhw::AbnormalityAccent::Blast},
 };
 
 struct SongDef { int id; const char *name; const char *nameEn; };
@@ -64,38 +64,38 @@ static const SongDef kSongs[] = {
     {0x114, "速度·回避↑", "Speed Boost + Evade Window Up"}, {0x118, "全属性强化", "Elemental Effectiveness"},
 };
 
-struct BuffDef { int offset; const char *name; int dependsOn; int withValue; const char *nameEn; };
+struct BuffDef { int offset; const char *name; int dependsOn; int withValue; const char *nameEn; mhw::AbnormalityAccent accent; };
 static const BuffDef kBuffs[] = {
     // Consumables
-    {0x690, "急奔饮料",   0, 0, "Dash Juice"},
-    {0x694, "活力剂",     0, 0, "Wiggly Litchy"},
-    {0x698, "星辰肉干",   0, 0, "Astera Jerky"},
-    {0x6A0, "怪力种子",   0x6A4, 10, "Might Seed"},
-    {0x6A0, "怪力药丸",   0x6A4, 25, "Might Pill"},
-    {0x6B0, "忍耐种子",   0x6B4, 20, "Adamant Seed"},
-    {0x6B0, "忍耐药丸",   0x6BC, 1, "Adamant Pill"},
-    {0x6C4, "鬼人粉尘",   0, 0, "Demon Powder"},
-    {0x6C8, "硬化粉尘",   0, 0, "Hardshell Powder"},
-    {0x6CC, "鬼人药",     0x6D4, 1, "Demondrug"},
-    {0x6CC, "大鬼人药",   0x6D4, 2, "Mega Demondrug"},
-    {0x6D0, "硬化药",     0x6D8, 1, "Armorskin"},
-    {0x6D0, "大硬化药",   0x6D8, 2, "Mega Armorskin"},
-    {0x6EC, "冷饮",       0, 0, "Cool Drink"},
-    {0x6F0, "热饮",       0, 0, "Hot Drink"},
-    {0x6F8, "体力回复",   0, 0, "Health Regen."},
-    {0x6FC, "耐寒强化",   0, 0, "Cold Res."},
-    {0x718, "力量松果",   0, 0, "Powercone"},
-    {0x71C, "耐热强化",   0, 0, "Ice Res. (L)"},
+    {0x690, "急奔饮料",   0, 0, "Dash Juice",      mhw::AbnormalityAccent::Drink},
+    {0x694, "活力剂",     0, 0, "Wiggly Litchy",   mhw::AbnormalityAccent::None},
+    {0x698, "星辰肉干",   0, 0, "Astera Jerky",    mhw::AbnormalityAccent::None},
+    {0x6A0, "怪力种子",   0x6A4, 10, "Might Seed",  mhw::AbnormalityAccent::Attack},
+    {0x6A0, "怪力药丸",   0x6A4, 25, "Might Pill",  mhw::AbnormalityAccent::Attack},
+    {0x6B0, "忍耐种子",   0x6B4, 20, "Adamant Seed", mhw::AbnormalityAccent::Defense},
+    {0x6B0, "忍耐药丸",   0x6BC, 1, "Adamant Pill",  mhw::AbnormalityAccent::Defense},
+    {0x6C4, "鬼人粉尘",   0, 0, "Demon Powder",   mhw::AbnormalityAccent::Attack},
+    {0x6C8, "硬化粉尘",   0, 0, "Hardshell Powder", mhw::AbnormalityAccent::Defense},
+    {0x6CC, "鬼人药",     0x6D4, 1, "Demondrug",    mhw::AbnormalityAccent::Attack},
+    {0x6CC, "大鬼人药",   0x6D4, 2, "Mega Demondrug", mhw::AbnormalityAccent::Attack},
+    {0x6D0, "硬化药",     0x6D8, 1, "Armorskin",    mhw::AbnormalityAccent::Defense},
+    {0x6D0, "大硬化药",   0x6D8, 2, "Mega Armorskin", mhw::AbnormalityAccent::Defense},
+    {0x6EC, "冷饮",       0, 0, "Cool Drink",      mhw::AbnormalityAccent::Drink},
+    {0x6F0, "热饮",       0, 0, "Hot Drink",       mhw::AbnormalityAccent::Drink},
+    {0x6F8, "体力回复",   0, 0, "Health Regen.",   mhw::AbnormalityAccent::None},
+    {0x6FC, "耐寒强化",   0, 0, "Cold Res.",       mhw::AbnormalityAccent::Drink},
+    {0x718, "力量松果",   0, 0, "Powercone",       mhw::AbnormalityAccent::Drink},
+    {0x71C, "耐热强化",   0, 0, "Ice Res. (L)",    mhw::AbnormalityAccent::Drink},
     // Skills
-    {0x764, "不屈",       0, 0, "Fortify"},
-    {0x76C, "刚刃研磨",   0, 0, "Protective Polish"},
-    {0x770, "滑走强化",   0, 0, "Affinity Sliding"},
-    {0x730, "属性加速",   0, 0, "Element Acceleration"},
-    {0x738, "力量解放",   0, 0, "Latent Power"},
-    {0x754, "肾上腺素",   0, 0, "Adrenaline"},
-    {0x788, "冰气炼成",   0, 0, "Frostcraft"},
-    {0x79C, "攻击守势",   0, 0, "Offensive Guard"},
-    {0x7A0, "转福",       0, 0, "Coalescence"},
+    {0x764, "不屈",       0, 0, "Fortify",         mhw::AbnormalityAccent::None},
+    {0x76C, "刚刃研磨",   0, 0, "Protective Polish", mhw::AbnormalityAccent::None},
+    {0x770, "滑走强化",   0, 0, "Affinity Sliding", mhw::AbnormalityAccent::None},
+    {0x730, "属性加速",   0, 0, "Element Acceleration", mhw::AbnormalityAccent::None},
+    {0x738, "力量解放",   0, 0, "Latent Power",    mhw::AbnormalityAccent::None},
+    {0x754, "肾上腺素",   0, 0, "Adrenaline",      mhw::AbnormalityAccent::None},
+    {0x788, "冰气炼成",   0, 0, "Frostcraft",      mhw::AbnormalityAccent::None},
+    {0x79C, "攻击守势",   0, 0, "Offensive Guard",  mhw::AbnormalityAccent::Defense},
+    {0x7A0, "转福",       0, 0, "Coalescence",     mhw::AbnormalityAccent::None},
 };
 
 
@@ -106,6 +106,35 @@ static const BuffDef kBuffs[] = {
 // told apart only by (dependsOn, withValue), so those are part of the key.
 // Each row keeps its frozen zh literal and gains an English column from the
 // official localization; StringTable::isEnglish() picks the column.
+// v0.11.0: accent lookups by the SAME key the name lookups use. Exported so
+// PlayerPanel::setupDemoData() (which seeds hand-written PlayerAbnormality
+// structs rather than going through the reader) can resolve a demo pill's
+// colour from the very table the reader uses, instead of a second copy of
+// the mapping living in the UI. Parameter counts differ from the *Name
+// helpers above, so no default argument is ever needed (a defaulted
+// pointer would make playerDebuffAccent(x) ambiguous).
+AbnormalityAccent playerDebuffAccent(int offset)
+{
+    for (const auto &d : kDebuffs)
+        if (d.offset == offset)
+            return d.accent;
+    return AbnormalityAccent::None;
+}
+
+AbnormalityAccent playerBuffAccent(int offset, int dependsOn, int withValue)
+{
+    for (const auto &b : kBuffs) {
+        if (b.offset != offset)
+            continue;
+        if (dependsOn != 0 && b.dependsOn != dependsOn)
+            continue;
+        if (withValue != 0 && b.withValue != withValue)
+            continue;
+        return b.accent;
+    }
+    return AbnormalityAccent::None;
+}
+
 QString playerDebuffName(int offset)
 {
     for (const auto &d : kDebuffs)
@@ -385,6 +414,7 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
             PlayerAbnormality ab;
             ab.offset  = d.offset;
             ab.name    = playerDebuffName(d.offset);
+            ab.accent  = d.accent;   // v0.11.0: family from the table, not the name
             ab.timer   = *timer;
             result.debuffs.push_back(ab);
         }
@@ -420,6 +450,7 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
             PlayerAbnormality ab;
             ab.offset  = b.offset;
             ab.name    = playerBuffName(b.offset, b.dependsOn, b.withValue);
+            ab.accent  = b.accent;   // v0.11.0: family from the table, not the name
             ab.timer   = *timer;
             result.buffs.push_back(ab);
         }
