@@ -1219,6 +1219,10 @@ void appendRiseAbnormalities(const ProcessMemory &memory,
         entry.maxTimer = schema.isBuildup
             ? static_cast<float>(schema.maxBuildup)
             : schema.maxTimer;
+        // v0.11.0: colour family, taken straight from the schema that
+        // generated this row. Never derived from `name`, which flips with
+        // the locale.
+        entry.accent = schema.accent;
         snapshot.abnormalities.push_back(entry);
     }
 }

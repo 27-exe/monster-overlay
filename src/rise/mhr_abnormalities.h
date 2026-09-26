@@ -31,6 +31,11 @@
 #include <cstddef>
 #include <cstdint>
 
+// v0.11.0: the AbnormalityAccent trait (pill colour family) lives with the
+// player types — one enum shared by the World and Rise paths so both
+// readers and the panel agree on the family vocabulary.
+#include "player/player_types.h"
+
 namespace mhw {
 
 // HunterPie.Core.Game.Enums.AbnormalityFlagType (Rise subset). Each non-None
@@ -80,6 +85,12 @@ struct RiseAbnormalitySchema {
     bool isInfinite;
     bool isInteger;
     bool isBuildup;
+    // v0.11.0: colour family of the pill, resolved here from the schema's
+    // stable Id so the panel never substring-matches the (translating)
+    // display name. Defaulted so the pre-accent table rows and any future
+    // generator output that omits it keep the family-neutral default
+    // (debuff purple / buff green) instead of failing to compile.
+    mhw::AbnormalityAccent accent{mhw::AbnormalityAccent::None};
 };
 
 // Generated tables (69 consumables + 28 debuffs, XML document order — the
