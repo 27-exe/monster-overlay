@@ -130,6 +130,7 @@ add_library(mhw-ui STATIC
     src/ui/panel_pet_damage.h
     src/ui/panel_player.cpp
     src/ui/panel_player.h
+    src/ui/panel_player_metrics.h
     src/ui/panel_sections.h
     src/ui/panel_source.cpp
     src/ui/panel_source.h
@@ -186,11 +187,12 @@ target_include_directories(mhw-ui PRIVATE
 
 # The UI layer is now one library. Keep the sink honest: a target that adds
 # a src/ui/* source directly alongside `mhw-ui` would compile that file
-# twice and risk duplicate symbols. tests/reader_tests.cpp deliberately
-# compiles src/ui/panel_player.cpp by hand (its wirebug-label helper with
-# MHW_WIREBUG_SLOT_LABEL_TEST), and pet-damage-panel-tests does the same
-# for panel_pet_damage.cpp under MHW_PET_DAMAGE_DATA_TEST — neither links
-# mhw-ui, so they are not duplicates. Everything else must link, not list.
+# twice and risk duplicate symbols. pet-damage-panel-tests does exactly
+# that for panel_pet_damage.cpp under MHW_PET_DAMAGE_DATA_TEST — it does
+# not link mhw-ui, so it is not a duplicate. Anything else must link, not
+# list. (The reader test target used to textually include panel_player.cpp
+# for its wirebug-label / stamina-scale helpers; those helpers now live in
+# the standalone inline src/ui/panel_player_metrics.h, see its header note.)
 get_target_property(_mhw_ui_type mhw-ui TYPE)
 if(NOT _mhw_ui_type STREQUAL "STATIC_LIBRARY")
     message(FATAL_ERROR "mhw-ui must be a STATIC library")

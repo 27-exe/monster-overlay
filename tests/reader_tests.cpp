@@ -8,6 +8,7 @@
 #include "quest/quest_types.h"
 #include "rise/mhr_reader.h"
 #include "rise/mhr_types.h"
+#include "ui/panel_player_metrics.h"
 #include "world/world_types.h"
 
 #include <QCoreApplication>
@@ -23,12 +24,14 @@
 #include <limits>
 #include <vector>
 
-// Compile the production's standalone label helper without pulling the Qt
-// widgets panel into this Core-only reader test target. The helper is the exact
-// source used by PlayerPanel in normal builds.
-#define MHW_WIREBUG_SLOT_LABEL_TEST
-#include "../src/ui/panel_player.cpp"
-#undef MHW_WIREBUG_SLOT_LABEL_TEST
+// The player-panel display metrics (kRiseStaminaUnitScale,
+// staminaDisplayValue(), wirebugSlotLabel()) live in their own inline header,
+// panel_player_metrics.h. It used to be the other way round: this target
+// textually #include'd the 1557-line panel_player.cpp under a test-only
+// macro guard to reach the helpers in its anonymous namespace, which meant
+// everything compiled after the guard was invisible here — code appended to
+// that region neither compiled nor failed. Including the header directly
+// closes that blind spot.
 
 namespace mhw {
 // Exposed here for the schema sanity test below.
