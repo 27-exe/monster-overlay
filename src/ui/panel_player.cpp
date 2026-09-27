@@ -45,6 +45,14 @@ constexpr int kWslot    = 26;     // HTML: .wslot 26x26
 constexpr int kMbW      = 66;     // HTML: .mb width:66px
 constexpr int kMbH      = 60;     // .mb svg ~26px + cn + tm (tightened 2026-07-27)
 constexpr int kPillH    = 18;     // HTML: .pill height (b + span ~9px + padding)
+// Vertical gap between the pill rows of a wrapping pill grid (the World
+// debuff / buff rows). Both the layout side (reserved height) and the
+// paint side (actual y offsets) use this token so the row pitch can never
+// drift apart between the two. Same numeric value as kRiseStatusRowGap on
+// purpose: the Rise 「状态」 pill grid wraps exactly like these rows, so its
+// grid must have the same pitch — kRiseStatusRowGap stays its own token so
+// the Rise block can be retuned without silently moving the World rows.
+constexpr int kPillRowGap = 4;
 constexpr int kGapQrow  = 3;      // vertical between .qrow lines
 constexpr int kGapBar   = 7;      // HTML: .bar margin-bottom:7px
 constexpr int kGapSection = 9;    // HTML: .mantlerow/.debuffs margin-top:9 padding-top:9
@@ -780,14 +788,14 @@ void PlayerPanel::paintPanel(QPainter &p)
     if (debuffCount > 0) {
         constexpr int kPillsPerRow = 3;
         const int debuffRows = (debuffCount + kPillsPerRow - 1) / kPillsPerRow;
-        debuffH = debuffRows * kPillH + (debuffRows - 1) * 4;
+        debuffH = debuffRows * kPillH + (debuffRows - 1) * kPillRowGap;
     }
     constexpr int kBuffGap = kGapSection;  // 9
     int buffH = 0;
     if (buffCount > 0) {
         constexpr int kPillsPerRow = 3;
         const int buffRows = (buffCount + kPillsPerRow - 1) / kPillsPerRow;
-        buffH = buffRows * kPillH + (buffRows - 1) * 4;
+        buffH = buffRows * kPillH + (buffRows - 1) * kPillRowGap;
     }
     // v0.7.1: wirebug capsule row height. Up to four source slots fit in one row
     // (kPillH tall); the section's gap before it matches the debuff/buff
@@ -1274,14 +1282,14 @@ void PlayerPanel::paintPanel(QPainter &p)
             const int itemsInRow = std::min(kPillsPerRow, debuffCount - rowIdx * kPillsPerRow);
             const int slotW = (totalW - pillGap * (itemsInRow - 1)) / itemsInRow;
             const int cx    = innerLeft + colIdx * (slotW + pillGap);
-            const QRectF pillRect(cx, y + rowIdx * (kPillH + 4), slotW, kPillH);
+            const QRectF pillRect(cx, y + rowIdx * (kPillH + kPillRowGap), slotW, kPillH);
             const auto &d = player_.debuffs[i];
             const QString n = d.name.isEmpty() ? mh::tr("ui.player_status_section") : d.name;
             const QString t = QStringLiteral("%1s").arg(static_cast<int>(d.timer));
             // Accent colour per ailment family (shared with the Rise block).
             drawPill(p, pillRect, accentFor(d.accent), n, t);
         }
-        y += rows * kPillH + (rows - 1) * 4;
+        y += rows * kPillH + (rows - 1) * kPillRowGap;
     }
 
     // ---- buffs: .pill row, same layout as debuffs but green accent ----
@@ -1297,14 +1305,14 @@ void PlayerPanel::paintPanel(QPainter &p)
             const int itemsInRow = std::min(kPillsPerRow, buffCount - rowIdx * kPillsPerRow);
             const int slotW = (totalW - pillGap * (itemsInRow - 1)) / itemsInRow;
             const int cx    = innerLeft + colIdx * (slotW + pillGap);
-            const QRectF pillRect(cx, y + rowIdx * (kPillH + 4), slotW, kPillH);
+            const QRectF pillRect(cx, y + rowIdx * (kPillH + kPillRowGap), slotW, kPillH);
             const auto &b = player_.buffs[i];
             const QString n = b.name.isEmpty() ? mh::tr("ui.player_buff_fallback") : b.name;
             const QString t = QStringLiteral("%1s").arg(static_cast<int>(b.timer));
             // Accent colour per consumable family (shared with the Rise block).
             drawPill(p, pillRect, accentFor(b.accent), n, t);
         }
-        y += rows * kPillH + (rows - 1) * 4;
+        y += rows * kPillH + (rows - 1) * kPillRowGap;
     }
 }
 
