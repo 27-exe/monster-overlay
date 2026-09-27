@@ -104,6 +104,8 @@ add_library(mhw-ui STATIC
     src/ui/control_panel.h
     src/ui/formatters.cpp
     src/ui/formatters.h
+    src/ui/viewmodel/console_layout_store.cpp
+    src/ui/viewmodel/console_layout_store.h
     src/ui/hud_canvas.cpp
     src/ui/hud_canvas.h
     src/ui/icon.cpp
@@ -759,6 +761,25 @@ add_executable(world-severable-scan-tests
     target_include_directories(rise-reframework-status-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(rise-reframework-status-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-reframework-status-tests COMMAND rise-reframework-status-tests)
+
+    # Window-layout persistence (mhw::ConsoleLayoutStore): the seven
+    # QSettings call sites the console used to open inline. Isolated the
+    # same way locale_sync_tests is — XDG_CONFIG_HOME redirected into a
+    # QTemporaryDir and a (organization, application) pair that exists
+    # nowhere else, so the developer's real
+    # ~/.config/monster-overlay/monster-control.conf is never touched.
+    # The store is QtCore-only, so this target compiles its two sources
+    # directly instead of linking mhw-ui (which would drag in the whole
+    # GUI layer, LayerShellQt included, for one settings wrapper).
+    add_executable(console-layout-store-tests
+        tests/console_layout_store_tests.cpp
+        src/ui/viewmodel/console_layout_store.cpp
+        src/ui/viewmodel/console_layout_store.h
+    )
+    target_link_libraries(console-layout-store-tests PRIVATE Qt6::Core)
+    target_include_directories(console-layout-store-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-layout-store-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME console-layout-store-tests COMMAND console-layout-store-tests)
 
     # Source-level CLI/build contract: catches an option that is declared but
     # not registered, or a fourth panel omitted from the product target.

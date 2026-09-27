@@ -15,6 +15,7 @@
 #include "ui/ui_theme.h"
 #include "ui/viewmodel/overlay_process_controller.h"
 #include "ui/viewmodel/rise_reframework_status.h"
+#include "ui/viewmodel/console_layout_store.h"
 #include "core/game_detector.h"
 #include "core/rise_reframework_manager.h"
 #include "core/steam_game_locator.h"
@@ -432,11 +433,10 @@ ControlPanel::ControlPanel(QWidget *parent)
     resize(1200, 1040);
     setMinimumSize(960, 820);
     {
-        QSettings s;
-        const QByteArray geom = s.value(QStringLiteral("ui/geometry")).toByteArray();
-        if (!geom.isEmpty()) restoreGeometry(geom);
-        const QByteArray state = s.value(QStringLiteral("ui/windowState")).toByteArray();
-        if (!state.isEmpty()) restoreState(state);
+        const mhw::ConsoleLayoutStore layout;
+        const mhw::ConsoleLayoutStore::WindowFrame frame = layout.windowFrame();
+        if (!frame.geometry.isEmpty()) restoreGeometry(frame.geometry);
+        if (!frame.windowState.isEmpty()) restoreState(frame.windowState);
     }
 
     // Real panel instances, rendered off-screen only. WA_DontShowOnScreen
@@ -641,13 +641,13 @@ ControlPanel::ControlPanel(QWidget *parent)
     leftSplitter->setSizes({150, 180});
     leftSplitter_ = leftSplitter;
     {
-        QSettings s;
-        const QByteArray saved = s.value(QStringLiteral("ui/leftSplitter")).toByteArray();
+        const mhw::ConsoleLayoutStore layout;
+        const QByteArray saved = layout.leftSplitterState();
         if (!saved.isEmpty()) leftSplitter->restoreState(saved);
     }
     connect(leftSplitter, &QSplitter::splitterMoved, this, [this, leftSplitter]{
-        QSettings s;
-        s.setValue(QStringLiteral("ui/leftSplitter"), leftSplitter->saveState());
+        mhw::ConsoleLayoutStore layout;
+        layout.saveLeftSplitterState(leftSplitter->saveState());
     });
     topRow->addWidget(leftSplitter);
 
@@ -829,9 +829,8 @@ ControlPanel::ControlPanel(QWidget *parent)
         updateZoomLabel();   // i18n: the format lives in one place
     });
     {
-        QSettings s;
-        const qreal savedZoom = s.value(QStringLiteral("ui/zoom"), 2.0).toDouble();
-        canvas_->setZoom(savedZoom);
+        const mhw::ConsoleLayoutStore layout;
+        canvas_->setZoom(layout.zoom());
         updateZoomLabel();
     }
     for (int i = 0; i < mhw::kPanelCount; ++i)
@@ -862,12 +861,12 @@ ControlPanel::ControlPanel(QWidget *parent)
     // Hard minimum on the top pane so the inspector doesn't get crushed.
     topContainer->setMinimumHeight(360);
     {
-        QSettings s;
-        const QByteArray saved = s.value(QStringLiteral("ui/splitter")).toByteArray();
-        if (!saved.isEmpty()) splitter->restoreState(saved);
+        const mhw::ConsoleLayoutStore layout;
+        const mhw::ConsoleLayoutStore::SplitterLayout saved = layout.splitterLayout();
+        if (!saved.splitterState.isEmpty()) splitter->restoreState(saved.splitterState);
         // After restore, keep the user's last-chosen stage height as a
         // plain int (easier than decoding the splitter bytearray).
-        savedStageSize_ = s.value(QStringLiteral("ui/stageHeight"), 570).toInt();
+        savedStageSize_ = saved.stageHeight;
     }
     consoleSplitter_ = splitter;
 
@@ -889,9 +888,8 @@ ControlPanel::ControlPanel(QWidget *parent)
         if (stageAnim_ && stageAnim_->state() == QAbstractAnimation::Running)
             return;
         const int newStage = splitter->sizes().value(1, 570);
-        QSettings s;
-        s.setValue(QStringLiteral("ui/splitter"), splitter->saveState());
-        s.setValue(QStringLiteral("ui/stageHeight"), newStage);
+        mhw::ConsoleLayoutStore layout;
+        layout.saveSplitterLayout(splitter->saveState(), newStage);
         if (stageVisible_) {
             savedStageSize_ = newStage;
         }
@@ -1297,10 +1295,10 @@ void ControlPanel::closeEvent(QCloseEvent *e)
 
     saveMaskToDisk();
     {
-        QSettings s;
-        s.setValue(QStringLiteral("ui/geometry"), saveGeometry());
-        s.setValue(QStringLiteral("ui/zoom"), canvas_ ? canvas_->zoom() : 1.0);
-        s.setValue(QStringLiteral("ui/windowState"), saveState());
+        mhw::ConsoleLayoutStore layout;
+        layout.saveWindowFrame(saveGeometry(),
+                               canvas_ ? canvas_->zoom() : 1.0,
+                               saveState());
     }
     QMainWindow::closeEvent(e);
 }
