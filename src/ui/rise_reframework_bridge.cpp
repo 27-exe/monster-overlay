@@ -5,6 +5,7 @@
 #include "core/game_detector.h"
 #include "core/reframework_fetcher.h"
 #include "core/rise_reframework_manager.h"
+#include "core/string_table.h"
 
 #include <QDebug>
 #include <QDir>
@@ -17,13 +18,21 @@ namespace {
 using mhw::ReFrameworkFetcher;
 using mhw::RiseReFrameworkManager;
 
-const QString kGameRunningDetail = QStringLiteral(
-    "Refusing to change REFramework files while a Monster Hunter game is running.");
+// Localized console chrome lookup. The bridge has no header of its own for
+// string_table.h, so the same inline alias the readers use is declared here
+// (ODR-safe, exactly as mhr_reader.cpp does). Every `detail` string below is
+// rendered by riseReframeworkStatusLines() through console.reframework.*, so
+// it is user-facing chrome and must be translated — see docs/I18N.md §4.
+inline QString trMessage(const QString &key) { return mhw::StringTable::instance().tr(key); }
+
+const QString kGameRunningDetail = [] {
+    return trMessage(QStringLiteral("console.reframework.game_running"));
+}();
 
 QString unusableGameDir(const RiseReFrameworkManager::Status &status)
 {
     return status.detail.isEmpty()
-        ? QStringLiteral("The Rise installation directory is not usable.")
+        ? trMessage(QStringLiteral("console.reframework.result_game_dir_unusable"))
         : status.detail;
 }
 
@@ -57,9 +66,8 @@ bool runInstall(const QString &applicationDir, const QString &gameDir,
         && status.manifest == RiseReFrameworkManager::ManifestState::Valid;
     if (status.lua == RiseReFrameworkManager::LuaState::Modified
         && !managedUpgrade) {
-        *detail = QStringLiteral(
-            "The overlay Lua differs from the packaged copy; remove it first "
-            "(\"REMOVE LUA\"), then install again.");
+        *detail = trMessage(QStringLiteral("console.reframework.result_lua_modified"))
+                      .arg(trMessage(QStringLiteral("console.reframework.remove_lua")));
         return false;
     }
 
@@ -69,7 +77,7 @@ bool runInstall(const QString &applicationDir, const QString &gameDir,
     if (status.lua == RiseReFrameworkManager::LuaState::Current
         && usableCore
         && status.manifest == RiseReFrameworkManager::ManifestState::Valid) {
-        *detail = QStringLiteral("REFramework and the overlay Lua are already installed.");
+        *detail = trMessage(QStringLiteral("console.reframework.result_already_installed"));
         return true;
     }
 
@@ -83,7 +91,7 @@ bool runInstall(const QString &applicationDir, const QString &gameDir,
         return repaired.ok;
     }
     if (status.manifest == RiseReFrameworkManager::ManifestState::Invalid) {
-        *detail = QStringLiteral("Cannot install while the managed manifest is invalid: %1")
+        *detail = trMessage(QStringLiteral("console.reframework.result_manifest_invalid"))
                       .arg(status.detail);
         return false;
     }
@@ -96,8 +104,9 @@ bool runInstall(const QString &applicationDir, const QString &gameDir,
         },
         [&cancel] { return cancel.load(); });
     if (!prepared.ok) {
-        *detail = prepared.cancelled ? QStringLiteral("Operation cancelled.")
-                                     : prepared.detail;
+        *detail = prepared.cancelled
+                     ? trMessage(QStringLiteral("reader.reframework.operation_cancelled"))
+                     : prepared.detail;
         return false;
     }
 
@@ -109,9 +118,9 @@ bool runInstall(const QString &applicationDir, const QString &gameDir,
     }
 
     *detail = prepared.source == ReFrameworkFetcher::Source::LocalArchive
-        ? QStringLiteral("Installed REFramework %1 and the overlay Lua from the bundled archive.")
+        ? trMessage(QStringLiteral("console.reframework.result_installed_bundled"))
               .arg(RiseReFrameworkManager::upstreamTag())
-        : QStringLiteral("Downloaded REFramework %1 and installed it with the overlay Lua.")
+        : trMessage(QStringLiteral("console.reframework.result_installed_downloaded"))
               .arg(RiseReFrameworkManager::upstreamTag());
     return true;
 }
@@ -145,10 +154,10 @@ bool runRemoveLua(const QString &applicationDir, const QString &gameDir,
     }
 
     *detail = !wasPresent
-        ? QStringLiteral("The overlay Lua was not present.")
+        ? trMessage(QStringLiteral("console.reframework.result_lua_not_present"))
         : wasModified
-            ? QStringLiteral("Removed the overlay Lua (it differed from the packaged copy).")
-            : QStringLiteral("Removed the overlay Lua.");
+            ? trMessage(QStringLiteral("console.reframework.result_lua_removed_modified"))
+            : trMessage(QStringLiteral("console.reframework.result_lua_removed"));
     return true;
 }
 
@@ -177,11 +186,11 @@ bool runRemoveReframework(const QString &applicationDir, const QString &gameDir,
     if (!lua.ok) {
         luaText = lua.detail;
     } else if (status.lua == RiseReFrameworkManager::LuaState::Missing) {
-        luaText = QStringLiteral("The overlay Lua was already absent.");
+        luaText = trMessage(QStringLiteral("console.reframework.result_lua_already_absent"));
     } else if (status.lua == RiseReFrameworkManager::LuaState::Modified) {
-        luaText = QStringLiteral("Removed the modified overlay Lua.");
+        luaText = trMessage(QStringLiteral("console.reframework.result_lua_modified_removed"));
     } else {
-        luaText = QStringLiteral("Removed the overlay Lua.");
+        luaText = trMessage(QStringLiteral("console.reframework.result_lua_removed"));
     }
 
     // Re-read the state: removeLua() may have rewritten or removed the
@@ -191,8 +200,8 @@ bool runRemoveReframework(const QString &applicationDir, const QString &gameDir,
     bool coreOk = true;
     if (afterLua.manifest == RiseReFrameworkManager::ManifestState::Missing) {
         coreText = afterLua.core == RiseReFrameworkManager::CoreState::External
-            ? QStringLiteral("An externally installed REFramework core was left in place.")
-            : QStringLiteral("No managed REFramework files were found.");
+            ? trMessage(QStringLiteral("console.reframework.result_external_core_left"))
+            : trMessage(QStringLiteral("console.reframework.result_no_managed_files"));
     } else {
         const RiseReFrameworkManager::Result core = manager.removeManaged(gameDir);
         coreOk = core.ok;
@@ -248,7 +257,7 @@ void RiseReFrameworkBridge::start(QString label, Operation operation)
     if (m_busy.exchange(true)) {
         // The UI gates re-entry, so this is defensive only.
         emit finished(false,
-                      QStringLiteral("Another REFramework operation is already running."));
+                      trMessage(QStringLiteral("console.reframework.result_busy")));
         return;
     }
     joinWorker(); // reap the previous, already-finished worker thread
@@ -260,9 +269,10 @@ void RiseReFrameworkBridge::start(QString label, Operation operation)
         try {
             ok = operation(m_cancel, &detail);
         } catch (const std::exception &error) {
-            detail = QStringLiteral("Unexpected error: %1").arg(QString::fromUtf8(error.what()));
+            detail = trMessage(QStringLiteral("console.reframework.result_unexpected_error"))
+                         .arg(QString::fromUtf8(error.what()));
         } catch (...) {
-            detail = QStringLiteral("Unexpected error while performing the operation.");
+            detail = trMessage(QStringLiteral("console.reframework.result_unexpected_unknown"));
         }
         qInfo().noquote() << "[reframework]" << label << (ok ? "finished" : "failed") << detail;
 
