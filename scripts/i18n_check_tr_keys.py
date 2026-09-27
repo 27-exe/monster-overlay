@@ -33,15 +33,47 @@ DEFAULT_ROOTS = ["src"]
 
 STR = r'(?:QStringLiteral\(|QLatin1String\(|QString\()?\s*"([^"]+)"'
 
+# Same literal shape, without the wrapping call — used to harvest the entries
+# inside a static key table.
+STR_LITERAL = re.compile(r'"([^"]+)"')
+
 PATTERNS = [
     # mh::tr("k") / trMessage("k") / table.tr("k") / instance().tr("k")
     re.compile(r'(?:mh::tr|trMessage|table\.tr|instance\(\)\.tr)\(\s*' + STR),
-    # trSet(w, "k") / trTip(w, "k") / trHook(w, "k") — key is arg 2. The
-    # widget expression must not itself contain a comma at depth 0, which
-    # holds for every current call site (plain identifiers / this->x).
+    # trVm("k") — the view-model/table alias. Measured 17 call sites in src/,
+    # so a typo in any of them used to reach all three gates green.
+    re.compile(r'trVm\(\s*' + STR),
+    # A key chosen by a ternary: tr(a ? "k1" : "k2"). The conditional sits
+    # between the callee and the literal, so match the literal on either
+    # branch instead of assuming we know the preceding token.
+    re.compile(r'(?:mh::tr|trMessage|trVm|table\.tr|instance\(\)\.tr)'
+               r'\((?:[^()"]*?[?][^()]*?)?\s*' + STR),
+    # Keys pulled out of a static array or list:
+    # trVm(kNameKeys[i]) / tr(QString::fromLatin1(kProbeKeys[i])). Only the
+    # literal inside the array initialiser is matchable from the call site,
+    # so the arrays themselves are enumerated by ARRAY_PATTERNS below.
     re.compile(r'tr(?:Set|Tip|Hook)\([^,()]+,\s*' + STR),
     # trWindowTitle("k")
     re.compile(r'trWindowTitle\(\s*' + STR),
+]
+
+# Static key tables: the literals live in the initialiser, and the call site
+# only names the array. Without this, a typo inside kCorners[] is invisible to
+# every gate. Matched against the whole file, not a call expression.
+#
+# Only tables whose name marks them as keys are enumerated. Matching every
+# braced initialiser in the tree would also swallow path fragments, JSON
+# field names and protocol tokens, which are formats, not translations --
+# the check gate then fails on strings that were never meant to resolve.
+ARRAY_NAME_HINT = re.compile(r'[Kk]eys?|Corners|Names?$', re.IGNORECASE)
+ARRAY_PATTERNS = [
+    # const char *const kNameKeys[] = { "a", "b" };
+    # static const QVector<QString> kCorners = { "a", "b" };
+    # Group 1 is the name, group 2 the brace body; ARRAY_NAME_HINT vets 1.
+    # (No \K here: Python's re has no \K, unlike PCRE.)
+    re.compile(r'\b(?:static\s+)?(?:const\s+)?'
+               r'(?:QVector<QString>|QStringList|const\s+char\s*\*|const\s+QString)\s+'
+               r'([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[\s*\d*\s*\])?\s*=\s*\{([^{}]*)\}'),
 ]
 
 # Documentation-only occurrences: core/string_table.h carries schema examples
@@ -99,6 +131,14 @@ def main():
                 for pat in PATTERNS:
                     for m in pat.finditer(src):
                         used.setdefault(m.group(1), set()).add(full)
+                # Static key tables hold their literals in the initialiser, so
+                # the call site never shows them. Enumerate the table itself.
+                for pat in ARRAY_PATTERNS:
+                    for m in pat.finditer(src):
+                        if not ARRAY_NAME_HINT.search(m.group(1)):
+                            continue  # not a key table — formats don't translate
+                        for lit in STR_LITERAL.finditer(m.group(2)):
+                            used.setdefault(lit.group(1), set()).add(full)
 
     print(f"distinct tr-style keys used in {', '.join(args.roots)}: {len(used)}")
     print(f"keys defined in zh-CN: {len(known)}")
