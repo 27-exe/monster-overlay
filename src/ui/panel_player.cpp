@@ -14,7 +14,6 @@
 
 #include <QPainter>
 #include <QPainterPath>
-#include <QSet>
 #include <QFontMetrics>
 #include <QLinearGradient>
 
@@ -453,13 +452,6 @@ void PlayerPanel::retranslateUi()
     triggerUpdate();
 }
 
-void PlayerPanel::update(const mhw::PlayerSnapshot &p)
-{
-    player_ = p;
-    hasData_ = p.valid;
-    canvas()->update();
-}
-
 void PlayerPanel::update(const mhw::GameSnapshot &snap)
 {
     player_    = snap.player;
@@ -479,7 +471,6 @@ void PlayerPanel::update(const mhw::GameSnapshot &snap)
     playerMR_   = snap.player.masterRank;
     playerName_ = snap.player.name;
     weaponId_   = snap.player.weaponId;
-    sharpness_  = snap.player.sharpness;
     partyCount_ = snap.party.size();
 
     // When party has a local=true snapshot it carries the same fields;
@@ -500,34 +491,6 @@ void PlayerPanel::update(const mhw::GameSnapshot &snap)
             // Nothing to show — player struct also returned nothing.
             weaponId_ = -1;
         }
-    }
-
-    QSet<int> activeOffsets;
-    for (const auto &d : player_.debuffs) {
-        activeOffsets.insert(d.offset);
-        const auto it = debuffMaxTimers_.find(d.offset);
-        if (it == debuffMaxTimers_.end() || d.timer > *it)
-            debuffMaxTimers_[d.offset] = d.timer;
-    }
-    for (auto it = debuffMaxTimers_.begin(); it != debuffMaxTimers_.end(); ) {
-        if (!activeOffsets.contains(it.key()))
-            it = debuffMaxTimers_.erase(it);
-        else
-            ++it;
-    }
-
-    QSet<int> activeBuffOffsets;
-    for (const auto &b : player_.buffs) {
-        activeBuffOffsets.insert(b.offset);
-        const auto it = buffMaxTimers_.find(b.offset);
-        if (it == buffMaxTimers_.end() || b.timer > *it)
-            buffMaxTimers_[b.offset] = b.timer;
-    }
-    for (auto it = buffMaxTimers_.begin(); it != buffMaxTimers_.end(); ) {
-        if (!activeBuffOffsets.contains(it.key()))
-            it = buffMaxTimers_.erase(it);
-        else
-            ++it;
     }
 
     canvas()->update();
@@ -1064,7 +1027,7 @@ void PlayerPanel::paintPanel(QPainter &p)
         const int shpTotalW = kShpGaugeTotal + kShpGap + kShpNum;
         const int shpCenterX = innerLeft + (innerW - shpTotalW) / 2;
         const int compRightX = shpCenterX + shpTotalW;
-        const int gaugeLeftX = drawSharpnessBar(p, sharpness_,
+        const int gaugeLeftX = drawSharpnessBar(p, player_.sharpness,
                                                 compRightX, y, prowH);
         const int gaugeLeftEffective = (gaugeLeftX < compRightX)
             ? gaugeLeftX - gapToMR : innerRight;
@@ -1446,18 +1409,18 @@ void PlayerPanel::setupDemoData()
     // Hand-crafted thresholds[7] for a Purple-able Great Sword. r23: the
     // badge shows `currentHits - thresholds[level - 1]` (whole-bar 177 −
     // purple start 130 = 47), so these numbers must stay consistent.
-    sharpness_.valid = true;
-    sharpness_.level = 6;        // Purple
-    sharpness_.currentHits = 177;   // whole-bar remainder (130 + 47)
-    sharpness_.maxHits = 190;
-    sharpness_.threshold = 130;     // thresholds[level - 1]
-    sharpness_.thresholds[0] = 5;
-    sharpness_.thresholds[1] = 15;
-    sharpness_.thresholds[2] = 30;
-    sharpness_.thresholds[3] = 60;
-    sharpness_.thresholds[4] = 90;
-    sharpness_.thresholds[5] = 130;
-    sharpness_.thresholds[6] = 190;
+    player_.sharpness.valid = true;
+    player_.sharpness.level = 6;        // Purple
+    player_.sharpness.currentHits = 177;   // whole-bar remainder (130 + 47)
+    player_.sharpness.maxHits = 190;
+    player_.sharpness.threshold = 130;     // thresholds[level - 1]
+    player_.sharpness.thresholds[0] = 5;
+    player_.sharpness.thresholds[1] = 15;
+    player_.sharpness.thresholds[2] = 30;
+    player_.sharpness.thresholds[3] = 60;
+    player_.sharpness.thresholds[4] = 90;
+    player_.sharpness.thresholds[5] = 130;
+    player_.sharpness.thresholds[6] = 190;
     // v0.8.4-r18 player-abnormalities: the two games keep their status data
     // in different snapshot fields, so the demo seeds whichever field the
     // selected game actually renders — World keeps the buff/debuff pill rows

@@ -4,17 +4,12 @@
 #include "core/game_snapshot.h"
 #include "player/player_types.h"
 
-#include <QHash>
-
 // Player status panel: zone + quest + connection status + memory address,
 // then HP / ST bars + weapon icon + mantle timers + debuff bars.
 class PlayerPanel : public Panel {
     Q_OBJECT
 public:
     explicit PlayerPanel(QWidget *parent = nullptr);
-
-    // Player-only update (sets hasData_ from snapshot.valid).
-    void update(const mhw::PlayerSnapshot &p);
 
     // Full snapshot — keeps zone/quest/connection info in sync. We
     // only care about the fields relevant to this panel, so call this
@@ -57,13 +52,5 @@ private:
     bool hasData_{false};
     int  playerMR_{0};                 // mirrored from party slot 0 MR
     QString playerName_;                // mirrored from party slot 0 name
-    int     partyCount_{0};             // mirrored from party snapshot size
-    // Track max timer per debuff offset for progress bar scaling.
-    QHash<int, float> debuffMaxTimers_;
-    // Track max timer per buff offset for progress bar scaling.
-    QHash<int, float> buffMaxTimers_;
-    // Sharpness — mirrored from PlayerSnapshot.sharpness on every
-    // poll. valid=false means the equipped weapon is ranged (or the
-    // memory read failed) and the panel should hide the bar.
-    mhw::SharpnessSnapshot sharpness_;
+    int     partyCount_{0};                 // mirrored from party snapshot size
 };
