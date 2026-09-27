@@ -1,4 +1,5 @@
 #include "core/game_detector.h"
+#include "core/game_profile.h"
 #include "core/game_snapshot.h"
 #include "core/locale_conf.h"
 #include "core/locale_sync.h"
@@ -288,10 +289,8 @@ int main(int argc, char **argv)
     mhw::GameId gameId = mhw::GameId::World;
     {
         const QString gameArg = parser.value(gameOption).toLower();
-        if (gameArg == QStringLiteral("world")) {
-            gameId = mhw::GameId::World;
-        } else if (gameArg == QStringLiteral("rise")) {
-            gameId = mhw::GameId::Rise;
+        if (mhw::gameIdFromString(gameArg, &gameId)) {
+            // recognised "world" / "rise"
         } else {
             if (gameArg != QStringLiteral("auto"))
                 qWarning("Ignoring invalid --game value '%s'; using auto",

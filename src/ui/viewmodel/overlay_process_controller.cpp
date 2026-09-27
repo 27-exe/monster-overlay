@@ -1,5 +1,7 @@
 #include "overlay_process_controller.h"
 
+#include "core/game_profile.h"
+
 #include <QCoreApplication>
 #include <QProcess>
 #include <QTimer>
@@ -36,9 +38,7 @@ bool OverlayProcessController::launch(const QStringList &argv, bool editMode)
     // Target game selected in the rail (setCurrentGame persists it). The
     // overlay would otherwise auto-detect, which can pick the wrong
     // process when both World and Rise are installed/running.
-    args << QStringLiteral("--game=%1")
-                .arg(currentGame_ == mhw::GameId::Rise
-                         ? QStringLiteral("rise") : QStringLiteral("world"));
+    args << QStringLiteral("--game=%1").arg(mhw::gameIdToString(currentGame_));
 
     // monster-overlay lives next to monster-control in the same build dir.
     const QString overlay = QCoreApplication::applicationDirPath()

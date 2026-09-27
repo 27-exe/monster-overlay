@@ -17,6 +17,7 @@
 #include "ui/viewmodel/rise_reframework_status.h"
 #include "ui/viewmodel/console_layout_store.h"
 #include "core/game_detector.h"
+#include "core/game_profile.h"
 #include "core/rise_reframework_manager.h"
 #include "core/steam_game_locator.h"
 #include "core/locale_conf.h"
@@ -1045,16 +1046,13 @@ ControlPanel::ControlPanel(QWidget *parent)
         if (detected) {
             lastDetectedGame_ = detected->game;
             s.setValue(QStringLiteral("detectedGame"),
-                       detected->game == mhw::GameId::Rise ? QStringLiteral("rise")
-                                                           : QStringLiteral("world"));
+                       mhw::gameIdToString(detected->game));
         }
-        if (savedGame == QStringLiteral("rise")) {
-            switchGame(mhw::GameId::Rise);
-        } else if (savedGame == QStringLiteral("world")) {
-            switchGame(mhw::GameId::World);
-        } else {
+        mhw::GameId savedGameId = mhw::GameId::World;
+        if (mhw::gameIdFromString(savedGame, &savedGameId))
+            switchGame(savedGameId);
+        else
             switchGame(detected ? detected->game : mhw::GameId::World);
-        }
         // One-shot startup text ("keep / change?" framing); the first
         // timer tick after 5s takes over with the live-badge format.
         if (autoDetectBadge_) {
@@ -2125,7 +2123,8 @@ void ControlPanel::switchGame(mhw::GameId game)
     if (changed) {
         QSettings s;
         s.setValue(QStringLiteral("game"),
-                   isRise ? QStringLiteral("rise") : QStringLiteral("world"));
+                   mhw::gameIdToString(isRise ? mhw::GameId::Rise
+                                             : mhw::GameId::World));
     }
 
     if (changed && overlay_->isRunning()) {
@@ -2505,8 +2504,7 @@ void ControlPanel::refreshAutoDetect()
         lastDetectedGame_ = detected->game;
         QSettings s;
         s.setValue(QStringLiteral("detectedGame"),
-                   detected->game == mhw::GameId::Rise ? QStringLiteral("rise")
-                                                       : QStringLiteral("world"));
+                   mhw::gameIdToString(detected->game));
         const QString name = gameName(detected->game);
         const bool match = (detected->game == currentGame());
         detectedShort = mh::tr(QStringLiteral("console.detect.short"))

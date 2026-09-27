@@ -2,6 +2,33 @@
 
 本文件记录 monster-overlay 的变更。格式参考 Keep a Changelog。
 
+## [0.11.1] — 2026-09-27
+
+World 与 Rise 平级化的第一步：把「游戏叫什么」从 8 个调用点的私有三元表达式
+收敛成一份共享词表。
+
+### 新增
+
+- `src/core/game_profile.{h,cpp}` — `GameId` ↔ wire 字符串的唯一转换点。解析
+  是全函数的：未识别的取值显式失败，而不是悄悄回落到某个游戏，这样损坏的
+  设置值会走到调用方的 else 分支，不会替玩家选一款游戏。`gameIdToString`
+  用 switch 而非三元——新增第三款游戏时编译器会指向那一行，而不是让某个
+  分支被静默继承。
+- `tests/game_profile_tests.cpp` — 钉住双向映射、大小写与空白容忍、非法值
+  拒绝、失败解析不污染调用方的 out 参数、null out 指针不被解引用。
+
+### 变更
+
+- `control_panel.cpp` / `overlay_process_controller.cpp` / `main.cpp` 共 8 处
+  `"rise"` / `"world"` 字面量改为调用 `gameIdToString` / `gameIdFromString`。
+  字面量现在只存在于 `game_profile.cpp` 一处。对外格式（`--game` 参数、
+  QSettings 值、子进程参数）逐字未变。
+
+### 验证
+
+`ctest` 36/36、`i18n_gate` 三门禁 PASS、洁净从零构建 0 error / 0 warning、
+面板像素基准零 diff。
+
 ## [0.11.0] — 2026-09-27
 
 一次以「不影响功能」为硬约束的重构。所有改动均通过 ctest、i18n 门禁与

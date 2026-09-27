@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(monster_overlay VERSION 0.11.0 LANGUAGES CXX)
+project(monster_overlay VERSION 0.11.1 LANGUAGES CXX)
 
 # Strip the build machine's absolute paths out of every compiled TU. Without
 # this the binaries embed CMAKE_SOURCE_DIR via __FILE__ and the wiring test's
@@ -29,6 +29,8 @@ add_library(monster-core STATIC
     src/core/string_table.cpp
     src/core/game_detector.h
     src/core/game_detector.cpp
+    src/core/game_profile.h
+    src/core/game_profile.cpp
     src/core/steam_game_locator.h
     src/core/steam_game_locator.cpp
     src/core/rise_reframework_manager.h
@@ -621,6 +623,16 @@ add_executable(world-severable-scan-tests
     target_include_directories(monster-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-core-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME monster-core-tests COMMAND monster-core-tests)
+
+    # Game identity: the one place that names a game. QtCore-only, so the
+    # vocabulary is testable without a game process or a window.
+    add_executable(game-profile-tests
+        tests/game_profile_tests.cpp
+    )
+    target_link_libraries(game-profile-tests PRIVATE Qt6::Core monster-core)
+    target_include_directories(game-profile-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(game-profile-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME game-profile-tests COMMAND game-profile-tests)
 
     # Steam/Rise installation discovery and REFramework lifecycle tests are
     # QtCore-only and link the same production core library used by the

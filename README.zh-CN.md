@@ -28,8 +28,8 @@
 ## 安装
 
 ```bash
-tar -xzf monster-overlay-v0.11.0-linux-x86_64.tar.gz
-cd monster-overlay-v0.11.0-linux-x86_64
+tar -xzf monster-overlay-v0.11.1-linux-x86_64.tar.gz
+cd monster-overlay-v0.11.1-linux-x86_64
 sudo ./install-deps.sh      # 一次性:Qt 6 + layer-shell-qt
 ./install.sh                # 可选:装到 ~/.local/bin 与 XDG 数据目录
 ```
