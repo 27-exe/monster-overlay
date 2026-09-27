@@ -71,6 +71,14 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 #include <signal.h>
 #include <sys/types.h>
 
+// v0.11: the console stage-pane default height lives as the named
+// constant mhw::kConsoleStageHeightDefault (ConsoleLayoutStore) so tests
+// and the panel read one source of truth instead of a re-typed literal.
+// This file already includes that header; pull the name in once at file
+// scope because the stage-pane call sites (below) are member functions
+// at global scope where the unqualified name is otherwise invisible.
+using mhw::kConsoleStageHeightDefault;
+
 namespace {
 
 QString consoleText(const QString &key)
@@ -857,7 +865,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     // setSizes clamps to the widget minimums ([332,148] for a 1040px
     // window) — the correct 570 default would be lost. Use the constant
     // default, then let QSettings + splitterMoved override it later.
-    savedStageSize_ = 570;
+    savedStageSize_ = kConsoleStageHeightDefault;
     // Hard minimum on the top pane so the inspector doesn't get crushed.
     topContainer->setMinimumHeight(360);
     {
@@ -887,7 +895,7 @@ ControlPanel::ControlPanel(QWidget *parent)
         // user drag (animation not running) may write QSettings.
         if (stageAnim_ && stageAnim_->state() == QAbstractAnimation::Running)
             return;
-        const int newStage = splitter->sizes().value(1, 570);
+        const int newStage = splitter->sizes().value(1, kConsoleStageHeightDefault);
         mhw::ConsoleLayoutStore layout;
         layout.saveSplitterLayout(splitter->saveState(), newStage);
         if (stageVisible_) {
@@ -922,7 +930,7 @@ ControlPanel::ControlPanel(QWidget *parent)
             // show complete: clear any temporary max cap.
             if (auto *stg = consoleSplitter_->widget(1)) stg->setMaximumHeight(QWIDGETSIZE_MAX);
             const int topH = consoleSplitter_->sizes().value(0);
-            const int stageH = savedStageSize_ > 0 ? savedStageSize_ : 570;
+            const int stageH = savedStageSize_ > 0 ? savedStageSize_ : kConsoleStageHeightDefault;
             consoleSplitter_->setSizes({topH, stageH});
         } else {
             // hide complete: force stage to zero. The QSplitter insists
@@ -1346,9 +1354,9 @@ void ControlPanel::animStageTo(bool visible)
     // When hiding, capture the user's preferred stage height so SHOW
     // restores it (not whatever the splitter has after animation).
     if (visible && savedStageSize_ <= 0) {
-        savedStageSize_ = current > 0 ? current : 570;
+        savedStageSize_ = current > 0 ? current : kConsoleStageHeightDefault;
     }
-    const int target = visible ? (savedStageSize_ > 0 ? savedStageSize_ : 570) : 0;
+    const int target = visible ? (savedStageSize_ > 0 ? savedStageSize_ : kConsoleStageHeightDefault) : 0;
     // Avoid pointless animation if we're already there.
     if (current == target) return;
     stageAnim_->stop();
