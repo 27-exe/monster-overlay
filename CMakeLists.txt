@@ -878,3 +878,28 @@ add_executable(rise-probe EXCLUDE_FROM_ALL
 target_link_libraries(rise-probe PRIVATE Qt6::Core monster-core mhw-reader)
 target_include_directories(rise-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(rise-probe PRIVATE -Wall -Wextra -Wpedantic)
+
+# ---------------------------------------------------------------------------
+# i18n gates as real tests.
+#
+# The three scripts used to be a manual step, so a clean ctest run said
+# nothing about the translation tables: a zh-only key or a tr() typo both
+# sailed through. They now run under ctest, against the source tree (the
+# tests are static analysis, no build artefacts needed).
+#
+# `unused` deliberately stays non-strict by default: the shipped data tables
+# keep retired keys on purpose, and --strict has been red for so long that
+# nobody would look at it. Adding a key nobody references is a warning.
+# ---------------------------------------------------------------------------
+find_program(PYTHON3_EXECUTABLE NAMES python3 REQUIRED)
+
+set(MHW_I18N_GATES check parity unused)
+
+foreach(gate IN LISTS MHW_I18N_GATES)
+    add_test(
+        NAME i18n-gate-${gate}
+        COMMAND ${PYTHON3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/i18n_gate.py
+                ${gate} -q
+    )
+endforeach()
