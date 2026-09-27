@@ -3,8 +3,36 @@
 #include "core/string_table.h"
 
 namespace mhw {
+namespace {
 
-const char *zoneName(Zone zone)
+// The two name tables, factored so that "does this zone have a name?" is
+// answerable without reading a display string.
+//
+// A lookup returns nullptr when the Zone carries no table entry. The public
+// accessors below turn that nullptr into the placeholder literal
+// ("未知" / "Unknown"), so every rendered label stays byte-identical to the
+// pre-refactor behaviour.
+//
+// Why the indirection exists: UI logic used to infer "this zone has no
+// name" by comparing the localized display label against the literals
+// that mean "no name" (the zh placeholder and the translated
+// ui.zone_unknown value). That is display-layer data driving a branch, so
+// editing a translation silently changed the branch. The answer belongs to
+// the data layer, where the zone's identity already lives — hence
+// hasZoneName(). No source file may re-introduce a comparison of a name
+// string; scripts/i18n_gate.py's callers and this comment carry the history.
+//
+// nullptr is the ONLY representation of "no entry". The placeholder-looking
+// rows are ordinary data rows that DO name a zone: RiseLoc0/6/8/16 are the
+// official table's own hole markers (StageId 200/206/208/216 have no entry
+// upstream) and keep their own explicit label, so they stay non-null.
+//
+// Both tables carry the same key set — every Zone enumerator plus the Rise
+// village ids 0..11 rebased into 700..799 — so the zh lookup doubles as the
+// canonical "is this zone named?" test. A row that existed only in en
+// would be a table bug to fix here, not a reason for the UI's logic to
+// flip with the active language.
+const char *zoneNameLookup(Zone zone)
 {
     // Rise villages (stage.type == 4) are mapped by computeZoneId()
     // into 700..799. Inline Chinese name table (was mhrVillageName()
@@ -31,7 +59,7 @@ const char *zoneName(Zone zone)
             case 11: return "骑士团指挥所";
             default: break;
             }
-            return "未知";
+            return nullptr;
         }
     }
     switch (zone) {
@@ -82,7 +110,8 @@ const char *zoneName(Zone zone)
     //    mirror.hunterpie.com). Full table, provenance and the
     //   three-way comparison: v0.8.4-r18/zone-names/REPORT.md.
     // StageId 200 / 206 / 208 / 216 have no entry upstream (a hunt never
-    // reports them) and keep the generic placeholder.
+    // reports them) and keep the generic placeholder. That placeholder IS
+    // the entry's own data (a named hole marker), so it stays non-null.
     //   hid 1  -> 201 Shrine Ruins      废神社     (in-game verified)
     //   hid 2  -> 202 Sandy Plains      沙原
     //   hid 3  -> 203 Flooded Forest    水没林
@@ -116,12 +145,12 @@ const char *zoneName(Zone zone)
     case Zone::RiseLoc14: return "塔之秘境";
     case Zone::RiseLoc15: return "渊劫地狱";
     case Zone::RiseLoc16: return "未知狩猎区"; // StageId 216: no entry upstream
-    case Zone::Unknown: return "未知";
+    case Zone::Unknown: break;
     }
-    return "未知";
+    return nullptr;
 }
 
-const char *zoneNameEn(Zone zone)
+const char *zoneNameEnLookup(Zone zone)
 {
     // v0.9 i18n (WS-A). English labels for the exact same Zone values,
     // sourced from HunterPie's official en-us.xml (Strings/Stages/World and
@@ -140,6 +169,7 @@ const char *zoneNameEn(Zone zone)
     //     StageId = HuntingId + 200 for the maps).
     //   * StageId 200/206/208/216 (RiseLoc0/6/8/16, en route to a hunt) have
     //     no upstream entry: both columns keep a placeholder, ours here.
+    //     That placeholder is a named hole marker, not "no entry".
     {
         const int raw = static_cast<int>(zone);
         if (raw >= 700 && raw <= 799) {
@@ -155,7 +185,7 @@ const char *zoneNameEn(Zone zone)
             case 11: return "Elgado's Command Post";
             default: break;
             }
-            return "Unknown";
+            return nullptr;
         }
     }
     switch (zone) {
@@ -212,9 +242,25 @@ const char *zoneNameEn(Zone zone)
     case Zone::RiseLoc14: return "Forlorn Arena";
     case Zone::RiseLoc15: return "Yawning Abyss";
     case Zone::RiseLoc16: return "Unknown Hunting Zone"; // StageId 216: no entry upstream
-    case Zone::Unknown: return "Unknown";
+    case Zone::Unknown: break;
     }
-    return "Unknown";
+    return nullptr;
+}
+
+} // namespace
+
+const char *zoneName(Zone zone)
+{
+    // "未知" is the zh column's placeholder for a Zone with no table
+    // entry — the same value zoneName() has always returned for them.
+    const char *name = zoneNameLookup(zone);
+    return name != nullptr ? name : "未知";
+}
+
+const char *zoneNameEn(Zone zone)
+{
+    const char *name = zoneNameEnLookup(zone);
+    return name != nullptr ? name : "Unknown";
 }
 
 const char *zoneNameLocalized(Zone zone)
@@ -222,7 +268,25 @@ const char *zoneNameLocalized(Zone zone)
     // The single locale switch for zone labels. An unloaded / non-English
     // StringTable (tests, first frames) reads as Chinese, which keeps the
     // pre-i18n behaviour.
-    return StringTable::instance().isEnglish() ? zoneNameEn(zone) : zoneName(zone);
+    return StringTable::instance().isEnglish()
+        ? zoneNameEn(zone)
+        : zoneName(zone);
+}
+
+// Data-layer answer to "does this zone have a name?": true means a lookup
+// hit a named entry for this Zone.
+//
+// Callers pair it with zoneNameLocalized() and use the false branch for a
+// generic "outpost N" / "area N" fallback — instead of reverse-engineering
+// the answer out of the *translated label*, which made the branch move
+// whenever ui.zone_unknown or the zh table was reworded.
+//
+// Locale-independent by design: whether a zone is named is a property of
+// the Zone and the upstream table, never of the active language.
+// Zone::Unknown answers false — "no zone" is not "an unnamed zone".
+bool hasZoneName(Zone zone)
+{
+    return zoneNameLookup(zone) != nullptr;
 }
 
 bool isHuntingZone(Zone zone)

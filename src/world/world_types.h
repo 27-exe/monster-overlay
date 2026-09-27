@@ -75,6 +75,17 @@ const char* zoneNameEn(Zone zone);
 // enum: only the returned literal changes. Callers that already cache the
 // string must re-resolve after a locale reload.
 const char* zoneNameLocalized(Zone zone);
+// Data-layer answer to "does this zone have a name in the table?".
+// true  = the zone lookup hit a named entry (including the upstream hole
+//         markers, which are entries of their own).
+// false = no entry: an id passed straight to static_cast<Zone>() from a
+//         raw villageId (0..100), or a value outside both tables.
+//
+// UI logic must ask THIS instead of comparing a localized display label
+// against a sentinel: whether a zone is named is a property of the data,
+// never of the active language, and a rewording of a translation cannot
+// move the branch. Locale-independent by construction.
+bool hasZoneName(Zone zone);
 bool isHuntingZone(Zone zone);
 bool isPeaceZone(Zone zone);
 

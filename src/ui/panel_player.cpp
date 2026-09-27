@@ -190,24 +190,25 @@ QString zoneLabel(mhw::Zone z)
         return mh::tr("ui.zone_unknown_area");
     // v0.9 i18n: localized table (zh: zoneName(), en: zoneNameEn()) so the
     // zone row flips with the rest of the UI on a language switch.
-    const QString name = QString::fromUtf8(mhw::zoneNameLocalized(z));
     // v0.8.x: enum-internal ID range for peace zones (village / hub).
     // computeZoneId() returns the raw villageId (0..100) for type==4,
     // which static_cast<Zone>() then maps to integer values that
-    // overlap with no named enum entry. zoneNameLocalized() returns
-    // "未知"/"Unknown" for those, so we provide a friendlier "据点 N"
-    // fallback (bug #7 — "据点显示未知地点"). The i18n data-name table
-    // also returns the localized "Unknown" (ui.zone_unknown), so both
-    // spellings count as "no name" — the zh literal stays for the
-    // pre-i18n table.
-    if (name.isEmpty() || name == QStringLiteral("未知")
-        || name == mh::tr("ui.zone_unknown")) {
+    // overlap with no named enum entry. hasZoneName() reports that the
+    // lookup missed, so we provide a friendlier "据点 N" fallback
+    // (bug #7 — "据点显示未知地点").
+    //
+    // The branch asks the DATA layer whether this zone has a name. It used
+    // to compare the localized label against "未知" / tr("ui.zone_unknown")
+    // instead — display-layer data driving logic, which moved whenever a
+    // translation was reworded. hasZoneName() is locale-independent, so the
+    // branch is stable and no longer touches any UI string.
+    if (!mhw::hasZoneName(z)) {
         const int raw = static_cast<int>(z);
         if (raw >= 0 && raw <= 100)
             return mh::tr("ui.zone_outpost").arg(raw);
         return mh::tr("ui.zone_area").arg(raw);
     }
-    return name;
+    return QString::fromUtf8(mhw::zoneNameLocalized(z));
 }
 
 QString fmtMmSs(float seconds)
