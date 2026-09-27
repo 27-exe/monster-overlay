@@ -2,7 +2,6 @@
 
 #include "panel.h"
 #include "core/game_snapshot.h"
-#include "rise/rise_damage_reader.h"
 #include "ui/viewmodel/damage_view_model.h"
 
 #include <QPainter>
