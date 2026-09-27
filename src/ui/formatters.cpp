@@ -15,16 +15,6 @@ QString percentage(float value, float maximum)
         std::clamp(value / maximum * 100.0F, 0.0F, 999.0F), 0, 'f', 1);
 }
 
-QString seconds(float value)
-{
-    if (!std::isfinite(value) || value <= 0.0F)
-        return QStringLiteral("--");
-    const int total = static_cast<int>(value);
-    return QStringLiteral("%1:%2")
-        .arg(total / 60, 2, 10, QLatin1Char('0'))
-        .arg(total % 60, 2, 10, QLatin1Char('0'));
-}
-
 QString groupNumber(int value)
 {
     QLocale loc;   // honours user locale; defaults to C, but our caller
