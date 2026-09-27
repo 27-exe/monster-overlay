@@ -464,34 +464,16 @@ void PlayerPanel::update(const mhw::GameSnapshot &snap)
     status_    = snap.status;
     hasData_   = snap.player.valid;
 
-    // MR / name / weapon all come from the local player struct
-    // (PlayerSnapshot) directly.  In the gathering hub the party
-    // array is empty, but the player struct still holds valid name,
-    // MR and weaponId so we can show them.
-    playerMR_   = snap.player.masterRank;
-    playerName_ = snap.player.name;
-    weaponId_   = snap.player.weaponId;
-    partyCount_ = snap.party.size();
-
-    // When party has a local=true snapshot it carries the same fields;
-    // prefer those in case the player struct lags by a poll.
-    for (const auto &m : snap.party) {
-        if (m.local) {
-            if (m.masterRank > 0) playerMR_   = m.masterRank;
-            if (!m.name.isEmpty())  playerName_ = m.name;
-            if (m.weaponId >= 0)    weaponId_   = m.weaponId;
-            break;
-        }
-    }
-
-    // If we are not attached to a real process, reset demo mirrors so
-    // the panel doesn't keep stale data from a previous frame.
-    if (!snap.player.valid) {
-        if (weaponId_ == 0 && playerName_.isEmpty()) {
-            // Nothing to show — player struct also returned nothing.
-            weaponId_ = -1;
-        }
-    }
+    // Player identity — the merge lives in the ViewModel (see
+    // ui/viewmodel/player_view_model.h): initial mirror from the player
+    // struct, party override, not-attached fallback. The panel keeps
+    // owning these four members; paintPanel() reads them.
+    const mhw::PlayerViewModel::PlayerIdentity id =
+        m_vm.resolveIdentity(snap);
+    playerMR_   = id.masterRank;
+    playerName_ = id.name;
+    weaponId_   = id.weaponId;
+    partyCount_ = id.partyCount;
 
     canvas()->update();
 }

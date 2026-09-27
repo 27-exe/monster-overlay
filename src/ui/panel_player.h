@@ -3,6 +3,7 @@
 #include "panel.h"
 #include "core/game_snapshot.h"
 #include "player/player_types.h"
+#include "ui/viewmodel/player_view_model.h"
 
 // Player status panel: zone + quest + connection status + memory address,
 // then HP / ST bars + weapon icon + mantle timers + debuff bars.
@@ -53,4 +54,9 @@ private:
     int  playerMR_{0};                 // mirrored from party slot 0 MR
     QString playerName_;                // mirrored from party slot 0 name
     int     partyCount_{0};                 // mirrored from party snapshot size
+
+    // Player-identity resolver (MR / name / weaponId / partyCount) — the
+    // three merge blocks that used to live inline in update() below. The
+    // panel still owns the four members above, which paintPanel() reads.
+    mhw::PlayerViewModel m_vm;
 };

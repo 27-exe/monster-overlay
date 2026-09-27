@@ -130,6 +130,8 @@ add_library(mhw-ui STATIC
     src/ui/panel_pet_damage.h
     src/ui/panel_player.cpp
     src/ui/panel_player.h
+    src/ui/viewmodel/player_view_model.cpp
+    src/ui/viewmodel/player_view_model.h
     src/ui/panel_player_metrics.h
     src/ui/panel_sections.h
     src/ui/panel_source.cpp
