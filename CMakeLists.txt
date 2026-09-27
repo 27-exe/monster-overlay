@@ -797,6 +797,29 @@ add_executable(world-severable-scan-tests
     target_compile_options(console-layout-store-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME console-layout-store-tests COMMAND console-layout-store-tests)
 
+    # PlayerPanel's identity resolution
+    # (mhw::PlayerViewModel::resolveIdentity): the three blocks that used to
+    # sit inline in PlayerPanel::update() — the mirroring of (masterRank, name,
+    # weaponId, partyCount) from the player struct, the party-override loop
+    # that prefers the local member's fields, and the !valid fallback that
+    # resets weaponId to -1. A decision this visible at every poll had zero
+    # automated coverage because it lived in a 1541-line file that drags in
+    # QPainter and QFontMetrics.
+    #
+    # Like console-layout-store-tests this compiles the ViewModel's own two
+    # sources directly instead of linking mhw-ui: the class is QtCore-only
+    # (QString) plus the pure data headers that define GameSnapshot, so
+    # linking the GUI sink for it would buy nothing but compile time.
+    add_executable(player-view-model-tests
+        tests/player_view_model_tests.cpp
+        src/ui/viewmodel/player_view_model.cpp
+        src/ui/viewmodel/player_view_model.h
+    )
+    target_link_libraries(player-view-model-tests PRIVATE Qt6::Core)
+    target_include_directories(player-view-model-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(player-view-model-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME player-view-model-tests COMMAND player-view-model-tests)
+
     # Source-level CLI/build contract: catches an option that is declared but
     # not registered, or a fourth panel omitted from the product target.
     add_executable(rise-damage-wiring-tests
