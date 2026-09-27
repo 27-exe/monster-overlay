@@ -19,6 +19,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <functional>
 
 using mhw::Icon;
 
@@ -423,6 +424,49 @@ void drawWirebug(QPainter &p, const QRectF &box, const QString &name,
         : QStringLiteral("%1s").arg(static_cast<int>(cooldown));
     p.drawText(QRectF(box.x() + 4, box.y(), box.width() - 8, box.height()),
                Qt::AlignRight | Qt::AlignVCenter, timerTxt);
+}
+
+// v0.11.0: the single pill-grid layout used by every wrapping pill row on
+// this panel — the Rise 「状态」 block and the World debuff and buff rows.
+// All three inline this identical arithmetic (rowIdx / colIdx / itemsInRow /
+// slotW / cx -> QRectF), so it lives here once. The caller keeps ownership
+// of what a pill *says*: paint decides the colour, the name and the timer,
+// and early-returns to skip or replace a slot (the Rise overflow tail draws
+// its "+N" pill and returns instead of the entry that would have gone
+// there). A partial final row stretches to fill the grid width.
+//
+// Numeric arguments, in the order the callers pass them:
+//   top            y of the first row's top edge (the label row / separator
+//                  gap has already been consumed by the caller)
+//   count          pills to lay out; every caller guards count > 0, so no
+//                  divide by zero is reachable here
+//   pillsPerRow    pills per wrapped row — kRiseStatusPillsPerRow for the
+//                  Rise block, the local kPillsPerRow (3) for the World rows
+//   rowGap         vertical gap between wrapped rows (kRiseStatusRowGap and
+//                  kPillRowGap, currently 4 each and deliberately kept as
+//                  separate tokens so retuning one cannot move the other)
+//   pillGap        horizontal gap between pills inside a row (5 at all three
+//                  call sites today)
+//   rowH           pill height (kPillH at all three call sites)
+//   left           grid left edge (innerLeft)
+//   width          grid width (innerW)
+//   paint          (QPainter &, int index, const QRectF &box); draws exactly
+//                  one pill. The painter is handed over rather than captured
+//                  so the callback body reads like a plain drawPill() call.
+void drawPillGrid(QPainter &p, int top, int count, int pillsPerRow,
+                  int rowGap, int pillGap, int rowH, int left, int width,
+                  const std::function<void(QPainter &, int, const QRectF &)> &paint)
+{
+    for (int i = 0; i < count; ++i) {
+        const int rowIdx     = i / pillsPerRow;
+        const int colIdx     = i % pillsPerRow;
+        const int itemsInRow = std::min(pillsPerRow,
+                                        count - rowIdx * pillsPerRow);
+        const int slotW = (width - pillGap * (itemsInRow - 1)) / itemsInRow;
+        const int cx    = left + colIdx * (slotW + pillGap);
+        const QRectF box(cx, top + rowIdx * (rowH + rowGap), slotW, rowH);
+        paint(p, i, box);
+    }
 }
 
 } // namespace
@@ -1242,29 +1286,24 @@ void PlayerPanel::paintPanel(QPainter &p)
         y += kQrowH;
 
         const int pillGap = 5;
-        for (int i = 0; i < riseStatusShown; ++i) {
-            const int rowIdx     = i / kRiseStatusPillsPerRow;
-            const int colIdx     = i % kRiseStatusPillsPerRow;
-            const int itemsInRow = std::min(
-                kRiseStatusPillsPerRow,
-                riseStatusShown - rowIdx * kRiseStatusPillsPerRow);
-            const int slotW = (innerW - pillGap * (itemsInRow - 1)) / itemsInRow;
-            const int cx    = innerLeft + colIdx * (slotW + pillGap);
-            const QRectF pillRect(cx,
-                                  y + rowIdx * (kPillH + kRiseStatusRowGap),
-                                  slotW, kPillH);
+        drawPillGrid(p, y, riseStatusShown, kRiseStatusPillsPerRow,
+                     kRiseStatusRowGap, pillGap, kPillH, innerLeft, innerW,
+                     [this, &riseStatusRows,
+                      riseStatusShown, riseStatusTotal,
+                      riseStatusOverflow](
+                         QPainter &p, int i, const QRectF &pillRect) {
             if (riseStatusOverflow && i == riseStatusShown - 1) {
                 drawPill(p, pillRect, QColor(90, 92, 94), QStringLiteral("…"),
                          QStringLiteral("+%1").arg(riseStatusTotal
                                                    - (riseStatusShown - 1)));
-                continue;
+                return;
             }
             const mhw::PlayerAbnormalitySnapshot &a = *riseStatusRows[i];
             drawPill(p, pillRect, accentFor(a.accent),
                      a.name,
                      mhw::riseAbnormalityTimerText(a.timer, a.isInfinite,
                                                    a.isBuildup, a.maxTimer));
-        }
+        });
         y += riseStatusGridRows * kPillH
              + (riseStatusGridRows - 1) * kRiseStatusRowGap;
     }
@@ -1276,19 +1315,15 @@ void PlayerPanel::paintPanel(QPainter &p)
         const int pillGap = 5;
         constexpr int kPillsPerRow = 3;
         const int rows = (debuffCount + kPillsPerRow - 1) / kPillsPerRow;
-        for (int i = 0; i < debuffCount; ++i) {
-            const int rowIdx    = i / kPillsPerRow;
-            const int colIdx    = i % kPillsPerRow;
-            const int itemsInRow = std::min(kPillsPerRow, debuffCount - rowIdx * kPillsPerRow);
-            const int slotW = (totalW - pillGap * (itemsInRow - 1)) / itemsInRow;
-            const int cx    = innerLeft + colIdx * (slotW + pillGap);
-            const QRectF pillRect(cx, y + rowIdx * (kPillH + kPillRowGap), slotW, kPillH);
+        drawPillGrid(p, y, debuffCount, kPillsPerRow, kPillRowGap, pillGap,
+                     kPillH, innerLeft, totalW,
+                     [this](QPainter &p, int i, const QRectF &pillRect) {
             const auto &d = player_.debuffs[i];
             const QString n = d.name.isEmpty() ? mh::tr("ui.player_status_section") : d.name;
             const QString t = QStringLiteral("%1s").arg(static_cast<int>(d.timer));
             // Accent colour per ailment family (shared with the Rise block).
             drawPill(p, pillRect, accentFor(d.accent), n, t);
-        }
+        });
         y += rows * kPillH + (rows - 1) * kPillRowGap;
     }
 
@@ -1299,19 +1334,15 @@ void PlayerPanel::paintPanel(QPainter &p)
         const int pillGap = 5;
         constexpr int kPillsPerRow = 3;
         const int rows = (buffCount + kPillsPerRow - 1) / kPillsPerRow;
-        for (int i = 0; i < buffCount; ++i) {
-            const int rowIdx    = i / kPillsPerRow;
-            const int colIdx    = i % kPillsPerRow;
-            const int itemsInRow = std::min(kPillsPerRow, buffCount - rowIdx * kPillsPerRow);
-            const int slotW = (totalW - pillGap * (itemsInRow - 1)) / itemsInRow;
-            const int cx    = innerLeft + colIdx * (slotW + pillGap);
-            const QRectF pillRect(cx, y + rowIdx * (kPillH + kPillRowGap), slotW, kPillH);
+        drawPillGrid(p, y, buffCount, kPillsPerRow, kPillRowGap, pillGap,
+                     kPillH, innerLeft, totalW,
+                     [this](QPainter &p, int i, const QRectF &pillRect) {
             const auto &b = player_.buffs[i];
             const QString n = b.name.isEmpty() ? mh::tr("ui.player_buff_fallback") : b.name;
             const QString t = QStringLiteral("%1s").arg(static_cast<int>(b.timer));
             // Accent colour per consumable family (shared with the Rise block).
             drawPill(p, pillRect, accentFor(b.accent), n, t);
-        }
+        });
         y += rows * kPillH + (rows - 1) * kPillRowGap;
     }
 }
