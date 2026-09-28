@@ -246,13 +246,12 @@ void PetDamagePanel::updateRiseDamage(const mhw::RiseDamageSnapshot &snapshot)
         sourceActors_.clear();
         rows_.clear();
         hasQuestEpoch_ = false;
-        questActive_ = false;
         triggerUpdate();
         return;
     }
 
-    const bool epochChanged = hasQuestEpoch_
-                           && snapshot.questEpoch != questEpoch_;
+    const bool epochChanged = mhw::riseDamageQuestEpochChanged(
+        hasQuestEpoch_, questEpoch_, snapshot);
     if (epochChanged) {
         sourceActors_.clear();
         rows_.clear();
@@ -266,11 +265,9 @@ void PetDamagePanel::updateRiseDamage(const mhw::RiseDamageSnapshot &snapshot)
         // four owner aggregates is the normal extreme, not a layout limit.
         sourceActors_ = snapshot.actors;
         rebuildRows();
-        questActive_ = true;
     } else {
         // Result states 3..7 freeze the final active rows. Their actor arrays
         // may already be empty, so consuming them would erase final totals.
-        questActive_ = false;
     }
 
     triggerUpdate();

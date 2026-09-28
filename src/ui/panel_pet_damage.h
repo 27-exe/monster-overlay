@@ -51,6 +51,5 @@ private:
     mhw::RiseDamageDisplayOptions displayOptions_;
     int questEpoch_{0};
     bool hasQuestEpoch_{false};
-    bool questActive_{false};
     bool demoData_{false};
 };

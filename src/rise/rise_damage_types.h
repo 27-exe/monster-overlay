@@ -83,6 +83,23 @@ riseDamageLifecycleAction(const RiseDamageSnapshot &snapshot)
     return RiseDamageLifecycleAction::Clear;
 }
 
+// Shared epoch verdict for the two Rise damage consumers.
+//
+// Both DamageViewModel (the main table) and PetDamagePanel (the companion
+// surface) keep their own per-quest row state and must reset it exactly when
+// the hunt identity changes, so the "did the hunt change?" blade belongs in
+// one place. Each caller owns its own state and therefore clears its own
+// vectors: the shared predicate only answers *whether*, never *how much*.
+//
+// `hasPrevEpoch` / `prevEpoch` are the caller's epoch memory. A first-ever
+// snapshot can never be an epoch change — there is nothing to reset yet.
+inline constexpr bool
+riseDamageQuestEpochChanged(bool hasPrevEpoch, int prevEpoch,
+                            const RiseDamageSnapshot &snapshot)
+{
+    return hasPrevEpoch && snapshot.questEpoch != prevEpoch;
+}
+
 inline bool isRiseDamageActorVisible(const RiseDamageActor &actor,
                                      const RiseDamageDisplayOptions &options)
 {

@@ -516,6 +516,15 @@ void PlayerPanel::update(const mhw::GameSnapshot &snap)
     status_    = snap.status;
     hasData_   = snap.player.valid;
 
+    // The nine mirror lines above are deliberately NOT in the ViewModel:
+    // each is a whole-struct copy with no decision in it. The rule this file
+    // follows (see ui/viewmodel/player_view_model.h) is that a ViewModel owns
+    // a *transformation* — several inputs, a branch, one answer — so it can be
+    // tested with a hand-built snapshot. A struct copy is not a transformation;
+    // extracting it would only add a nine-field result type plus nine mirror
+    // lines back here, and split hasData_ from the demo path that writes it
+    // directly at the bottom of this file.
+    //
     // Player identity — the merge lives in the ViewModel (see
     // ui/viewmodel/player_view_model.h): initial mirror from the player
     // struct, party override, not-attached fallback. The panel keeps
