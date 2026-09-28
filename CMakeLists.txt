@@ -58,6 +58,7 @@ add_library(monster-core STATIC
     src/world/world_types.h
     src/world/world_types.cpp
     src/monster/part_schemas.cpp
+    src/rise/part_schemas.cpp
 )
 target_include_directories(monster-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(monster-core PUBLIC Qt6::Core Threads::Threads)
@@ -557,9 +558,12 @@ add_executable(world-severable-scan-tests
     # thresholds, not-capturable ids), so that translation unit stays listed.
     # Adding monster-core here would drag in the whole reader/UI chain for a
     # pure-table check and create a duplicate-symbol fight with the TU above.
+    # Both table TUs are listed: monster/ holds the World tables, rise/ holds
+    # crownThresholdsFor()'s kRiseCrownThresholds / kRiseNotCapturableMonsterIds.
     add_executable(rise-monster-metadata-tests
         tests/rise_monster_metadata_tests.cpp
         src/monster/part_schemas.cpp
+        src/rise/part_schemas.cpp
         src/resources/resources.qrc
     )
     target_link_libraries(rise-monster-metadata-tests PRIVATE Qt6::Core)
