@@ -6,7 +6,7 @@
 //   - wrong image base (EIO / EFAULT)
 //   - wrong map (no MonsterHunterWorld.exe row in /proc/<pid>/maps)
 
-#include "mhw_reader.h"
+#include "world/world_reader.h"
 
 #include <QCoreApplication>
 #include <QFile>

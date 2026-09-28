@@ -7,7 +7,7 @@
 #include "core/steam_game_locator.h"
 #include "core/string_table.h"
 #include "monster/monster_types.h"
-#include "mhw_reader.h"
+#include "world/world_reader.h"
 #include "rise/mhr_reader.h"
 #include "rise/rise_damage_reader.h"
 #include "rise/rise_damage_roster.h"

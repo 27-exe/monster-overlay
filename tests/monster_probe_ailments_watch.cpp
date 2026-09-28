@@ -15,7 +15,7 @@
 // Stop with Ctrl-C; the log is appended on every iteration, so search
 // backward through it for `active=1 id=N` once you've had a trigger.
 
-#include "mhw_reader.h"
+#include "world/world_reader.h"
 
 #include <QCoreApplication>
 #include <QDateTime>

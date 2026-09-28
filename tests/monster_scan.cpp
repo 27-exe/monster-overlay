@@ -17,7 +17,7 @@
 // For each candidate component, print pointer + name + id + HP. This is
 // enough to deduce the live monster list location and the array base.
 
-#include "mhw_reader.h"
+#include "world/world_reader.h"
 
 #include <QCoreApplication>
 #include <QFile>

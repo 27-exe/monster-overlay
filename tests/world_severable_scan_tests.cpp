@@ -1,4 +1,4 @@
-#include "monster/world_severable_scan.h"
+#include "world/world_severable_scan.h"
 
 #include <cstddef>
 #include <cstdint>

@@ -11,8 +11,8 @@
 //
 // Build target added by CMakeLists.
 
-#include "mhw_reader.h"
-#include "monster/world_severable_scan.h"
+#include "world/world_reader.h"
+#include "world/world_severable_scan.h"
 
 #include <QCoreApplication>
 #include <QFile>

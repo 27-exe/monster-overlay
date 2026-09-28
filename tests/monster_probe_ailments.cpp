@@ -19,7 +19,7 @@
 // triggered (so the monster is asleep right now), one of these will
 // have IsActive != 0 and Duration > 0.
 
-#include "mhw_reader.h"
+#include "world/world_reader.h"
 
 #include <QCoreApplication>
 #include <QFile>

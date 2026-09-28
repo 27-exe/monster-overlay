@@ -73,13 +73,13 @@ target_compile_options(monster-core PRIVATE -Wall -Wextra -Wpedantic)
 # and its own types header), so they share one library safely; this is the
 # World counterpart of monster-core's Rise reader.
 add_library(mhw-reader STATIC
-    src/mhw_reader.h
-    src/mhw_reader.cpp
-    src/monster/monster_reader.cpp
-    src/monster/target_selector.cpp
-    src/player/player_reader.cpp
-    src/quest/quest_reader.cpp
+    src/world/world_reader.h
     src/world/world_reader.cpp
+    src/world/monster_reader.cpp
+    src/world/quest_reader.cpp
+    src/world/player_reader.cpp
+    src/world/world_severable_scan.h
+    src/monster/target_selector.cpp
 )
 target_include_directories(mhw-reader PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(mhw-reader PUBLIC Qt6::Core monster-core)
