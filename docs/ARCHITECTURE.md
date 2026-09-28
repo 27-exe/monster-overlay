@@ -58,7 +58,7 @@ include reader 头（`grep -rn 'include "mhw_reader' src/ui/` 无输出，它只
 
 | 库 | 源文件数 | 实测行数（`wc -l`） | PUBLIC 依赖 |
 |---|---|---|---|
-| `monster-core` STATIC | 33 | 10658 | `Qt6::Core`、`Threads::Threads`（`CMakeLists.txt:63`） |
+| `monster-core` STATIC | 35 | 10741 | `Qt6::Core`、`Threads::Threads`（`CMakeLists.txt:63`） |
 | `mhw-reader` STATIC | 7 | 2385 | `Qt6::Core`、`monster-core`（`CMakeLists.txt:84`） |
 | `mhw-ui` STATIC | 46 | 13523 | `Qt6::Core` `Qt6::Gui` `Qt6::Widgets` `Qt6::Svg` `LayerShellQt::Interface` `monster-core` `mhw-reader`（`CMakeLists.txt:156-164`） |
 
@@ -73,7 +73,21 @@ rise_reframework_manager / reframework_fetcher / map_paths /
 **process_memory**）、
 `src/rise/*`（mhr_reader / mhr_part_names / mhr_monster_names /
 mhr_abnormalities / rise_damage_reader / rise_damage_roster）、
+`src/rise/data/mhr_part_names_data.cpp`、
 `src/world/world_types.*`、`src/monster/part_schemas.cpp`。
+
+`src/rise/mhr_part_names.{h,cpp}` 拆成了「数据 TU + 逻辑 TU」：`mhr_part_names.cpp`
+原本 764 行，其中 598 行是一张 `constexpr` 表。数据整表搬到
+`src/rise/data/mhr_part_names_data.cpp`（682 行），原文件只剩 133 行逻辑
+（`risePartNameEntry()` 的 `lower_bound` 二分 + 两个 locale 包装 + 显示名/格式化
+助手）。**这次必须改头文件**：598 行表原来在匿名 namespace 里，内部链接，搬到
+另一个 TU 后逻辑 TU 看不见它。解法是把 `struct RisePartName` 与
+`extern const std::array<RisePartName, 598> kRisePartNames;` 提升到
+`mhr_part_names.h`，数据 TU 里的定义保留 `constexpr`（两个 static_assert 因此
+仍能逐行审查提交进来的数据），逻辑 TU 经 `extern const` 引用同一份定义。
+`nm` 证明跨 TU 链接成立：数据 TU 里是 `D mhw::kRisePartNames`，逻辑 TU 里是
+`U mhw::kRisePartNames`。责任分工写进了生成器的文档头：`--cpp-out` 现在默认
+指向数据 TU，`--check` 实测通过（三个输入 sha256 与记录一致）。
 
 **S3 把进程内存原语下沉到了这里**：`ProcessMemory`、`AddressMap` 和四个
 stateless 助手（`findGamePid` / `selectLoadableMap` / `followPointerChain` /
@@ -354,7 +368,7 @@ status 串每 poll tick 自然刷新；`data` 是数据名与演示数据。
 | `grep -n 'qrc' CMakeLists.txt` | 无 `add_library` 块含 qrc；`resources.qrc` 22 处、`icons.qrc` 12 处，全部在 exe target（首次例：`:208-209`） |
 | `grep -rn 'include "ui/' src/core src/monster src/player src/quest src/world` | 无输出（core/reader 不依赖 UI） |
 | `grep -rn 'include "mhw_reader' src/ui/` | 无输出（UI 不 include reader 头；`panel.h:14-16` 前置声明 `GameSnapshot`） |
-| `wc -l`（三个 `add_library` 块列出的全部源文件） | monster-core **33 文件 / 10658 行**；mhw-reader **7 / 2385**；mhw-ui **46 / 13523**（旧 28/9041、7/2690、43/13423） |
+| `wc -l`（三个 `add_library` 块列出的全部源文件） | monster-core **35 文件 / 10741 行**；mhw-reader **7 / 2385**；mhw-ui **46 / 13523**（旧 28/9041、7/2690、43/13423） |
 | `grep -n '#include' src/ui/viewmodel/*.h src/ui/viewmodel/*.cpp` | 无 QWidget / QPainter / QtWidgets 的 `#include`；仅 `console_layout_store.cpp:8` 有 `<QSettings>`，且只在 .cpp |
 | `wc -l src/ui/viewmodel/*` | **12 文件 / 2076 行**；各类行数见 §3 表（旧 10/1964） |
 | `grep -rn 'onSnapshot' src/ tests/` | 仅 `src/ui/panel.h:142` 定义，零调用 |

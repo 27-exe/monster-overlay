@@ -46,6 +46,7 @@ add_library(monster-core STATIC
     src/rise/mhr_reader.cpp
     src/rise/mhr_part_names.h
     src/rise/mhr_part_names.cpp
+    src/rise/data/mhr_part_names_data.cpp
     src/rise/mhr_monster_names.h
     src/rise/mhr_monster_names.cpp
     src/rise/mhr_abnormalities.h
