@@ -113,6 +113,13 @@ private:
         QComboBox *outputCombo = nullptr;
     };
 
+    // Shared mask reader for the four chrome panels: a panel is "all
+    // off" (0) when its master chip is unchecked, otherwise every
+    // checked sub row sets its own bit. Used by the argv builder
+    // (--mask-*) and by the mask writer so both read the same state.
+    // Static: it needs PanelCtl's full type but no ControlPanel state.
+    static uint32_t maskFor(const PanelCtl &c);
+
     QWidget *buildInspector(const QString &titleKey, const QString &subKey,
                             const QStringList &labels, int idx);
     QWidget *buildObjectButton(const QString &letter, const QString &titleKey,

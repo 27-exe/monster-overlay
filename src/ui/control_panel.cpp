@@ -391,6 +391,21 @@ QColor panelAccent(int panel)
 
 } // namespace
 
+// v0.11.2: extracted from the two identical lambdas in
+// launchOverlayChild() (argv builder) and saveMaskToDisk() (mask
+// writer) — they were byte-for-byte the same 8 lines, so they now read
+// the checkbox state through one shared private static helper. Body is
+// unchanged from the lambda it replaces.
+uint32_t ControlPanel::maskFor(const PanelCtl &c)
+{
+    if (!c.master->isChecked()) return 0u;
+    uint32_t m = 0;
+    for (int b = 0; b < c.subs.size(); ++b)
+        if (c.subs[b]->isChecked())
+            m |= (1u << b);
+    return m;
+}
+
 Panel *ControlPanel::panelAt(int idx) const
 {
     return mhw::isPanelIndex(idx) ? ctl_[idx].panel : nullptr;
@@ -2411,18 +2426,10 @@ void ControlPanel::launchOverlayChild(bool editMode)
             panel->saveAppearance();
 
     // Build argv from the same mask source the file uses.
-    auto maskFor = [](const PanelCtl &c) -> uint32_t {
-        if (!c.master->isChecked()) return 0u;
-        uint32_t m = 0;
-        for (int b = 0; b < c.subs.size(); ++b)
-            if (c.subs[b]->isChecked())
-                m |= (1u << b);
-        return m;
-    };
-    const uint32_t mp = maskFor(ctl_[0]);
-    const uint32_t mm = maskFor(ctl_[1]);
-    const uint32_t md = maskFor(ctl_[2]);
-    const uint32_t mt = maskFor(ctl_[3]);
+    const uint32_t mp = ControlPanel::maskFor(ctl_[0]);
+    const uint32_t mm = ControlPanel::maskFor(ctl_[1]);
+    const uint32_t md = ControlPanel::maskFor(ctl_[2]);
+    const uint32_t mt = ControlPanel::maskFor(ctl_[3]);
 
     // v0.10.1: the companion (pets) surface is Rise-only — in World its mask
     // is not passed and the panel is force-disabled below.
@@ -2611,18 +2618,10 @@ void ControlPanel::saveMaskToDisk() const
 {
     const QString path = mhw::localeConfPath();
 
-    auto maskFor = [](const PanelCtl &c) -> uint32_t {
-        if (!c.master->isChecked()) return 0u;
-        uint32_t m = 0;
-        for (int b = 0; b < c.subs.size(); ++b)
-            if (c.subs[b]->isChecked())
-                m |= (1u << b);
-        return m;
-    };
-    const uint32_t mp = maskFor(ctl_[0]);
-    const uint32_t mm = maskFor(ctl_[1]);
-    const uint32_t md = maskFor(ctl_[2]);
-    const uint32_t mt = maskFor(ctl_[3]);
+    const uint32_t mp = ControlPanel::maskFor(ctl_[0]);
+    const uint32_t mm = ControlPanel::maskFor(ctl_[1]);
+    const uint32_t md = ControlPanel::maskFor(ctl_[2]);
+    const uint32_t mt = ControlPanel::maskFor(ctl_[3]);
 
     // The mask writer owns exactly these four rows. Preserve locale, comments
     // and unknown/future keys in their original relative order, while removing
