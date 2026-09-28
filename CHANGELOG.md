@@ -2,6 +2,79 @@
 
 本文件记录 monster-overlay 的变更。格式参考 Keep a Changelog。
 
+## [0.11.2] — 2026-09-28
+
+把「能测的」和「测不到」之间的缝隙补上，再把库边界的方向扶正。
+全程 6 个 commit，每个都是独立可回滚的改动。
+
+### 测试盲区
+
+`src/ui/panel_player.cpp` 原本从第一行 `#if defined(MHW_WIREBUG_SLOT_LABEL_TEST)` 到
+文件末尾都被 guard 包着，Core-only 测试 target 为了够到两个纯函数，得以**文本
+include 1557 行 Qt View 代码**。实测：往 guard 之后的第 97 行注入
+`this is not C++ ##`，`monster-reader-tests` **编译通过、链接成功、退出码 0**；
+同样错误放第 50 行则报 3 个编译错误。也就是 guard 之后新增的任何代码
+（包括此后要抽的 ViewModel）既不编译也不报错，而盲区随文件增长。
+
+两个纯函数搬进 `src/ui/panel_player_metrics.h`（纯 `inline` 头，测试直接
+include），guard 全部消失，**没有窗口可掉**。文件 1651 → 1578 行。
+
+### update() 路径纳入回归保护
+
+现有两张 player 基准只调 `setGameForDemo`，**从不调 `update(const GameSnapshot&)`**——
+那 72 行的镜像、party 覆盖与跨帧累积逻辑零保护。新增 `player_update_world.png`
+与 `player_update_rise.png` 覆盖真实路径，包括只有该路径才有的 party 覆盖规则。
+
+写这两张基准时发现：`Panel::paintEvent()` 在 edit 模式首次绘制就跑
+`setupDemoData()`，会把 `update()` 刚镜像的字段全冲掉——照原有用例只加一次
+`renderPanel()`，生成的 PNG 与旧基准**逐字节相同**。所以先渲染一次消耗掉
+demo seed，再 `update()`，再渲染。
+
+### 状态与绘制
+
+- `update(GameSnapshot)` 的 21 行合并规则进 `mhw::PlayerViewModel`
+  （普通类，单一写入路径，不需要信号）。函数体逐字搬迁，`break` 保留。
+- 删三处冗余：`debuffMaxTimers_` / `buffMaxTimers_` 写而不读（`drawBar` 换成
+  `drawPill` 后分母不再被读，循环留下）、零调用的 `update(PlayerSnapshot&)`、
+  `sharpness_` 对 `player_.sharpness` 的冗余别名（改引用后删成员）。
+- 三份逐行同构的 pill 网格循环收进一个 `drawPillGrid`；Rise 的溢出胶囊与
+  World 的 `"%1s"` 各自留在调用点。
+- World 的 pill 行间距此前散落 4 处裸 `4`，与 Rise 的 `kRiseStatusRowGap` 同值。
+  命名为 `kPillRowGap` 并保留两个独立 token——共用一个会让调 Rise 间距时
+  拖着 World 一起动。
+
+### 库边界
+
+- `monster-core` 曾反向依赖 `mhw-reader`：`src/rise/mhr_reader.cpp` 调用 6 处
+  `MhwReader::`，而后者在下游库。倒置之所以没暴露，是 13 个 core-only 测试
+  碰不到那个 TU。四个被调用的符号都是 `static` 无状态函数，入参 `ProcessMemory`
+  是与「MhwReader（World 侧 reader）」无语义关系的内存封装——两者一并搬到
+  `src/core/process_memory.*`，`MhwReader` 留四个 inline 委托，World 侧调用点
+  零改动。`findGamePid` 的 5 秒 PID 缓存仍是同一个函数局部 static。
+  **链接层验证**：`nm` 显示 `libmonster-core.a` 对 `MhwReader::` 的未定义引用
+  为 0——不只是源码里不写那几个字。
+- `part_schemas.cpp` / `world_types.cpp` / `string_table.cpp` 原本被逐 target
+  重复编译（源列表 93 行、唯一文件 45 个）。收进库后降到 50 行，消 43 次
+  重复编译，不改一行 C++。
+
+### i18n 门禁
+
+- check 门禁的正则只认 `mh::tr` / `trMessage` / `table.tr`，**漏掉 `trVm`
+  别名、三元表达式里的 key、静态数组里的 key**。注入 typo 三门禁全绿——
+  「i18n 已覆盖」的账面数字偏乐观。补齐后覆盖从 297 升到 312 个 key，注入
+  typo 实测变红。
+- 三门禁接进 ctest（`i18n-gate-{check,parity,unused}`），此前它们纯人工运行。
+  注入一个 zh-only key 实测 `i18n-gate-parity` 变红。
+- `rise_reframework_bridge.cpp` 15 处诊断串迁入 i18n（`main.cpp` 的 CLI 描述与
+  `rise_damage_reader.cpp` 的 stderr 文本经核实是格式不是翻译，保持不动——
+  `StringTable::load()` 在 CLI 选项构造之后才执行）。
+
+### 验证
+
+洁净从零构建 127 个 target、0 error / 0 warning；`ctest` 40/40；i18n 三门禁
+PASS；7 张像素基准逐张零 diff。`PlayerViewModel` 的 `break` 语义做过变异测试
+（删掉 `break;` 后 10 处断言精确失败，还原后全过）。
+
 ## [0.11.1] — 2026-09-27
 
 World 与 Rise 平级化的第一步：把「游戏叫什么」从 8 个调用点的私有三元表达式

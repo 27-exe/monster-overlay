@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(monster_overlay VERSION 0.11.1 LANGUAGES CXX)
+project(monster_overlay VERSION 0.11.2 LANGUAGES CXX)
 
 # Strip the build machine's absolute paths out of every compiled TU. Without
 # this the binaries embed CMAKE_SOURCE_DIR via __FILE__ and the wiring test's
