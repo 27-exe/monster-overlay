@@ -15,7 +15,7 @@
 
 #include "ui/viewmodel/rise_reframework_status.h"
 
-#include "core/rise_reframework_manager.h"
+#include "rise/reframework/rise_reframework_manager.h"
 #include "core/string_table.h"
 
 #include <QCoreApplication>

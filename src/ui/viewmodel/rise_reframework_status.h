@@ -24,7 +24,7 @@
 // "improved" on the way. A branch that looks wrong is recorded in
 // T17-REPORT.md rather than fixed here.
 
-#include "core/rise_reframework_manager.h"
+#include "rise/reframework/rise_reframework_manager.h"
 
 #include <QString>
 #include <QStringList>

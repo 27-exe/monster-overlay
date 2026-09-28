@@ -33,10 +33,6 @@ add_library(monster-core STATIC
     src/core/game_profile.cpp
     src/core/steam_game_locator.h
     src/core/steam_game_locator.cpp
-    src/core/rise_reframework_manager.h
-    src/core/rise_reframework_manager.cpp
-    src/core/reframework_fetcher.h
-    src/core/reframework_fetcher.cpp
     src/core/map_paths.h
     src/core/map_paths.cpp
     src/core/process_memory.h
@@ -57,6 +53,14 @@ add_library(monster-core STATIC
     src/rise/rise_damage_reader.cpp
     src/rise/rise_damage_roster.h
     src/rise/rise_damage_roster.cpp
+    # Rise-only REFramework installer (network fetch + checksum + install of
+    # the REFramework runtime payload). It is Rise behaviour, not a shared
+    # contract, so it lives under src/rise/ rather than src/core/.
+    src/rise/reframework/rise_reframework_manager.h
+    src/rise/reframework/rise_reframework_manager.cpp
+    src/rise/reframework/reframework_fetcher.h
+    src/rise/reframework/reframework_fetcher.cpp
+    src/rise/part_schemas.cpp
     src/world/world_types.h
     src/world/world_types.cpp
     # World monster DATA tables (kPartSchemas / kAilmentNames / kAilmentNamesEn /
@@ -64,7 +68,6 @@ add_library(monster-core STATIC
     # unit; the lookup code that reads them lives elsewhere. scripts/gen_schema.py
     # rewrites THIS file in place.
     src/monster/data/part_schemas_data.cpp
-    src/rise/part_schemas.cpp
 )
 target_include_directories(monster-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(monster-core PUBLIC Qt6::Core Threads::Threads)

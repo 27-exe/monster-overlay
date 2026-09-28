@@ -3,8 +3,8 @@
 #include "ui/rise_reframework_bridge.h"
 
 #include "core/game_detector.h"
-#include "core/reframework_fetcher.h"
-#include "core/rise_reframework_manager.h"
+#include "rise/reframework/reframework_fetcher.h"
+#include "rise/reframework/rise_reframework_manager.h"
 #include "core/string_table.h"
 
 #include <QDebug>

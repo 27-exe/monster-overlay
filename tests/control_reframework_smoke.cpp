@@ -25,7 +25,7 @@
 #include <cstdio>
 
 #include "core/game_detector.h"
-#include "core/rise_reframework_manager.h"
+#include "rise/reframework/rise_reframework_manager.h"
 #include "core/steam_game_locator.h"
 #include "core/string_table.h"
 #include "ui/control_panel.h"

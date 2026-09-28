@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-#include "core/reframework_fetcher.h"
+#include "rise/reframework/reframework_fetcher.h"
 
 #include "core/string_table.h"
 
