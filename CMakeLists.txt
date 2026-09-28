@@ -119,6 +119,8 @@ add_library(mhw-ui STATIC
     src/ui/control_panel.h
     src/ui/control_panel_styles.cpp
     src/ui/control_panel_styles.h
+    src/ui/rise_reframework_card.cpp
+    src/ui/rise_reframework_card.h
     src/ui/formatters.cpp
     src/ui/formatters.h
     src/ui/viewmodel/console_layout_store.cpp

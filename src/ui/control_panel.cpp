@@ -14,14 +14,13 @@
 #include "ui/screen_query.h"
 #include "ui/ui_theme.h"
 #include "ui/control_panel_styles.h"
+#include "ui/rise_reframework_card.h"
 #include "ui/viewmodel/console_text_helpers.h"
 #include "ui/viewmodel/overlay_process_controller.h"
-#include "ui/viewmodel/rise_reframework_status.h"
 #include "ui/viewmodel/console_layout_store.h"
 #include "ui/viewmodel/panel_mask_codec.h"
 #include "core/game_detector.h"
 #include "core/game_profile.h"
-#include "rise/reframework/rise_reframework_manager.h"
 #include "core/steam_game_locator.h"
 #include "core/locale_conf.h"
 #include "core/string_table.h"
@@ -47,7 +46,6 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 #include <QGuiApplication>
 #include <QScreen>
 #include <QPushButton>
-#include <QMessageBox>
 #include <QGroupBox>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -215,6 +213,14 @@ ControlPanel::ControlPanel(QWidget *parent)
     // Owned here — before any build*() call reads currentGame() — but
     // wired to the launcher buttons further down, once those exist.
     overlay_ = new mhw::OverlayProcessController(this);
+
+    // Rise REFramework card: owns the presentation half (widgets, status
+    // lines, button enablement) of the Rise-only management block. The
+    // request signals and the finishRiseReframeworkOperation() slot stay on
+    // this class — they are what src/main_control.cpp connects to. The card
+    // needs a constructed owner (it reaches trSet()/currentGame() through
+    // it), so it goes up before the first buildInspector().
+    riseCard_ = new RiseReframeworkCard(this);
 
     setObjectName("monster-control-panel");
     setStyleSheet(consoleStyleSheet());
@@ -878,9 +884,9 @@ ControlPanel::ControlPanel(QWidget *parent)
     riseReframeworkRefreshTimer_ = new QTimer(this);
     riseReframeworkRefreshTimer_->setInterval(1500);
     connect(riseReframeworkRefreshTimer_, &QTimer::timeout,
-            this, [this]{ refreshRiseReframeworkStatus(); });
+            this, [this]{ riseCard_->refresh(); });
     riseReframeworkRefreshTimer_->start();
-    refreshRiseReframeworkStatus();
+    riseCard_->refresh();
 }
 
 ControlPanel::~ControlPanel()
@@ -977,7 +983,7 @@ void ControlPanel::retranslateUi()
     for (int i = 0; i < mhw::kPanelCount; ++i)
         updatePosLabel(i);                        // corner + margin readout
     refreshAutoDetect();                          // badge + GAME column
-    refreshRiseReframeworkStatus();               // Rise-only management card
+    riseCard_->refresh();                         // Rise-only management card
     for (int i = 0; i < mhw::kPanelCount; ++i)
         if (Panel *panel = panelAt(i))
             panel->retranslateUi();               // cached preview-panel copy
@@ -1397,109 +1403,10 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
 
     vl->addSpacing(12);
 
+    // v0.11 K4-A1: the Rise-only REFramework management card (build, refresh
+    // and the four button actions) lives in src/ui/rise_reframework_card.
     if (idx == 2) {
-        auto *card = new QFrame(content);
-        card->setObjectName(QStringLiteral("riseReframeworkCard"));
-        auto *cardLayout = new QVBoxLayout(card);
-        cardLayout->setContentsMargins(14, 12, 14, 12);
-        cardLayout->setSpacing(7);
-
-        auto *cardTitle = new QLabel();
-        trSet(cardTitle, QStringLiteral("console.reframework.title"));
-        cardTitle->setObjectName(QStringLiteral("riseReframeworkTitle"));
-        cardLayout->addWidget(cardTitle);
-
-        auto *cardSubtitle = new QLabel();
-        trSet(cardSubtitle, QStringLiteral("console.reframework.subtitle"));
-        cardSubtitle->setObjectName(QStringLiteral("riseReframeworkSubtitle"));
-        cardSubtitle->setWordWrap(true);
-        cardLayout->addWidget(cardSubtitle);
-
-        auto *status = new QLabel();
-        trSet(status, QStringLiteral("console.reframework.not_found"));
-        status->setObjectName(QStringLiteral("riseReframeworkStatus"));
-        status->setWordWrap(true);
-        riseReframeworkStatus_ = status;
-        cardLayout->addWidget(status);
-
-        auto *actions = new QVBoxLayout();
-        actions->setSpacing(5);
-        auto *install = new QPushButton();
-        trSet(install, QStringLiteral("console.reframework.install"));
-        install->setObjectName(QStringLiteral("installRiseReframeworkButton"));
-        install->setCursor(Qt::PointingHandCursor);
-        connect(install, &QPushButton::clicked, this,
-                [this]{ requestRiseReframeworkInstall(); });
-        actions->addWidget(install);
-        installRiseReframeworkButton_ = install;
-
-        auto *removeLua = new QPushButton();
-        trSet(removeLua, QStringLiteral("console.reframework.remove_lua"));
-        removeLua->setObjectName(QStringLiteral("removeRiseLuaButton"));
-        removeLua->setCursor(Qt::PointingHandCursor);
-        connect(removeLua, &QPushButton::clicked, this,
-                [this]{ requestRiseLuaRemoval(); });
-        actions->addWidget(removeLua);
-        removeRiseLuaButton_ = removeLua;
-
-        // v0.10.10: menu-state fix. Deliberately NOT part of install — it is a
-        // user-config overlay on a file REFramework shares with ~80 other
-        // settings, so it stays an explicit click. Both directions are offered
-        // because the point is to give the player control, not to force one
-        // behaviour; the label under them reflects what the files say now.
-        auto *menuHeader = new QLabel();
-        trSet(menuHeader, QStringLiteral("console.reframework.menu_state_header"));
-        menuHeader->setObjectName(QStringLiteral("riseReframeworkSubtitle"));
-        menuHeader->setWordWrap(true);
-        actions->addWidget(menuHeader);
-
-        auto *menuState = new QLabel();
-        menuState->setObjectName(QStringLiteral("riseReframeworkStatus"));
-        menuState->setWordWrap(true);
-        actions->addWidget(menuState);
-        menuStateStatus_ = menuState;
-
-        auto *menuFix = new QPushButton();
-        trSet(menuFix, QStringLiteral("console.reframework.fix_menu_state"));
-        menuFix->setObjectName(QStringLiteral("fixMenuStateButton"));
-        menuFix->setCursor(Qt::PointingHandCursor);
-        // trTip, not setToolTip: only trTip registers the widget with the
-        // locale switcher, so a plain setToolTip would freeze it in whatever
-        // language the panel happened to be built in.
-        trTip(menuFix, QStringLiteral("console.reframework.fix_menu_state_tip"));
-        connect(menuFix, &QPushButton::clicked, this,
-                [this]{ requestRiseMenuStateFix(false); });
-        actions->addWidget(menuFix);
-        menuStateFixButton_ = menuFix;
-
-        auto *menuRestore = new QPushButton();
-        trSet(menuRestore,
-              QStringLiteral("console.reframework.restore_menu_state"));
-        menuRestore->setObjectName(QStringLiteral("restoreMenuStateButton"));
-        menuRestore->setCursor(Qt::PointingHandCursor);
-        trTip(menuRestore,
-              QStringLiteral("console.reframework.restore_menu_state_tip"));
-        connect(menuRestore, &QPushButton::clicked, this,
-                [this]{ requestRiseMenuStateFix(true); });
-        actions->addWidget(menuRestore);
-        menuStateRestoreButton_ = menuRestore;
-
-        auto *removeReframework = new QPushButton();
-        trSet(removeReframework,
-              QStringLiteral("console.reframework.remove_reframework"));
-        removeReframework->setObjectName(
-            QStringLiteral("removeRiseReframeworkButton"));
-        removeReframework->setCursor(Qt::PointingHandCursor);
-        connect(removeReframework, &QPushButton::clicked, this,
-                [this]{ requestRiseReframeworkRemoval(); });
-        actions->addWidget(removeReframework);
-        removeRiseReframeworkButton_ = removeReframework;
-
-        cardLayout->addLayout(actions);
-        riseReframeworkCard_ = card;
-        riseReframeworkCard_->setVisible(currentGame() == mhw::GameId::Rise);
-        vl->addWidget(riseReframeworkCard_);
-        vl->addSpacing(12);
+        riseCard_->build(content, vl);
     }
 
     // v0.5 UI-link: APPEARANCE sliders (scale + opacity), live preview.
@@ -1845,7 +1752,7 @@ void ControlPanel::switchGame(mhw::GameId game)
     // reachable from the rail buttons during teardown.
     if (overlay_) overlay_->setCurrentGame(game);
     const bool isRise = (game == mhw::GameId::Rise);
-    refreshRiseReframeworkStatus();
+    riseCard_->refresh();
 
     // v0.10.1: companion surfaces are Rise-only. Selecting World removes the
     // pets rail card, its inspector page and the stage preview tile
@@ -1929,253 +1836,14 @@ void ControlPanel::switchGame(mhw::GameId game)
     }
 }
 
-void ControlPanel::refreshRiseReframeworkStatus()
-{
-    if (!riseReframeworkCard_)
-        return;
-
-    const bool riseSelected = currentGame() == mhw::GameId::Rise;
-    riseReframeworkCard_->setVisible(riseSelected);
-    if (!riseSelected)
-        return;
-
-    // The locator is the single source of truth for the Steam install. The
-    // manager is still queried for an empty path so every refresh exercises
-    // the same validation/status path; no mutation happens in this method.
-    riseGameDir_ = mhw::findRiseInstallDir();
-    const mhw::RiseReFrameworkManager manager(QCoreApplication::applicationDirPath());
-    const mhw::RiseReFrameworkManager::Status status = manager.status(riseGameDir_);
-    const bool gameRunning = mhw::detectGame().has_value();
-
-    // The readable status lines are derived by the widget-free view model
-    // (src/ui/viewmodel/rise_reframework_status.cpp), which carries the
-    // derivation rules and their i18n keys so the REFramework state machine
-    // is reachable from a plain logic test. The query above, the console's
-    // operation flags and the game-process check are the model's whole input;
-    // the join and the write below are still this panel's job.
-    mhw::RiseReframeworkStatusInput statusInput;
-    statusInput.gameDir = riseGameDir_;
-    statusInput.status = status;
-    statusInput.gameRunning = gameRunning;
-    statusInput.operationPending = riseReframeworkOperationPending_;
-    statusInput.hasResult = riseReframeworkHasResult_;
-    statusInput.resultOk = riseReframeworkResultOk_;
-    statusInput.resultDetail = riseReframeworkResultDetail_;
-    const QStringList lines = mhw::riseReframeworkStatusLines(statusInput);
-    riseReframeworkStatus_->setText(lines.join(QLatin1Char('\n')));
-
-    // A missing/invalid locator result is not actionable. A running game or
-    // an in-flight worker is also a hard safety gate. Destructive actions are
-    // enabled only when there is actually something owned to remove.
-    const bool canChange = status.gameDirValid && !gameRunning
-                           && !riseReframeworkOperationPending_;
-    const bool usableCore =
-        status.core == mhw::RiseReFrameworkManager::CoreState::Managed
-        || status.core == mhw::RiseReFrameworkManager::CoreState::External;
-    const bool ready = usableCore
-                       && status.lua == mhw::RiseReFrameworkManager::LuaState::Current
-                       && status.manifest == mhw::RiseReFrameworkManager::ManifestState::Valid;
-    const bool installSafe = status.core != mhw::RiseReFrameworkManager::CoreState::Conflict
-                             && status.manifest
-                                    != mhw::RiseReFrameworkManager::ManifestState::Invalid;
-    installRiseReframeworkButton_->setEnabled(canChange && installSafe && !ready);
-    removeRiseLuaButton_->setEnabled(
-        canChange && status.lua != mhw::RiseReFrameworkManager::LuaState::Missing);
-    removeRiseReframeworkButton_->setEnabled(
-        canChange
-        && (status.manifest == mhw::RiseReFrameworkManager::ManifestState::Valid
-            || status.lua != mhw::RiseReFrameworkManager::LuaState::Missing));
-    // The menu-state fix edits REFramework's own user config. The overlay Lua
-    // may legitimately be gone (it is ours to remove), and the config file
-    // itself survives — but the REFramework CORE is the thing that happens to
-    // read that file. With it uninstalled the key is an orphan line nothing
-    // parses, so editing it would be a no-op dressed up as a fix. Gate on the
-    // core, exactly like the removal buttons do.
-    menuStateFixButton_->setEnabled(canChange && usableCore);
-
-    // Report what the files actually say, and label the two actions by the
-    // state they lead to rather than by fixed text — the point is that the
-    // player can see which one is in effect right now.
-    if (menuStateStatus_) {
-        const mhw::ReFrameworkMenuStateReport menuReport =
-            mhw::queryReFrameworkMenuState(riseGameDir_);
-        const char *stateKey =
-            menuReport.state == mhw::ReFrameworkMenuState::Overridden
-                ? "console.reframework.menu_state_overridden"
-                : menuReport.state == mhw::ReFrameworkMenuState::Default
-                    ? "console.reframework.menu_state_default"
-                    : "console.reframework.menu_state_unknown";
-        const QString keyText = mh::tr(QString::fromLatin1(stateKey));
-        // With the core gone the key is real but inert — say so rather than
-        // leaving the player to read an "active" state that nothing consumes.
-        const QString note =
-            usableCore ? QString()
-                       : QStringLiteral("\n")
-                         + mh::tr(QStringLiteral(
-                             "console.reframework.menu_state_no_core"));
-        // Only name the paths when there is more than one: a single game-dir
-        // file needs no listing, while several mean the fallback locations are
-        // in play and the player should know which ones were touched.
-        QString pathText;
-        if (menuReport.paths.size() > 1) {
-            pathText = QStringLiteral("\n")
-                       + mh::tr(QStringLiteral("console.reframework.menu_state_paths"))
-                             .arg(menuReport.paths.size())
-                       + QStringLiteral("\n")
-                       + menuReport.paths.join(QStringLiteral("\n"));
-        }
-        menuStateStatus_->setText(keyText + note + pathText);
-        menuStateRestoreButton_->setEnabled(
-            canChange && usableCore
-            && menuReport.state != mhw::ReFrameworkMenuState::Default);
-    }
-}
-
-void ControlPanel::requestRiseReframeworkInstall()
-{
-    if (currentGame() != mhw::GameId::Rise || riseGameDir_.isEmpty()
-        || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
-        refreshRiseReframeworkStatus();
-        return;
-    }
-    const auto answer = QMessageBox::question(
-        this,
-        mh::tr(QStringLiteral("console.reframework.confirm_title")),
-        mh::tr(QStringLiteral("console.reframework.confirm_install")).arg(riseGameDir_),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
-    if (answer != QMessageBox::Yes)
-        return;
-
-    riseReframeworkOperationPending_ = true;
-    riseReframeworkHasResult_ = false;
-    riseReframeworkResultDetail_.clear();
-    refreshRiseReframeworkStatus();
-    if (receivers(SIGNAL(installRiseReframeworkRequested(QString))) == 0) {
-        finishRiseReframeworkOperation(
-            false, mh::tr(QStringLiteral("console.reframework.no_worker")));
-        return;
-    }
-    emit installRiseReframeworkRequested(riseGameDir_);
-}
-
-void ControlPanel::requestRiseLuaRemoval()
-{
-    if (currentGame() != mhw::GameId::Rise || riseGameDir_.isEmpty()
-        || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
-        refreshRiseReframeworkStatus();
-        return;
-    }
-    const auto answer = QMessageBox::question(
-        this,
-        mh::tr(QStringLiteral("console.reframework.confirm_title")),
-        mh::tr(QStringLiteral("console.reframework.confirm_remove_lua")).arg(riseGameDir_),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
-    if (answer != QMessageBox::Yes)
-        return;
-
-    riseReframeworkOperationPending_ = true;
-    riseReframeworkHasResult_ = false;
-    riseReframeworkResultDetail_.clear();
-    refreshRiseReframeworkStatus();
-    if (receivers(SIGNAL(removeRiseLuaRequested(QString))) == 0) {
-        finishRiseReframeworkOperation(
-            false, mh::tr(QStringLiteral("console.reframework.no_worker")));
-        return;
-    }
-    emit removeRiseLuaRequested(riseGameDir_);
-}
-
-void ControlPanel::requestRiseMenuStateFix(bool restoreDefault)
-{
-    // Same core gate as the button: without a REFramework core there is
-    // nothing to read the key we would write, so the action is meaningless.
-    const mhw::RiseReFrameworkManager manager(
-        QCoreApplication::applicationDirPath());
-    const mhw::RiseReFrameworkManager::Status rfStatus =
-        manager.status(mhw::findRiseInstallDir());
-    const bool rfCorePresent =
-        rfStatus.core == mhw::RiseReFrameworkManager::CoreState::Managed
-        || rfStatus.core == mhw::RiseReFrameworkManager::CoreState::External;
-
-    if (currentGame() != mhw::GameId::Rise || riseGameDir_.isEmpty()
-        || riseReframeworkOperationPending_ || !rfCorePresent
-        || mhw::detectGame().has_value()) {
-        refreshRiseReframeworkStatus();
-        return;
-    }
-
-    // Every place REFramework might read its config from — the game dir plus
-    // the %APPDATA% fallback it switches to when the game dir is unreachable.
-    const QStringList configPaths =
-        mhw::reframeworkConfigPaths(riseGameDir_);
-    const QString pathList = configPaths.join(QStringLiteral("\n"));
-    const char *confirmKey = restoreDefault
-        ? "console.reframework.confirm_restore_menu_state"
-        : "console.reframework.confirm_fix_menu_state";
-    const auto answer = QMessageBox::question(
-        this,
-        mh::tr(QStringLiteral("console.reframework.confirm_title")),
-        mh::tr(QString::fromLatin1(confirmKey)).arg(pathList),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
-    if (answer != QMessageBox::Yes)
-        return;
-
-    // One key, a handful of files. Nothing is downloaded and no core file is
-    // touched, so this runs inline — but it still routes through the shared
-    // pending/result state so the card reads the same as install/removal.
-    riseReframeworkOperationPending_ = true;
-    riseReframeworkHasResult_ = false;
-    riseReframeworkResultDetail_.clear();
-    refreshRiseReframeworkStatus();
-
-    mhw::ReFrameworkMenuStateReport report;
-    if (!mhw::applyReFrameworkMenuStateFix(riseGameDir_, restoreDefault, &report)) {
-        finishRiseReframeworkOperation(
-            false, mh::tr(QStringLiteral("console.reframework.fix_menu_state_failed")));
-        return;
-    }
-    finishRiseReframeworkOperation(true, QString());
-}
-
-void ControlPanel::requestRiseReframeworkRemoval()
-{
-    if (currentGame() != mhw::GameId::Rise || riseGameDir_.isEmpty()
-        || riseReframeworkOperationPending_ || mhw::detectGame().has_value()) {
-        refreshRiseReframeworkStatus();
-        return;
-    }
-    const auto answer = QMessageBox::question(
-        this,
-        mh::tr(QStringLiteral("console.reframework.confirm_title")),
-        mh::tr(QStringLiteral("console.reframework.confirm_remove_reframework"))
-            .arg(riseGameDir_),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
-    if (answer != QMessageBox::Yes)
-        return;
-
-    riseReframeworkOperationPending_ = true;
-    riseReframeworkHasResult_ = false;
-    riseReframeworkResultDetail_.clear();
-    refreshRiseReframeworkStatus();
-    if (receivers(SIGNAL(removeRiseReframeworkRequested(QString))) == 0) {
-        finishRiseReframeworkOperation(
-            false, mh::tr(QStringLiteral("console.reframework.no_worker")));
-        return;
-    }
-    emit removeRiseReframeworkRequested(riseGameDir_);
-}
-
+// Integration seam (v0.11 K4-A1): the async worker/fetcher that
+// src/main_control.cpp connects to the request signals below reports back
+// through this slot. It stays on ControlPanel because main_control.cpp
+// connects to it by name; the outcome itself is the Rise card's bookkeeping,
+// so it is forwarded there.
 void ControlPanel::finishRiseReframeworkOperation(bool ok, const QString &detail)
 {
-    riseReframeworkOperationPending_ = false;
-    riseReframeworkHasResult_ = true;
-    riseReframeworkResultOk_ = ok;
-    riseReframeworkResultDetail_ = detail;
-    refreshRiseReframeworkStatus();
+    riseCard_->finishOperation(ok, detail);
 }
 
 // K4-A3 split. The old single function did three things: persist the

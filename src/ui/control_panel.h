@@ -32,6 +32,7 @@ class ToggleChip;
 class SectionRow;
 class SectionCountBar;
 class HudCanvas;
+class RiseReframeworkCard;
 
 namespace mhw {
 class OverlayProcessController;
@@ -81,6 +82,12 @@ protected:
     void closeEvent(QCloseEvent *e) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
     void keyPressEvent(QKeyEvent *e) override;
+
+    // RiseReframeworkCard (src/ui/rise_reframework_card.{h,cpp}) reaches
+    // trSet()/trTip() so its widgets land in the i18n replay registry above,
+    // and QObject::receivers(), to see that a worker is connected at all.
+    // Befriending it is narrower than widening this API for one caller.
+    friend class RiseReframeworkCard;
 
 private:
     // L2: persistent mask state lives at ~/.config/monster-overlay/monster-overlay.conf
@@ -150,15 +157,10 @@ private:
     // Read-only forward to the controller's copy of the target game.
     [[nodiscard]] mhw::GameId currentGame() const;
     void refreshAutoDetect();
-    void refreshRiseReframeworkStatus();
     // v0.11: re-style the START/STOP toggle + status badge for a liveness
     // state. Called from the controller's runningChanged signal and from
     // retranslateUi().
     void setOverlayRunning(bool running);
-    void requestRiseReframeworkInstall();
-    void requestRiseLuaRemoval();
-    void requestRiseMenuStateFix(bool restoreDefault);
-    void requestRiseReframeworkRemoval();
     void syncAppearance(int idx);
     void resetPanel(int idx);
     void rebuildAndRender(int idx);
@@ -267,22 +269,13 @@ private:
     // so the View holds no argv state of its own.
     mhw::OverlayProcessController *overlay_ = nullptr;
 
-    // Rise-only REFramework card. Install/removal is delegated through the
-    // request signals above; these handles only own presentation/state.
-    QFrame *riseReframeworkCard_ = nullptr;
-    QLabel *riseReframeworkStatus_ = nullptr;
-    QPushButton *installRiseReframeworkButton_ = nullptr;
-    QPushButton *removeRiseLuaButton_ = nullptr;
-    QPushButton *menuStateFixButton_ = nullptr;
-    QPushButton *menuStateRestoreButton_ = nullptr;
-    QLabel *menuStateStatus_ = nullptr;
-    QPushButton *removeRiseReframeworkButton_ = nullptr;
+    // Rise-only REFramework card. The presentation half (widgets, status
+    // lines, the four buttons' enablement) lives in RiseReframeworkCard;
+    // the request signals and the result slot above stay here — they are the
+    // seam src/main_control.cpp connects to. So does the 1500 ms timer:
+    // retranslateUi() and switchGame() refresh the card on their own.
+    RiseReframeworkCard *riseCard_ = nullptr;
     QTimer *riseReframeworkRefreshTimer_ = nullptr;
-    QString riseGameDir_;
-    QString riseReframeworkResultDetail_;
-    bool riseReframeworkOperationPending_ = false;
-    bool riseReframeworkHasResult_ = false;
-    bool riseReframeworkResultOk_ = false;
 
     // v0.5.6 polish: animated stage toggle. savedStageSize_ captures the
     // user-chosen (or default 45/55) stage height when the user hides
