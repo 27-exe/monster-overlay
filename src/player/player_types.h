@@ -1,5 +1,27 @@
 #pragma once
 
+// Player-side shared contract types — the vocabulary both games and the UI
+// agree on about the local player. Declared here, defined elsewhere.
+//
+// This directory carries types only, and that is the intended shape. The
+// functions this header declares are members of the World reader class —
+// MhwReader::readPlayer, MhwReader::readParty and the World
+// player-abnormality table lookups — so their definitions moved with the class
+// into src/world/player_reader.cpp; `grep 'src/player|src/quest' CMakeLists.txt`
+// returns nothing, so neither this directory nor src/quest is in any source
+// list.
+//
+// None of that makes these types World's. core/game_snapshot.h holds
+// PlayerSnapshot and PartyMemberSnapshot, src/rise/mhr_reader.cpp fills the same
+// PlayerSnapshot from Rise, and src/ui/panel_player.{h,cpp} plus
+// viewmodel/player_view_model.h render it. AbnormalityAccent is the accent
+// vocabulary both readers and both panels share — src/rise/mhr_abnormalities.h
+// includes this header for that one enum alone. So this file is the cross-game
+// contract, not one game's implementation detail.
+//
+// "Only a header, no .cpp" is therefore correct and complete, not a leftover of
+// an unfinished move.
+
 #include <QString>
 #include <QVector>
 

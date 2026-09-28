@@ -1,5 +1,20 @@
 #pragma once
 
+// Quest-side shared contract types — the quest state all readers converge
+// on, plus the two HunterPie timer helpers. No reader implementation here.
+//
+// Same shape as src/player/: types only, on purpose. QuestSnapshot is filled
+// by both readers — World's definition is MhwReader::readQuest in
+// src/world/quest_reader.cpp, Rise writes the same struct from
+// src/rise/mhr_reader.cpp — core/game_snapshot.h holds the snapshot, and
+// src/ui/panel_damage.cpp + panel_player.cpp consume it. Since each reader is
+// a member of that game's reader class, its definition lives with that class
+// under src/world/ and src/rise/. This directory, like src/player/, is in no
+// source list (`grep 'src/player|src/quest' CMakeLists.txt` = 0 hits).
+//
+// "Only a header, no .cpp" is the correct end state: the types are the
+// cross-game contract, the readers belong to whichever game they read.
+//
 #include <algorithm>
 #include <array>
 #include <cstdint>
