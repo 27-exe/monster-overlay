@@ -45,11 +45,11 @@ src/
 │   ├── world_types.cpp 362 + .h 91
 │   ├── quest_reader.cpp 55             ← 1 处
 │   └── world_severable_scan.h 49
-├── monster/                    5 个目录项 / 4 个源 372 行（另有 data/）
+├── monster/                    4 个目录项 / 4 个源 1325 行
 │   ├── monster_types.h 323
-│   ├── target_selector.{h,cpp} 15+23
-│   ├── part_schemas.cpp 11              ← 11 行空壳，仅注释 + 空 namespace
-│   └── data/part_schemas_data.cpp 964   ← 真数据在此，gen_schema.py 就地改写这份
+│   ├── target_selector.{h,cpp} 15+23   ← 归 mhw-reader，不进 monster-core
+│   ├── data/part_schemas_data.cpp 964   ← src/monster/ 里唯一进 monster-core 的文件
+│   └── （原 11 行的 part_schemas.cpp 空壳已随 d911963 删除）
 ├── player/                     1 文件 / 245 行   ← 不是模块，是跨游戏契约纸（§1.2）
 │   └── player_types.h
 ├── quest/                      1 文件 / 61 行    ← 同上
@@ -69,9 +69,9 @@ src/
 ```
 
 `src/monster/`、`src/player/`、`src/quest/` 三个目录今天都已经**不是**「有自己
-.cpp 的模块」：`.cpp` 全部搬去了别处（`src/world/`）或者只剩空壳。其中
-`src/monster/` 还留着 `monster_types.h` + `target_selector` 是共享数据类型；
-`src/player/` 与 `src/quest/` 则纯粹是跨游戏契约纸，见下一节。
+模块身份」的目录：`.cpp` 要么归了别的库（`src/monster/target_selector.cpp` 在
+mhw-reader，`src/monster/data/part_schemas_data.cpp` 是 monster-core 里的数据
+TU），要么整个不存在（`src/player/`、`src/quest/` 只剩契约纸头）。
 
 ### 1.2 `src/player/` 与 `src/quest/` 不是模块，是跨游戏契约纸
 
@@ -112,8 +112,8 @@ target。依赖方向严格单向：
 ```
                   monster-core (STATIC)
                   src/core/* + src/rise/* + world/world_types
-                  + monster/part_schemas + monster/data/part_schemas_data
-                  + rise/part_schemas + rise/data/*_data + core/process_memory
+                  + monster/data/part_schemas_data + rise/part_schemas
+                  + rise/data/*_data + core/process_memory
                   Qt6::Core, Threads::Threads          (CMakeLists.txt:71)
                         |
                         | PUBLIC
@@ -136,10 +136,15 @@ target。依赖方向严格单向：
 ```
 
 反向依赖为零：`grep -rn 'include "ui/' src/core src/monster src/player
-src/quest src/world` 无输出；reader 层同样不 include UI 头——注意这条得用当前
-文件名来问：`grep -rn 'include "world/world_reader' src/ui/` 同样无输出
-（mhw-reader 的头只在 UI 之外被 include；UI 只前置声明 `mhw::GameSnapshot` 于
-`src/ui/panel.h:14-16`，以及 include monster-core 的 `world/world_types.h`）。
+src/quest src/world src/rise` 无输出；reader 层同样不 include UI 头——注意这条得
+用当前文件名来问，而且要同时问两个 reader：`grep -rn '#include ".*reader' src/ui/`
+会命中 `panel_player.cpp:5` 与 `panel_player_metrics.h:19` 两条
+`#include "rise/mhr_reader.h"`——但那不是读 reader 的类 API，只是为了拿
+`src/rise/mhr_reader.h:174` 的 1 行常量 `kRiseWirebugSlotCap`
+（`src/ui/` 下没有任何文件 include `core/process_memory.h` 或
+`world/world_reader.h`，UI 也不调用 `MhwReader` / `MhrReader` 的成员）。
+UI 只前置声明 `mhw::GameSnapshot` 于
+`src/ui/panel.h:14-16`，以及 include monster-core 的 `world/world_types.h`。
 
 本地化横跨三层：`mhw::StringTable` 在 monster-core 里（`src/core/string_table.h`），
 调用方从 core 一路铺到 ui/viewmodel：`src/core/locale_sync.h`、
@@ -163,7 +168,7 @@ src/quest src/world` 无输出；reader 层同样不 include UI 头——注意�
 
 | 库 | 源文件数 | 实测行数（`wc -l`） | PUBLIC 依赖 |
 |---|---|---|---|
-| `monster-core` STATIC | 37 | 10828 | `Qt6::Core`、`Threads::Threads`（`CMakeLists.txt:71`） |
+| `monster-core` STATIC | 36 | 10817 | `Qt6::Core`、`Threads::Threads`（`CMakeLists.txt:71`） |
 | `mhw-reader` STATIC | 7 | 2431 | `Qt6::Core`、`monster-core`（`CMakeLists.txt:92`） |
 | `mhw-ui` STATIC | 48 | 13583 | `Qt6::Core` `Qt6::Gui` `Qt6::Widgets` `Qt6::Svg` `LayerShellQt::Interface` `monster-core` `mhw-reader`（`CMakeLists.txt:166-174`） |
 
@@ -171,14 +176,14 @@ src/quest src/world` 无输出；reader 层同样不 include UI 头——注意�
 > 「目录里有哪些文件」不是同一口径：`src/ui` 下实际有 49 个源文件，但只有 48 个
 > 进了库（`src/ui/viewmodel/panel_mask_codec.h` 由它自己的测试 target 直接列举，
 > 见 §3）；反过来 `src/core/game_snapshot.h`（37 行）是纯数据头、不进任何库，
-> 由 13 个 include 它的 TU 各自编译。
+> 由 12 个真实 include 它的 TU 各自编译。
 
 `monster-core` 的清单按其自身结构描述：
 
 - `src/core/*` 9 组：`string_table`、`game_detector`、`game_profile`、
   `steam_game_locator`、`rise_reframework_manager`、`reframework_fetcher`、
   `map_paths`、**`process_memory`**。共 16 个文件 / 4000 行。
-- `src/rise/*` 13 个：`mhr_reader.{h,cpp}`（626+1529）、
+- `src/rise/*` 14 个：`mhr_reader.{h,cpp}`（626+1529）、
   `mhr_abnormalities.{h,cpp}`（225+898）、`mhr_part_names.{h,cpp}`（71+133）、
   `mhr_monster_names.{h,cpp}`（67+77）、`rise_damage_reader.{h,cpp}`（50+506）、
   `rise_damage_roster.{h,cpp}`（19+169）、`mhr_types.h`（308）、
@@ -187,14 +192,22 @@ src/quest src/world` 无输出；reader 层同样不 include UI 头——注意�
   `mhr_monster_names_data.cpp`（158）。
 - `src/rise/part_schemas.cpp`（96，Rise 的 3 张表：`kRiseAilmentNames` 等）。
 - `src/world/world_types.{h,cpp}`（91+362）。
-- `src/monster/part_schemas.cpp`（**11 行空壳**）+ `src/monster/data/part_schemas_data.cpp`（**964 行**）。
+- `src/monster/data/part_schemas_data.cpp`（**964 行**，World 的 5 张表 +
+  `extern const` 声明；除此之外 `src/monster/` 在库里**没有任何 `.cpp`**，
+  `monster_types.h` 与 `target_selector.{h,cpp}` 都不在 monster-core 里）。
 
-`src/monster/part_schemas.cpp` 从 1047 行变成 11 行空壳，数据整表搬到了
-`src/monster/data/part_schemas_data.cpp`（964 行）；空壳里只剩注释，说明
-「数据 TU 是哪一个、`scripts/gen_schema.py` 就地改写哪一份」，加 World 怪物
-数据表时请改 data/ 那份，空壳是给 include 它做符号引用的落点。
-`src/monster/target_selector.{h,cpp}`（15+23）则**不在** monster-core 里，归
-mhw-reader。
+`src/monster/data/part_schemas_data.cpp`（964 行）装着 5 张 World 表
+（`kPartSchemas` / `kAilmentNames` / `kAilmentNamesEn` / `kCrownThresholds` /
+`kMonsterCaptureThresholds`）。拆分之初它还保留过一个 11 行的空壳逻辑 TU
+`src/monster/part_schemas.cpp`（只有注释和空 namespace），到 `d911963` 连这个空壳
+也被删掉了——它零符号、零 include，却仍占着 monster-core 源列表和
+`rise-monster-metadata-tests` 的一个槽位，于是那个测试 target 改为自己直列两个
+承载数据的 TU（`monster/data/part_schemas_data.cpp` 与 `rise/part_schemas.cpp`）。
+Monster-core 的源文件数因此从 37 降到 **36**、`wc -l` 从 10828 降到 **10817**。
+`scripts/gen_schema.py` 的 `DEFAULT_CPP` 本来就指向 data/ 那份，**不需要改**
+（它的 `--cpp-out` 默认值即 `src/monster/data/part_schemas_data.cpp`）。加 World 怪物
+数据表时请改 data/ 那份；`src/monster/target_selector.{h,cpp}`（15+23）则**不在**
+monster-core 里，归 mhw-reader。
 
 ### `monster-core`（`CMakeLists.txt:27`）
 
@@ -217,11 +230,13 @@ mhw-reader。
    `src/rise/data/mhr_monster_names_data.cpp`（158 行），
    `extern const std::array<RiseMonsterName, 79> kRiseMonsterNames;` 声明在
    `mhr_monster_names.h:59`。
-3. `src/monster/data/part_schemas_data.cpp`：World 侧的对应物。逻辑 TU
-   `src/monster/part_schemas.cpp` 收缩到 11 行，五个表（`kPartSchemas` /
+3. `src/monster/data/part_schemas_data.cpp`：World 侧的对应物。拆分之初还留了
+   一个 11 行的逻辑 TU `src/monster/part_schemas.cpp`，五个表（`kPartSchemas` /
    `kAilmentNames` / `kAilmentNamesEn` / `kCrownThresholds` /
-   `kMonsterCaptureThresholds`）全在 data/ 那份里，CMake 注释明确
-   「`scripts/gen_schema.py` rewrites THIS file in place」。
+   `kMonsterCaptureThresholds`）全部搬进 data/ 那份，CMake 注释明确
+   「`scripts/gen_schema.py` rewrites THIS file in place」。`d911963` 把那个
+   空壳删了（零符号、零 include，只剩一个槽位），所以现在 data/ 那份是
+   `src/monster/` 下唯一的 `.cpp`。
 
 **S3 把进程内存原语下沉到了这里**：`ProcessMemory`、`AddressMap` 和四个
 stateless 助手（`findGamePid` / `selectLoadableMap` / `followPointerChain` /
@@ -236,15 +251,18 @@ World 侧已有的调用点拼写，`src/world/world_reader.h:20-55` 保留了�
 实现仍只有 core 里那一份；它们只是转调 `mhw::` 自由函数。
 
 `src/core/game_snapshot.h`（37 行）不在 `add_library` 列表里：它是纯数据结构，
-被 13 个头文件 include（`grep -rln 'core/game_snapshot.h' src/`：
-`core/game_detector.h`、`core/process_memory.h`、`main.cpp`、`monster/monster_types.h`、
-`rise/mhr_reader.h`、`rise/rise_damage_roster.h`、`ui/control_panel.h`、`ui/icon.h`、
+被 **12 处真实 include**（`grep -rn '#include "core/game_snapshot.h"' src/`：
+`core/game_detector.h`、`core/process_memory.h`、`main.cpp`、`rise/mhr_reader.h`、
+`rise/rise_damage_roster.h`、`ui/control_panel.h`、`ui/icon.h`、
 `ui/panel_damage.h`、`ui/panel_player.h`、`ui/viewmodel/damage_view_model.h`、
 `ui/viewmodel/overlay_process_controller.h`、`ui/viewmodel/player_view_model.h`），
 随各自的 TU 编译。它把四方契约拼在一个 struct 里：`MonsterSnapshot` 来自
 `monster/`，`PlayerSnapshot` / `PlayerAbnormalitySnapshot` / `AbnormalityAccent`
 来自 `player/`，`QuestSnapshot` 来自 `quest/`，`Zone` 来自 `world/`——这也是
 为什么 §1.2 那两个目录必须独立存在。
+（另有 `monster/monster_types.h`、`player/player_types.h`、
+`quest/quest_types.h` 三个头在注释里提到 `core/game_snapshot.h` 这个路径，
+并非 include；`grep -rln` 会一并命中，故会数出 15。）
 
 `src/core/locale_conf.h` 与 `src/core/locale_sync.h` 也不在该库里
 （`grep -n 'locale_conf\|locale_sync' CMakeLists.txt` 只命中 `:654-667`，
@@ -397,8 +415,13 @@ tests/` 只命中 `tests/snap_gauge_fill.cpp` 的间接引用。跨帧的 PartAu
 
 要点：
 
-- **Reader 与 UI 只经 snapshot 耦合**：Reader 不 include UI 头，UI 不 include
-  reader 头（§1.3 的 grep 结果）。GameSnapshot 有两个对等的 reader 入口：
+- **Reader 与 UI 只经 snapshot 耦合**：Reader 不 include UI 头；UI 侧也不用任何
+  reader 的类 API——`grep -rn '#include ".*reader' src/ui/` 只命中
+  `panel_player.cpp:5` 与 `panel_player_metrics.h:19` 两条
+  `#include "rise/mhr_reader.h"`，为的是取 `kRiseWirebugSlotCap`
+  （`src/rise/mhr_reader.h:174`）这 1 行常量，而不是读 reader 成员；
+  `src/ui/` 下没有任何文件 include `core/process_memory.h` 或 `world/world_reader.h`
+  （§1.3 的 grep 结果）。GameSnapshot 有两个对等的 reader 入口：
   World 的 `MhwReader::poll()` 与 Rise 的 `MhrReader::poll()`，二者都返回
   `GameSnapshot`，UI 侧完全不区分。所以准确表述是「**每个游戏各有一个取数入口，
   且入口签名一致**」，而非「唯一入口」。
@@ -528,7 +551,7 @@ status 串每 poll tick 自然刷新；`data` 是数据名与演示数据。
 | 改玩家 MR/名/武器/party 的合并规则 | `src/ui/viewmodel/player_view_model.{h,cpp}` + `tests/player_view_model_tests.cpp` |
 | 改控制台纯文本（节标签/游戏名/console key 解析） | `src/ui/viewmodel/console_text_helpers.{h,cpp}`（1:1 搬自 `control_panel.cpp`，别在 View 里再抄一份） |
 | 改 `.conf` 面板 mask 的文本格式 | `src/ui/viewmodel/panel_mask_codec.h`（header-only）+ `tests/panel_mask_codec_tests.cpp`；文件系统读写与告警留在 `control_panel.cpp` |
-| 加 World / Rise 数据表 | 改 `src/monster/data/part_schemas_data.cpp` / `src/rise/data/mhr_{part,monster}_names_data.cpp`（`gen_schema.py` 就地改写的那份），**不要**改 11 行的 `src/monster/part_schemas.cpp` 空壳 |
+| 加 World / Rise 数据表 | 改 `src/monster/data/part_schemas_data.cpp` / `src/rise/data/mhr_{part,monster}_names_data.cpp`（`gen_schema.py` 就地改写的那份）。旧的 11 行空壳 `src/monster/part_schemas.cpp` 已随 `d911963` 删除，`src/monster/` 下只剩 data/ 这一个 `.cpp` |
 | 在 rise / world / ui 之间共享类型 | 放进 `src/player/` 或 `src/quest/` 这类跨游戏契约纸目录（§1.2），或 `src/monster/monster_types.h`；**不要**塞进某个游戏目录 |
 | 改 i18n key / 域切分 | `docs/I18N.md` 是权威；门禁脚本在 `scripts/i18n_*.py` |
 | 新增 exe / 测试 target | 记得把 `src/resources/resources.qrc` 与 `assets/icons.qrc` 列进自己的源列表（§2 末） |
@@ -539,7 +562,10 @@ status 串每 poll tick 自然刷新；`data` 是数据名与演示数据。
 
 以下命令在 worktree `/home/a27exe/experiment/monster-overlay-v0.11.0/wt-i1`
 （detached HEAD `90e41ce`）执行，即本文的基线。本文此前的记录停在 HEAD
-`863d8b2`，其后 14 个 commit 未回头更新文档；本次已重测。输出摘要：
+`863d8b2`，其后 14 个 commit 未回头更新文档；本次已重测。其后本文又跟到
+`d911963`（`monster: drop the shell the schema split left behind`）：本表全部命令
+已在该 HEAD 上重测通过，唯 monster-core 的「37 文件 / 10828 行」变为
+「36 / 10817」（空壳 `src/monster/part_schemas.cpp` 被删除）。输出摘要：
 
 | 命令 | 摘要 |
 |---|---|
@@ -549,9 +575,9 @@ status 串每 poll tick 自然刷新；`data` 是数据名与演示数据。
 | `grep -c 'add_test(NAME' CMakeLists.txt` | 38（旧 37）；加 3 个 `MHW_I18N_GATES` 门禁 = ctest **41**（旧 40） |
 | `sed -n '915,929p' CMakeLists.txt` | i18n 门禁 `foreach` 块：`set(MHW_I18N_GATES check parity unused)` 在 `:920`、`foreach` 在 `:922`（旧 `:886-895`） |
 | `grep -n 'qrc' CMakeLists.txt` | 无 `add_library` 块含 qrc；`resources.qrc` 22 处、`icons.qrc` 12 处，全部在 exe target（首次例：`:218-219`） |
-| `grep -rn 'include "ui/' src/core src/monster src/player src/quest src/world` | 无输出（core/reader 不依赖 UI） |
-| `grep -rn 'include "world/world_reader' src/ui/` | 无输出（UI 不 include reader 头；`panel.h:14-16` 前置声明 `GameSnapshot`） |
-| `wc -l`（三个 `add_library` 块列出的全部源文件） | monster-core **37 文件 / 10828 行**；mhw-reader **7 / 2431**；mhw-ui **48 / 13583**（旧 28/9041、35/10741、7/2690、43/13423） |
+| `grep -rn 'include "ui/' src/core src/monster src/player src/quest src/world src/rise` | 无输出（core/reader/rise 不依赖 UI） |
+| `grep -rn '#include ".*reader' src/ui/` | 命中 2 条，均为 `rise/mhr_reader.h`（`panel_player.cpp:5`、`panel_player_metrics.h:19`）：**UI 不使用 reader 的类 API**，这两个 TU include 它只是为了取 `kRiseWirebugSlotCap`（定义 `src/rise/mhr_reader.h:174`）；`src/ui/` 下无任何文件 include `core/process_memory.h` 或 `world/world_reader.h`，`panel.h:14-16` 前置声明 `GameSnapshot` |
+| `wc -l`（三个 `add_library` 块列出的全部源文件） | monster-core **36 文件 / 10817 行**（`d911963` 删掉 11 行的 `src/monster/part_schemas.cpp` 前是 37 / 10828）；mhw-reader **7 / 2431**；mhw-ui **48 / 13583**（旧 28/9041、35/10741、7/2690、43/13423） |
 | `find src/ui -name '*.cpp' -o -name '*.h' \| wc -l` | **49**（非 viewmodel 34 + viewmodel 15）；48 个进库，`panel_mask_codec.h` 例外（`CMakeLists.txt:792`） |
 | `grep -n '#include' src/ui/viewmodel/*.h src/ui/viewmodel/*.cpp` | 无 QWidget / QPainter / QtWidgets 的 `#include`；仅 `console_layout_store.cpp:8` 有 `<QSettings>`，且只在 .cpp |
 | `wc -l src/ui/viewmodel/*` | **15 文件 / 2438 行**；各类行数见 §3 表（旧 10/1964、12/2076） |
@@ -559,11 +585,11 @@ status 串每 poll tick 自然刷新；`data` 是数据名与演示数据。
 | `grep -rn 'MhwReader::' src --include=*.cpp` | **19 处 / 5 个文件**（4 个在 `src/world/`）；成员函数定义 **16** 处（旧 63/7/19、15） |
 | `sed -n '132p;215p' src/world/world_reader.cpp` | 构造函数 `:132`、`GameSnapshot MhwReader::poll()` `:215`（旧记 `mhw_reader.cpp`，已删） |
 | `sed -n '12p;173p' src/world/world_reader.h` | `class MhwReader {` / `};`——类声明跨 `:12-173` |
-| `grep -n 'static qint64 cachedPid' src/core/process_memory.cpp` | 三个 static 在 `:173` `:174` `:175`，exeName 失效分支 `:180-184`。S3 之前它们在 `mhw_reader.cpp` 的 287-289 行；那份文件已随 `8a12d5c` 整份删除 |
+| `grep -n '^    static ' src/core/process_memory.cpp` | 三个 static 在 `:173` `:174` `:175`（`cachedPid` / `lastScanMs` / `cachedExeName`），exeName 失效分支 `:180-184`。S3 之前它们在 `mhw_reader.cpp` 的 287-289 行；那份文件已随 `8a12d5c` 整份删除。附注：只 grep `static qint64 cachedPid` 只命中 `:173` 一行，得不出「三个 static」的结论 |
 | `wc -l src/ui/control_panel.cpp` | 2857（旧 2916 / 2910） |
 | `grep -n 'QMessageBox' src/ui/control_panel.cpp` | 17 行命中，含 4 处 `QMessageBox::question()` 模态确认（`:2257` `:2285` `:2333` `:2366`） |
 | `grep -n 'ConsoleLayoutStore ' src/ui/control_panel.cpp` | `:451 :659 :664 :847 :879 :906 :1310`（7 个，数量不变、行号位移） |
-| `wc -l src/monster/part_schemas.cpp` | 11（1047 行的表已搬到 `src/monster/data/part_schemas_data.cpp`，964 行） |
+| `wc -l src/monster/data/part_schemas_data.cpp` | 964；World 5 张表的 `extern const` 定义（`kPartSchemas` 等）。`d911963` 之前它旁边还有一个 11 行的 `src/monster/part_schemas.cpp` 空壳，该 commit 把它整份删除，`src/monster/` 下再无其它 `.cpp` |
 | `wc -l src/rise/part_schemas.cpp` | 96（Rise 3 张表） |
 | `wc -l src/rise/data/mhr_part_names_data.cpp` | 682；`mhr_part_names.cpp` 剩 133；`kRisePartNames` 声明在 `mhr_part_names.h:39`（598 项） |
 | `wc -l src/rise/data/mhr_monster_names_data.cpp` | 158；`kRiseMonsterNames` 声明在 `mhr_monster_names.h:59`（79 项） |
