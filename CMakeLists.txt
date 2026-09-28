@@ -776,6 +776,26 @@ add_executable(world-severable-scan-tests
     target_compile_options(console-layout-store-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME console-layout-store-tests COMMAND console-layout-store-tests)
 
+    # The mask half of the console's `monster-overlay.conf` persistence
+    # (mhw::PanelMaskCodec): the parse and serialize logic that used to sit
+    # inline in ControlPanel::loadMaskFromDisk / saveMaskToDisk. Those four
+    # rows are a user contract — the overlay's locale_sync.h polls the same
+    # file, users hand-edit it, an older three-row config must keep loading
+    # — so the contract is pinned down here by literal assertions instead of
+    # by a QA click on a widget the test cannot reach.
+    #
+    # Header-only and QtCore-only (QString / QByteArray / QTextStream plus
+    # the pure DamageSection table in panel_sections.h), so there is no
+    # second source file to compile and no reason to link mhw-ui.
+    add_executable(panel-mask-codec-tests
+        tests/panel_mask_codec_tests.cpp
+        src/ui/viewmodel/panel_mask_codec.h
+    )
+    target_link_libraries(panel-mask-codec-tests PRIVATE Qt6::Core)
+    target_include_directories(panel-mask-codec-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(panel-mask-codec-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME panel-mask-codec-tests COMMAND panel-mask-codec-tests)
+
     # PlayerPanel's identity resolution
     # (mhw::PlayerViewModel::resolveIdentity): the three blocks that used to
     # sit inline in PlayerPanel::update() — the mirroring of (masterRank, name,

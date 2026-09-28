@@ -17,6 +17,7 @@
 #include "ui/viewmodel/overlay_process_controller.h"
 #include "ui/viewmodel/rise_reframework_status.h"
 #include "ui/viewmodel/console_layout_store.h"
+#include "ui/viewmodel/panel_mask_codec.h"
 #include "core/game_detector.h"
 #include "core/game_profile.h"
 #include "core/rise_reframework_manager.h"
@@ -2548,45 +2549,10 @@ void ControlPanel::loadMaskFromDisk()
     // Anything malformed is silently ignored — we never want a bad
     // config to make the console unstartable.
     QTextStream in(&f);
-    uint32_t playerMask = 0;
-    uint32_t monsterMask = 0;
-    uint32_t damageMask = 0;
-    uint32_t petsMask = 0;
-    bool playerValid = false;
-    bool monsterValid = false;
-    bool damageValid = false;
-    bool petsValid = false;
-    bool petsLineSeen = false;
+    in.setEncoding(QStringConverter::Utf8);
+    const QString text = in.readAll();
 
-    auto parseMask = [](const QString &text, uint32_t &mask, bool &valid) {
-        bool ok = false;
-        const uint parsed = text.toUInt(&ok, 16);
-        if (ok) {
-            mask = parsed;
-            valid = true;
-        }
-    };
-
-    while (!in.atEnd()) {
-        const QString line = in.readLine().trimmed();
-        if (line.startsWith(QLatin1String("player="))) {
-            parseMask(line.mid(7), playerMask, playerValid);
-        } else if (line.startsWith(QLatin1String("monster="))) {
-            parseMask(line.mid(8), monsterMask, monsterValid);
-        } else if (line.startsWith(QLatin1String("damage="))) {
-            parseMask(line.mid(7), damageMask, damageValid);
-        } else if (line.startsWith(QLatin1String("pets="))) {
-            petsLineSeen = true;
-            parseMask(line.mid(5), petsMask, petsValid);
-        }
-    }
-
-    // A pre-pets config has no way to express either new owner filter. Keep
-    // the old visible behaviour: the Pets defaults remain untouched, and an
-    // enabled damage panel continues to include teammates / followers. A zero
-    // damage mask still means the whole panel was disabled and remains zero.
-    if (!petsLineSeen && damageValid && damageMask > 0u)
-        damageMask |= static_cast<uint32_t>(mhw::DamageSection::OtherMembers);
+    const mhw::PanelMaskSet masks = mhw::parsePanelMasks(text);
 
     // v0.9 i18n (integration fix): the optional `locale=` row is the
     // console->overlay handshake (core/locale_conf.h). It is resolved at
@@ -2608,10 +2574,10 @@ void ControlPanel::loadMaskFromDisk()
         for (int b = 0; b < c.subs.size(); ++b)
             c.subs[b]->setChecked((mask & (1u << b)) != 0u);
     };
-    applyTo(playerValid, playerMask, ctl_[0]);
-    applyTo(monsterValid, monsterMask, ctl_[1]);
-    applyTo(damageValid, damageMask, ctl_[2]);
-    applyTo(petsValid, petsMask, ctl_[3]);
+    applyTo(masks.playerValid, masks.player, ctl_[0]);
+    applyTo(masks.monsterValid, masks.monster, ctl_[1]);
+    applyTo(masks.damageValid, masks.damage, ctl_[2]);
+    applyTo(masks.petsValid, masks.pets, ctl_[3]);
 }
 
 void ControlPanel::saveMaskToDisk() const
@@ -2626,7 +2592,7 @@ void ControlPanel::saveMaskToDisk() const
     // The mask writer owns exactly these four rows. Preserve locale, comments
     // and unknown/future keys in their original relative order, while removing
     // every old copy of a canonical mask row so duplicates converge.
-    QStringList preserved;
+    QString preservedText;
     if (QFileInfo::exists(path)) {
         QFile existing(path);
         if (!existing.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -2636,25 +2602,11 @@ void ControlPanel::saveMaskToDisk() const
         }
         QTextStream in(&existing);
         in.setEncoding(QStringConverter::Utf8);
-        while (!in.atEnd()) {
-            const QString line = in.readLine();
-            const QString trimmed = line.trimmed();
-            const bool canonical = trimmed.startsWith(QLatin1String("player="))
-                                   || trimmed.startsWith(QLatin1String("monster="))
-                                   || trimmed.startsWith(QLatin1String("damage="))
-                                   || trimmed.startsWith(QLatin1String("pets="));
-            if (!canonical)
-                preserved.append(line);
-        }
+        preservedText = in.readAll();
     }
 
-    QByteArray data;
-    data += "player="  + QString::number(mp, 16).toUtf8() + '\n';
-    data += "monster=" + QString::number(mm, 16).toUtf8() + '\n';
-    data += "damage="  + QString::number(md, 16).toUtf8() + '\n';
-    data += "pets="    + QString::number(mt, 16).toUtf8() + '\n';
-    for (const QString &line : preserved)
-        data += line.toUtf8() + '\n';
+    const QByteArray data = mhw::serializePanelMasks(
+        mp, mm, md, mt, preservedText);
 
     const QString parent = QFileInfo(path).absolutePath();
     if (!QDir().mkpath(parent)) {
