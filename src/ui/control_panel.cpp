@@ -21,7 +21,7 @@
 #include "ui/viewmodel/panel_mask_codec.h"
 #include "core/game_detector.h"
 #include "core/game_profile.h"
-#include "core/rise_reframework_manager.h"
+#include "rise/reframework/rise_reframework_manager.h"
 #include "core/steam_game_locator.h"
 #include "core/locale_conf.h"
 #include "core/string_table.h"
