@@ -5,12 +5,38 @@
 
 #include <QString>
 
+#include <array>
+
 namespace mhw {
 
 struct PartHealthPair {
     float current{};
     float maximum{};
 };
+
+// ---------------------------------------------------------------------------
+// Generated Rise part-name table (data lives in
+// src/rise/data/mhr_part_names_data.cpp).
+//
+// struct RisePartName and the table declaration live HERE rather than inside
+// the data translation unit: the 598-row array used to be a constexpr in an
+// anonymous namespace, so the two static_asserts that police it could only run
+// where it was defined. Declaring the struct and an extern declaration of the
+// array in this header lets the data TU keep both static_asserts (they still
+// compile against the definition in that TU) while the lookup functions in
+// src/rise/mhr_part_names.cpp use the table across the TU boundary.
+// ---------------------------------------------------------------------------
+struct RisePartName {
+    int monsterId;
+    int partIndex;
+    const char *name;    // UTF-8, Simplified Chinese, verbatim from zh-cn.xml
+    const char *nameEn;  // UTF-8, English, verbatim from en-us.xml
+};
+
+// One row per (monsterId, partIndex), strictly increasing, so risePartNameEntry()
+// can binary-search it. Defined in src/rise/data/mhr_part_names_data.cpp,
+// which also static_asserts the ordering and that both columns are populated.
+extern const std::array<RisePartName, 598> kRisePartNames;
 
 // Official Rise part name for (monsterId, partIndex), generated from HunterPie
 // Game/Rise/Data/MonsterData.xml joined to the official localization

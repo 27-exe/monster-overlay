@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 #
-# Generate src/rise/mhr_part_names.cpp — the per-monster part-name table —
-# in BOTH locales from HunterPie's Rise data + official localization.
+# Generate src/rise/data/mhr_part_names_data.cpp — the per-monster part-name
+# TABLE — in BOTH locales from HunterPie's Rise data + official localization.
+#
+# The table and its two static_asserts are generated into the data translation
+# unit; the LOOKUP layer (risePartNameEntry / risePartName / risePartNameEn /
+# risePartDisplayName) is hand-written in src/rise/mhr_part_names.cpp, and
+# struct RisePartName plus the extern declaration of kRisePartNames live in
+# src/rise/mhr_part_names.h so the two TUs can share the table. Regenerating
+# therefore rewrites only the data file; the logic file is maintained by hand.
 #
 # Adapted (WS-B, i18n) from the v0.8.4-r21 single-locale generator
 # `v0.8.4-r21/parts-names-hp/tools/generate_rise_part_names.py`:
@@ -10,8 +17,8 @@
 #   * verifies all three input sha256 hashes (MonsterData.xml + both locale
 #     files) and fails on mismatch unless --allow-unverified is passed;
 #   * emits one row per (monsterId, partIndex) carrying both columns
-#     `{ monsterId, partIndex, "<zh>", "<en>" }` and the locale-aware lookups
-#     the overlay uses at run time.
+#     `{ monsterId, partIndex, "<zh>", "<en>" }`; the locale-aware selection
+#     over those columns lives in src/rise/mhr_part_names.cpp.
 #
 # Join (unchanged from the original generator): every
 # /Monsters/Monster/Parts/Part of HunterPie/Game/Rise/Data/MonsterData.xml,
@@ -27,7 +34,7 @@
 #   python3 scripts/generate_rise_part_names.py \
 #       --monster-data HunterPie/Game/Rise/Data/MonsterData.xml \
 #       --en-xml hp-loc/en-us.xml --zh-xml hp-loc/zh-cn.xml \
-#       --cpp-out src/rise/mhr_part_names.cpp [--check] [--allow-unverified]
+#       --cpp-out src/rise/data/mhr_part_names_data.cpp [--check] [--allow-unverified]
 
 from __future__ import annotations
 
@@ -111,7 +118,7 @@ def cpp_file(rows: list[tuple[int, int, str, str, str]], monster_data: Path,
 // AUTO-GENERATED - do not edit by hand.
 // Regenerate with scripts/generate_rise_part_names.py:
 //   python3 scripts/generate_rise_part_names.py --monster-data <MonsterData.xml>
-//       --en-xml <en-us.xml> --zh-xml <zh-cn.xml> --cpp-out src/rise/mhr_part_names.cpp
+//       --en-xml <en-us.xml> --zh-xml <zh-cn.xml> --cpp-out src/rise/data/mhr_part_names_data.cpp
 //
 // Sources (all three sha256-verified by the generator):
 //   MonsterData.xml  HunterPie/Game/Rise/Data/MonsterData.xml
@@ -131,6 +138,16 @@ def cpp_file(rows: list[tuple[int, int, str, str, str]], monster_data: Path,
 //   Extracted 2026-09-18. The generator asserts both locales resolve every
 //   PART_* key reached from MonsterData.xml ({len(rows)} rows, 79 monsters).
 //
+// DATA translation unit: struct RisePartName (in rise/mhr_part_names.h), the
+// rows below, and the two static_asserts that police them. The lookups
+// (risePartNameEntry's lower_bound binary search, risePartName / risePartNameEn
+// / risePartDisplayName) live in src/rise/mhr_part_names.cpp and use the table
+// through the `extern const` declaration in rise/mhr_part_names.h — hence the
+// plain `namespace mhw` scope below, not an anonymous one: a constexpr array
+// inside an anonymous namespace has internal linkage and no other TU could
+// see it. `constexpr` here (rather than `extern const`) is what lets the
+// static_asserts inspect the committed rows at compile time.
+//
 // PART_TO_BE_MAPPED is "Unknown" in BOTH locales (upstream placeholder);
 // risePartName() keeps suppressing it so the overlay shows its safe
 // "部位 N" / "Part N" fallback instead of the literal "Unknown".
@@ -143,24 +160,12 @@ def cpp_file(rows: list[tuple[int, int, str, str, str]], monster_data: Path,
 
 #include "rise/mhr_part_names.h"
 
-#include "core/string_table.h"
-
-#include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstddef>
-#include <cstring>
-#include <utility>
 
 namespace mhw {{
-namespace {{
 
-struct RisePartName {{
-    int monsterId;
-    int partIndex;
-    const char *name;    // UTF-8, Simplified Chinese, verbatim from zh-cn.xml
-    const char *nameEn;  // UTF-8, English, verbatim from en-us.xml
-}};
+// AUTO-GENERATED TABLE - do not edit by hand.
 
 constexpr std::array<RisePartName, {len(rows)}> kRisePartNames = {{{{
 {body}
@@ -193,86 +198,6 @@ constexpr bool risePartNamesCarryBothColumns()
 static_assert(risePartNamesCarryBothColumns(),
               "every Rise part row carries a zh and an en name");
 
-const RisePartName *risePartNameEntry(int monsterId, int partIndex)
-{{
-    const auto it = std::lower_bound(
-        kRisePartNames.begin(), kRisePartNames.end(),
-        std::pair{{monsterId, partIndex}},
-        [](const RisePartName &entry, const std::pair<int, int> &key) {{
-            return entry.monsterId < key.first
-                || (entry.monsterId == key.first && entry.partIndex < key.second);
-        }});
-    if (it == kRisePartNames.end() || it->monsterId != monsterId
-        || it->partIndex != partIndex)
-        return nullptr;
-    return &*it;
-}}
-
-// HunterPie's tables intentionally leave PART_TO_BE_MAPPED as "Unknown" in
-// both locales. Preserve the existing localized fallback instead of exposing
-// that upstream placeholder in the overlay.
-const char *risePartNameFromEntry(const RisePartName *entry, bool english)
-{{
-    if (entry == nullptr)
-        return nullptr;
-    const char *name = english ? entry->nameEn : entry->name;
-    if (std::strcmp(name, "Unknown") == 0)
-        return nullptr;
-    return name;
-}}
-
-QString compactPartHealthValue(float value)
-{{
-    if (!std::isfinite(value) || value < 0.0F)
-        return QStringLiteral("--");
-    const int rounded = static_cast<int>(std::lround(value));
-    if (rounded < 1000)
-        return QString::number(rounded);
-    const float thousands = static_cast<float>(rounded) / 1000.0F;
-    if (rounded % 1000 == 0 || thousands >= 10.0F)
-        return QStringLiteral("%1k").arg(static_cast<int>(std::lround(thousands)));
-    return QStringLiteral("%1k").arg(thousands, 0, 'f', 1);
-}}
-
-}} // namespace
-
-const char *risePartName(int monsterId, int partIndex)
-{{
-    return risePartNameFromEntry(risePartNameEntry(monsterId, partIndex),
-                                 StringTable::instance().isEnglish());
-}}
-
-const char *risePartNameEn(int monsterId, int partIndex)
-{{
-    return risePartNameFromEntry(risePartNameEntry(monsterId, partIndex), true);
-}}
-
-QString risePartDisplayName(int monsterId, int partIndex)
-{{
-    const bool english = StringTable::instance().isEnglish();
-    if (const char *name = risePartNameFromEntry(
-            risePartNameEntry(monsterId, partIndex), english))
-        return QString::fromUtf8(name);
-    return english ? QStringLiteral("Part %1").arg(partIndex)
-                   : QStringLiteral("部位 %1").arg(partIndex);
-}}
-
-QString compactPartHealth(float current, float maximum)
-{{
-    if (!std::isfinite(maximum) || maximum <= 0.0F)
-        return QStringLiteral("--/--");
-    return QStringLiteral("%1/%2")
-        .arg(compactPartHealthValue(current))
-        .arg(compactPartHealthValue(maximum));
-}}
-
-PartHealthPair partHealthForDisplay(const PartSnapshot &part)
-{{
-    if (part.partType == PartType::Flinch)
-        return {{part.flinch, part.maxFlinch}};
-    return {{part.health, part.maxHealth}};
-}}
-
 }} // namespace mhw
 '''
 
@@ -282,7 +207,11 @@ def main() -> int:
     ap.add_argument("--monster-data", type=Path, required=True)
     ap.add_argument("--en-xml", type=Path, required=True)
     ap.add_argument("--zh-xml", type=Path, required=True)
-    ap.add_argument("--cpp-out", type=Path)
+    # The default is the DATA translation unit. The lookup layer
+    # (src/rise/mhr_part_names.cpp) is hand-written, so --cpp-out can only
+    # ever point at the file that owns the generated rows + static_asserts.
+    ap.add_argument("--cpp-out", type=Path,
+                    default=Path("src/rise/data/mhr_part_names_data.cpp"))
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--allow-unverified", action="store_true")
     args = ap.parse_args()
