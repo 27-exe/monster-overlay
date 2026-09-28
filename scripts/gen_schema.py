@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the kPartSchemas table in src/monster/part_schemas.cpp.
+"""Regenerate the kPartSchemas table in src/monster/data/part_schemas_data.cpp.
 
 Columns produced per part, per monster:
 
@@ -31,7 +31,7 @@ regenerates and asserts that everything is identical to the checked-in text.
 
 Usage:
     scripts/gen_schema.py [MonsterData.xml] [zh-cn.xml] [en-us.xml]
-    scripts/gen_schema.py --cpp src/monster/part_schemas.cpp --in-place
+    scripts/gen_schema.py --cpp src/monster/data/part_schemas_data.cpp --in-place
     scripts/gen_schema.py --check            # CI-style drift check
 """
 import argparse
@@ -41,7 +41,10 @@ import sys
 import xml.etree.ElementTree as ET
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
-DEFAULT_CPP = REPO / "src/monster/part_schemas.cpp"
+# The kPartSchemas data table has its own translation unit since the monster
+# data/logic split, so the generator must rewrite THAT file: a rewrite aimed at
+# part_schemas.cpp would silently lose the split on the next regeneration.
+DEFAULT_CPP = REPO / "src/monster/data/part_schemas_data.cpp"
 DEFAULT_HP = pathlib.Path("/tmp/HunterPie")
 
 ENTRY_RE = re.compile(

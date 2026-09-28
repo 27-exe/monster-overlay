@@ -57,6 +57,11 @@ add_library(monster-core STATIC
     src/rise/rise_damage_roster.cpp
     src/world/world_types.h
     src/world/world_types.cpp
+    # World monster DATA tables (kPartSchemas / kAilmentNames / kAilmentNamesEn /
+    # kCrownThresholds / kMonsterCaptureThresholds), split out of
+    # src/monster/part_schemas.cpp so the data and the lookup code are separate
+    # translation units. scripts/gen_schema.py rewrites THIS file in place.
+    src/monster/data/part_schemas_data.cpp
     src/monster/part_schemas.cpp
     src/rise/part_schemas.cpp
 )
@@ -562,6 +567,7 @@ add_executable(world-severable-scan-tests
     # crownThresholdsFor()'s kRiseCrownThresholds / kRiseNotCapturableMonsterIds.
     add_executable(rise-monster-metadata-tests
         tests/rise_monster_metadata_tests.cpp
+        src/monster/data/part_schemas_data.cpp
         src/monster/part_schemas.cpp
         src/rise/part_schemas.cpp
         src/resources/resources.qrc
