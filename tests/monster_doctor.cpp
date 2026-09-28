@@ -24,7 +24,7 @@
 // about what the overlay would do.
 
 #include "core/map_paths.h"
-#include "mhw_reader.h"
+#include "world/world_reader.h"
 #include "rise/mhr_reader.h"
 
 #include <QByteArray>

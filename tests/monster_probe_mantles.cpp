@@ -10,7 +10,7 @@
 //
 // Usage: ./build/monster-probe-mantles [/tmp/log]
 
-#include "mhw_reader.h"
+#include "world/world_reader.h"
 
 #include <QCoreApplication>
 

@@ -1,6 +1,6 @@
-#include "mhw_reader.h"
+#include "world/world_reader.h"
 #include "core/string_table.h"
-#include "monster/world_severable_scan.h"
+#include "world/world_severable_scan.h"
 #include <QFile>
 #include <QIODevice>
 #include <QSet>

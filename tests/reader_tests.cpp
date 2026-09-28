@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-#include "mhw_reader.h"
+#include "world/world_reader.h"
 #include "core/map_paths.h"
 #include "core/string_table.h"
 #include "monster/target_selector.h"

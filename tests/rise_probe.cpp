@@ -37,7 +37,7 @@
 
 #include "core/game_snapshot.h"
 #include "core/map_paths.h"
-#include "mhw_reader.h"
+#include "world/world_reader.h"
 #include "rise/mhr_abnormalities.h"
 #include "rise/mhr_reader.h"
 #include "rise/mhr_types.h"
