@@ -60,11 +60,10 @@ add_library(monster-core STATIC
     src/world/world_types.h
     src/world/world_types.cpp
     # World monster DATA tables (kPartSchemas / kAilmentNames / kAilmentNamesEn /
-    # kCrownThresholds / kMonsterCaptureThresholds), split out of
-    # src/monster/part_schemas.cpp so the data and the lookup code are separate
-    # translation units. scripts/gen_schema.py rewrites THIS file in place.
+    # kCrownThresholds / kMonsterCaptureThresholds) — their own translation
+    # unit; the lookup code that reads them lives elsewhere. scripts/gen_schema.py
+    # rewrites THIS file in place.
     src/monster/data/part_schemas_data.cpp
-    src/monster/part_schemas.cpp
     src/rise/part_schemas.cpp
 )
 target_include_directories(monster-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -563,16 +562,15 @@ add_executable(world-severable-scan-tests
     # Unit tests for Rise/World monster metadata isolation. These use only
     # static tables generated from HunterPie XML and never touch live game memory.
     # Does NOT link monster-core: this test asserts the pure static metadata
-    # tables in monster_types.h that part_schemas.cpp defines (crowns, capture
-    # thresholds, not-capturable ids), so that translation unit stays listed.
+    # tables in monster_types.h that the data table TUs define (crowns, capture
+    # thresholds, not-capturable ids), so those translation units stay listed.
     # Adding monster-core here would drag in the whole reader/UI chain for a
     # pure-table check and create a duplicate-symbol fight with the TU above.
-    # Both table TUs are listed: monster/ holds the World tables, rise/ holds
+    # Both table TUs are listed: monster/data/ holds the World tables, rise/ holds
     # crownThresholdsFor()'s kRiseCrownThresholds / kRiseNotCapturableMonsterIds.
     add_executable(rise-monster-metadata-tests
         tests/rise_monster_metadata_tests.cpp
         src/monster/data/part_schemas_data.cpp
-        src/monster/part_schemas.cpp
         src/rise/part_schemas.cpp
         src/resources/resources.qrc
     )
