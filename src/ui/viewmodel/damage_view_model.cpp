@@ -61,8 +61,8 @@ void DamageViewModel::updateRise(const RiseDamageSnapshot &dmg)
         return;
     }
 
-    const bool epochChanged = hasRiseQuestEpoch_
-                           && dmg.questEpoch != riseQuestEpoch_;
+    const bool epochChanged = mhw::riseDamageQuestEpochChanged(
+        hasRiseQuestEpoch_, riseQuestEpoch_, dmg);
     riseQuestEpoch_ = dmg.questEpoch;
     hasRiseQuestEpoch_ = true;
 

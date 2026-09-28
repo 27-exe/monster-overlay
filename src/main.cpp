@@ -613,28 +613,42 @@ int main(int argc, char **argv)
             damagePanel.setVisible(damagePanel.panelEnabled()
                                    && damagePanel.hasVisibleContent());
             damagePanel.triggerUpdate();
+            // Rise 与 World 判据不同是刻意的，不是同一逻辑写了两遍：
+            // Rise 由 DamageViewModel 自答 hasData()（它维护 quest 生命周期
+            // 状态，主循环代答会与 EpochReset 的时序打架）；World 的 feed 是
+            // 单帧快照、没有跨帧状态，所以由主循环按刚投递的那份 party 裁决
+            // ——visibleDamageParty 会把「其他成员」过滤掉，用未过滤的
+            // snap.party 判可见会在过滤到空时留下一个空框。这是两套不同来源
+            // 的数据，差异是真实语义，不该压成一个表达式。
             // Rise owns the companion surface. World still force-disables it
             // at construction and in its branch.
             petDamagePanel.setVisible(petDamagePanel.panelEnabled()
                                       && petDamagePanel.hasVisibleContent());
             petDamagePanel.triggerUpdate();
-        } else if (skipUpdate(damagePanel)) {
-            petDamagePanel.setVisible(false);
-            damagePanel.triggerUpdate();
-            damagePanel.setVisible(!snap.party.isEmpty() || showAll);
         } else {
             petDamagePanel.setVisible(false);
             // Always deliver empty/non-hunting snapshots too. DamagePanel owns
             // the hunt lifecycle; skipping these updates leaves the previous
             // chart and DPS tick counter alive into the next quest.
+            //
+            // Built before the two World branches so both of them gate
+            // visibility on the very snapshot the panel was just handed —
+            // the skipUpdate branch asks "did the user enable edit mode /
+            // is there a real party?" and must not re-derive that from an
+            // unfiltered roster the panel never saw.
             const mhw::GameSnapshot damageSnap = [&] {
                 mhw::GameSnapshot filtered = snap;
                 filtered.party = mhw::visibleDamageParty(
                     snap.party, riseDamageDisplayOptions.showOtherMembers);
                 return filtered;
             }();
-            damagePanel.update(damageSnap);
-            damagePanel.setVisible(!damageSnap.party.isEmpty() || showAll);
+            if (skipUpdate(damagePanel)) {
+                damagePanel.triggerUpdate();
+                damagePanel.setVisible(!damageSnap.party.isEmpty() || showAll);
+            } else {
+                damagePanel.update(damageSnap);
+                damagePanel.setVisible(!damageSnap.party.isEmpty() || showAll);
+            }
         }
     });
     timer.start(pollMs);  // consistent poll rate regardless of mode
