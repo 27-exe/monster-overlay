@@ -1,6 +1,7 @@
 #pragma once
 
-#include "mhw_reader.h"
+#include "core/game_snapshot.h"
+#include "core/process_memory.h"
 #include "rise/mhr_types.h"
 
 #include <QString>
@@ -534,9 +535,9 @@ inline RiseSharpnessSegment riseSharpnessCurrentSegment(const SharpnessSnapshot 
 }
 
 // Memory reader for Monster Hunter Rise (16.0.2.0 address map). Mirrors
-// MhwReader's structure and reuses the generic ProcessMemory / AddressMap
-// and the static followPointerChain() helper. The resulting GameSnapshot
-// is tagged GameId::Rise.
+// the World reader's structure and reuses the generic ProcessMemory /
+// AddressMap and the namespace-level followPointerChain() helper. The
+// resulting GameSnapshot is tagged GameId::Rise.
 class MhrReader {
 public:
     explicit MhrReader(QString mapPath);

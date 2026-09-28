@@ -185,12 +185,12 @@ const QString &MhrReader::mapPath() const
 
 std::optional<qint64> MhrReader::findRisePid()
 {
-    return MhwReader::findGamePid(QStringLiteral("monsterhunterrise.exe"));
+    return findGamePid(QStringLiteral("monsterhunterrise.exe"));
 }
 
 QString MhrReader::findBestMap(const QStringList &candidates)
 {
-    const QString loadableFallback = MhwReader::selectLoadableMap(candidates);
+    const QString loadableFallback = selectLoadableMap(candidates);
     AddressMap fallbackMap;
     if (!fallbackMap.load(loadableFallback))
         return loadableFallback;
@@ -211,7 +211,7 @@ QString MhrReader::findBestMap(const QStringList &candidates)
         AddressMap map;
         if (!map.load(candidate) || !map.hasAddress(QStringLiteral("MONSTERS_ADDRESS")))
             continue;
-        const std::uintptr_t base = MhwReader::followPointerChain(
+        const std::uintptr_t base = followPointerChain(
             memory, imageBase + map.address(QStringLiteral("MONSTERS_ADDRESS")),
             map.offsets(QStringLiteral("MONSTER_LIST_OFFSETS")), nullptr);
         if (!base)
@@ -230,13 +230,13 @@ QString MhrReader::findBestMap(const QStringList &candidates)
             const auto id = memory.read<std::int32_t>(*monsterOpt + 0x2D4ULL);
             if (!hasRiseMonsterId(id))
                 continue;
-            const std::uintptr_t component = MhwReader::followPointerChainOffsetThenDeref(
+            const std::uintptr_t component = followPointerChainOffsetThenDeref(
                 memory, *monsterOpt,
                 map.offsets(QStringLiteral("MONSTER_HEALTH_COMPONENT_OFFSETS")), nullptr);
             if (!component)
                 continue;
             const auto maxHealth = memory.read<float>(component + 0x18ULL);
-            const std::uintptr_t encoded = MhwReader::followPointerChainOffsetThenDeref(
+            const std::uintptr_t encoded = followPointerChainOffsetThenDeref(
                 memory, component,
                 map.offsets(QStringLiteral("MONSTER_HEALTH_COMPONENT_ENCODED_OFFSETS")), nullptr);
             if (!encoded)
@@ -291,7 +291,7 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
         }
 
         // P1 (v0.9.1): same read-path probe as the World reader — see
-        // MhwReader::ensureAttached for the rationale.
+        // the World reader's ensureAttached for the rationale.
         std::uint8_t headerProbe[8] = {};
         if (!memory_.readBytes(imageBase_, headerProbe, sizeof(headerProbe), &error)) {
             clearRisePartCaches();
@@ -328,7 +328,7 @@ QString MhrReader::readUtf16(std::uintptr_t address, int length) const
 MhrReader::StageInfo MhrReader::readZone(QString *error)
 {
     StageInfo info;
-    const std::uintptr_t stageBase = MhwReader::followPointerChain(
+    const std::uintptr_t stageBase = followPointerChain(
         memory_, absolute(QStringLiteral("STAGE_ADDRESS")),
         map_.offsets(QStringLiteral("STAGE_OFFSETS")), error);
     if (!stageBase)
@@ -344,7 +344,7 @@ MhrReader::StageInfo MhrReader::readZone(QString *error)
 
 std::uintptr_t MhrReader::readLockOnTarget() const
 {
-    const std::uintptr_t typeAddr = MhwReader::followPointerChain(
+    const std::uintptr_t typeAddr = followPointerChain(
         memory_, absolute(QStringLiteral("LOCKON_ADDRESS")),
         map_.offsets(QStringLiteral("LOCKON_CAMERA_STYLE_OFFSETS")), nullptr);
     if (!typeAddr)
@@ -353,7 +353,7 @@ std::uintptr_t MhrReader::readLockOnTarget() const
     if (!type || *type < 0)
         return 0;
 
-    const std::uintptr_t stylePtr = MhwReader::followPointerChain(
+    const std::uintptr_t stylePtr = followPointerChain(
         memory_, absolute(QStringLiteral("LOCKON_ADDRESS")),
         map_.offsets(QStringLiteral("LOCKON_OFFSETS")), nullptr);
     if (!stylePtr)
@@ -379,13 +379,13 @@ void MhrReader::readMonsterParts(std::uintptr_t monster, MonsterSnapshot &snapsh
             snapshot.parts = cached->published;
     };
 
-    const std::uintptr_t flinchArr = MhwReader::followPointerChainOffsetThenDeref(
+    const std::uintptr_t flinchArr = followPointerChainOffsetThenDeref(
         memory_, monster,
         map_.offsets(QStringLiteral("MONSTER_FLINCH_HEALTH_COMPONENT_OFFSETS")), nullptr);
-    const std::uintptr_t breakArr = MhwReader::followPointerChainOffsetThenDeref(
+    const std::uintptr_t breakArr = followPointerChainOffsetThenDeref(
         memory_, monster,
         map_.offsets(QStringLiteral("MONSTER_BREAK_HEALTH_COMPONENT_OFFSETS")), nullptr);
-    const std::uintptr_t severArr = MhwReader::followPointerChainOffsetThenDeref(
+    const std::uintptr_t severArr = followPointerChainOffsetThenDeref(
         memory_, monster,
         map_.offsets(QStringLiteral("MONSTER_SEVER_HEALTH_COMPONENT_OFFSETS")), nullptr);
     if (!flinchArr || !breakArr || !severArr) {
@@ -426,7 +426,7 @@ void MhrReader::readMonsterParts(std::uintptr_t monster, MonsterSnapshot &snapsh
             return false;
         out.pointer = *partOpt;
         const auto maxV = memory_.read<float>(out.pointer + 0x18ULL);
-        const std::uintptr_t encoded = MhwReader::followPointerChainOffsetThenDeref(
+        const std::uintptr_t encoded = followPointerChainOffsetThenDeref(
             memory_, out.pointer,
             map_.offsets(QStringLiteral("MONSTER_HEALTH_COMPONENT_ENCODED_OFFSETS")), nullptr);
         if (!maxV || !encoded)
@@ -543,7 +543,7 @@ void MhrReader::readMonsterTenderizes(std::uintptr_t /*monster*/,
 
 void MhrReader::readMonsterAilments(std::uintptr_t monster, MonsterSnapshot &snapshot)
 {
-    const std::uintptr_t base = MhwReader::followPointerChainOffsetThenDeref(
+    const std::uintptr_t base = followPointerChainOffsetThenDeref(
         memory_, monster,
         map_.offsets(QStringLiteral("MONSTER_AILMENTS_OFFSETS")), nullptr);
     if (!base)
@@ -622,7 +622,7 @@ void MhrReader::readMonsterQurio(std::uintptr_t monster, MonsterSnapshot &snapsh
         snapshot.qurioThreshold = threshold->threshold;
     }
 
-    const std::uintptr_t partArrayBase = MhwReader::followPointerChainOffsetThenDeref(
+    const std::uintptr_t partArrayBase = followPointerChainOffsetThenDeref(
         memory_, monster,
         map_.offsets(QStringLiteral("MONSTER_QURIO_HEALTH_COMPONENT_OFFSETS")), nullptr);
     if (!partArrayBase)
@@ -649,7 +649,7 @@ void MhrReader::readMonsterQurio(std::uintptr_t monster, MonsterSnapshot &snapsh
             qpart.maxHealth = *maxHealth;
         if (const auto healthPtr = memory_.read<std::uintptr_t>(part + 0x18ULL)) {
             if (isSanePointer(*healthPtr)) {
-                const std::uintptr_t encoded = MhwReader::followPointerChainOffsetThenDeref(
+                const std::uintptr_t encoded = followPointerChainOffsetThenDeref(
                     memory_, *healthPtr,
                     map_.offsets(QStringLiteral("MONSTER_HEALTH_COMPONENT_ENCODED_OFFSETS")), nullptr);
                 if (encoded) {
@@ -665,7 +665,7 @@ void MhrReader::readMonsterQurio(std::uintptr_t monster, MonsterSnapshot &snapsh
 QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
 {
     QVector<MonsterSnapshot> result;
-    const std::uintptr_t base = MhwReader::followPointerChain(
+    const std::uintptr_t base = followPointerChain(
         memory_, absolute(QStringLiteral("MONSTERS_ADDRESS")),
         map_.offsets(QStringLiteral("MONSTER_LIST_OFFSETS")), error);
     if (!base)
@@ -720,13 +720,13 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
         else
             snapshot.internalName = QStringLiteral("Monster #%1").arg(*idOpt);
 
-        const std::uintptr_t healthComponent = MhwReader::followPointerChainOffsetThenDeref(
+        const std::uintptr_t healthComponent = followPointerChainOffsetThenDeref(
             memory_, monster,
             map_.offsets(QStringLiteral("MONSTER_HEALTH_COMPONENT_OFFSETS")), nullptr);
         if (healthComponent) {
             if (const auto maxHP = memory_.read<float>(healthComponent + 0x18ULL))
                 snapshot.maxHealth = *maxHP;
-            const std::uintptr_t encoded = MhwReader::followPointerChainOffsetThenDeref(
+            const std::uintptr_t encoded = followPointerChainOffsetThenDeref(
                 memory_, healthComponent,
                 map_.offsets(QStringLiteral("MONSTER_HEALTH_COMPONENT_ENCODED_OFFSETS")), nullptr);
             if (encoded) {
@@ -746,7 +746,7 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
         // (riseMonsterSizeFromFactors) so an unreadable or absurd read leaves
         // snapshot.size at its 0.0F "unknown" default instead of the 1.0F
         // placeholder that made every monster display a dead `1.00x`.
-        const std::uintptr_t sizeBase = MhwReader::followPointerChainOffsetThenDeref(
+        const std::uintptr_t sizeBase = followPointerChainOffsetThenDeref(
             memory_, monster,
             map_.offsets(QStringLiteral("MONSTER_CROWN_OFFSETS")), nullptr);
         if (sizeBase) {
@@ -757,7 +757,7 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
             }
         }
 
-        const std::uintptr_t enrageAddr = MhwReader::followPointerChainOffsetThenDeref(
+        const std::uintptr_t enrageAddr = followPointerChainOffsetThenDeref(
             memory_, monster,
             map_.offsets(QStringLiteral("MONSTER_ENRAGE_OFFSETS")), nullptr);
         if (enrageAddr) {
@@ -780,7 +780,7 @@ QVector<MonsterSnapshot> MhrReader::readMonsters(QString *error)
         // riseMonsterStaminaFromPair keeps the honest-zero convention: a
         // failed or absurd read leaves the snapshot at 0/0 and the panel
         // hides the stamina row (same contract as riseMonsterSizeFromFactors).
-        const std::uintptr_t staminaAddr = MhwReader::followPointerChainOffsetThenDeref(
+        const std::uintptr_t staminaAddr = followPointerChainOffsetThenDeref(
             memory_, monster,
             map_.offsets(QStringLiteral("MONSTER_STAMINA_OFFSETS")), nullptr);
         if (staminaAddr) {
@@ -827,7 +827,7 @@ PlayerSnapshot MhrReader::readPlayer(QString *error)
     PlayerSnapshot result;
 
     std::uintptr_t charNamePtr = 0;
-    const std::uintptr_t savePtr = MhwReader::followPointerChain(
+    const std::uintptr_t savePtr = followPointerChain(
         memory_, absolute(QStringLiteral("CHARACTER_ADDRESS")),
         map_.offsets(QStringLiteral("CHARACTER_OFFSETS")), error);
     if (savePtr) {
@@ -840,7 +840,7 @@ PlayerSnapshot MhrReader::readPlayer(QString *error)
         }
     }
 
-    const std::uintptr_t saveBase = MhwReader::followPointerChain(
+    const std::uintptr_t saveBase = followPointerChain(
         memory_, absolute(QStringLiteral("SAVE_ADDRESS")),
         map_.offsets(QStringLiteral("SAVE_OFFSETS")), nullptr);
     // HunterPie compares every candidate's name pointer against the current
@@ -855,7 +855,7 @@ PlayerSnapshot MhrReader::readPlayer(QString *error)
             // saveBase, then add 0x20+slot*8). The second is a direct
             // add into the resolved slot object (the level struct lives
             // there at +0x18, not behind another pointer).
-            const std::uintptr_t slotEntryAddr = MhwReader::followPointerChain(
+            const std::uintptr_t slotEntryAddr = followPointerChain(
                 memory_, saveBase, {0x20ULL + static_cast<std::uintptr_t>(slot) * kPointerSize}, nullptr);
             if (!slotEntryAddr)
                 continue;
@@ -879,7 +879,7 @@ PlayerSnapshot MhrReader::readPlayer(QString *error)
         }
     }
 
-    const std::uintptr_t weaponAddr = MhwReader::followPointerChain(
+    const std::uintptr_t weaponAddr = followPointerChain(
         memory_, absolute(QStringLiteral("WEAPON_ADDRESS")),
         map_.offsets(QStringLiteral("WEAPON_OFFSETS")), nullptr);
     if (weaponAddr) {
@@ -900,7 +900,7 @@ PlayerSnapshot MhrReader::readPlayer(QString *error)
     // health would read the bottom half of an engine pointer and
     // maxHealth would land on memory that happens to be ~1.7e8 in
     // village hubs (final-audit §5.1, 反证 #1).
-    const std::uintptr_t hudPtr = MhwReader::followPointerChain(
+    const std::uintptr_t hudPtr = followPointerChain(
         memory_, absolute(QStringLiteral("UI_ADDRESS")),
         map_.offsets(QStringLiteral("PLAYER_HUD_OFFSETS")), nullptr);
     if (hudPtr) {
@@ -942,7 +942,7 @@ QVector<PartyMemberSnapshot> MhrReader::readParty(
                                         QString *readError) -> std::uintptr_t {
         if (!map_.hasAddress(addressKey) || !map_.hasOffsets(offsetKey))
             return 0;
-        const std::uintptr_t field = MhwReader::followPointerChain(
+        const std::uintptr_t field = followPointerChain(
             memory_, absolute(addressKey), map_.offsets(offsetKey), readError);
         if (!field)
             return 0;
@@ -1040,7 +1040,7 @@ QVector<PartyMemberSnapshot> MhrReader::readParty(
         && map_.hasOffsets(QStringLiteral("SERVANT_NAME_OFFSETS"))) {
         // This chain ends in 0x0, so followPointerChain already returns the
         // Mono array object itself (unlike the one-field arrays above).
-        const std::uintptr_t servantsArray = MhwReader::followPointerChain(
+        const std::uintptr_t servantsArray = followPointerChain(
             memory_, absolute(QStringLiteral("SERVANTS_DATA_ADDRESS")),
             map_.offsets(QStringLiteral("SERVANTS_DATA_ARRAY_OFFSETS")), nullptr);
         const auto servantPointers = readPointerArray(
@@ -1055,7 +1055,7 @@ QVector<PartyMemberSnapshot> MhrReader::readParty(
                 continue;
 
             const std::uintptr_t namePointer =
-                MhwReader::followPointerChainOffsetThenDeref(
+                followPointerChainOffsetThenDeref(
                     memory_, servantPointer,
                     map_.offsets(QStringLiteral("SERVANT_NAME_OFFSETS")), nullptr);
             const auto weapon = memory_.read<std::int32_t>(
@@ -1084,7 +1084,7 @@ QVector<PartyMemberSnapshot> MhrReader::readParty(
 // iteration range.
 void MhrReader::readWirebugs(PlayerSnapshot &snapshot, QString *error)
 {
-    const std::uintptr_t countBase = MhwReader::followPointerChain(
+    const std::uintptr_t countBase = followPointerChain(
         memory_, absolute(QStringLiteral("ABNORMALITIES_ADDRESS")),
         map_.offsets(QStringLiteral("WIREBUG_COUNT_OFFSETS")), error);
     if (!countBase)
@@ -1093,7 +1093,7 @@ void MhrReader::readWirebugs(PlayerSnapshot &snapshot, QString *error)
     if (!count || !isRiseWirebugCountSane(*count))
         return;
 
-    const std::uintptr_t arrayPtr = MhwReader::followPointerChain(
+    const std::uintptr_t arrayPtr = followPointerChain(
         memory_, absolute(QStringLiteral("ABNORMALITIES_ADDRESS")),
         map_.offsets(QStringLiteral("WIREBUG_DATA_OFFSETS")), nullptr);
     if (!isSanePointer(arrayPtr))
@@ -1131,7 +1131,7 @@ void MhrReader::readWirebugs(PlayerSnapshot &snapshot, QString *error)
             const QString extraKey = extraSource == RiseWirebugExtraDataSource::Environment
                 ? QStringLiteral("WIREBUG_EXTRA_DATA_OFFSETS")
                 : QStringLiteral("WIREBUG_EXTRA_DATA_FROM_SKILL_OFFSETS");
-            const std::uintptr_t extrasBase = MhwReader::followPointerChain(
+            const std::uintptr_t extrasBase = followPointerChain(
                 memory_, absolute(QStringLiteral("ABNORMALITIES_ADDRESS")),
                 map_.offsets(extraKey), nullptr);
             if (extrasBase) {
@@ -1257,10 +1257,10 @@ void MhrReader::readAbnormalities(PlayerSnapshot &snapshot, bool inHuntingZone,
     if (!inHuntingZone)
         return;
 
-    const std::uintptr_t consumableBase = MhwReader::followPointerChain(
+    const std::uintptr_t consumableBase = followPointerChain(
         memory_, absolute(QStringLiteral("ABNORMALITIES_ADDRESS")),
         map_.offsets(QStringLiteral("CONS_ABNORMALITIES_OFFSETS")), error);
-    const std::uintptr_t debuffBase = MhwReader::followPointerChain(
+    const std::uintptr_t debuffBase = followPointerChain(
         memory_, absolute(QStringLiteral("ABNORMALITIES_ADDRESS")),
         map_.offsets(QStringLiteral("DEBUFF_ABNORMALITIES_OFFSETS")), nullptr);
     if (consumableBase == 0 && debuffBase == 0)
@@ -1270,7 +1270,7 @@ void MhrReader::readAbnormalities(PlayerSnapshot &snapshot, bool inHuntingZone,
     // 0, which is what HunterPie keeps after reporting CommonConditions.None
     // / DebuffConditions.None (and what a fresh field starts at).
     RiseAbnormalityConditions conditions;
-    const std::uintptr_t conditionPtr = MhwReader::followPointerChain(
+    const std::uintptr_t conditionPtr = followPointerChain(
         memory_, absolute(QStringLiteral("LOCAL_PLAYER_DATA_ADDRESS")),
         map_.offsets(QStringLiteral("PLAYER_CONDITION_OFFSETS")), nullptr);
     if (conditionPtr) {
@@ -1281,7 +1281,7 @@ void MhrReader::readAbnormalities(PlayerSnapshot &snapshot, bool inHuntingZone,
                 conditionPtr + kMhrDebuffConditionsOffset))
             conditions.debuff = *debuff;
     }
-    const std::uintptr_t actionPtr = MhwReader::followPointerChain(
+    const std::uintptr_t actionPtr = followPointerChain(
         memory_, absolute(QStringLiteral("LOCAL_PLAYER_DATA_ADDRESS")),
         map_.offsets(QStringLiteral("PLAYER_ACTIONFLAG_OFFSETS")), nullptr);
     if (actionPtr) {
@@ -1315,7 +1315,7 @@ void MhrReader::readAbnormalities(PlayerSnapshot &snapshot, bool inHuntingZone,
 QuestSnapshot MhrReader::readQuest(QString *error)
 {
     QuestSnapshot result;
-    const std::uintptr_t questStruct = MhwReader::followPointerChain(
+    const std::uintptr_t questStruct = followPointerChain(
         memory_, absolute(QStringLiteral("QUEST_ADDRESS")),
         map_.offsets(QStringLiteral("QUEST_OFFSETS")), error);
     if (!questStruct)
@@ -1460,7 +1460,7 @@ SharpnessSnapshot MhrReader::readSharpness(int weaponId, QString *error)
 
     // 1. Read the live sharpness state. Same as HunterPie: only a valid
     //    in-range level can produce a visible gauge.
-    const std::uintptr_t sharpPtr = MhwReader::followPointerChain(
+    const std::uintptr_t sharpPtr = followPointerChain(
         memory_,
         absolute(QStringLiteral("SHARPNESS_ADDRESS")),
         map_.offsets(QStringLiteral("SHARPNESS_OFFSETS")),
@@ -1480,7 +1480,7 @@ SharpnessSnapshot MhrReader::readSharpness(int weaponId, QString *error)
 
     // 3. The resolved address is the Mono int[] object header. Its length
     //    is at +0x1C and elements begin at +0x20 (MHRiseUtils.ReadArrayAsync).
-    const std::uintptr_t arrayPtr = MhwReader::followPointerChain(
+    const std::uintptr_t arrayPtr = followPointerChain(
         memory_,
         absolute(QStringLiteral("SHARPNESS_ADDRESS")),
         map_.offsets(QStringLiteral("SHARPNESS_ARRAY_OFFSETS")),

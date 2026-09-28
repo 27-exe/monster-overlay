@@ -39,6 +39,8 @@ add_library(monster-core STATIC
     src/core/reframework_fetcher.cpp
     src/core/map_paths.h
     src/core/map_paths.cpp
+    src/core/process_memory.h
+    src/core/process_memory.cpp
     src/rise/mhr_types.h
     src/rise/mhr_reader.h
     src/rise/mhr_reader.cpp
