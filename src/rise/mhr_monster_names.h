@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <array>
+#include <cstddef>
+
 namespace mhw {
 
 // Official localized name for a Rise monster, keyed by the HunterPie schema
@@ -35,6 +38,26 @@ namespace mhw {
 // Returns nullptr when the localization file has no entry for `id` (the id
 // gaps 47..75 / 99..106 and anything outside 0..115 are upstream and real);
 // callers fall back to "Monster #<id>". Never returns an empty string.
+
+// One row of the Rise monster-name table. Declared here so the data TU
+// (src/rise/data/mhr_monster_names_data.cpp) and the lookup TU
+// (src/rise/mhr_monster_names.cpp) agree on one type instead of each
+// declaring a private copy. Field names/types are fixed by the generator.
+struct RiseMonsterName {
+    int id;
+    const char *name;    // UTF-8, Simplified Chinese, verbatim from zh-cn.xml
+    const char *nameEn;  // UTF-8, English, verbatim from en-us.xml
+};
+
+// The generated table, sorted by id. The constexpr DEFINITION (and the two
+// static_asserts that gate it) lives in src/rise/data/mhr_monster_names_data.cpp;
+// declaring it `extern` here is what gives that definition external linkage, so
+// the lookup TU can binary-search the very same object instead of a private
+// duplicate. A plain `constexpr` declaration in this header would give every
+// TU its own copy. The element count must match the generator's row count —
+// scripts/extract_rise_monster_names.py --check verifies it.
+extern const std::array<RiseMonsterName, 79> kRiseMonsterNames;
+
 const char *riseMonsterName(int id);
 
 // The en-us.xml column, independent of the active locale (tests / tooling).
