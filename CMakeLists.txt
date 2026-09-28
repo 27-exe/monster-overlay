@@ -117,6 +117,8 @@ target_compile_options(mhw-reader PRIVATE -Wall -Wextra -Wpedantic)
 add_library(mhw-ui STATIC
     src/ui/control_panel.cpp
     src/ui/control_panel.h
+    src/ui/control_panel_styles.cpp
+    src/ui/control_panel_styles.h
     src/ui/formatters.cpp
     src/ui/formatters.h
     src/ui/viewmodel/console_layout_store.cpp

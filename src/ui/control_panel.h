@@ -134,9 +134,18 @@ private:
     void selectPanel(int idx);
     void updatePanelSummary(int idx);
     void switchGame(mhw::GameId game);
-    // v0.11: View half of the old launchOverlay() — saves mask/appearance
-    // and builds argv; the spawn/poll/hot-swap half is
+    // v0.11: View half of the old launchOverlay() — persists the user's
+    // current mask + per-panel appearance to disk, builds argv, and hands
+    // both to the controller. The spawn/poll/hot-swap half is
     // mhw::OverlayProcessController::launch().
+    //
+    // Split K4-A3: the write-disk half lives in saveBeforeLaunch() so the
+    // four UI entry points below can persist *before* they touch the
+    // launching path at all; the argv half is the const builder
+    // buildOverlayArgv(). launchOverlayChild() itself is what remains —
+    // the running check plus the delegation.
+    void saveBeforeLaunch();
+    [[nodiscard]] QStringList buildOverlayArgv(bool editMode) const;
     void launchOverlayChild(bool editMode);
     // Read-only forward to the controller's copy of the target game.
     [[nodiscard]] mhw::GameId currentGame() const;
@@ -253,11 +262,10 @@ private:
 
     // Process lifecycle is owned by the controller (overlay pid, the
     // 250 ms kill(pid,0) poll, the pending hot-swap restart and the
-    // --game value). The View keeps only what the argv needs: the argv of
-    // the last launch and whether it was an edit-mode launch.
+    // --game value). hot-swap keeps its own copy of the last argv and
+    // edit flag (mhw::OverlayProcessController::lastArgv_/lastEditMode_),
+    // so the View holds no argv state of its own.
     mhw::OverlayProcessController *overlay_ = nullptr;
-    QStringList overlayArgv_;
-    bool        overlayEditMode_ = false;
 
     // Rise-only REFramework card. Install/removal is delegated through the
     // request signals above; these handles only own presentation/state.
