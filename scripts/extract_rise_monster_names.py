@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 #
-# Generate src/rise/mhr_monster_names.cpp — the Rise monster-name table — in
-# BOTH locales from HunterPie's official localization files.
+# Generate src/rise/data/mhr_monster_names_data.cpp — the Rise monster-name
+# table in BOTH locales from HunterPie's official localization files.
 #
 # Adapted (WS-B, i18n) from the v0.8.4-r18 single-locale generator
 # `v0.8.4-r18/monster-identity/tools/extract_rise_monster_names.py`:
@@ -12,6 +12,13 @@
 #     unless --allow-unverified is passed);
 #   * emits one row per Id carrying both columns `{ id, "<zh>", "<en>" }`
 #     and the locale-aware lookup the overlay uses at run time.
+#
+# Data/logic split: this script owns the DATA TU
+# (src/rise/data/mhr_monster_names_data.cpp) — the struct's extern view and the
+# table definition plus the two static_asserts that gate it. The
+# `struct RiseMonsterName` declaration and the three lookup functions are
+# hand-maintained in src/rise/mhr_monster_names.{h,cpp} and are NOT generated;
+# the generated TU only `#include`s the header for the struct + extern table.
 #
 # The zh column is byte-identical to what the previous single-locale
 # generator produced, so regenerating this file never changes the Chinese
@@ -28,12 +35,13 @@
 # Usage:
 #   python3 scripts/extract_rise_monster_names.py \
 #       --en-xml hp-loc/en-us.xml --zh-xml hp-loc/zh-cn.xml \
-#       --cpp-out src/rise/mhr_monster_names.cpp \
+#       --data-out src/rise/data/mhr_monster_names_data.cpp \
 #       [--csv-out out.csv] [--json-out out.json] [--check] \
 #       [--allow-unverified]
 #
-# --check compares the regenerated text against --cpp-out and exits 1 when it
-# differs (CI / "is the checked-in table stale?" gate).
+# --check compares the regenerated text against --data-out and exits 1 when it
+# differs (CI / "is the checked-in table stale?" gate). --cpp-out remains
+# accepted as a deprecated alias of --data-out.
 
 from __future__ import annotations
 
@@ -127,7 +135,7 @@ def cpp_table(rows: list[tuple[int, str, str]], zh_src: Path, zh_lines: tuple[in
 //
 // AUTO-GENERATED — do not edit by hand.
 // Regenerate with scripts/extract_rise_monster_names.py
-//   python3 scripts/extract_rise_monster_names.py --en-xml <en-us.xml> --zh-xml <zh-cn.xml> --cpp-out src/rise/mhr_monster_names.cpp
+//   python3 scripts/extract_rise_monster_names.py --en-xml <en-us.xml> --zh-xml <zh-cn.xml> --data-out src/rise/data/mhr_monster_names_data.cpp
 //
 // Source: HunterPie official localization — BOTH columns verbatim.
 //   zh column: zh-cn.xml  https://cdn.hunterpie.com/localization/zh-cn.xml
@@ -152,22 +160,23 @@ def cpp_table(rows: list[tuple[int, str, str]], zh_src: Path, zh_lines: tuple[in
 // otherwise; an empty locale (before any load()) reads as Chinese, so the
 // pre-i18n behaviour is the default. riseMonsterNameEn() exposes the en column
 // explicitly (tests / tooling) and is locale-independent.
+//
+// Data/logic split: the table (and the two static_asserts that gate it) is
+// defined here; the struct + the extern view of the table + the three lookup
+// functions live in mhr_monster_names.h / mhr_monster_names.cpp. The table is
+// defined at namespace mhw scope rather than inside an anonymous namespace
+// because an anonymous-namespace constexpr object is invisible across TUs:
+// the header's `extern` declaration (which is what gives this definition
+// external linkage) and the lookup TU's binary search both need the SAME
+// object. `constexpr` is kept deliberately — it keeps the two static_asserts
+// below as compile-time gates on the regenerated data.
 
 #include "rise/mhr_monster_names.h"
-
-#include "core/string_table.h"
 
 #include <array>
 #include <cstddef>
 
 namespace mhw {{
-namespace {{
-
-struct RiseMonsterName {{
-    int id;
-    const char *name;    // UTF-8, Simplified Chinese, verbatim from zh-cn.xml
-    const char *nameEn;  // UTF-8, English, verbatim from en-us.xml
-}};
 
 // Sorted by id: the lookup below binary-searches it.
 constexpr std::array<RiseMonsterName, {count}> kRiseMonsterNames = {{{{
@@ -201,54 +210,78 @@ constexpr bool riseMonsterNamesCarryBothColumns()
 static_assert(riseMonsterNamesCarryBothColumns(),
               "every Rise monster row carries a zh and an en name");
 
-const RiseMonsterName *riseMonsterNameEntry(int id)
-{{
-    std::size_t lo = 0;
-    std::size_t hi = kRiseMonsterNames.size();
-    while (lo < hi) {{
-        const std::size_t mid = lo + (hi - lo) / 2;
-        if (kRiseMonsterNames[mid].id < id)
-            lo = mid + 1;
-        else
-            hi = mid;
-    }}
-    if (lo < kRiseMonsterNames.size() && kRiseMonsterNames[lo].id == id)
-        return &kRiseMonsterNames[lo];
-    return nullptr;
-}}
-
-}} // namespace
-
-const char *riseMonsterName(int id)
-{{
-    const RiseMonsterName *entry = riseMonsterNameEntry(id);
-    if (entry == nullptr)
-        return nullptr;
-    return StringTable::instance().isEnglish() ? entry->nameEn : entry->name;
-}}
-
-const char *riseMonsterNameEn(int id)
-{{
-    const RiseMonsterName *entry = riseMonsterNameEntry(id);
-    return entry == nullptr ? nullptr : entry->nameEn;
-}}
-
 }} // namespace mhw
 '''
+
+
+def check_header_declaration(rows: list[tuple[int, str, str]], header: Path) -> None:
+    """The header is hand-maintained; make sure it still matches this run.
+
+    The data TU below `#include`s src/rise/mhr_monster_names.h for both
+    `struct RiseMonsterName` and the extern view of the table, so the two must
+    stay in sync:
+      * the extern array's element count must equal the row count, otherwise
+        the initializer silently truncates or the compile fails;
+      * the struct must still declare id / name / nameEn in that order with
+        these exact names, because the row initializer binds positionally.
+
+    Fails loudly (SystemExit) instead of writing a TU that will not compile.
+    """
+    if not header.is_file():
+        raise SystemExit(f"{header}: missing hand-maintained header "
+                         "(the generated data TU includes it)")
+    source = header.read_text(encoding="utf-8")
+
+    count = len(rows)
+    declared = re.search(
+        r"extern\s+const\s+std::array<\s*RiseMonsterName\s*,\s*(\d+)\s*>"
+        r"\s+kRiseMonsterNames\s*;", source)
+    if declared is None:
+        raise SystemExit(
+            f"{header}: no `extern const std::array<RiseMonsterName, N> "
+            "kRiseMonsterNames;` declaration — the data TU cannot expose the "
+            "table to the lookup TU without it")
+    if int(declared.group(1)) != count:
+        raise SystemExit(
+            f"{header}: declares kRiseMonsterNames with {declared.group(1)} "
+            f"elements but the localization files yield {count} rows; update "
+            "the declaration (the generator no longer owns it)")
+
+    struct = re.search(r"struct\s+RiseMonsterName\s*\{(.*?)\};", source, re.S)
+    if struct is None:
+        raise SystemExit(f"{header}: `struct RiseMonsterName` is missing")
+    for field in ("id", "name", "nameEn"):
+        if not re.search(rf"\b{field}\s*;", struct.group(1)):
+            raise SystemExit(
+                f"{header}: struct RiseMonsterName no longer declares `{field}`; "
+                "the generated initializer would not compile")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--en-xml", type=Path, required=True)
     ap.add_argument("--zh-xml", type=Path, required=True)
-    ap.add_argument("--cpp-out", type=Path)
+    ap.add_argument("--data-out", type=Path,
+                    help="data TU to write (default: "
+                         "src/rise/data/mhr_monster_names_data.cpp)")
+    ap.add_argument("--cpp-out", type=Path,
+                    help="DEPRECATED alias of --data-out; --data-out wins")
     ap.add_argument("--csv-out", type=Path)
     ap.add_argument("--json-out", type=Path)
     ap.add_argument("--check", action="store_true",
-                    help="fail when --cpp-out differs from the regenerated text")
+                    help="fail when --data-out differs from the regenerated text")
     ap.add_argument("--allow-unverified", action="store_true",
                     help="downgrade a sha256 mismatch to a warning")
     args = ap.parse_args()
+
+    # The struct + lookup functions are hand-maintained in
+    # src/rise/mhr_monster_names.{h,cpp}, so the generator only owns the data
+    # TU. Pick the data destination, honouring the deprecated --cpp-out.
+    if args.data_out is None and args.cpp_out is None:
+        args.data_out = Path("src/rise/data/mhr_monster_names_data.cpp")
+    if args.cpp_out is not None and args.data_out is None:
+        args.data_out = args.cpp_out
+    header = Path("src/rise/mhr_monster_names.h")
 
     zh_entries, zh_lines, zh_digest = extract(
         args.zh_xml, EXPECTED_SHA256["zh-cn.xml"], args.allow_unverified)
@@ -266,17 +299,19 @@ def main() -> int:
     rows = [(i, zh_by_id[i], en_by_id[i]) for i, _ in zh_entries]
     text = cpp_table(rows, args.zh_xml, zh_lines, zh_digest,
                      args.en_xml, en_lines, en_digest)
+    check_header_declaration(rows, header)
 
     if args.check:
-        current = args.cpp_out.read_text(encoding="utf-8") if args.cpp_out else ""
+        current = args.data_out.read_text(encoding="utf-8") if args.data_out else ""
         if current != text:
-            print(f"OUT OF DATE: {args.cpp_out}")
+            print(f"OUT OF DATE: {args.data_out}")
             return 1
-        print(f"up to date: {args.cpp_out}")
+        print(f"up to date: {args.data_out}")
         return 0
 
-    if args.cpp_out:
-        args.cpp_out.write_text(text, encoding="utf-8")
+    if args.data_out:
+        args.data_out.parent.mkdir(parents=True, exist_ok=True)
+        args.data_out.write_text(text, encoding="utf-8")
     if args.csv_out:
         args.csv_out.write_text(
             "id,name_zh_cn,name_en_us\n"
