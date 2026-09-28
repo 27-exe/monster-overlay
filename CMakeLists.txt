@@ -119,6 +119,8 @@ add_library(mhw-ui STATIC
     src/ui/formatters.h
     src/ui/viewmodel/console_layout_store.cpp
     src/ui/viewmodel/console_layout_store.h
+    src/ui/viewmodel/console_text_helpers.cpp
+    src/ui/viewmodel/console_text_helpers.h
     src/ui/hud_canvas.cpp
     src/ui/hud_canvas.h
     src/ui/icon.cpp

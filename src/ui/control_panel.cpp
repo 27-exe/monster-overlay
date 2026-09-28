@@ -13,6 +13,7 @@
 #include "ui/panel_source.h"
 #include "ui/screen_query.h"
 #include "ui/ui_theme.h"
+#include "ui/viewmodel/console_text_helpers.h"
 #include "ui/viewmodel/overlay_process_controller.h"
 #include "ui/viewmodel/rise_reframework_status.h"
 #include "ui/viewmodel/console_layout_store.h"
@@ -80,12 +81,28 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 // at global scope where the unqualified name is otherwise invisible.
 using mhw::kConsoleStageHeightDefault;
 
+// The three text dispatchers that moved out of the anonymous namespace
+// below — consoleText(), gameName(), sectionLabel() — now live in
+// src/ui/viewmodel/console_text_helpers.{h,cpp} as mhw:: names. Pull
+// them in once at file scope so their call sites (ControlPanel member
+// functions sitting at global scope, where an unqualified mhw:: name is
+// invisible) stay exactly as they were written. Same pattern as the
+// kConsoleStageHeightDefault declaration directly above.
+using mhw::consoleText;
+using mhw::gameName;
+using mhw::sectionLabel;
+
 namespace {
 
-QString consoleText(const QString &key)
-{
-    return mh::tr(key);
-}
+// ---- what stays in this anonymous namespace, and why -------------------
+//
+// The three text dispatchers that used to open this namespace are now
+// in console_text_helpers.{h,cpp}. What is left is exactly the set that
+// cannot leave: each of these four reads a live GUI object —
+// prepareDamagePreview (DamagePanel + Panel's virtual demo hook),
+// qssBase() / panelAccent() (the live uiTheme() palette), iconKind()
+// (the SectionRow::Icon enum). None can run without a constructed
+// console, so they are not extraction candidates and stay with the View.
 
 void prepareDamagePreview(DamagePanel *damage,
                           const mhw::RiseDamageDisplayOptions &options)
@@ -370,33 +387,6 @@ QColor panelAccent(int panel)
     if (panel == 0) return t.accentPurple;
     if (panel == 1) return t.accentOrange;
     return t.accentTeal;
-}
-
-// ---- v0.9 i18n helpers ---------------------------------------------------
-// Game display name (WORLD/RISE). One resolver so the auto-detect badge,
-// the GAME column and the switching status line can never drift apart.
-// Falls back to the ASCII name when the key is missing (StringTable::tr()
-// returns the key itself for unknown keys).
-QString gameName(mhw::GameId id)
-{
-    const bool rise = (id == mhw::GameId::Rise);
-    const QString key = rise ? QStringLiteral("console.game.rise")
-                             : QStringLiteral("console.game.world");
-    const QString val = mhw::StringTable::instance().tr(key);
-    if (val != key)
-        return val;
-    return rise ? QStringLiteral("RISE") : QStringLiteral("WORLD");
-}
-
-// Section-switch display label for (panel, bit index) — delegates to the
-// now-dynamic panel_sections.h table (console.section.*).
-QString sectionLabel(int panel, int index)
-{
-    if (panel == 0) return mhw::PlayerSection::displayName(index);
-    if (panel == 1) return mhw::MonsterSection::displayName(index);
-    if (panel == 2) return mhw::DamageSection::displayName(index);
-    if (panel == 3) return mhw::PetDamageSection::displayName(index);
-    return {};
 }
 
 } // namespace
