@@ -55,6 +55,7 @@ add_library(monster-core STATIC
     src/rise/rise_damage_roster.cpp
     src/world/world_types.h
     src/world/world_types.cpp
+    src/monster/part_schemas.cpp
 )
 target_include_directories(monster-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(monster-core PUBLIC Qt6::Core Threads::Threads)
@@ -202,8 +203,6 @@ endif()
 
 add_executable(monster-overlay
     src/main.cpp
-    src/monster/part_schemas.cpp
-    src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -231,8 +230,6 @@ target_compile_options(monster-overlay PRIVATE -Wall -Wextra -Wpedantic)
 # desktop — see ~/.hermes/memory KDE/overlay testing note).
 add_executable(snap-player-demo
     tests/snap_player_demo.cpp
-    src/monster/part_schemas.cpp
-    src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -248,8 +245,6 @@ target_compile_options(snap-player-demo PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(snap-all-demo
     tests/snap_all_demo.cpp
-    src/monster/part_schemas.cpp
-    src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -270,8 +265,6 @@ target_compile_options(snap-all-demo PRIVATE -Wall -Wextra -Wpedantic)
 # `cmake --build .`, never registered as a CTest.
 add_executable(snap-world-mp EXCLUDE_FROM_ALL
     tests/snap_world_mp.cpp
-    src/monster/part_schemas.cpp
-    src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -292,8 +285,6 @@ target_compile_options(snap-world-mp PRIVATE -Wall -Wextra -Wpedantic)
 # `cmake --build .`, not registered as a CTest.
 add_executable(snap-gauge-fill EXCLUDE_FROM_ALL
     tests/snap_gauge_fill.cpp
-    src/monster/part_schemas.cpp
-    src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -313,9 +304,6 @@ target_compile_options(snap-gauge-fill PRIVATE -Wall -Wextra -Wpedantic)
 # listed here (and the qpa/screen_query private include lives on mhw-ui).
 add_executable(monster-control
     src/main_control.cpp
-    src/monster/part_schemas.cpp
-    src/core/string_table.cpp
-    src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -341,9 +329,6 @@ target_compile_options(monster-control PRIVATE -Wall -Wextra -Wpedantic)
 # then re-opens and verifies the load applied the same state.
 add_executable(monster-control-l2-smoke
     tests/control_l2_smoke.cpp
-    src/monster/part_schemas.cpp
-    src/core/string_table.cpp
-    src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -365,9 +350,6 @@ target_compile_options(monster-control-l2-smoke PRIVATE -Wall -Wextra -Wpedantic
 # Steam tree; config writes go to a redirected XDG_CONFIG_HOME.
 add_executable(monster-control-rise-rf-smoke
     tests/control_reframework_smoke.cpp
-    src/monster/part_schemas.cpp
-    src/core/string_table.cpp
-    src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -388,9 +370,6 @@ target_compile_options(monster-control-rise-rf-smoke PRIVATE -Wall -Wextra -Wped
 # its own test source plus the non-UI helpers.
 add_executable(monster-control-p0-test
     tests/control_panel_p0_test.cpp
-    src/monster/part_schemas.cpp
-    src/core/string_table.cpp
-    src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -415,8 +394,6 @@ if(BUILD_TESTING)
 # refactors had nothing to fail on.
 add_executable(snapshot-regression-tests
     tests/snapshot_regression_tests.cpp
-    src/monster/part_schemas.cpp
-    src/world/world_types.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -463,8 +440,6 @@ add_executable(world-severable-scan-tests
     # builds without pulling it into the default build.
     add_executable(snap-empty-state EXCLUDE_FROM_ALL
         tests/snap_empty_state.cpp
-        src/monster/part_schemas.cpp
-        src/world/world_types.cpp
         src/resources/resources.qrc
         assets/icons.qrc
     )
@@ -484,8 +459,6 @@ add_executable(world-severable-scan-tests
     # is a visual aid and needs a QPA platform.
     add_executable(snap-player-offline EXCLUDE_FROM_ALL
         tests/snap_player_offline.cpp
-        src/monster/part_schemas.cpp
-        src/world/world_types.cpp
         src/resources/resources.qrc
         assets/icons.qrc
     )
@@ -501,7 +474,6 @@ add_executable(world-severable-scan-tests
 
     add_executable(monster-reader-tests
         tests/reader_tests.cpp
-        src/monster/part_schemas.cpp
         # qrc: the tests flip StringTable between zh-CN / en-US to assert
         # both columns of the data-name tables.
         src/resources/resources.qrc
@@ -513,7 +485,6 @@ add_executable(world-severable-scan-tests
 
     add_executable(monster-probe
         tests/monster_probe.cpp
-        src/monster/part_schemas.cpp
     )
     target_link_libraries(monster-probe PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -521,7 +492,6 @@ add_executable(world-severable-scan-tests
 
     add_executable(monster-scan
         tests/monster_scan.cpp
-        src/monster/part_schemas.cpp
     )
     target_link_libraries(monster-scan PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-scan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -529,7 +499,6 @@ add_executable(world-severable-scan-tests
 
     add_executable(monster-probe-parts
         tests/monster_probe_parts.cpp
-        src/monster/part_schemas.cpp
     )
     target_link_libraries(monster-probe-parts PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe-parts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -537,7 +506,6 @@ add_executable(world-severable-scan-tests
 
     add_executable(monster-probe-ailments
         tests/monster_probe_ailments.cpp
-        src/monster/part_schemas.cpp
     )
     target_link_libraries(monster-probe-ailments PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe-ailments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -545,7 +513,6 @@ add_executable(world-severable-scan-tests
 
     add_executable(monster-probe-ailments-watch
         tests/monster_probe_ailments_watch.cpp
-        src/monster/part_schemas.cpp
     )
     target_link_libraries(monster-probe-ailments-watch PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe-ailments-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -553,7 +520,6 @@ add_executable(world-severable-scan-tests
 
     add_executable(monster-probe-mantles
         tests/monster_probe_mantles.cpp
-        src/monster/part_schemas.cpp
     )
     target_link_libraries(monster-probe-mantles PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe-mantles PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -561,7 +527,6 @@ add_executable(world-severable-scan-tests
 
     add_executable(monster-probe-mantles-wide
         tests/monster_probe_mantles_wide.cpp
-        src/monster/part_schemas.cpp
     )
     target_link_libraries(monster-probe-mantles-wide PRIVATE Qt6::Core monster-core mhw-reader)
     target_include_directories(monster-probe-mantles-wide PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -585,6 +550,11 @@ add_executable(world-severable-scan-tests
 
     # Unit tests for Rise/World monster metadata isolation. These use only
     # static tables generated from HunterPie XML and never touch live game memory.
+    # Does NOT link monster-core: this test asserts the pure static metadata
+    # tables in monster_types.h that part_schemas.cpp defines (crowns, capture
+    # thresholds, not-capturable ids), so that translation unit stays listed.
+    # Adding monster-core here would drag in the whole reader/UI chain for a
+    # pure-table check and create a duplicate-symbol fight with the TU above.
     add_executable(rise-monster-metadata-tests
         tests/rise_monster_metadata_tests.cpp
         src/monster/part_schemas.cpp
@@ -600,7 +570,6 @@ add_executable(world-severable-scan-tests
     # tables/inline helpers — never touches a live game process.
     add_executable(rise-monster-name-tests
         tests/rise_monster_name_tests.cpp
-        src/monster/part_schemas.cpp
         src/resources/resources.qrc
     )
     target_link_libraries(rise-monster-name-tests PRIVATE Qt6::Core monster-core)
@@ -620,7 +589,6 @@ add_executable(world-severable-scan-tests
     # Unit tests for the core string table — independent of MHW.
     add_executable(monster-core-tests
         tests/string_table_tests.cpp
-        src/core/string_table.cpp
         src/core/string_table.h
     )
     target_link_libraries(monster-core-tests PRIVATE Qt6::Core monster-core)
@@ -671,6 +639,10 @@ add_executable(world-severable-scan-tests
     # change-detection state machine (locale_sync.h) and the per-locale
     # multi-file StringTable loader. Compiles the real qrc so the shipped
     # locale files (zh-CN/ en-US/ directories) are exercised as packaged.
+    # Does NOT link monster-core: it exercises the StringTable loader
+    # (instance/load/tr) that string_table.cpp defines. Linking monster-core
+    # would pull the entire reader chain into what is a header-only-plus-loader
+    # i18n plumbing test.
     add_executable(monster-locale-tests
         tests/locale_sync_tests.cpp
         src/core/string_table.cpp
@@ -747,13 +719,6 @@ add_executable(world-severable-scan-tests
 
     add_executable(damage-view-model-tests
         tests/damage_view_model_tests.cpp
-        # The ViewModel lives in the mhw-ui sink, so linking the library
-        # drags in the whole GUI layer. These two translation units supply
-        # the data tables / zone names that layer references (the same pair
-        # snapshot-regression-tests lists for the same reason); they are not
-        # src/ui sources, so nothing is compiled twice.
-        src/monster/part_schemas.cpp
-        src/world/world_types.cpp
     )
     target_link_libraries(damage-view-model-tests PRIVATE Qt6::Core mhw-ui)
     target_include_directories(damage-view-model-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -769,8 +734,6 @@ add_executable(world-severable-scan-tests
     # exercised as packaged and the assertions see translated text.
     add_executable(rise-reframework-status-tests
         tests/rise_reframework_status_tests.cpp
-        src/monster/part_schemas.cpp
-        src/world/world_types.cpp
         src/resources/resources.qrc
     )
     target_link_libraries(rise-reframework-status-tests PRIVATE Qt6::Core mhw-ui)
@@ -889,7 +852,6 @@ endif()
 # overlay's. Default target on purpose: the packaging step must find it built.
 add_executable(monster-doctor
     tests/monster_doctor.cpp
-    src/monster/part_schemas.cpp
 )
 target_link_libraries(monster-doctor PRIVATE Qt6::Core monster-core mhw-reader)
 target_include_directories(monster-doctor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -900,7 +862,6 @@ target_compile_definitions(monster-doctor PRIVATE
 
 add_executable(rise-probe EXCLUDE_FROM_ALL
     tests/rise_probe.cpp
-    src/monster/part_schemas.cpp
 )
 target_link_libraries(rise-probe PRIVATE Qt6::Core monster-core mhw-reader)
 target_include_directories(rise-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
