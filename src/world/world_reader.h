@@ -92,9 +92,6 @@ private:
     QString exeName_;
     QString mapError_;
     std::uintptr_t imageBase_ = 0;
-    std::uintptr_t monsterTableBase_ = 0;
-    std::size_t monsterTableCount_ = 0;
-    std::vector<HpCluster> hpClusters_;
     struct CachedMonster { MonsterSnapshot snapshot; float maxHP; };
     std::unordered_map<std::uintptr_t, CachedMonster> monsterCache_;
     std::vector<std::uintptr_t> cachedArray_;
