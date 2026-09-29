@@ -93,6 +93,15 @@ add_library(mhw-reader STATIC
     src/world/world_reader.h
     src/world/world_reader.cpp
     src/world/monster_reader.cpp
+    # World monster display names: the two id-key tables plus the one lookup
+    # that reads them, moved out of monster_reader.cpp's monsterDisplayName()
+    # so the reader TU carries reader logic only. It is the DATA+logic pair the
+    # Rise equivalent splits across src/rise/data/mhr_monster_names_data.cpp +
+    # src/rise/mhr_monster_names.cpp; see the header comment in the file for why
+    # one TU is the honest alignment here (no generator to protect). It needs
+    # only monster-core (StringTable), so it belongs in this library and not in
+    # monster-core: world data stays out of the core → world-free direction.
+    src/world/monster_names.cpp
     src/world/quest_reader.cpp
     src/world/player_reader.cpp
     src/world/world_severable_scan.h
