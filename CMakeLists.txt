@@ -1070,3 +1070,31 @@ foreach(gate IN LISTS MHW_I18N_GATES)
                 ${gate} -q
     )
 endforeach()
+
+# ---------------------------------------------------------------------------
+# Zero-reference TU gate.
+#
+# S3 measured, with `nm` symbol reachability out of the built object files,
+# how many src translation units no ctest target's code ever touches -- the
+# number the CMake text and the binary symbol table both hide. This gate re-runs
+# that measurement, so the next TU carved out of a fat file cannot be added
+# without anybody deciding (in `owner` or in the exemption table) who tests it.
+#
+# It is a SNAPSHOT gate: it compares the measured src TU set against the
+# recorded one, so it needs no build. What it does *not* do is decide whether a
+# ZERO TU is acceptable -- that stays a human call, which is why the exemption
+# table lives in tests/ and every entry carries the reason next to it.
+# ---------------------------------------------------------------------------
+# Tests a committed snapshot of the src translation-unit census. The census is
+# refreshed with `python3 scripts/zero_reference_gate.py --update-snapshot`
+# (or `--report` to see the live numbers without touching anything).
+# Registering only the snapshot comparison, never the census, is deliberate:
+# a fresh checkout has no build/ for the census to read object files from.
+add_test(NAME zero-reference-gate
+    COMMAND ${PYTHON3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/zero_reference_gate.py
+            --repo ${CMAKE_CURRENT_SOURCE_DIR}
+            --snapshot ${CMAKE_CURRENT_SOURCE_DIR}/tests/tu_census.json
+            --quiet
+)
+

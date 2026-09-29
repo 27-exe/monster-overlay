@@ -1,0 +1,503 @@
+{
+  "_comment": "Census of src translation units, refreshed by `python3 scripts/zero_reference_gate.py --update-snapshot`. The ctest gate (zero-reference-gate) compares the src/*.cpp set on disk against the keys here, so a new TU fails the build until it appears in this file \u2014 with a class and either an owner test target or an EXEMPT entry in the script. `class` is DIRECT when some test target compiles the TU itself, INDIRECT when a test target needs one of its symbols, ZERO when nothing does, UNKNOWN when it has no external symbol to measure.",
+  "method": "nm --extern-only undefined/defined, per object file, pre-link",
+  "tus": {
+    "src/core/game_detector.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control-rise-rf-smoke"
+      ],
+      "symbols": 6
+    },
+    "src/core/game_profile.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "game-profile-tests"
+      ],
+      "symbols": 4
+    },
+    "src/core/map_paths.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "map-path-tests",
+        "monster-doctor",
+        "monster-reader-tests"
+      ],
+      "symbols": 15
+    },
+    "src/core/process_memory.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "mhr-reader-direct-tests",
+        "monster-doctor",
+        "monster-probe",
+        "monster-probe-ailments",
+        "monster-probe-ailments-watch",
+        "monster-probe-mantles",
+        "monster-probe-mantles-wide",
+        "monster-probe-parts",
+        "monster-reader-tests",
+        "monster-scan"
+      ],
+      "symbols": 25
+    },
+    "src/core/steam_game_locator.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control-rise-rf-smoke",
+        "steam-game-locator-tests"
+      ],
+      "symbols": 13
+    },
+    "src/core/string_table.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "monster-locale-tests"
+      ],
+      "refs": [
+        "console-text-helpers-tests",
+        "monster-control",
+        "monster-control-l2-smoke",
+        "monster-control-rise-rf-smoke",
+        "monster-core-tests",
+        "monster-locale-tests",
+        "monster-reader-tests",
+        "monster-view-model-tests",
+        "reframework-fetcher-tests",
+        "rise-abnormality-tests",
+        "rise-monster-name-tests",
+        "rise-part-names-hp-tests",
+        "rise-reframework-manager-tests",
+        "rise-reframework-status-tests",
+        "rise-zone-mapping-tests",
+        "snapshot-regression-tests"
+      ],
+      "symbols": 17
+    },
+    "src/main.cpp": {
+      "class": "ZERO",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 73
+    },
+    "src/main_control.cpp": {
+      "class": "ZERO",
+      "compiled_by": [
+        "monster-control"
+      ],
+      "refs": [],
+      "symbols": 19
+    },
+    "src/monster/data/part_schemas_data.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "rise-monster-metadata-tests"
+      ],
+      "refs": [
+        "monster-probe-parts",
+        "monster-reader-tests",
+        "rise-monster-metadata-tests",
+        "rise-monster-name-tests"
+      ],
+      "symbols": 42
+    },
+    "src/monster/target_selector.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-reader-tests"
+      ],
+      "symbols": 1
+    },
+    "src/rise/data/mhr_monster_names_data.cpp": {
+      "class": "ZERO",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 1
+    },
+    "src/rise/data/mhr_part_names_data.cpp": {
+      "class": "ZERO",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 1
+    },
+    "src/rise/mhr_abnormalities.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "rise-abnormality-tests",
+        "rise-monster-name-tests",
+        "snapshot-regression-tests"
+      ],
+      "symbols": 10
+    },
+    "src/rise/mhr_monster_names.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "rise-monster-name-tests"
+      ],
+      "symbols": 5
+    },
+    "src/rise/mhr_part_names.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-view-model-tests",
+        "rise-part-names-hp-tests"
+      ],
+      "symbols": 8
+    },
+    "src/rise/mhr_reader.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "mhr-reader-direct-tests",
+        "monster-doctor",
+        "monster-reader-tests"
+      ],
+      "symbols": 100
+    },
+    "src/rise/mhr_reader_quest.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "mhr-reader-direct-tests"
+      ],
+      "symbols": 4
+    },
+    "src/rise/mhr_reader_sharpness.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "mhr-reader-direct-tests"
+      ],
+      "symbols": 6
+    },
+    "src/rise/part_schemas.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "rise-monster-metadata-tests"
+      ],
+      "refs": [
+        "rise-monster-metadata-tests",
+        "rise-monster-name-tests"
+      ],
+      "symbols": 27
+    },
+    "src/rise/reframework/reframework_config.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "rise-reframework-manager-tests"
+      ],
+      "symbols": 22
+    },
+    "src/rise/reframework/reframework_fetcher.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "reframework-fetcher-tests"
+      ],
+      "symbols": 73
+    },
+    "src/rise/reframework/rise_reframework_manager.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control-rise-rf-smoke",
+        "rise-reframework-manager-tests"
+      ],
+      "symbols": 51
+    },
+    "src/rise/rise_damage_reader.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "rise-damage-reader-tests"
+      ],
+      "symbols": 24
+    },
+    "src/rise/rise_damage_roster.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "rise-damage-roster-tests"
+      ],
+      "symbols": 12
+    },
+    "src/ui/control_panel.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control",
+        "monster-control-l2-smoke",
+        "monster-control-rise-rf-smoke"
+      ],
+      "symbols": 105
+    },
+    "src/ui/control_panel_styles.cpp": {
+      "class": "ZERO",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 4
+    },
+    "src/ui/formatters.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "console-text-helpers-tests"
+      ],
+      "refs": [
+        "console-text-helpers-tests"
+      ],
+      "symbols": 6
+    },
+    "src/ui/hud_canvas.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control-p0-test",
+        "monster-control-rise-rf-smoke"
+      ],
+      "symbols": 43
+    },
+    "src/ui/icon.cpp": {
+      "class": "ZERO",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 29
+    },
+    "src/ui/panel.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control-p0-test",
+        "snapshot-regression-tests"
+      ],
+      "symbols": 42
+    },
+    "src/ui/panel_damage.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control-p0-test",
+        "snapshot-regression-tests"
+      ],
+      "symbols": 31
+    },
+    "src/ui/panel_monster.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control-p0-test",
+        "snapshot-regression-tests"
+      ],
+      "symbols": 35
+    },
+    "src/ui/panel_pet_damage.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "pet-damage-panel-tests"
+      ],
+      "refs": [
+        "pet-damage-panel-tests"
+      ],
+      "symbols": 22
+    },
+    "src/ui/panel_player.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control-p0-test",
+        "snapshot-regression-tests"
+      ],
+      "symbols": 37
+    },
+    "src/ui/panel_player_sharpness.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "player-sharpness-tests"
+      ],
+      "refs": [
+        "player-sharpness-tests"
+      ],
+      "symbols": 5
+    },
+    "src/ui/panel_source.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control-p0-test"
+      ],
+      "symbols": 16
+    },
+    "src/ui/rise_reframework_bridge.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control"
+      ],
+      "symbols": 33
+    },
+    "src/ui/rise_reframework_card.cpp": {
+      "class": "ZERO",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 16
+    },
+    "src/ui/screen_query.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control"
+      ],
+      "symbols": 27
+    },
+    "src/ui/section_count_bar.cpp": {
+      "class": "ZERO",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 6
+    },
+    "src/ui/section_row.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control-l2-smoke"
+      ],
+      "symbols": 13
+    },
+    "src/ui/toggle_chip.cpp": {
+      "class": "ZERO",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 9
+    },
+    "src/ui/ui_theme.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-control"
+      ],
+      "symbols": 8
+    },
+    "src/ui/viewmodel/console_layout_store.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "console-layout-store-tests"
+      ],
+      "refs": [
+        "console-layout-store-tests"
+      ],
+      "symbols": 14
+    },
+    "src/ui/viewmodel/console_text_helpers.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "console-text-helpers-tests"
+      ],
+      "refs": [
+        "console-text-helpers-tests"
+      ],
+      "symbols": 6
+    },
+    "src/ui/viewmodel/damage_view_model.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "damage-view-model-tests"
+      ],
+      "symbols": 50
+    },
+    "src/ui/viewmodel/monster_view_model.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "monster-view-model-tests"
+      ],
+      "refs": [
+        "monster-view-model-tests"
+      ],
+      "symbols": 13
+    },
+    "src/ui/viewmodel/overlay_process_controller.cpp": {
+      "class": "ZERO",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 19
+    },
+    "src/ui/viewmodel/player_view_model.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "player-view-model-tests"
+      ],
+      "refs": [
+        "player-view-model-tests"
+      ],
+      "symbols": 1
+    },
+    "src/ui/viewmodel/rise_reframework_status.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "rise-reframework-status-tests"
+      ],
+      "symbols": 8
+    },
+    "src/world/monster_names.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-reader-tests"
+      ],
+      "symbols": 12
+    },
+    "src/world/monster_reader.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-reader-tests"
+      ],
+      "symbols": 48
+    },
+    "src/world/player_reader.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-reader-tests",
+        "snapshot-regression-tests"
+      ],
+      "symbols": 34
+    },
+    "src/world/quest_reader.cpp": {
+      "class": "ZERO",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 4
+    },
+    "src/world/world_reader.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "mhr-reader-direct-tests",
+        "monster-doctor",
+        "monster-probe-ailments-watch",
+        "monster-reader-tests"
+      ],
+      "symbols": 39
+    },
+    "src/world/world_types.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-reader-tests",
+        "rise-zone-mapping-tests"
+      ],
+      "symbols": 9
+    }
+  }
+}
