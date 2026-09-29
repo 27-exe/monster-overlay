@@ -996,6 +996,49 @@ add_executable(world-severable-scan-tests
         -Wall -Wextra -Wpedantic -fno-access-control
     )
     add_test(NAME mhr-reader-direct-tests COMMAND mhr-reader-direct-tests)
+    # Direct tests for MhwReader's three zero-coverage World monster readers
+    # (readMonsterAilments / applyTenderizesToParts / readMonsters). Same
+    # mechanism as the Rise suite above — a fake image mapped over the reader's
+    # own AddressMap plus -fno-access-control on the TEST TU only — so the
+    # World monster path finally has the CI coverage the Rise side already had.
+    #
+    # AddressMap is implemented in src/world/world_reader.cpp, which lives in
+    # mhw-reader (monster-core must not depend on the World-only library), so
+    # this target links mhw-reader for that plus the monster reader bodies.
+    #
+    # The 0x10000 scratch stride and the StringTable locale save/restore are
+    # World-specific: the Monster struct spans ~0x1C500, and the reader picks
+    # its name columns from the active locale, so the test has to put it back.
+    #
+    # World's readParty is deliberately NOT exercised here: it fills a 4-slot
+    # roster by name and never tags a member's PartyMemberKind (v0.10.8 moved
+    # isMultiplayer to the session structure), so there is no business rule on
+    # the roster to assert.
+    #
+    # src/world/monster_reader.cpp is listed EXPLICITLY, not pulled in through
+    # the mhw-reader library, so `-fno-access-control` also relaxes it — the
+    # test calls MhwReader::readMonsters / readMonsterAilments /
+    # applyTenderizesToParts, which are private members of that translation
+    # unit. That is the same difference between "compiled by a test target" and
+    # "only referenced by one" the census records (see monster-locale-tests /
+    # rise-monster-metadata-tests above, which list their TUs for the same
+    # reason). The library still carries its own normally-compiled copy for the
+    # real overlay binary; the object this target builds is the one it links.
+    add_executable(mhw-reader-direct-tests
+        tests/mhrw_reader_direct_tests.cpp
+        src/world/monster_reader.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(mhw-reader-direct-tests PRIVATE
+        Qt6::Core monster-core mhw-reader)
+    target_include_directories(mhw-reader-direct-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(mhw-reader-direct-tests PRIVATE
+        MONSTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_compile_options(mhw-reader-direct-tests PRIVATE
+        -Wall -Wextra -Wpedantic -fno-access-control
+    )
+    add_test(NAME mhw-reader-direct-tests COMMAND mhw-reader-direct-tests)
 
     # v0.8.4-r18 player-abnormalities: generated Rise consumable/debuff schema
     # table + the pure evaluation core (flag gates, WithValue sub-ids, the
