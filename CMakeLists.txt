@@ -58,6 +58,12 @@ add_library(monster-core STATIC
     # contract, so it lives under src/rise/ rather than src/core/.
     src/rise/reframework/rise_reframework_manager.h
     src/rise/reframework/rise_reframework_manager.cpp
+    # The REFramework user-config (re2_fw_config.txt) overlay — the INI
+    # rewriter, its candidate-path resolution and the menu-state query/apply.
+    # Its 5 entry points are Rise-adjacent but REFramework-config specific and
+    # carry no dependency on the installer class, so they are their own TU.
+    src/rise/reframework/reframework_config.h
+    src/rise/reframework/reframework_config.cpp
     src/rise/reframework/reframework_fetcher.h
     src/rise/reframework/reframework_fetcher.cpp
     src/rise/part_schemas.cpp

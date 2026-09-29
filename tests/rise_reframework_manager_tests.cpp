@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+#include "rise/reframework/reframework_config.h"
 #include "rise/reframework/rise_reframework_manager.h"
 
 #include "core/string_table.h"
