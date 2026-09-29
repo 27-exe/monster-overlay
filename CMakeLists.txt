@@ -40,6 +40,7 @@ add_library(monster-core STATIC
     src/rise/mhr_types.h
     src/rise/mhr_reader.h
     src/rise/mhr_reader.cpp
+    src/rise/mhr_reader_sharpness.cpp
     src/rise/mhr_part_names.h
     src/rise/mhr_part_names.cpp
     src/rise/data/mhr_part_names_data.cpp

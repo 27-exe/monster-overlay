@@ -48,15 +48,6 @@ inline int computeZoneId(const MHRStageStructure &stage)
     }
 }
 
-// v0.8.4-r7 restore-reader: per-weapon sharpness struct layout
-// (HunterPie MHRSharpnessStructure: int Level, int Hits, int MaxHits).
-// Defined locally because no other translation unit needs it.
-struct MHRSharpnessStructure {
-    std::int32_t level;
-    std::int32_t hits;
-    std::int32_t maxHits;
-};
-static_assert(sizeof(MHRSharpnessStructure) == 12);
 } // namespace
 
 // v0.8 alignment: translate the Rise memory WeaponType byte (int at
@@ -1426,104 +1417,5 @@ GameSnapshot MhrReader::poll()
     return snapshot;
 }
 
-// ===================================================================
-// readSharpness — HunterPie MHRMeleeWeapon.GetWeaponSharpness
-//
-// Reads the local player's weapon sharpness. Returns a zero-initialised
-// snapshot (i.e. valid=false) when:
-//   - the equipped weapon is ranged (Bow / HBG / LBG), which have no
-//     sharpness bar in Rise
-//   - the memory read fails (game not running, address not mapped)
-//   - the in-game level field is Broken (-1) or Invalid (>6)
-//
-// Mem path (all pre-resolved in data/MonsterHunterRise.16.0.2.0.map):
-//   SHARPNESS_ADDRESS + SHARPNESS_OFFSETS
-//     MHRSharpnessStructure { int Level, int Hits, int MaxHits }
-//   SHARPNESS_ADDRESS + SHARPNESS_ARRAY_OFFSETS
-//     int[] thresholds        (7 per-level upper bounds, summed into
-//                              cumulative thresholds per HunterPie's
-//                              CalculateThresholds)
-//
-// The threshold array is cached by the Mono int[] object address. Two
-// weapons of the same type can have distinct arrays, so weaponId alone
-// is not a valid cache key.
-// ===================================================================
-SharpnessSnapshot MhrReader::readSharpness(int weaponId, QString *error)
-{
-    SharpnessSnapshot result;
-
-    // HunterPie only runs MHRMeleeWeapon.GetWeaponSharpness() for a known
-    // melee weapon.  Do this before any sharpness read so Weapon.None (-1)
-    // cannot render data retained at SHARPNESS_ADDRESS.
-    if (!isRiseMeleeWeaponId(weaponId))
-        return result;
-
-    // 1. Read the live sharpness state. Same as HunterPie: only a valid
-    //    in-range level can produce a visible gauge.
-    const std::uintptr_t sharpPtr = followPointerChain(
-        memory_,
-        absolute(QStringLiteral("SHARPNESS_ADDRESS")),
-        map_.offsets(QStringLiteral("SHARPNESS_OFFSETS")),
-        error);
-    if (!sharpPtr) {
-        cachedSharpnessThresholdsValid_ = false;
-        cachedSharpnessArrayPtr_ = 0;
-        return result;
-    }
-
-    const auto sharp = memory_.read<MHRSharpnessStructure>(sharpPtr);
-    if (!sharp || sharp->level < 0 || sharp->level > 6)
-        return result;
-    result.level = sharp->level;
-    result.currentHits = sharp->hits;
-    result.maxHits = sharp->maxHits;
-
-    // 3. The resolved address is the Mono int[] object header. Its length
-    //    is at +0x1C and elements begin at +0x20 (MHRiseUtils.ReadArrayAsync).
-    const std::uintptr_t arrayPtr = followPointerChain(
-        memory_,
-        absolute(QStringLiteral("SHARPNESS_ADDRESS")),
-        map_.offsets(QStringLiteral("SHARPNESS_ARRAY_OFFSETS")),
-        nullptr);
-    if (!isSanePointer(arrayPtr)) {
-        cachedSharpnessThresholdsValid_ = false;
-        cachedSharpnessArrayPtr_ = 0;
-        return result;
-    }
-
-    if (riseSharpnessCacheNeedsRefresh(cachedSharpnessArrayPtr_,
-                                       cachedSharpnessThresholdsValid_, arrayPtr)) {
-        const auto length = memory_.read<std::int32_t>(arrayPtr + 0x1CULL);
-        if (!length || *length < 1 || *length > 7) {
-            cachedSharpnessThresholdsValid_ = false;
-            cachedSharpnessArrayPtr_ = 0;
-            return result;
-        }
-
-        const auto raw = memory_.readArray<std::int32_t>(
-            arrayPtr + 0x20ULL, static_cast<std::size_t>(*length));
-        std::array<int, 7> thresholds{};
-        if (raw.size() != static_cast<std::size_t>(*length)
-            || !riseBuildSharpnessThresholds(raw, &thresholds)) {
-            cachedSharpnessThresholdsValid_ = false;
-            cachedSharpnessArrayPtr_ = 0;
-            return result;
-        }
-
-        cachedSharpnessThresholds_ = thresholds;
-        cachedSharpnessArrayPtr_ = arrayPtr;
-        cachedSharpnessThresholdsValid_ = true;
-    }
-
-    for (int i = 0; i < 7; ++i)
-        result.thresholds[i] = cachedSharpnessThresholds_[static_cast<std::size_t>(i)];
-
-    // threshold = end of previous-level segment (or 0 at Red).
-    result.threshold = (result.level <= 0)
-        ? 0
-        : result.thresholds[result.level - 1];
-    result.valid = true;
-    return result;
-}
 
 } // namespace mhw
