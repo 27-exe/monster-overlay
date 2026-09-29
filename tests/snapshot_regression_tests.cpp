@@ -385,6 +385,90 @@ int main(int argc, char *argv[])
             failures += compareImage(baselinePath("player_update_rise"), r.img, writeBaseline);
     }
 
+    // PlayerPanel's no-data / offline placeholder — the branch of
+    // paintPanel() every baseline above skips, because each of them
+    // paints a panel that HAS data. What a user actually stares at when
+    // the game is not running, when the reader is denied memory, or when
+    // not a single field has resolved yet is this block (see
+    // src/ui/panel_player.cpp:712-749), and until now it was the one
+    // code path in the panel with no assertion behind it.
+    //
+    // It has three visible outcomes: a red "未连接" label vs an amber
+    // "无数据" label, one grey elided reader-status row, and a shorter
+    // panel when there is no status row at all (rows = 1 vs 2, so
+    // setContentSize publishes a different height).
+    //
+    // update(const GameSnapshot&) is the only public entry that writes
+    // attached_ / hasData_ / status_, so every case below goes through
+    // it: no private access, no new seam. markDemoPrimed() suppresses the
+    // setupDemoData() that renderPanel's setEditMode(true) would
+    // otherwise run on the first paint — that seed sets attached_=true,
+    // player_.valid=true and its own demo status, and would quietly
+    // turn all three cases into player_world.
+    {
+        std::printf("player panel no-data placeholder:\n");
+
+        // Real reader strings, not literals: the status row is elided to
+        // the panel width, so the baseline only stays meaningful if the
+        // text the reader actually publishes is the text being rendered.
+        const QString waiting =
+            mhw::StringTable::instance().tr(QStringLiteral("reader.waiting_exe"))
+                .arg(QStringLiteral("MonsterHunterWorld.exe"));
+        const QString denied =
+            mhw::StringTable::instance().tr(QStringLiteral("reader.ptrace_denied"))
+                .arg(12345)
+                .arg(QStringLiteral("process_vm_readv PID 12345 @ 0x140000000: "
+                                    "Operation not permitted (1)"));
+
+        // 1. Offline with a reader status row: no game process yet, so
+        //    the reader is still polling for the exe. Red "未连接" label
+        //    plus one grey status line = the taller placeholder (rows=2).
+        {
+            PlayerPanel panel;
+            panel.markDemoPrimed();
+            mhw::GameSnapshot snap;
+            snap.attached = false;   // never saw a process -> offline
+            snap.status   = waiting;
+            panel.update(snap);
+            if (Render r = renderPanel(panel); r.ok)
+                failures += compareImage(baselinePath("player_offline"), r.img, writeBaseline);
+        }
+
+        // 2. Attached, nothing resolved, and the read was denied: amber
+        //    "无数据" label plus the reader's long status line, elided to
+        //    the row width. This is the ptrace_scope=1 / CachyOS report
+        //    shape — the case that made the original gap unreadable,
+        //    because a denied read and a missing game process looked
+        //    identical. Also the only one of the three that pins the
+        //    elision (the string is far wider than the 356px row).
+        {
+            PlayerPanel panel;
+            panel.markDemoPrimed();
+            mhw::GameSnapshot snap;
+            snap.attached = true;    // found the process
+            snap.pid      = 12345;
+            snap.status   = denied;
+            // player.valid stays false: no field resolved.
+            panel.update(snap);
+            if (Render r = renderPanel(panel); r.ok)
+                failures += compareImage(baselinePath("player_no_data"), r.img, writeBaseline);
+        }
+
+        // 3. Offline with no status row at all: the reader has nothing
+        //    to say yet, so `rows` collapses to 1 and the panel is 14px
+        //    (one kQrowH) shorter than the two cases above. Pins the
+        //    shorter setContentSize — a height regression here would
+        //    change every consumer that asks the panel how tall it is.
+        {
+            PlayerPanel panel;
+            panel.markDemoPrimed();
+            mhw::GameSnapshot snap;   // attached=false, status empty, player invalid
+            panel.update(snap);
+            if (Render r = renderPanel(panel); r.ok)
+                failures += compareImage(baselinePath("player_offline_bare"), r.img, writeBaseline);
+        }
+    }
+
     {
         std::printf("all-demo panels:\n");
         MonsterPanel monster;
