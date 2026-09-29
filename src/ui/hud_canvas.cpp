@@ -32,6 +32,15 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 
 namespace {
 
+// PRODUCT DECISION (v0.11, owner: user): the overlay's panel colours are
+// FIXED and deliberately do NOT follow the theme. A HUD floating on top of
+// the game must look the same in every theme, so uiTheme() — which drives
+// the control console's own chrome (surfaces, QSS, chips) — must never be
+// read here. These are the exact values Panel::accentColor() paints with,
+// which is what keeps this preview pixel-faithful to the live overlay.
+// Do NOT "simplify" these constants into uiTheme() lookups: that would
+// change the overlay's rendered colours, and this is a product decision,
+// not a bug.
 const QColor kPlayerAccent(167, 79, 255);
 const QColor kMonsterAccent(255, 112, 67);
 const QColor kDamageAccent(64, 169, 255);
