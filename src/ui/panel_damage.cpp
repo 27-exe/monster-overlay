@@ -3,7 +3,6 @@
 #include "core/string_table.h"
 #include "player/player_types.h"
 #include "quest/quest_types.h"
-#include "world/world_types.h"
 #include "ui/formatters.h"
 #include "ui/icon.h"
 #include "ui/panel_sections.h"

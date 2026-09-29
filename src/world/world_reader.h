@@ -60,7 +60,6 @@ private:
     QString readUtf8(std::uintptr_t address, std::size_t maxLength) const;
     QString joinOffsets() const;
     void refreshPlayerIdentity(PlayerSnapshot &player);
-    void discoverMonsterTable();
     Zone readZone(QString *error);
     QVector<MonsterSnapshot> readMonsters(QString *error);
     void readMonsterAilments(MonsterSnapshot &monster);

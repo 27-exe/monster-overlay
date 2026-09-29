@@ -3,7 +3,6 @@
 #include "panel_player_sharpness.h"
 
 #include "rise/mhr_abnormalities.h"
-#include "rise/mhr_reader.h"
 
 #include "core/string_table.h"
 #include "player/player_types.h"
