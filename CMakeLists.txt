@@ -858,6 +858,37 @@ add_executable(world-severable-scan-tests
     target_compile_options(rise-zone-mapping-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-zone-mapping-tests COMMAND rise-zone-mapping-tests)
 
+    # Direct tests for MhrReader's zero-coverage memory readers (readSharpness,
+    # readQuest - plus the map contracts they rest on). Until now the ONLY
+    # validation tool was rise-probe, which is deliberately EXCLUDE_FROM_ALL
+    # and therefore outside ctest, while these six readSharpness / readQuest /
+    # readPlayer / readParty / readMonsters / poll bodies were measured at 0%
+    # coverage. That is exactly why splitting src/rise/mhr_reader.cpp into a
+    # translation unit per function could not be verified by any gate, so this
+    # suite is the precondition for that split, not a nice-to-have.
+    #
+    # No game process is required. The target compiles with -fno-access-control
+    # so the TEST translation unit can name MhrReader's private members; the
+    # library itself is compiled normally and its ABI is untouched. A 272 MiB
+    # PROT_NONE reservation (RW for the image, PROT_NONE guard page after it)
+    # plays the part of the game's image, driven by the SHIPPED
+    # data/MonsterHunterRise.16.0.2.0.map offsets, so every read goes through
+    # the same process_vm_readv path as production.
+    add_executable(mhr-reader-direct-tests
+        tests/mhr_reader_direct_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(mhr-reader-direct-tests PRIVATE
+        Qt6::Core monster-core mhw-reader)
+    target_include_directories(mhr-reader-direct-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(mhr-reader-direct-tests PRIVATE
+        MONSTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_compile_options(mhr-reader-direct-tests PRIVATE
+        -Wall -Wextra -Wpedantic -fno-access-control
+    )
+    add_test(NAME mhr-reader-direct-tests COMMAND mhr-reader-direct-tests)
+
     # v0.8.4-r18 player-abnormalities: generated Rise consumable/debuff schema
     # table + the pure evaluation core (flag gates, WithValue sub-ids, the
     # raw/60 conversion, MaxTimer inversion). No game process is required.
