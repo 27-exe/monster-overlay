@@ -2,7 +2,6 @@
 
 #include "core/string_table.h"
 #include "monster/monster_types.h"
-#include "rise/mhr_part_names.h"
 #include "ui/formatters.h"
 #include "ui/icon.h"
 #include "ui/panel_sections.h"
