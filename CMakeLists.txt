@@ -843,6 +843,94 @@ add_executable(world-severable-scan-tests
     target_compile_options(player-view-model-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME player-view-model-tests COMMAND player-view-model-tests)
 
+    # MonsterPanel's .pc card builder (mhw::MonsterPartListBuilder) — the
+    # 337-line ViewModel S3-TEST-COVERAGE.md §4 B1 measured at ZERO ctest
+    # coverage: "改了 sanitizePartValue/sanitizeQ10/partDisplayLayers/
+    # MonsterPartListBuilder::build 任何规则，42 个 case 全绿". It used to
+    # live in MonsterPanel's private section, so its whole contract — the
+    # Per-PartType tag/layer dispatch, the HunterPie Row 3 value flip, the
+    # v0.10.8 World-multiplayer gauge suppression, the 2026-09-22 NaN crash
+    # fix and the 15 s PartAutoHide table with its three reader index scales
+    # — was reachable only through a paint.
+    #
+    # Compiles the ViewModel's own two sources directly instead of linking
+    # mhw-ui: the class is QtCore-only (QString / QVector) plus the pure
+    # monster data headers and rise/mhr_part_names.h. The qrc is compiled in
+    # so the localized card fields (部位 N, 斩, 破) are asserted against the
+    # text that actually ships.
+    add_executable(monster-view-model-tests
+        tests/monster_view_model_tests.cpp
+        src/ui/viewmodel/monster_view_model.cpp
+        src/ui/viewmodel/monster_view_model.h
+        src/resources/resources.qrc
+    )
+    target_link_libraries(monster-view-model-tests PRIVATE Qt6::Core monster-core)
+    target_include_directories(monster-view-model-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(monster-view-model-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME monster-view-model-tests COMMAND monster-view-model-tests)
+
+    # The console's three localized text dispatchers
+    # (mhw::consoleText / gameName / sectionLabel) plus the three formatters
+    # (mhw::percentage / groupNumber / sizeMultiplier). Both TU sit on the
+    # 裸奔 list (S3 §6.3) even though they are the CHEAPEST ones to close:
+    # pure functions with no widget and no process.
+    #
+    # console_text_helpers.cpp carries the whole console's i18n entry point,
+    # so the "no fallback in code" rule (docs/I18N.md) is pinned here: a
+    # missing key must return the KEY, not a plausible-looking string, or the
+    # next typo ships to users instead of being seen. sectionLabel() is the
+    # four-way (panel, index) dispatch whose wrong branch would list one
+    # panel's section names under another panel's switches — valid strings in
+    # the wrong place, which no i18n gate and no pixel baseline can catch.
+    # formatters.cpp owns the NaN/Inf fold that keeps a dead pointer from
+    # reaching Qt's qRound() and aborting the overlay inside a paint.
+    #
+    # Both compile their own sources directly: console_text_helpers.cpp
+    # needs only QtCore + core/string_table.h + the pure panel_sections.h
+    # table, and formatters.cpp needs only QLocale.
+    add_executable(console-text-helpers-tests
+        tests/console_text_helpers_tests.cpp
+        src/ui/viewmodel/console_text_helpers.cpp
+        src/ui/viewmodel/console_text_helpers.h
+        src/ui/formatters.cpp
+        src/ui/formatters.h
+        src/resources/resources.qrc
+    )
+    target_link_libraries(console-text-helpers-tests PRIVATE Qt6::Core monster-core)
+    target_include_directories(console-text-helpers-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-text-helpers-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME console-text-helpers-tests COMMAND console-text-helpers-tests)
+
+    # The player panel's sharpness gauge
+    # (drawPlayerSharpnessBar / playerSharpnessBarTotalWidth) — the third
+    # 裸奔 TU of S3 §6.3. The block moved 1:1 out of panel_player.cpp, so
+    # its PIXELS are unchanged; what nothing asserted is the contract the
+    # caller drives: the exported total width (the panel trims its MR/name
+    # rect by exactly this number) and the "no shrink" return value for
+    # every input that must not draw (ranged weapon / broken / Invalid /
+    # all-zero / non-increasing thresholds). Each guard is a real game state
+    # and each hides or overlaps the row in a different way.
+    #
+    # Compiles the draw source directly (NOT through mhw-ui): it is a free
+    # function over a QPainter, not a QWidget, so it needs only the two Qt
+    # modules it names plus the reader header that defines SharpnessSnapshot
+    # and riseSharpnessCurrentSegment(). Rendering into an offscreen QImage
+    # lets the assertions read real painted pixels (the "never stretch" rule
+    # is checked by counting opaque ones), which is why the target also
+    # carries QT_QPA_PLATFORM=offscreen.
+    add_executable(player-sharpness-tests
+        tests/player_sharpness_tests.cpp
+        src/ui/panel_player_sharpness.cpp
+        src/ui/panel_player_sharpness.h
+    )
+    target_link_libraries(player-sharpness-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets monster-core mhw-reader)
+    target_include_directories(player-sharpness-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(player-sharpness-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME player-sharpness-tests COMMAND player-sharpness-tests)
+    set_tests_properties(player-sharpness-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # Source-level CLI/build contract: catches an option that is declared but
     # not registered, or a fourth panel omitted from the product target.
     add_executable(rise-damage-wiring-tests
