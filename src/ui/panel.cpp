@@ -1,5 +1,7 @@
 #include "panel.h"
 
+#include "panel_accent.h"
+
 #include <LayerShellQt/Window>
 
 #include <QCoreApplication>
@@ -598,12 +600,18 @@ void Panel::wheelEvent(QWheelEvent *e)
 
 QColor Panel::accentColor(Accent a) const
 {
+    // Values come from the shared panel-accent table (panel_accent.h) so
+    // the preview and the live overlay cannot drift apart again. Keep the
+    // per-arm comments pointing at the HTML tokens they mirror.
     switch (a) {
-    case Accent::Player:  return QColor(167, 79, 255);  // --accent-purple
-    case Accent::Monster: return QColor(255, 112, 67);  // --enrage orange
-    case Accent::Damage:  return QColor(80, 197, 183);  // --accent-teal
+    case Accent::Player:  return mhw::panel_accent::forSlot(0);  // --accent-purple
+    case Accent::Monster: return mhw::panel_accent::forSlot(1);  // --enrage orange
+    case Accent::Damage:  return mhw::panel_accent::forSlot(2);  // --accent-teal
     }
-    return QColor(120, 180, 255);
+    // PetDamagePanel also reaches this through Accent::Damage, so slot 3
+    // shares that teal. Anything else is a caller error; the damage
+    // accent keeps the default arm non-crashing.
+    return mhw::panel_accent::forSlot(2);
 }
 
 void Panel::drawV03Chrome(QPainter &p, Accent accent) const

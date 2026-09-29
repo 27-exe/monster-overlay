@@ -21,6 +21,7 @@
 #include <cmath>
 
 #include "panel.h"
+#include "panel_accent.h"
 #include "panel_source.h"
 #include "screen_query.h"
 #include "core/string_table.h"
@@ -33,20 +34,25 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 namespace {
 
 // PRODUCT DECISION (v0.11, owner: user): the overlay's panel colours are
-// FIXED and deliberately do NOT follow the theme. A HUD floating on top of
-// the game must look the same in every theme, so uiTheme() — which drives
-// the control console's own chrome (surfaces, QSS, chips) — must never be
-// read here. These are the exact values Panel::accentColor() paints with,
-// which is what keeps this preview pixel-faithful to the live overlay.
-// Do NOT "simplify" these constants into uiTheme() lookups: that would
-// change the overlay's rendered colours, and this is a product decision,
-// not a bug.
-const QColor kPlayerAccent(167, 79, 255);
-const QColor kMonsterAccent(255, 112, 67);
-const QColor kDamageAccent(64, 169, 255);
-const QColor kPetsAccent(103, 214, 157);
+// FIXED and deliberately do NOT follow the console theme. A HUD floating
+// on top of the game must look the same in every theme, so uiTheme() —
+// which drives the control console's own chrome (surfaces, QSS, chips) —
+// must never be read here.
+//
+// The colours are NOT re-declared here. They come from panel_accent.h,
+// which is also what Panel::accentColor() reads, so the preview and the
+// live overlay paint from one table by construction rather than by two
+// hand-copied literals happening to agree. Before this converged the two
+// had already drifted: the damage and pets slots previewed blue/green
+// while the overlay drew teal, which is exactly the "预览在骗用户"
+// failure a preview exists to prevent. Do NOT re-hardcode literals here
+// and do NOT swap these for uiTheme() lookups — that would change the
+// overlay's rendered colours, and this is a product decision, not a bug.
 const std::array<QColor, mhw::kPanelCount> kAccents = {
-    kPlayerAccent, kMonsterAccent, kDamageAccent, kPetsAccent,
+    mhw::panel_accent::forSlot(0),
+    mhw::panel_accent::forSlot(1),
+    mhw::panel_accent::forSlot(2),
+    mhw::panel_accent::forSlot(3),
 };
 // i18n: panel display names come from the console string table
 // (console.panel.*) and are resolved at PAINT time, so a language switch

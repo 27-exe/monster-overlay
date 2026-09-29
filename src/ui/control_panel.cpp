@@ -1,6 +1,7 @@
 #include "control_panel.h"
 
 #include "ui/panel.h"
+#include "ui/panel_accent.h"
 #include "ui/panel_player.h"
 #include "ui/panel_monster.h"
 #include "ui/panel_damage.h"
@@ -2176,14 +2177,23 @@ QPixmap ControlPanel::renderPreview(Panel *p)
     painter.end();
 
     // R6: paint a 4-px vertical accent stripe on the left edge of every
-    // preview tile (purple for player, orange for monster, blue for damage,
-    // green for pets) so each panel has a clear identity at a glance. The stripe
+    // preview tile (purple for player, orange for monster, teal for damage,
+    // teal for pets) so each panel has a clear identity at a glance. The stripe
     // sits OUTSIDE the panel rectangle, so we just draw it on the pixmap.
-    QColor accent;
-    if (p == player_)      accent = QColor(170, 85, 255);   // #aa55ff
-    else if (p == monster_) accent = QColor(255, 128, 64);  // #ff8040
-    else if (p == damage_) accent = QColor(64, 169, 255);   // #40a9ff
-    else                   accent = QColor(103, 214, 157);  // #67d69d
+    //
+    // The colours come from the shared panel-accent table — the same one
+    // Panel::accentColor() and HudCanvas read — so the tile stripe, the
+    // HUD preview and the live overlay all paint identical hues. This used
+    // to be a fourth hand-written set of literals that named the
+    // player/monster tiles after the *console* theme's print hex while the
+    // overlay painted its own values. The slot index is recovered by
+    // identity because renderPreview() is handed a Panel*; the order
+    // matches the member declarations above.
+    const int slot = (p == player_)  ? 0
+                   : (p == monster_) ? 1
+                   : (p == damage_)  ? 2
+                                     : 3;
+    const QColor accent = mhw::panel_accent::forSlot(slot);
     QPainter stripe(&pix);
     stripe.fillRect(QRect(0, 0, 4, sz.height()), accent);
     stripe.end();

@@ -150,6 +150,7 @@ add_library(mhw-ui STATIC
     src/ui/icon.h
     src/ui/panel.cpp
     src/ui/panel.h
+    src/ui/panel_accent.h
     src/ui/panel_damage.cpp
     src/ui/panel_damage.h
     src/ui/viewmodel/damage_view_model.cpp
