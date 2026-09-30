@@ -1,4 +1,5 @@
 #include "monster/monster_types.h"
+#include "core/game_tables.h"
 #include <QHash>
 #include <QSet>
 
@@ -92,5 +93,25 @@ extern const QSet<int> kRiseNotCapturableMonsterIds = {
     115,
 
 };
+
+// Hand Rise's half of the static-metadata registry to core (S3). See
+// registerWorldTables() in src/monster/data/part_schemas_data.cpp for why
+// this sits beside the data, and why registration is a static initialiser
+// rather than a reader-constructor side effect.
+void registerRiseTables()
+{
+    registerCrownThresholds(GameId::Rise, kRiseCrownThresholds);
+    // Rise's MonsterData.xml carries <Monster IsNotCapturable="true"> and no
+    // Capture=N percentage at all, so the threshold table is genuinely
+    // absent — nullptr, not an empty table. An empty table would read as
+    // "Rise has thresholds and none of them match".
+    registerCaptureRules(GameId::Rise, nullptr, kRiseNotCapturableMonsterIds);
+}
+
+namespace {
+const struct RegisterRiseTablesAtStartup {
+    RegisterRiseTablesAtStartup() { registerRiseTables(); }
+} kRegisterRiseTablesAtStartup;
+} // namespace
 
 } // namespace mhw

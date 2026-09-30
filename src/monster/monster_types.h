@@ -257,25 +257,28 @@ extern const QHash<int, QString> kRiseAilmentNames;
 // capturable (0 = uncapturable, e.g. Elder Dragons).
 extern const QHash<int, int> kMonsterCaptureThresholds;
 
-inline const std::array<float, 3> *crownThresholdsFor(GameId game, int monsterId)
-{
-    const auto &thresholds = game == GameId::Rise ? kRiseCrownThresholds : kCrownThresholds;
-    const auto it = thresholds.constFind(monsterId);
-    return it == thresholds.cend() ? nullptr : &it.value();
-}
-
-inline std::optional<int> captureThresholdFor(GameId game, int monsterId)
-{
-    if (game == GameId::Rise) {
-        if (kRiseNotCapturableMonsterIds.contains(monsterId))
-            return 0;
-        return std::nullopt;
-    }
-    const auto it = kMonsterCaptureThresholds.constFind(monsterId);
-    return it == kMonsterCaptureThresholds.cend()
-        ? std::nullopt
-        : std::optional<int>{it.value()};
-}
+// crownThresholdsFor() and captureThresholdFor() used to be inline functions
+// right here, each opening with a `game == GameId::Rise ? ... : ...`. They now
+// live in core/game_tables.{h,cpp} and ask a registry instead of naming a
+// table, so that a third game registers its own data rather than forcing an
+// edit to this header. The declarations and call sites are unchanged.
+//
+// Two details moved with them, and both were reasons the old version could
+// not simply gain an arm:
+//   * Rise answers capture from a not-capturable SET (0 for a member,
+//     nullopt otherwise); World answers from a threshold TABLE. The registry
+//     keeps both shapes, and the query prefers the set when a game has one.
+//   * The old ternary defaulted to World, so an id no game knew about
+//     silently got World data. An unregistered game now answers nullopt,
+//     which is the honest answer.
+//
+// registerWorldTables() / registerRiseTables() live in the two data
+// translation units that define the tables, one per game. They are
+// declared here so a reader or a test can register without naming a data
+// file; each is defined next to the data it hands over, so the registry
+// itself never learns which game a table belongs to.
+void registerWorldTables();
+void registerRiseTables();
 
 // ---------------------------------------------------------------------------
 // Part-gauge fill palette

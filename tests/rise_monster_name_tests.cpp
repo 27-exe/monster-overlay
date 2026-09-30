@@ -53,6 +53,12 @@ int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
 
+    // S3 moved the crown lookup behind a game-keyed registry, which only
+    // answers for a game that registered. No reader exists here, so the
+    // tables are handed over directly before the crown assertions below.
+    mhw::registerWorldTables();
+    mhw::registerRiseTables();
+
     // ------------------------------------------------------------------
     // 1. Official localized names (zh-cn.xml, <Monsters><Rise>)
     // ------------------------------------------------------------------

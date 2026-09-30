@@ -27,6 +27,14 @@ int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
 
+    // Since S3 the two lookups ask a game-keyed registry rather than
+    // selecting a table inline, and a registry only answers for a game that
+    // has registered. This test has no reader to construct, so it registers
+    // both halves itself — which is also what makes it a real regression net
+    // for the behaviour the old ternaries encoded.
+    mhw::registerWorldTables();
+    mhw::registerRiseTables();
+
     // HunterPie Game/Rise/Data/MonsterData.xml, Monster Id=1:
     // <Crowns Mini="0.96" Silver="1.1" Gold="1.14" />.
     const auto *riseOne = mhw::crownThresholdsFor(mhw::GameId::Rise, 1);

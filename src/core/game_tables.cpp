@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "core/game_tables.h"
+
+#include <array>
+
+namespace mhw {
+namespace {
+
+// One entry per game. A game that has not registered is simply absent, and
+// the queries below answer "no data" for it.
+//
+// The `registered` flags are load-bearing: without them, a game that
+// registered an *empty* table would be indistinguishable from a game that
+// never registered at all. Both answer nullptr today, but only the second
+// is a state worth being able to assert about — see kRegistrationOrder.
+struct Tables {
+    bool hasCrowns{false};
+    const QHash<int, std::array<float, 3>> *crowns{nullptr};
+    bool hasCapture{false};
+    const QHash<int, int> *captureThresholds{nullptr};
+    const QSet<int> *notCapturable{nullptr};
+};
+
+Tables &tableFor(GameId game)
+{
+    // A switch, not an array indexed by the enum: adding a third game then
+    // fails to compile here rather than silently sharing World storage.
+    // (The old ternary had the opposite property — it compiled and answered
+    // with World data, which is how a Rise id could pick up a World
+    // threshold.)
+    static Tables world;
+    static Tables rise;
+    switch (game) {
+    case GameId::World:
+        return world;
+    case GameId::Rise:
+        return rise;
+    }
+    return world;
+}
+
+} // namespace
+
+CrownTables crownTablesFor(GameId game)
+{
+    const Tables &t = tableFor(game);
+    return CrownTables{t.hasCrowns ? t.crowns : nullptr};
+}
+
+CaptureTables captureTablesFor(GameId game)
+{
+    const Tables &t = tableFor(game);
+    return CaptureTables{t.hasCapture ? t.captureThresholds : nullptr,
+                         t.notCapturable};
+}
+
+const std::array<float, 3> *crownThresholdsFor(GameId game, int monsterId)
+{
+    const CrownTables tables = crownTablesFor(game);
+    if (!tables.byMonster)
+        return nullptr;
+    const auto it = tables.byMonster->constFind(monsterId);
+    return it == tables.byMonster->cend() ? nullptr : &it.value();
+}
+
+std::optional<int> captureThresholdFor(GameId game, int monsterId)
+{
+    const CaptureTables rules = captureTablesFor(game);
+    if (!rules.thresholdByMonster && !rules.notCapturable)
+        return std::nullopt;
+
+    // The not-capturable set wins when present: a game that publishes it
+    // (Rise) is telling us the answer outright, and its threshold table is
+    // absent. When a game publishes thresholds instead (World), the set is
+    // empty and the table answers. This preserves the pre-S3 behaviour of
+    // the two separate inline functions exactly, including the difference
+    // that made "just add an arm" wrong: Rise's answer for an unknown id is
+    // nullopt, and so is World's, but they get there by different routes.
+    if (rules.notCapturable && rules.notCapturable->contains(monsterId))
+        return 0;
+    if (!rules.thresholdByMonster)
+        return std::nullopt;
+    const auto it = rules.thresholdByMonster->constFind(monsterId);
+    return it == rules.thresholdByMonster->cend()
+        ? std::nullopt
+        : std::optional<int>{it.value()};
+}
+
+void registerCrownThresholds(GameId game, const QHash<int, std::array<float, 3>> &table)
+{
+    Tables &t = tableFor(game);
+    t.crowns = &table;
+    t.hasCrowns = true;
+}
+
+void registerCaptureRules(GameId game, const QHash<int, int> *thresholdByMonster,
+                          const QSet<int> &notCapturable)
+{
+    Tables &t = tableFor(game);
+    t.captureThresholds = thresholdByMonster;
+    t.notCapturable = &notCapturable;
+    t.hasCapture = true;
+}
+
+} // namespace mhw

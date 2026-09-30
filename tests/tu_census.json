@@ -18,6 +18,17 @@
       ],
       "symbols": 4
     },
+    "src/core/game_tables.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "rise-monster-metadata-tests"
+      ],
+      "refs": [
+        "rise-monster-metadata-tests",
+        "rise-monster-name-tests"
+      ],
+      "symbols": 6
+    },
     "src/core/map_paths.cpp": {
       "class": "INDIRECT",
       "compiled_by": [],
@@ -33,6 +44,7 @@
       "compiled_by": [],
       "refs": [
         "mhr-reader-direct-tests",
+        "mhw-reader-direct-tests",
         "monster-doctor",
         "monster-probe",
         "monster-probe-ailments",
@@ -61,6 +73,7 @@
       ],
       "refs": [
         "console-text-helpers-tests",
+        "mhw-reader-direct-tests",
         "monster-control",
         "monster-control-l2-smoke",
         "monster-control-rise-rf-smoke",
@@ -83,7 +96,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 73
+      "symbols": 69
     },
     "src/main_control.cpp": {
       "class": "ZERO",
@@ -99,12 +112,13 @@
         "rise-monster-metadata-tests"
       ],
       "refs": [
+        "mhw-reader-direct-tests",
         "monster-probe-parts",
         "monster-reader-tests",
         "rise-monster-metadata-tests",
         "rise-monster-name-tests"
       ],
-      "symbols": 42
+      "symbols": 45
     },
     "src/monster/target_selector.cpp": {
       "class": "INDIRECT",
@@ -188,7 +202,7 @@
         "rise-monster-metadata-tests",
         "rise-monster-name-tests"
       ],
-      "symbols": 27
+      "symbols": 28
     },
     "src/rise/reframework/reframework_config.cpp": {
       "class": "INDIRECT",
@@ -297,7 +311,7 @@
         "monster-control-p0-test",
         "snapshot-regression-tests"
       ],
-      "symbols": 35
+      "symbols": 34
     },
     "src/ui/panel_pet_damage.cpp": {
       "class": "INDIRECT",
@@ -452,14 +466,18 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "mhw-reader-direct-tests",
         "monster-reader-tests"
       ],
       "symbols": 12
     },
     "src/world/monster_reader.cpp": {
       "class": "INDIRECT",
-      "compiled_by": [],
+      "compiled_by": [
+        "mhw-reader-direct-tests"
+      ],
       "refs": [
+        "mhw-reader-direct-tests",
         "monster-reader-tests"
       ],
       "symbols": 48
@@ -484,6 +502,7 @@
       "compiled_by": [],
       "refs": [
         "mhr-reader-direct-tests",
+        "mhw-reader-direct-tests",
         "monster-doctor",
         "monster-probe-ailments-watch",
         "monster-reader-tests"

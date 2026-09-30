@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/game_snapshot.h"
+#include "core/game_tables.h"
 #include "core/process_memory.h"
 #include "rise/mhr_types.h"
 

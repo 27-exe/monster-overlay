@@ -37,6 +37,13 @@ add_library(monster-core STATIC
     src/core/map_paths.cpp
     src/core/process_memory.h
     src/core/process_memory.cpp
+    # The game-keyed metadata registry (S3). Replaces the two inline
+    # lookups that lived in monster_types.h, each of which named a
+    # specific game's table through a `game == GameId::Rise ? ...` ternary.
+    # It is here, not on a game side, because it is the thing that no longer
+    # has to know any game's data — it only holds pointers handed to it.
+    src/core/game_tables.h
+    src/core/game_tables.cpp
     src/rise/mhr_types.h
     src/rise/mhr_reader.h
     src/rise/mhr_reader.cpp
@@ -595,10 +602,16 @@ add_executable(world-severable-scan-tests
     # pure-table check and create a duplicate-symbol fight with the TU above.
     # Both table TUs are listed: monster/data/ holds the World tables, rise/ holds
     # crownThresholdsFor()'s kRiseCrownThresholds / kRiseNotCapturableMonsterIds.
+    # game_tables.cpp is listed for the same reason: since S3 the two lookups
+    # live in the registry rather than as inline functions in monster_types.h,
+    # and this test never constructs a reader, so nothing registers the tables
+    # for it. It links the registry TU directly instead of monster-core, which
+    # would drag in the whole reader chain for a pure-table check.
     add_executable(rise-monster-metadata-tests
         tests/rise_monster_metadata_tests.cpp
         src/monster/data/part_schemas_data.cpp
         src/rise/part_schemas.cpp
+        src/core/game_tables.cpp
         src/resources/resources.qrc
     )
     target_link_libraries(rise-monster-metadata-tests PRIVATE Qt6::Core)

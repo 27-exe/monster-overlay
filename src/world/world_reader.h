@@ -6,6 +6,7 @@
 // the World-side call sites, which spell them as MhwReader::staticMember.
 // The MhwReader class below keeps only World-specific state.
 #include "core/process_memory.h"
+#include "core/game_tables.h"
 #include "world/world_types.h"
 
 namespace mhw {

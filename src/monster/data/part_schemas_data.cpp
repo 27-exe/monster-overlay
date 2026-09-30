@@ -1,4 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "monster/monster_types.h"
+#include "core/game_tables.h"
 #include <QHash>
 
 // World monster metadata tables, split out of part_schemas.cpp so the data
@@ -960,5 +962,33 @@ extern const QHash<int, int> kMonsterCaptureThresholds = {
     { 90, 20 }, { 91, 15 }, { 92, 10 }, { 93, 15 }, { 94, 20 }, { 95, 20 },
     { 96,  0 }, { 97,  0 }, { 98,  0 }, { 99, 15 }, { 100, 20 }, { 101,  0 },
 };
+
+// Hand World's half of the static-metadata registry to core (S3).
+//
+// This lives beside the data rather than in the registry, so the registry
+// never learns which game a table belongs to — it only stores what it is
+// given.
+//
+// Registration is a static initializer, NOT something a reader does in its
+// constructor. That distinction was found the hard way: a reader-local
+// registration meant the edit-mode demo panels, which construct no reader,
+// silently lost their crown chips. Static initialisation is safe here
+// because within one translation unit initialisers run top to bottom, so
+// the tables above are constructed before the one that takes their address,
+// and nothing here dereferences them. Cross-TU order is irrelevant because
+// only pointers are stored.
+void registerWorldTables()
+{
+    registerCrownThresholds(GameId::World, kCrownThresholds);
+    // World expresses non-capturability inside the threshold table itself
+    // (Elder Dragons carry Capture=0), so it registers no separate set.
+    registerCaptureRules(GameId::World, &kMonsterCaptureThresholds, kNoNotCapturable());
+}
+
+namespace {
+const struct RegisterWorldTablesAtStartup {
+    RegisterWorldTablesAtStartup() { registerWorldTables(); }
+} kRegisterWorldTablesAtStartup;
+} // namespace
 
 } // namespace mhw
