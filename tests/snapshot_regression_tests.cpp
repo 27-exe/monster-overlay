@@ -33,6 +33,10 @@
 #include "core/string_table.h"
 #include "player/player_types.h"
 #include "rise/mhr_abnormalities.h"
+// ZoneRef carries a raw id, not the vocabulary; the test names zones, so it
+// asks the World vocabulary directly rather than relying on GameSnapshot
+// re-exporting it (which S1 removed on purpose).
+#include "world/world_types.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
@@ -298,7 +302,8 @@ int main(int argc, char *argv[])
         snap.attached  = true;
         snap.pid       = 24601;
         snap.status    = QStringLiteral("已连接 · 猎人状态");
-        snap.zone      = mhw::Zone::GreatRavine;
+        snap.zone      = mhw::ZoneRef{mhw::GameId::World,
+                                      static_cast<int>(mhw::WorldZone::GreatRavine)};
         // Player struct: 7000/10000 = 70%.
         snap.player.valid      = true;
         snap.player.name       = QStringLiteral("Hunter");
@@ -344,7 +349,8 @@ int main(int argc, char *argv[])
         snap.attached  = true;
         snap.pid       = 31337;
         snap.status    = QStringLiteral("已连接 · 猎人状态");
-        snap.zone      = mhw::Zone::RiseLoc3;
+        snap.zone      = mhw::ZoneRef{mhw::GameId::Rise,
+                                      static_cast<int>(mhw::WorldZone::RiseLoc3)};
         snap.player.valid      = true;
         snap.player.name       = QStringLiteral("Hunter");
         snap.player.health     = 7000.0F;

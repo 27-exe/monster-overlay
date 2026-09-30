@@ -34,24 +34,24 @@ void check(bool condition, const char *message)
 int main()
 {
     // Official table entries (StageId 201..215).
-    check(std::strcmp(mhw::zoneName(mhw::Zone::RiseLoc1), "废神社") == 0,
+    check(std::strcmp(mhw::zoneName(mhw::WorldZone::RiseLoc1), "废神社") == 0,
           "hid 1 (StageId 201) is 废神社 [in-game verified]");
-    check(std::strcmp(mhw::zoneName(mhw::Zone::RiseLoc4), "冰封群岛") == 0,
+    check(std::strcmp(mhw::zoneName(mhw::WorldZone::RiseLoc4), "冰封群岛") == 0,
           "hid 4 (StageId 204) is 冰封群岛 [in-game verified]");
-    check(std::strcmp(mhw::zoneName(mhw::Zone::RiseLoc5), "熔岩洞") == 0,
+    check(std::strcmp(mhw::zoneName(mhw::WorldZone::RiseLoc5), "熔岩洞") == 0,
           "hid 5 (StageId 205) is 熔岩洞");
-    check(std::strcmp(mhw::zoneName(mhw::Zone::RiseLoc7), "翡叶要塞") == 0,
+    check(std::strcmp(mhw::zoneName(mhw::WorldZone::RiseLoc7), "翡叶要塞") == 0,
           "hid 7 (StageId 207, Red Stronghold) is 翡叶要塞");
-    check(std::strcmp(mhw::zoneName(mhw::Zone::RiseLoc12), "密林") == 0,
+    check(std::strcmp(mhw::zoneName(mhw::WorldZone::RiseLoc12), "密林") == 0,
           "hid 12 (StageId 212) is 密林");
     // Official-table holes keep the placeholder.
-    check(std::strcmp(mhw::zoneName(mhw::Zone::RiseLoc0), "未知狩猎区") == 0,
+    check(std::strcmp(mhw::zoneName(mhw::WorldZone::RiseLoc0), "未知狩猎区") == 0,
           "hid 0 (StageId 200, no upstream entry) keeps the placeholder");
 
     // Guards against the pre-r18 shifted table regressing back in.
-    check(std::strcmp(mhw::zoneName(mhw::Zone::RiseLoc1), "冰封群岛") != 0,
+    check(std::strcmp(mhw::zoneName(mhw::WorldZone::RiseLoc1), "冰封群岛") != 0,
           "RiseLoc1 is no longer labelled Frost Islands (old shifted table)");
-    check(std::strcmp(mhw::zoneName(mhw::Zone::RiseLoc7), "珊瑚宫殿") != 0,
+    check(std::strcmp(mhw::zoneName(mhw::WorldZone::RiseLoc7), "珊瑚宫殿") != 0,
           "RiseLoc7 is no longer labelled Coral Palace");
 
     // --- v0.9 i18n (WS-A): the English column of the same table -------------
@@ -62,30 +62,30 @@ int main()
     mhw::StringTable &strings = mhw::StringTable::instance();
     check(strings.load(QStringLiteral("en-US")), "en-US locale loads");
     check(strings.isEnglish(), "isEnglish() is true for en-US");
-    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::RiseLoc1), "Shrine Ruins") == 0,
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::RiseLoc1), "Shrine Ruins") == 0,
           "hid 1 reads as Shrine Ruins in English");
-    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::RiseLoc7), "Red Stronghold") == 0,
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::RiseLoc7), "Red Stronghold") == 0,
           "hid 7 reads as Red Stronghold in English");
-    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::RiseLoc14), "Forlorn Arena") == 0,
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::RiseLoc14), "Forlorn Arena") == 0,
           "hid 14 reads as Forlorn Arena in English");
-    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::RiseLoc0), "Unknown Hunting Zone") == 0,
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::RiseLoc0), "Unknown Hunting Zone") == 0,
           "hid 0 keeps the explicit English placeholder (no upstream entry)");
-    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::RiseTrainingRoom), "Training Area") == 0,
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::RiseTrainingRoom), "Training Area") == 0,
           "the rebased training-room village reads as Training Area");
-    check(std::strcmp(mhw::zoneNameLocalized(static_cast<mhw::Zone>(703)), "Gathering Hub") == 0,
+    check(std::strcmp(mhw::zoneNameLocalized(static_cast<mhw::WorldZone>(703)), "Gathering Hub") == 0,
           "Rise village id 3 reads as Gathering Hub");
-    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::AncientForest), "Ancient Forest") == 0,
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::AncientForest), "Ancient Forest") == 0,
           "World zone 101 reads as Ancient Forest in English");
     // The locale-independent accessor is unaffected by the switch.
-    check(std::strcmp(mhw::zoneName(mhw::Zone::RiseLoc1), "废神社") == 0,
+    check(std::strcmp(mhw::zoneName(mhw::WorldZone::RiseLoc1), "废神社") == 0,
           "zoneName() still returns the zh string while en-US is loaded");
 
     check(strings.load(QStringLiteral("zh-CN")), "zh-CN locale reloads");
-    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::RiseLoc1), "废神社") == 0,
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::RiseLoc1), "废神社") == 0,
           "after reloading zh-CN the label is 废神社 again");
-    check(std::strcmp(mhw::zoneNameLocalized(mhw::Zone::RiseLoc0), "未知狩猎区") == 0,
+    check(std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::RiseLoc0), "未知狩猎区") == 0,
           "after reloading zh-CN the placeholder is 未知狩猎区 again");
-    check(std::strcmp(mhw::zoneNameEn(mhw::Zone::RiseLoc1), "Shrine Ruins") == 0,
+    check(std::strcmp(mhw::zoneNameEn(mhw::WorldZone::RiseLoc1), "Shrine Ruins") == 0,
           "zoneNameEn() stays the English accessor regardless of locale");
 
     if (failures == 0) {

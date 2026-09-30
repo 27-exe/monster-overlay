@@ -8,7 +8,7 @@ namespace {
 // The two name tables, factored so that "does this zone have a name?" is
 // answerable without reading a display string.
 //
-// A lookup returns nullptr when the Zone carries no table entry. The public
+// A lookup returns nullptr when the WorldZone carries no table entry. The public
 // accessors below turn that nullptr into the placeholder literal
 // ("未知" / "Unknown"), so every rendered label stays byte-identical to the
 // pre-refactor behaviour.
@@ -27,12 +27,12 @@ namespace {
 // official table's own hole markers (StageId 200/206/208/216 have no entry
 // upstream) and keep their own explicit label, so they stay non-null.
 //
-// Both tables carry the same key set — every Zone enumerator plus the Rise
+// Both tables carry the same key set — every WorldZone enumerator plus the Rise
 // village ids 0..11 rebased into 700..799 — so the zh lookup doubles as the
 // canonical "is this zone named?" test. A row that existed only in en
 // would be a table bug to fix here, not a reason for the UI's logic to
 // flip with the active language.
-const char *zoneNameLookup(Zone zone)
+const char *zoneNameLookup(WorldZone zone)
 {
     // Rise villages (stage.type == 4) are mapped by computeZoneId()
     // into 700..799. Inline Chinese name table (was mhrVillageName()
@@ -63,42 +63,42 @@ const char *zoneNameLookup(Zone zone)
         }
     }
     switch (zone) {
-    case Zone::MainMenu: return "主菜单";
-    case Zone::AncientForest: return "古代树森林";
-    case Zone::WildspireWaste: return "荒野大陆";
-    case Zone::CoralHighlands: return "珊瑚高地";
-    case Zone::RottenVale: return "龙结晶之地";
-    case Zone::EldersRecess: return "龙之墓场";
-    case Zone::GreatRavine: return "大溪谷";
-    case Zone::GreatRavine2: return "大溪谷·深层";
-    case Zone::HoarfrostReach: return "冰呪之地";
-    case Zone::GuidingLands: return "引导之地";
-    case Zone::SpecialArena: return "特殊斗技场";
-    case Zone::Arena: return "斗技场";
-    case Zone::SelianaSupplyCache: return "月辰补给所";
-    case Zone::Astera: return "阿斯特拉";
-    case Zone::AsteraGatheringHub: return "阿斯特拉·集会所";
-    case Zone::ResearchBase: return "研究基地";
-    case Zone::Seliana: return "月辰";
-    case Zone::SelianaGatheringHub: return "月辰·集会所";
-    case Zone::Introduction: return "新大陆入门区";
-    case Zone::Everstream: return "不绝的河流";
-    case Zone::ConfluenceOfFates: return "命运的交汇";
-    case Zone::AncientForest2: return "古代树森林·深层";
-    case Zone::CavernsOfElDorado: return "黄金洞窟";
-    case Zone::SelianaSupplyCache2: return "月辰补给所·深层";
-    case Zone::OriginIsle: return "原点之岛";
-    case Zone::OriginIsle2: return "原点之岛·深层";
-    case Zone::SecludedValley: return "秘境之谷";
-    case Zone::SecludedValley2: return "秘境之谷·深层";
-    case Zone::CastleSchrade: return "城塞高地·修雷德";
-    case Zone::LivingQuarters: return "猎人生活区";
-    case Zone::PrivateQuarters: return "私人房间";
-    case Zone::PrivateSuite: return "私人套房";
-    case Zone::TrainingArea: return "训练区";
-    case Zone::ChamberOfFive: return "五星之间";
-    case Zone::SelianaRoom: return "月辰·休息室";
-    case Zone::RiseTrainingRoom: return "训练场";
+    case WorldZone::MainMenu: return "主菜单";
+    case WorldZone::AncientForest: return "古代树森林";
+    case WorldZone::WildspireWaste: return "荒野大陆";
+    case WorldZone::CoralHighlands: return "珊瑚高地";
+    case WorldZone::RottenVale: return "龙结晶之地";
+    case WorldZone::EldersRecess: return "龙之墓场";
+    case WorldZone::GreatRavine: return "大溪谷";
+    case WorldZone::GreatRavine2: return "大溪谷·深层";
+    case WorldZone::HoarfrostReach: return "冰呪之地";
+    case WorldZone::GuidingLands: return "引导之地";
+    case WorldZone::SpecialArena: return "特殊斗技场";
+    case WorldZone::Arena: return "斗技场";
+    case WorldZone::SelianaSupplyCache: return "月辰补给所";
+    case WorldZone::Astera: return "阿斯特拉";
+    case WorldZone::AsteraGatheringHub: return "阿斯特拉·集会所";
+    case WorldZone::ResearchBase: return "研究基地";
+    case WorldZone::Seliana: return "月辰";
+    case WorldZone::SelianaGatheringHub: return "月辰·集会所";
+    case WorldZone::Introduction: return "新大陆入门区";
+    case WorldZone::Everstream: return "不绝的河流";
+    case WorldZone::ConfluenceOfFates: return "命运的交汇";
+    case WorldZone::AncientForest2: return "古代树森林·深层";
+    case WorldZone::CavernsOfElDorado: return "黄金洞窟";
+    case WorldZone::SelianaSupplyCache2: return "月辰补给所·深层";
+    case WorldZone::OriginIsle: return "原点之岛";
+    case WorldZone::OriginIsle2: return "原点之岛·深层";
+    case WorldZone::SecludedValley: return "秘境之谷";
+    case WorldZone::SecludedValley2: return "秘境之谷·深层";
+    case WorldZone::CastleSchrade: return "城塞高地·修雷德";
+    case WorldZone::LivingQuarters: return "猎人生活区";
+    case WorldZone::PrivateQuarters: return "私人房间";
+    case WorldZone::PrivateSuite: return "私人套房";
+    case WorldZone::TrainingArea: return "训练区";
+    case WorldZone::ChamberOfFive: return "五星之间";
+    case WorldZone::SelianaRoom: return "月辰·休息室";
+    case WorldZone::RiseTrainingRoom: return "训练场";
     // v0.8.4-r18 zone-names: table re-anchored to HunterPie's official
     // stage table. HunterPie emits StageId = HuntingId + 200
     // (MHRPlayer.cs:216-227) and resolves the label from the localization
@@ -128,31 +128,31 @@ const char *zoneNameLookup(Zone zone)
     // The previous (v0.8.x) table used the community-site *navigation*
     // order (Shrine, Frost, Sandy, Flooded, Lava …) as if it were the
     // memory HuntingId order — every label from hid 4 on was shifted.
-    case Zone::RiseLoc0:  return "未知狩猎区"; // StageId 200: no entry upstream
-    case Zone::RiseLoc1:  return "废神社";
-    case Zone::RiseLoc2:  return "沙原";
-    case Zone::RiseLoc3:  return "水没林";
-    case Zone::RiseLoc4:  return "冰封群岛";
-    case Zone::RiseLoc5:  return "熔岩洞";
-    case Zone::RiseLoc6:  return "未知狩猎区"; // StageId 206: no entry upstream
-    case Zone::RiseLoc7:  return "翡叶要塞";
-    case Zone::RiseLoc8:  return "未知狩猎区"; // StageId 208: no entry upstream
-    case Zone::RiseLoc9:  return "狱泉乡";
-    case Zone::RiseLoc10: return "斗技场";
-    case Zone::RiseLoc11: return "龙宫古城";
-    case Zone::RiseLoc12: return "密林";
-    case Zone::RiseLoc13: return "城塞高地";
-    case Zone::RiseLoc14: return "塔之秘境";
-    case Zone::RiseLoc15: return "渊劫地狱";
-    case Zone::RiseLoc16: return "未知狩猎区"; // StageId 216: no entry upstream
-    case Zone::Unknown: break;
+    case WorldZone::RiseLoc0:  return "未知狩猎区"; // StageId 200: no entry upstream
+    case WorldZone::RiseLoc1:  return "废神社";
+    case WorldZone::RiseLoc2:  return "沙原";
+    case WorldZone::RiseLoc3:  return "水没林";
+    case WorldZone::RiseLoc4:  return "冰封群岛";
+    case WorldZone::RiseLoc5:  return "熔岩洞";
+    case WorldZone::RiseLoc6:  return "未知狩猎区"; // StageId 206: no entry upstream
+    case WorldZone::RiseLoc7:  return "翡叶要塞";
+    case WorldZone::RiseLoc8:  return "未知狩猎区"; // StageId 208: no entry upstream
+    case WorldZone::RiseLoc9:  return "狱泉乡";
+    case WorldZone::RiseLoc10: return "斗技场";
+    case WorldZone::RiseLoc11: return "龙宫古城";
+    case WorldZone::RiseLoc12: return "密林";
+    case WorldZone::RiseLoc13: return "城塞高地";
+    case WorldZone::RiseLoc14: return "塔之秘境";
+    case WorldZone::RiseLoc15: return "渊劫地狱";
+    case WorldZone::RiseLoc16: return "未知狩猎区"; // StageId 216: no entry upstream
+    case WorldZone::Unknown: break;
     }
     return nullptr;
 }
 
-const char *zoneNameEnLookup(Zone zone)
+const char *zoneNameEnLookup(WorldZone zone)
 {
-    // v0.9 i18n (WS-A). English labels for the exact same Zone values,
+    // v0.9 i18n (WS-A). English labels for the exact same WorldZone values,
     // sourced from HunterPie's official en-us.xml (Strings/Stages/World and
     // Strings/Stages/Rise), sha256
     // 661d58b54bd1214ae0e9eff92fb4167b8aab54df0452eea238cb9574300030ea.
@@ -189,81 +189,81 @@ const char *zoneNameEnLookup(Zone zone)
         }
     }
     switch (zone) {
-    case Zone::MainMenu: return "Main Menu";
-    case Zone::AncientForest: return "Ancient Forest";
-    case Zone::WildspireWaste: return "Wildspire Waste";
-    case Zone::CoralHighlands: return "Coral Highlands";
-    case Zone::RottenVale: return "Rotten Vale";
-    case Zone::EldersRecess: return "Elder's Recess";
-    case Zone::GreatRavine: return "Great Ravine";
-    case Zone::GreatRavine2: return "Great Ravine";
-    case Zone::HoarfrostReach: return "Hoarfrost Reach";
-    case Zone::GuidingLands: return "The Guiding Lands";
-    case Zone::SpecialArena: return "Special Arena";
-    case Zone::Arena: return "Arena";
-    case Zone::SelianaSupplyCache: return "Seliana Supply Cache";
-    case Zone::Astera: return "Astera";
-    case Zone::AsteraGatheringHub: return "Astera Gathering Hub";
-    case Zone::ResearchBase: return "Research Base";
-    case Zone::Seliana: return "Seliana";
-    case Zone::SelianaGatheringHub: return "Seliana Gathering Hub";
-    case Zone::Introduction: return "Introduction";
-    case Zone::Everstream: return "Everstream";
-    case Zone::ConfluenceOfFates: return "Confluence of Fates";
-    case Zone::AncientForest2: return "Ancient Forest";
-    case Zone::CavernsOfElDorado: return "Caverns of El Dorado";
-    case Zone::SelianaSupplyCache2: return "Seliana Supply Cache";
-    case Zone::OriginIsle: return "Origin Isle";
-    case Zone::OriginIsle2: return "Origin Isle";
-    case Zone::SecludedValley: return "Secluded Valley";
-    case Zone::SecludedValley2: return "Secluded Valley";
-    case Zone::CastleSchrade: return "Castle Schrade";
-    case Zone::LivingQuarters: return "Living Quarters";
-    case Zone::PrivateQuarters: return "Private Quarters";
-    case Zone::PrivateSuite: return "Private Suite";
-    case Zone::TrainingArea: return "Training Area";
-    case Zone::ChamberOfFive: return "Chamber of Five";
-    case Zone::SelianaRoom: return "Seliana Room";
-    case Zone::RiseTrainingRoom: return "Training Area";
-    case Zone::RiseLoc0:  return "Unknown Hunting Zone"; // StageId 200: no entry upstream
-    case Zone::RiseLoc1:  return "Shrine Ruins";
-    case Zone::RiseLoc2:  return "Sandy Plains";
-    case Zone::RiseLoc3:  return "Flooded Forest";
-    case Zone::RiseLoc4:  return "Frost Islands";
-    case Zone::RiseLoc5:  return "Lava Caverns";
-    case Zone::RiseLoc6:  return "Unknown Hunting Zone"; // StageId 206: no entry upstream
-    case Zone::RiseLoc7:  return "Red Stronghold";
-    case Zone::RiseLoc8:  return "Unknown Hunting Zone"; // StageId 208: no entry upstream
-    case Zone::RiseLoc9:  return "Infernal Springs";
-    case Zone::RiseLoc10: return "Arena";
-    case Zone::RiseLoc11: return "Coral Palace";
-    case Zone::RiseLoc12: return "Jungle";
-    case Zone::RiseLoc13: return "Citadel";
-    case Zone::RiseLoc14: return "Forlorn Arena";
-    case Zone::RiseLoc15: return "Yawning Abyss";
-    case Zone::RiseLoc16: return "Unknown Hunting Zone"; // StageId 216: no entry upstream
-    case Zone::Unknown: break;
+    case WorldZone::MainMenu: return "Main Menu";
+    case WorldZone::AncientForest: return "Ancient Forest";
+    case WorldZone::WildspireWaste: return "Wildspire Waste";
+    case WorldZone::CoralHighlands: return "Coral Highlands";
+    case WorldZone::RottenVale: return "Rotten Vale";
+    case WorldZone::EldersRecess: return "Elder's Recess";
+    case WorldZone::GreatRavine: return "Great Ravine";
+    case WorldZone::GreatRavine2: return "Great Ravine";
+    case WorldZone::HoarfrostReach: return "Hoarfrost Reach";
+    case WorldZone::GuidingLands: return "The Guiding Lands";
+    case WorldZone::SpecialArena: return "Special Arena";
+    case WorldZone::Arena: return "Arena";
+    case WorldZone::SelianaSupplyCache: return "Seliana Supply Cache";
+    case WorldZone::Astera: return "Astera";
+    case WorldZone::AsteraGatheringHub: return "Astera Gathering Hub";
+    case WorldZone::ResearchBase: return "Research Base";
+    case WorldZone::Seliana: return "Seliana";
+    case WorldZone::SelianaGatheringHub: return "Seliana Gathering Hub";
+    case WorldZone::Introduction: return "Introduction";
+    case WorldZone::Everstream: return "Everstream";
+    case WorldZone::ConfluenceOfFates: return "Confluence of Fates";
+    case WorldZone::AncientForest2: return "Ancient Forest";
+    case WorldZone::CavernsOfElDorado: return "Caverns of El Dorado";
+    case WorldZone::SelianaSupplyCache2: return "Seliana Supply Cache";
+    case WorldZone::OriginIsle: return "Origin Isle";
+    case WorldZone::OriginIsle2: return "Origin Isle";
+    case WorldZone::SecludedValley: return "Secluded Valley";
+    case WorldZone::SecludedValley2: return "Secluded Valley";
+    case WorldZone::CastleSchrade: return "Castle Schrade";
+    case WorldZone::LivingQuarters: return "Living Quarters";
+    case WorldZone::PrivateQuarters: return "Private Quarters";
+    case WorldZone::PrivateSuite: return "Private Suite";
+    case WorldZone::TrainingArea: return "Training Area";
+    case WorldZone::ChamberOfFive: return "Chamber of Five";
+    case WorldZone::SelianaRoom: return "Seliana Room";
+    case WorldZone::RiseTrainingRoom: return "Training Area";
+    case WorldZone::RiseLoc0:  return "Unknown Hunting Zone"; // StageId 200: no entry upstream
+    case WorldZone::RiseLoc1:  return "Shrine Ruins";
+    case WorldZone::RiseLoc2:  return "Sandy Plains";
+    case WorldZone::RiseLoc3:  return "Flooded Forest";
+    case WorldZone::RiseLoc4:  return "Frost Islands";
+    case WorldZone::RiseLoc5:  return "Lava Caverns";
+    case WorldZone::RiseLoc6:  return "Unknown Hunting Zone"; // StageId 206: no entry upstream
+    case WorldZone::RiseLoc7:  return "Red Stronghold";
+    case WorldZone::RiseLoc8:  return "Unknown Hunting Zone"; // StageId 208: no entry upstream
+    case WorldZone::RiseLoc9:  return "Infernal Springs";
+    case WorldZone::RiseLoc10: return "Arena";
+    case WorldZone::RiseLoc11: return "Coral Palace";
+    case WorldZone::RiseLoc12: return "Jungle";
+    case WorldZone::RiseLoc13: return "Citadel";
+    case WorldZone::RiseLoc14: return "Forlorn Arena";
+    case WorldZone::RiseLoc15: return "Yawning Abyss";
+    case WorldZone::RiseLoc16: return "Unknown Hunting Zone"; // StageId 216: no entry upstream
+    case WorldZone::Unknown: break;
     }
     return nullptr;
 }
 
 } // namespace
 
-const char *zoneName(Zone zone)
+const char *zoneName(WorldZone zone)
 {
-    // "未知" is the zh column's placeholder for a Zone with no table
+    // "未知" is the zh column's placeholder for a WorldZone with no table
     // entry — the same value zoneName() has always returned for them.
     const char *name = zoneNameLookup(zone);
     return name != nullptr ? name : "未知";
 }
 
-const char *zoneNameEn(Zone zone)
+const char *zoneNameEn(WorldZone zone)
 {
     const char *name = zoneNameEnLookup(zone);
     return name != nullptr ? name : "Unknown";
 }
 
-const char *zoneNameLocalized(Zone zone)
+const char *zoneNameLocalized(WorldZone zone)
 {
     // The single locale switch for zone labels. An unloaded / non-English
     // StringTable (tests, first frames) reads as Chinese, which keeps the
@@ -274,7 +274,7 @@ const char *zoneNameLocalized(Zone zone)
 }
 
 // Data-layer answer to "does this zone have a name?": true means a lookup
-// hit a named entry for this Zone.
+// hit a named entry for this WorldZone.
 //
 // Callers pair it with zoneNameLocalized() and use the false branch for a
 // generic "outpost N" / "area N" fallback — instead of reverse-engineering
@@ -282,77 +282,77 @@ const char *zoneNameLocalized(Zone zone)
 // whenever ui.zone_unknown or the zh table was reworded.
 //
 // Locale-independent by design: whether a zone is named is a property of
-// the Zone and the upstream table, never of the active language.
-// Zone::Unknown answers false — "no zone" is not "an unnamed zone".
-bool hasZoneName(Zone zone)
+// the WorldZone and the upstream table, never of the active language.
+// WorldZone::Unknown answers false — "no zone" is not "an unnamed zone".
+bool hasZoneName(WorldZone zone)
 {
     return zoneNameLookup(zone) != nullptr;
 }
 
-bool isHuntingZone(Zone zone)
+bool isHuntingZone(WorldZone zone)
 {
     switch (zone) {
-    case Zone::AncientForest:
-    case Zone::WildspireWaste:
-    case Zone::CoralHighlands:
-    case Zone::RottenVale:
-    case Zone::EldersRecess:
-    case Zone::GreatRavine:
-    case Zone::GreatRavine2:
-    case Zone::HoarfrostReach:
-    case Zone::GuidingLands:
-    case Zone::SpecialArena:
-    case Zone::Arena:
-    case Zone::SelianaSupplyCache:
-    case Zone::Introduction:
-    case Zone::Everstream:
-    case Zone::ConfluenceOfFates:
-    case Zone::AncientForest2:
-    case Zone::CavernsOfElDorado:
-    case Zone::SelianaSupplyCache2:
-    case Zone::OriginIsle:
-    case Zone::OriginIsle2:
-    case Zone::SecludedValley:
-    case Zone::SecludedValley2:
-    case Zone::CastleSchrade:
-    case Zone::TrainingArea:
-    case Zone::ChamberOfFive:
-    case Zone::RiseTrainingRoom:
-    case Zone::RiseLoc0:
-    case Zone::RiseLoc1:
-    case Zone::RiseLoc2:
-    case Zone::RiseLoc3:
-    case Zone::RiseLoc4:
-    case Zone::RiseLoc5:
-    case Zone::RiseLoc6:
-    case Zone::RiseLoc7:
-    case Zone::RiseLoc8:
-    case Zone::RiseLoc9:
-    case Zone::RiseLoc10:
-    case Zone::RiseLoc11:
-    case Zone::RiseLoc12:
-    case Zone::RiseLoc13:
-    case Zone::RiseLoc14:
-    case Zone::RiseLoc15:
-    case Zone::RiseLoc16:
+    case WorldZone::AncientForest:
+    case WorldZone::WildspireWaste:
+    case WorldZone::CoralHighlands:
+    case WorldZone::RottenVale:
+    case WorldZone::EldersRecess:
+    case WorldZone::GreatRavine:
+    case WorldZone::GreatRavine2:
+    case WorldZone::HoarfrostReach:
+    case WorldZone::GuidingLands:
+    case WorldZone::SpecialArena:
+    case WorldZone::Arena:
+    case WorldZone::SelianaSupplyCache:
+    case WorldZone::Introduction:
+    case WorldZone::Everstream:
+    case WorldZone::ConfluenceOfFates:
+    case WorldZone::AncientForest2:
+    case WorldZone::CavernsOfElDorado:
+    case WorldZone::SelianaSupplyCache2:
+    case WorldZone::OriginIsle:
+    case WorldZone::OriginIsle2:
+    case WorldZone::SecludedValley:
+    case WorldZone::SecludedValley2:
+    case WorldZone::CastleSchrade:
+    case WorldZone::TrainingArea:
+    case WorldZone::ChamberOfFive:
+    case WorldZone::RiseTrainingRoom:
+    case WorldZone::RiseLoc0:
+    case WorldZone::RiseLoc1:
+    case WorldZone::RiseLoc2:
+    case WorldZone::RiseLoc3:
+    case WorldZone::RiseLoc4:
+    case WorldZone::RiseLoc5:
+    case WorldZone::RiseLoc6:
+    case WorldZone::RiseLoc7:
+    case WorldZone::RiseLoc8:
+    case WorldZone::RiseLoc9:
+    case WorldZone::RiseLoc10:
+    case WorldZone::RiseLoc11:
+    case WorldZone::RiseLoc12:
+    case WorldZone::RiseLoc13:
+    case WorldZone::RiseLoc14:
+    case WorldZone::RiseLoc15:
+    case WorldZone::RiseLoc16:
         return true;
     default:
         return false;
     }
 }
 
-bool isPeaceZone(Zone zone)
+bool isPeaceZone(WorldZone zone)
 {
     switch (zone) {
-    case Zone::Astera:
-    case Zone::AsteraGatheringHub:
-    case Zone::ResearchBase:
-    case Zone::Seliana:
-    case Zone::SelianaGatheringHub:
-    case Zone::LivingQuarters:
-    case Zone::PrivateQuarters:
-    case Zone::PrivateSuite:
-    case Zone::SelianaRoom:
+    case WorldZone::Astera:
+    case WorldZone::AsteraGatheringHub:
+    case WorldZone::ResearchBase:
+    case WorldZone::Seliana:
+    case WorldZone::SelianaGatheringHub:
+    case WorldZone::LivingQuarters:
+    case WorldZone::PrivateQuarters:
+    case WorldZone::PrivateSuite:
+    case WorldZone::SelianaRoom:
         return true;
     default:
         return false;

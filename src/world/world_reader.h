@@ -6,6 +6,7 @@
 // the World-side call sites, which spell them as MhwReader::staticMember.
 // The MhwReader class below keeps only World-specific state.
 #include "core/process_memory.h"
+#include "world/world_types.h"
 
 namespace mhw {
 
@@ -60,7 +61,7 @@ private:
     QString readUtf8(std::uintptr_t address, std::size_t maxLength) const;
     QString joinOffsets() const;
     void refreshPlayerIdentity(PlayerSnapshot &player);
-    Zone readZone(QString *error);
+    WorldZone readZone(QString *error);
     QVector<MonsterSnapshot> readMonsters(QString *error);
     void readMonsterAilments(MonsterSnapshot &monster);
     // v0.7.4: Tenderize is folded into PartSnapshot; this routine walks

@@ -221,16 +221,17 @@ GameSnapshot MhwReader::poll()
     // v0.7.5: bump the per-instance poll counter so readPlayer()'s
     // mantle cache can compute ages in kMantleCacheTtl increments.
     ++pollTick_;
-    snapshot.zone = readZone(nullptr);
-    static Zone lastZone = Zone::Unknown;
-    if (snapshot.zone != lastZone) {
+    const WorldZone worldZone = readZone(nullptr);
+    snapshot.zone = ZoneRef{GameId::World, static_cast<int>(worldZone)};
+    static WorldZone lastZone = WorldZone::Unknown;
+    if (worldZone != lastZone) {
         cachedArray_.clear();
         monsterCache_.clear();
         cachedArrayBase_ = 0;
-        lastZone = snapshot.zone;
+        lastZone = worldZone;
     }
     QString error;
-    if (isHuntingZone(snapshot.zone)) {
+    if (isHuntingZone(worldZone)) {
         snapshot.monsters = readMonsters(&error);
     }
     snapshot.player = readPlayer(nullptr);
@@ -247,7 +248,7 @@ GameSnapshot MhwReader::poll()
     // Clear stale quest data when we're in a non-hunting zone (e.g.
     // gathering hub). The quest struct in memory can retain the
     // previous quest's state/id/maxDeaths after returning to town.
-    if (!isHuntingZone(snapshot.zone))
+    if (!isHuntingZone(worldZone))
         snapshot.quest = {};
 
     // readParty always probes 4 slots; stale names in memory linger
@@ -255,8 +256,8 @@ GameSnapshot MhwReader::poll()
     // pinned to the now-meaningless last-quest data. Force-clear
     // party whenever we're not in a hunting zone (where party
     // damage is actually meaningful).
-    snapshot.party = isHuntingZone(snapshot.zone) ? readParty(nullptr)
-                                                   : QVector<PartyMemberSnapshot>{};
+    snapshot.party = isHuntingZone(worldZone) ? readParty(nullptr)
+                                               : QVector<PartyMemberSnapshot>{};
     // v0.10.8: multiplayer now comes from the session structure's player
     // count (HunterPie MHWPlayer.GetParty) instead of the roster size.
     // readParty fills a 4-slot roster by name and never tags a member's
@@ -285,9 +286,9 @@ GameSnapshot MhwReader::poll()
 
 // readZone used to live in its own TU (src/world/world_reader.cpp). Folded in
 // verbatim when the World reader layer moved into this directory.
-Zone MhwReader::readZone(QString *error)
+WorldZone MhwReader::readZone(QString *error)
 {
-    Zone result = Zone::Unknown;
+    WorldZone result = WorldZone::Unknown;
     const std::uintptr_t zoneAddress = followPointerChain(memory_, absolute(QStringLiteral("ZONE_OFFSET")),
                                                          map_.offsets(QStringLiteral("ZoneOffsets")), error);
     if (!zoneAddress)
@@ -298,7 +299,7 @@ Zone MhwReader::readZone(QString *error)
     const int intValue = static_cast<int>(*value);
     if (intValue < 0 || intValue > 1000)
         return result;
-    return static_cast<Zone>(intValue);
+    return static_cast<WorldZone>(intValue);
 }
 
 } // namespace mhw

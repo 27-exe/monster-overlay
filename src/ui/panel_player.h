@@ -40,7 +40,7 @@ private:
     mhw::PlayerSnapshot player_;
     // Cached metadata from GameSnapshot so paintPanel doesn't need to
     // take a GameSnapshot every frame.
-    mhw::Zone zone_{mhw::Zone::Unknown};
+    mhw::ZoneRef zone_{};
     mhw::QuestSnapshot quest_;
     // v0.7.1: tracked so paintPanel() knows whether to render Rise-only
     // wirebug capsules (and hide Mantles) or World-only mantle boxes.

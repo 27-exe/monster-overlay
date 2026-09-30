@@ -2,7 +2,7 @@
 
 namespace mhw {
 
-enum class Zone : int {
+enum class WorldZone : int {
     MainMenu = 0,
     AncientForest = 101,
     WildspireWaste = 102,
@@ -68,25 +68,25 @@ enum class Zone : int {
     Unknown = -1
 };
 
-const char* zoneName(Zone zone);
-const char* zoneNameEn(Zone zone);
+const char* zoneName(WorldZone zone);
+const char* zoneNameEn(WorldZone zone);
 // v0.9 i18n (WS-A): switch between the pre-i18n zh literals and the English
 // labels using the active StringTable locale (isEnglish()). Same ids, same
 // enum: only the returned literal changes. Callers that already cache the
 // string must re-resolve after a locale reload.
-const char* zoneNameLocalized(Zone zone);
+const char* zoneNameLocalized(WorldZone zone);
 // Data-layer answer to "does this zone have a name in the table?".
 // true  = the zone lookup hit a named entry (including the upstream hole
 //         markers, which are entries of their own).
-// false = no entry: an id passed straight to static_cast<Zone>() from a
+// false = no entry: an id passed straight to static_cast<WorldZone>() from a
 //         raw villageId (0..100), or a value outside both tables.
 //
 // UI logic must ask THIS instead of comparing a localized display label
 // against a sentinel: whether a zone is named is a property of the data,
 // never of the active language, and a rewording of a translation cannot
 // move the branch. Locale-independent by construction.
-bool hasZoneName(Zone zone);
-bool isHuntingZone(Zone zone);
-bool isPeaceZone(Zone zone);
+bool hasZoneName(WorldZone zone);
+bool isHuntingZone(WorldZone zone);
+bool isPeaceZone(WorldZone zone);
 
 } // namespace mhw

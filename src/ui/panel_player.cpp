@@ -120,15 +120,15 @@ QString questStateLabel(int state)
     }
 }
 
-QString zoneLabel(mhw::Zone z)
+QString zoneLabel(mhw::ZoneRef z)
 {
-    if (z == mhw::Zone::Unknown)
+    if (mhw::isUnknownZone(z))
         return mh::tr("ui.zone_unknown_area");
     // v0.9 i18n: localized table (zh: zoneName(), en: zoneNameEn()) so the
     // zone row flips with the rest of the UI on a language switch.
     // v0.8.x: enum-internal ID range for peace zones (village / hub).
     // computeZoneId() returns the raw villageId (0..100) for type==4,
-    // which static_cast<Zone>() then maps to integer values that
+    // which static_cast<WorldZone>() then maps to integer values that
     // overlap with no named enum entry. hasZoneName() reports that the
     // lookup missed, so we provide a friendlier "据点 N" fallback
     // (bug #7 — "据点显示未知地点").
@@ -138,13 +138,22 @@ QString zoneLabel(mhw::Zone z)
     // instead — display-layer data driving logic, which moved whenever a
     // translation was reworded. hasZoneName() is locale-independent, so the
     // branch is stable and no longer touches any UI string.
-    if (!mhw::hasZoneName(z)) {
-        const int raw = static_cast<int>(z);
+    //
+    // The vocabulary still lives with the game that owns the id. Both games'
+    // named zones currently share this one table (World's own ids plus Rise's
+    // 600..716 band, which does not collide with World's), so the lookup is
+    // still one call. What changed is that the CALLER no longer holds a
+    // World enum in a field named `zone` — it holds a ZoneRef, so when a third
+    // game brings ids that do collide, this function gains a dispatch on
+    // z.game without any field or signature changing upstream.
+    const mhw::WorldZone worldZone = static_cast<mhw::WorldZone>(z.id);
+    if (!mhw::hasZoneName(worldZone)) {
+        const int raw = z.id;
         if (raw >= 0 && raw <= 100)
             return mh::tr("ui.zone_outpost").arg(raw);
         return mh::tr("ui.zone_area").arg(raw);
     }
-    return QString::fromUtf8(mhw::zoneNameLocalized(z));
+    return QString::fromUtf8(mhw::zoneNameLocalized(worldZone));
 }
 
 QString fmtMmSs(float seconds)
@@ -1204,7 +1213,8 @@ void PlayerPanel::setupDemoData()
     attached_ = true;
     pid_       = 12345;
     imageBase_ = 0x7FFE00000000ULL;
-    zone_      = mhw::Zone::AncientForest;
+    zone_      = mhw::ZoneRef{mhw::GameId::World,
+                              static_cast<int>(mhw::WorldZone::AncientForest)};
     // Order matches QuestSnapshot in quest_types.h: id, stars, isAnomaly,
     // rank, state, category, deaths, maxDeaths, timeLeftSeconds,
     // maxTimerSeconds, elapsedSeconds, active.

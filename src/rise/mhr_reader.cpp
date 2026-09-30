@@ -1312,7 +1312,7 @@ GameSnapshot MhrReader::poll()
 
     QString error;
     const StageInfo stageInfo = readZone(nullptr);
-    snapshot.zone = static_cast<Zone>(computeZoneId(stageInfo.stage));
+    snapshot.zone = ZoneRef{GameId::Rise, computeZoneId(stageInfo.stage)};
 
     if (stageInfo.inHuntingZone)
         snapshot.monsters = readMonsters(&error);
