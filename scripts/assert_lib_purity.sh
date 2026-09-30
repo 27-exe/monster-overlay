@@ -49,7 +49,17 @@ report() {  # $1=label $2=count
 # Symbols whose names mention a game but are generic helpers, driven by a
 # game-supplied string. Enumerated explicitly so that ADDING another one
 # fails the gate and forces a decision, instead of being silently excluded.
-GENERIC_GAME_NAMED='riseMapCandidates|worldMapCandidates|findRiseInstallDir'
+#
+# These two remain in the kernel because taking the file name as a parameter
+# is what makes them game-agnostic: the kernel does not know whose map is
+# being searched for, only that a caller asked for one. A third game's map
+# search is a call to these, not an edit here.
+#
+# findRiseInstallDir used to be in this list. It left the kernel in 67bcf4b
+# (its Steam appId and exe name are Rise's facts, so it moved to
+# src/rise/rise_install_locator.cpp). It is deliberately NOT re-listed: it is
+# no longer defined in this archive, so leaving it out proves that.
+GENERIC_GAME_NAMED='riseMapCandidates|worldMapCandidates'
 
 # Case-insensitive "does this name mention a game" test over defined symbols,
 # minus the enumerated exceptions. Prints the offending symbols so a failure
