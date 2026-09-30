@@ -21,9 +21,23 @@ find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Widgets Svg)
 find_package(LayerShellQt REQUIRED)
 find_package(Threads REQUIRED)
 
-# Core library: foundational types, memory reader, string table.
-# Other modules (address_map, monster, player, quest, world, ui)
-# will be added here incrementally.
+# Core library: the game-agnostic kernel.
+#
+# S3 (library split). This library used to carry both games' data tables and
+# the Rise reader alongside the kernel, so `libmonster-core.a` exported 60
+# game-specific symbols of 140 — 43% — even after S1-S6 cut the header-level
+# dependency. The registry in core/game_tables.{h,cpp} is what makes this
+# split possible: it holds pointers, never a game's data, so moving each
+# game's tables into its own library does not turn core around to depend on
+# the games.
+#
+# What may live here:
+#   * src/core/**               the contracts (snapshot, reader, zone, tables)
+#   * src/monster/monster_types.h  the vocabulary the contracts are written in
+#   * src/player/ src/quest/    the two shared structural vocabularies
+# What may NOT live here: any concrete game's reader, data table, types, or
+# offset constant. Both of those now live in game-rise / game-world, and the
+# nm assertion in scripts/assert_lib_purity.sh keeps them out.
 add_library(monster-core STATIC
     src/core/string_table.h
     src/core/string_table.cpp
@@ -37,11 +51,10 @@ add_library(monster-core STATIC
     src/core/map_paths.cpp
     src/core/process_memory.h
     src/core/process_memory.cpp
-    # The game-keyed metadata registry (S3). Replaces the two inline
-    # lookups that lived in monster_types.h, each of which named a
-    # specific game's table through a `game == GameId::Rise ? ...` ternary.
-    # It is here, not on a game side, because it is the thing that no longer
-    # has to know any game's data — it only holds pointers handed to it.
+    # The game-keyed metadata registry (S3). It is here, not on a game side,
+    # because it is the thing that no longer has to know any game's data —
+    # it only holds pointers handed to it by registerWorldTables() /
+    # registerRiseTables(), which live next to the data they own.
     src/core/game_tables.h
     src/core/game_tables.cpp
     # Per-game traits the UI asks as questions instead of branching on
@@ -57,6 +70,23 @@ add_library(monster-core STATIC
     # reader types, which type-erased the difference while leaving the
     # wiring — which reader, which map, which lambda — game-specific.
     src/core/game_reader.h
+)
+target_include_directories(monster-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(monster-core PUBLIC Qt6::Core Threads::Threads)
+target_compile_options(monster-core PRIVATE -Wall -Wextra -Wpedantic)
+
+# ---------------------------------------------------------------------------
+# game-rise: everything Monster Hunter Rise (S3 library split).
+#
+# The reader, its five per-domain TUs, the generated name tables, the
+# REFramework installer and its config overlay, and the Rise static metadata
+# (crowns / not-capturable set / ailment palette) that registerRiseTables()
+# hands to core's registry via a static initialiser.
+#
+# It is the Rise half of the game-keyed architecture: core holds the query
+# contract, this library holds the answers and is the only place that knows
+# a Rise offset. Nothing here may include a world/ header.
+add_library(game-rise STATIC
     src/rise/mhr_types.h
     src/rise/mhr_reader.h
     src/rise/mhr_reader.cpp
@@ -88,48 +118,60 @@ add_library(monster-core STATIC
     src/rise/reframework/reframework_config.cpp
     src/rise/reframework/reframework_fetcher.h
     src/rise/reframework/reframework_fetcher.cpp
+    # Rise static metadata: crown thresholds, the not-capturable set and the
+    # ailment palette, plus the registerRiseTables() that hands them to
+    # core/game_tables.h. Defined beside the data, because the registry must
+    # never name a game's table.
     src/rise/part_schemas.cpp
+)
+target_include_directories(game-rise PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(game-rise PUBLIC Qt6::Core monster-core)
+target_compile_options(game-rise PRIVATE -Wall -Wextra -Wpedantic)
+
+# ---------------------------------------------------------------------------
+# game-world: everything Monster Hunter World (S3 library split).
+#
+# Renamed from `mhw-reader`, which said "the reader" while holding exactly one
+# game's reader — the name was how a second game's assets ended up in the same
+# archive in the first place. It now also carries the World vocabulary
+# (world_types.{h,cpp}) and the World data tables that registerWorldTables()
+# hands to core's registry, so the library is "everything World" rather than
+# "the reader that happened to be the only one".
+add_library(game-world STATIC
     src/world/world_types.h
     src/world/world_types.cpp
-    # World monster DATA tables (kPartSchemas / kAilmentNames / kAilmentNamesEn /
-    # kCrownThresholds / kMonsterCaptureThresholds) — their own translation
-    # unit; the lookup code that reads them lives elsewhere. scripts/gen_schema.py
-    # rewrites THIS file in place.
-    src/monster/data/part_schemas_data.cpp
-)
-target_include_directories(monster-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(monster-core PUBLIC Qt6::Core Threads::Threads)
-target_compile_options(monster-core PRIVATE -Wall -Wextra -Wpedantic)
-
-# Reader library: the process-memory readers for the World build (MhwReader
-# itself plus the five per-domain readers that define its member functions).
-# These files used to be listed directly by 20 targets, which meant the whole
-# reader layer was compiled 20 times over per build and every new target had
-# a silent way to drift from the rest by picking the wrong subset. The five
-# domain readers are internally decoupled (each includes only mhw_reader.h
-# and its own types header), so they share one library safely; this is the
-# World counterpart of monster-core's Rise reader.
-add_library(mhw-reader STATIC
     src/world/world_reader.h
     src/world/world_reader.cpp
     src/world/monster_reader.cpp
     # World monster display names: the two id-key tables plus the one lookup
-    # that reads them, moved out of monster_reader.cpp's monsterDisplayName()
-    # so the reader TU carries reader logic only. It is the DATA+logic pair the
-    # Rise equivalent splits across src/rise/data/mhr_monster_names_data.cpp +
-    # src/rise/mhr_monster_names.cpp; see the header comment in the file for why
-    # one TU is the honest alignment here (no generator to protect). It needs
+    # that reads them, moved out of monster_reader.cpp's monsterDisplayName() so
+    # that the reader TU carries reader logic only. It is the DATA+logic pair
+    # the Rise equivalent splits across src/rise/data/mhr_monster_names_data.cpp
+    # + src/rise/mhr_monster_names.cpp; see the header comment in the file for
+    # why one TU is the honest alignment here (no generator to protect). It needs
     # only monster-core (StringTable), so it belongs in this library and not in
     # monster-core: world data stays out of the core → world-free direction.
     src/world/monster_names.cpp
     src/world/quest_reader.cpp
     src/world/player_reader.cpp
     src/world/world_severable_scan.h
+    # The shared target-pick rule (highest HP with a lock, else the matching
+    # address, else the first alive). Both readers need it; it is game-agnostic
+    # in the "snapshot in, index out" sense and is listed here only because it
+    # is not a core contract. Moving it into monster-core would be equally
+    # defensible.
     src/monster/target_selector.cpp
+    # World monster DATA tables (kPartSchemas / kAilmentNames / kAilmentNamesEn /
+    # kCrownThresholds / kMonsterCaptureThresholds) plus the registerWorldTables()
+    # that hands them to core/game_tables.h — their own translation unit; the
+    # lookup code that reads them lives elsewhere. scripts/gen_schema.py rewrites
+    # THIS file in place. Named src/monster/data/ for its generator, not for
+    # ownership: every table in it is a World table.
+    src/monster/data/part_schemas_data.cpp
 )
-target_include_directories(mhw-reader PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(mhw-reader PUBLIC Qt6::Core monster-core)
-target_compile_options(mhw-reader PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(game-world PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(game-world PUBLIC Qt6::Core monster-core)
+target_compile_options(game-world PRIVATE -Wall -Wextra -Wpedantic)
 
 # ---------------------------------------------------------------------------
 # mhw-ui: the whole GUI layer, compiled exactly once.
@@ -147,7 +189,7 @@ target_compile_options(mhw-reader PRIVATE -Wall -Wextra -Wpedantic)
 # carry them.
 #
 # src/ui is self-contained w.r.t. the other layers: it includes only
-# monster-core / mhw-reader headers (core/…, player/…, quest/…, world/…,
+# monster-core / game-world headers (core/…, player/…, quest/…, world/…,
 # rise/…), never the reverse. That is what makes it safe to compile once
 # and link 12 ways.
 # ---------------------------------------------------------------------------
@@ -216,7 +258,8 @@ target_link_libraries(mhw-ui PUBLIC
     Qt6::Svg
     LayerShellQt::Interface
     monster-core
-    mhw-reader
+    game-rise
+    game-world
 )
 target_compile_options(mhw-ui PRIVATE -Wall -Wextra -Wpedantic)
 
@@ -280,7 +323,8 @@ target_link_libraries(monster-overlay PRIVATE
     Qt6::Svg
     LayerShellQt::Interface
     monster-core
-    mhw-reader
+    game-rise
+    game-world
     mhw-ui
 )
 
@@ -303,7 +347,7 @@ target_link_libraries(snap-player-demo PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
-    mhw-reader
+    game-world
     mhw-ui
 )
 target_include_directories(snap-player-demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -318,7 +362,7 @@ target_link_libraries(snap-all-demo PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
-    mhw-reader
+    game-world
     mhw-ui
 )
 target_include_directories(snap-all-demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -338,7 +382,7 @@ target_link_libraries(snap-world-mp PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
-    mhw-reader
+    game-world
     mhw-ui
 )
 target_include_directories(snap-world-mp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -358,7 +402,7 @@ target_link_libraries(snap-gauge-fill PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
-    mhw-reader
+    game-world
     mhw-ui
 )
 target_include_directories(snap-gauge-fill PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -377,7 +421,7 @@ target_link_libraries(monster-control PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
-    mhw-reader
+    game-world
     mhw-ui
 )
 target_include_directories(monster-control PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -402,7 +446,7 @@ target_link_libraries(monster-control-l2-smoke PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
-    mhw-reader
+    game-world
     mhw-ui
 )
 target_include_directories(monster-control-l2-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -423,7 +467,8 @@ target_link_libraries(monster-control-rise-rf-smoke PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
-    mhw-reader
+    game-rise
+    game-world
     mhw-ui
 )
 target_include_directories(monster-control-rise-rf-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -443,7 +488,7 @@ target_link_libraries(monster-control-p0-test PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
-    mhw-reader
+    game-world
     mhw-ui
 )
 target_include_directories(monster-control-p0-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -467,7 +512,7 @@ target_link_libraries(snapshot-regression-tests PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
     LayerShellQt::Interface
     monster-core
-    mhw-reader
+    game-world
     mhw-ui
 )
 target_include_directories(snapshot-regression-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -513,7 +558,7 @@ add_executable(world-severable-scan-tests
         Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
         LayerShellQt::Interface
         monster-core
-        mhw-reader
+        game-world
         mhw-ui
     )
     target_include_directories(snap-empty-state PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -532,7 +577,7 @@ add_executable(world-severable-scan-tests
         Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
         LayerShellQt::Interface
         monster-core
-        mhw-reader
+        game-world
         mhw-ui
     )
     target_include_directories(snap-player-offline PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -544,7 +589,8 @@ add_executable(world-severable-scan-tests
         # both columns of the data-name tables.
         src/resources/resources.qrc
     )
-    target_link_libraries(monster-reader-tests PRIVATE Qt6::Core monster-core mhw-reader)
+    target_link_libraries(monster-reader-tests PRIVATE
+        Qt6::Core monster-core game-rise game-world)
     target_include_directories(monster-reader-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-reader-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME monster-reader-tests COMMAND monster-reader-tests)
@@ -552,49 +598,49 @@ add_executable(world-severable-scan-tests
     add_executable(monster-probe
         tests/monster_probe.cpp
     )
-    target_link_libraries(monster-probe PRIVATE Qt6::Core monster-core mhw-reader)
+    target_link_libraries(monster-probe PRIVATE Qt6::Core monster-core game-world)
     target_include_directories(monster-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-scan
         tests/monster_scan.cpp
     )
-    target_link_libraries(monster-scan PRIVATE Qt6::Core monster-core mhw-reader)
+    target_link_libraries(monster-scan PRIVATE Qt6::Core monster-core game-world)
     target_include_directories(monster-scan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-scan PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-probe-parts
         tests/monster_probe_parts.cpp
     )
-    target_link_libraries(monster-probe-parts PRIVATE Qt6::Core monster-core mhw-reader)
+    target_link_libraries(monster-probe-parts PRIVATE Qt6::Core monster-core game-world)
     target_include_directories(monster-probe-parts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-parts PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-probe-ailments
         tests/monster_probe_ailments.cpp
     )
-    target_link_libraries(monster-probe-ailments PRIVATE Qt6::Core monster-core mhw-reader)
+    target_link_libraries(monster-probe-ailments PRIVATE Qt6::Core monster-core game-world)
     target_include_directories(monster-probe-ailments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-ailments PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-probe-ailments-watch
         tests/monster_probe_ailments_watch.cpp
     )
-    target_link_libraries(monster-probe-ailments-watch PRIVATE Qt6::Core monster-core mhw-reader)
+    target_link_libraries(monster-probe-ailments-watch PRIVATE Qt6::Core monster-core game-world)
     target_include_directories(monster-probe-ailments-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-ailments-watch PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-probe-mantles
         tests/monster_probe_mantles.cpp
     )
-    target_link_libraries(monster-probe-mantles PRIVATE Qt6::Core monster-core mhw-reader)
+    target_link_libraries(monster-probe-mantles PRIVATE Qt6::Core monster-core game-world)
     target_include_directories(monster-probe-mantles PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-mantles PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
     add_executable(monster-probe-mantles-wide
         tests/monster_probe_mantles_wide.cpp
     )
-    target_link_libraries(monster-probe-mantles-wide PRIVATE Qt6::Core monster-core mhw-reader)
+    target_link_libraries(monster-probe-mantles-wide PRIVATE Qt6::Core monster-core game-world)
     target_include_directories(monster-probe-mantles-wide PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-probe-mantles-wide PRIVATE -Wall -Wno-unused-variable -Wno-unused-parameter)
 
@@ -647,7 +693,8 @@ add_executable(world-severable-scan-tests
         tests/rise_monster_name_tests.cpp
         src/resources/resources.qrc
     )
-    target_link_libraries(rise-monster-name-tests PRIVATE Qt6::Core monster-core)
+    target_link_libraries(rise-monster-name-tests PRIVATE
+        Qt6::Core monster-core game-rise game-world)
     target_include_directories(rise-monster-name-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(rise-monster-name-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-monster-name-tests COMMAND rise-monster-name-tests)
@@ -656,7 +703,8 @@ add_executable(world-severable-scan-tests
         tests/rise_part_names_hp_tests.cpp
         src/resources/resources.qrc
     )
-    target_link_libraries(rise-part-names-hp-tests PRIVATE Qt6::Core monster-core)
+    target_link_libraries(rise-part-names-hp-tests PRIVATE
+        Qt6::Core monster-core game-rise)
     target_include_directories(rise-part-names-hp-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(rise-part-names-hp-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-part-names-hp-tests COMMAND rise-part-names-hp-tests)
@@ -690,7 +738,8 @@ add_executable(world-severable-scan-tests
         tests/reader_factory_tests.cpp
         src/reader_descriptors.cpp
     )
-    target_link_libraries(reader-factory-tests PRIVATE Qt6::Core monster-core)
+    target_link_libraries(reader-factory-tests PRIVATE
+        Qt6::Core monster-core game-rise)
     target_include_directories(reader-factory-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(reader-factory-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME reader-factory-tests COMMAND reader-factory-tests)
@@ -705,7 +754,7 @@ add_executable(world-severable-scan-tests
         src/monster/data/part_schemas_data.cpp
         src/rise/part_schemas.cpp
     )
-    target_link_libraries(ailment-style-tests PRIVATE Qt6::Core monster-core)
+    target_link_libraries(ailment-style-tests PRIVATE Qt6::Core)
     target_include_directories(ailment-style-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(ailment-style-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME ailment-style-tests COMMAND ailment-style-tests)
@@ -725,7 +774,8 @@ add_executable(world-severable-scan-tests
         tests/rise_reframework_manager_tests.cpp
         src/resources/resources.qrc
     )
-    target_link_libraries(rise-reframework-manager-tests PRIVATE monster-core)
+    target_link_libraries(rise-reframework-manager-tests PRIVATE
+        monster-core game-rise)
     target_include_directories(rise-reframework-manager-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(rise-reframework-manager-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-reframework-manager-tests COMMAND rise-reframework-manager-tests)
@@ -734,7 +784,7 @@ add_executable(world-severable-scan-tests
         tests/reframework_fetcher_tests.cpp
         src/resources/resources.qrc
     )
-    target_link_libraries(reframework-fetcher-tests PRIVATE monster-core)
+    target_link_libraries(reframework-fetcher-tests PRIVATE monster-core game-rise)
     target_include_directories(reframework-fetcher-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(reframework-fetcher-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME reframework-fetcher-tests COMMAND reframework-fetcher-tests)
@@ -776,7 +826,8 @@ add_executable(world-severable-scan-tests
     add_executable(rise-damage-reader-tests
         tests/rise_damage_reader_tests.cpp
     )
-    target_link_libraries(rise-damage-reader-tests PRIVATE Qt6::Core monster-core)
+    target_link_libraries(rise-damage-reader-tests PRIVATE
+        Qt6::Core monster-core game-rise)
     target_include_directories(rise-damage-reader-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(rise-damage-reader-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-damage-reader-tests COMMAND rise-damage-reader-tests)
@@ -792,7 +843,8 @@ add_executable(world-severable-scan-tests
     add_executable(rise-damage-roster-tests
         tests/rise_damage_roster_tests.cpp
     )
-    target_link_libraries(rise-damage-roster-tests PRIVATE Qt6::Core monster-core)
+    target_link_libraries(rise-damage-roster-tests PRIVATE
+        Qt6::Core monster-core game-rise)
     target_include_directories(rise-damage-roster-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(rise-damage-roster-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-damage-roster-tests COMMAND rise-damage-roster-tests)
@@ -928,7 +980,8 @@ add_executable(world-severable-scan-tests
         src/ui/viewmodel/monster_view_model.h
         src/resources/resources.qrc
     )
-    target_link_libraries(monster-view-model-tests PRIVATE Qt6::Core monster-core)
+    target_link_libraries(monster-view-model-tests PRIVATE
+        Qt6::Core monster-core game-rise game-world)
     target_include_directories(monster-view-model-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(monster-view-model-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME monster-view-model-tests COMMAND monster-view-model-tests)
@@ -988,7 +1041,7 @@ add_executable(world-severable-scan-tests
         src/ui/panel_player_sharpness.h
     )
     target_link_libraries(player-sharpness-tests PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Widgets monster-core mhw-reader)
+        Qt6::Core Qt6::Gui Qt6::Widgets monster-core game-rise game-world)
     target_include_directories(player-sharpness-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(player-sharpness-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME player-sharpness-tests COMMAND player-sharpness-tests)
@@ -1024,7 +1077,7 @@ add_executable(world-severable-scan-tests
         tests/rise_zone_mapping_tests.cpp
         src/resources/resources.qrc
     )
-    target_link_libraries(rise-zone-mapping-tests PRIVATE monster-core)
+    target_link_libraries(rise-zone-mapping-tests PRIVATE monster-core game-world)
     target_include_directories(rise-zone-mapping-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(rise-zone-mapping-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-zone-mapping-tests COMMAND rise-zone-mapping-tests)
@@ -1050,7 +1103,7 @@ add_executable(world-severable-scan-tests
         src/resources/resources.qrc
     )
     target_link_libraries(mhr-reader-direct-tests PRIVATE
-        Qt6::Core monster-core mhw-reader)
+        Qt6::Core monster-core game-rise game-world)
     target_include_directories(mhr-reader-direct-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_definitions(mhr-reader-direct-tests PRIVATE
         MONSTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
@@ -1066,8 +1119,8 @@ add_executable(world-severable-scan-tests
     # World monster path finally has the CI coverage the Rise side already had.
     #
     # AddressMap is implemented in src/world/world_reader.cpp, which lives in
-    # mhw-reader (monster-core must not depend on the World-only library), so
-    # this target links mhw-reader for that plus the monster reader bodies.
+    # game-world (monster-core must not depend on the World-only library), so
+    # this target links game-world for that plus the monster reader bodies.
     #
     # The 0x10000 scratch stride and the StringTable locale save/restore are
     # World-specific: the Monster struct spans ~0x1C500, and the reader picks
@@ -1079,7 +1132,7 @@ add_executable(world-severable-scan-tests
     # the roster to assert.
     #
     # src/world/monster_reader.cpp is listed EXPLICITLY, not pulled in through
-    # the mhw-reader library, so `-fno-access-control` also relaxes it — the
+    # the game-world library, so `-fno-access-control` also relaxes it — the
     # test calls MhwReader::readMonsters / readMonsterAilments /
     # applyTenderizesToParts, which are private members of that translation
     # unit. That is the same difference between "compiled by a test target" and
@@ -1087,21 +1140,21 @@ add_executable(world-severable-scan-tests
     # rise-monster-metadata-tests above, which list their TUs for the same
     # reason). The library still carries its own normally-compiled copy for the
     # real overlay binary; the object this target builds is the one it links.
-    add_executable(mhw-reader-direct-tests
+    add_executable(game-world-direct-tests
         tests/mhrw_reader_direct_tests.cpp
         src/world/monster_reader.cpp
         src/resources/resources.qrc
     )
-    target_link_libraries(mhw-reader-direct-tests PRIVATE
-        Qt6::Core monster-core mhw-reader)
-    target_include_directories(mhw-reader-direct-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_compile_definitions(mhw-reader-direct-tests PRIVATE
+    target_link_libraries(game-world-direct-tests PRIVATE
+        Qt6::Core monster-core game-world)
+    target_include_directories(game-world-direct-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(game-world-direct-tests PRIVATE
         MONSTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     )
-    target_compile_options(mhw-reader-direct-tests PRIVATE
+    target_compile_options(game-world-direct-tests PRIVATE
         -Wall -Wextra -Wpedantic -fno-access-control
     )
-    add_test(NAME mhw-reader-direct-tests COMMAND mhw-reader-direct-tests)
+    add_test(NAME game-world-direct-tests COMMAND game-world-direct-tests)
 
     # v0.8.4-r18 player-abnormalities: generated Rise consumable/debuff schema
     # table + the pure evaluation core (flag gates, WithValue sub-ids, the
@@ -1110,7 +1163,8 @@ add_executable(world-severable-scan-tests
         tests/rise_abnormality_tests.cpp
         src/resources/resources.qrc
     )
-    target_link_libraries(rise-abnormality-tests PRIVATE Qt6::Core monster-core)
+    target_link_libraries(rise-abnormality-tests PRIVATE
+        Qt6::Core monster-core game-rise)
     target_include_directories(rise-abnormality-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(rise-abnormality-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-abnormality-tests COMMAND rise-abnormality-tests)
@@ -1139,7 +1193,8 @@ endif()
 add_executable(monster-doctor
     tests/monster_doctor.cpp
 )
-target_link_libraries(monster-doctor PRIVATE Qt6::Core monster-core mhw-reader)
+target_link_libraries(monster-doctor PRIVATE
+    Qt6::Core monster-core game-rise game-world)
 target_include_directories(monster-doctor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(monster-doctor PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(monster-doctor PRIVATE
@@ -1149,7 +1204,8 @@ target_compile_definitions(monster-doctor PRIVATE
 add_executable(rise-probe EXCLUDE_FROM_ALL
     tests/rise_probe.cpp
 )
-target_link_libraries(rise-probe PRIVATE Qt6::Core monster-core mhw-reader)
+target_link_libraries(rise-probe PRIVATE
+    Qt6::Core monster-core game-rise game-world)
 target_include_directories(rise-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(rise-probe PRIVATE -Wall -Wextra -Wpedantic)
 
@@ -1204,4 +1260,28 @@ add_test(NAME zero-reference-gate
             --snapshot ${CMAKE_CURRENT_SOURCE_DIR}/tests/tu_census.json
             --quiet
 )
+
+# ---------------------------------------------------------------------------
+# Library-boundary gate. Reads the built archives with nm and fails if a
+# library has picked up another layer's symbols: the kernel carrying a game's
+# reader or data table, a game library referencing the other game, or the UI
+# referencing a reader.
+#
+# This is the only check that can catch a boundary violation. The compiler
+# cannot: cross-library references are legal, and the old single-library layout
+# compiled clean while 60 of monster-core's 140 exported symbols belonged to
+# two concrete games. `-Wl,--no-undefined` would only catch a MISSING symbol,
+# not a misplaced one, and would also fail the legitimate test targets that
+# deliberately link a single .cpp.
+#
+# Runs against build/, so a fresh checkout without a build reports "skipped"
+# rather than failing — the same tradeoff zero-reference-gate makes.
+find_program(BASH_EXECUTABLE bash)
+if(BASH_EXECUTABLE)
+    add_test(NAME lib-purity-gate
+        COMMAND ${BASH_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/assert_lib_purity.sh
+                ${CMAKE_CURRENT_BINARY_DIR}
+    )
+endif()
 

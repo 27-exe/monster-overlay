@@ -7,9 +7,10 @@
       "compiled_by": [],
       "refs": [
         "console-text-helpers-tests",
+        "monster-reader-tests",
         "monster-view-model-tests"
       ],
-      "symbols": 5
+      "symbols": 6
     },
     "src/core/game_detector.cpp": {
       "class": "INDIRECT",
@@ -55,8 +56,8 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "game-world-direct-tests",
         "mhr-reader-direct-tests",
-        "mhw-reader-direct-tests",
         "monster-doctor",
         "monster-probe",
         "monster-probe-ailments",
@@ -86,7 +87,7 @@
       ],
       "refs": [
         "console-text-helpers-tests",
-        "mhw-reader-direct-tests",
+        "game-world-direct-tests",
         "monster-control",
         "monster-control-l2-smoke",
         "monster-control-rise-rf-smoke",
@@ -127,7 +128,7 @@
       ],
       "refs": [
         "ailment-style-tests",
-        "mhw-reader-direct-tests",
+        "game-world-direct-tests",
         "monster-probe-parts",
         "monster-reader-tests",
         "rise-monster-metadata-tests",
@@ -322,7 +323,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 29
+      "symbols": 19
     },
     "src/ui/panel.cpp": {
       "class": "INDIRECT",
@@ -504,7 +505,7 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
-        "mhw-reader-direct-tests",
+        "game-world-direct-tests",
         "monster-reader-tests"
       ],
       "symbols": 12
@@ -512,10 +513,10 @@
     "src/world/monster_reader.cpp": {
       "class": "INDIRECT",
       "compiled_by": [
-        "mhw-reader-direct-tests"
+        "game-world-direct-tests"
       ],
       "refs": [
-        "mhw-reader-direct-tests",
+        "game-world-direct-tests",
         "monster-reader-tests"
       ],
       "symbols": 48
@@ -539,8 +540,8 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "game-world-direct-tests",
         "mhr-reader-direct-tests",
-        "mhw-reader-direct-tests",
         "monster-doctor",
         "monster-probe-ailments-watch",
         "monster-reader-tests",

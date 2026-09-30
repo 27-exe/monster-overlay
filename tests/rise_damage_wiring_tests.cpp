@@ -169,6 +169,8 @@ int main()
         cmakeCall(cmakeSource, "add_library(monster-core");
     const std::string_view uiTarget =
         cmakeCall(cmakeSource, "add_library(mhw-ui");
+    const std::string_view riseTarget =
+        cmakeCall(cmakeSource, "add_library(game-rise");
 
     checkContains(mainSource,
                   "QCommandLineOptionmaskPetsOption(QStringLiteral(\"mask-pets\")",
@@ -233,8 +235,16 @@ int main()
                   "ui library tracks the fourth panel header");
     checkContains(uiTarget, "src/ui/panel_pet_damage.cpp",
                   "ui library compiles the fourth panel source");
-    checkContains(coreTarget, "src/rise/rise_damage_types.h",
-                  "core target tracks the shared Rise damage types");
+    // S3 (library split): the Rise damage types moved OUT of monster-core and
+    // into game-rise along with the rest of Rise. The point of the assertion
+    // survives — the shared types must be tracked by exactly one library, so
+    // mhw-ui and the executable consume them without recompiling them — but
+    // the library it asks about changed. Asserting this against monster-core
+    // would now be asserting the split has NOT happened.
+    checkContains(riseTarget, "src/rise/rise_damage_types.h",
+                  "game-rise target tracks the shared Rise damage types");
+    checkNotContains(coreTarget, "src/rise/rise_damage_types.h",
+                     "the kernel no longer carries a Rise-specific header");
 
     // v0.10.1: the companion (pets) surface is Rise-only end to end.
     const std::string panelSource =
