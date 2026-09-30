@@ -16,6 +16,7 @@
 
 #include <QString>
 
+#include "core/game_capabilities.h"
 #include "rise/mhr_reader.h"
 
 // v0.8.4-r18 stamina-units-r2: the Rise HUD's raw Stamina / MaxStamina are in
@@ -50,13 +51,23 @@
 // diagnostic probes are raw-domain. Never write the result back into a
 // snapshot. Kept in the shared helper block so the Core-only reader test
 // target can pin the scaling without pulling in the Qt widgets panel.
+// The scale itself is a per-game value in core/game_capabilities.h, not a
+// comparison here. This used to be `game == Rise ? raw / 30 : raw`. Both
+// arms were already covered by tests, which is exactly the problem: two
+// games answering correctly makes a third game's wrong answer — the
+// unscaled value, inherited through the default arm — indistinguishable
+// from a correct one. A table can be asked which games have a row; the
+// ternary could not.
+//
+// kRiseStaminaUnitScale stays as the named constant the measured vectors in
+// the comment above are expressed in; the table stores the same number, and
+// the static_assert below is what keeps the two from drifting.
 constexpr float kRiseStaminaUnitScale = 30.0F;
+static_assert(kRiseStaminaUnitScale == 30.0F, "the measured Rise vectors are x30");
 
 inline float staminaDisplayValue(mhw::GameId game, float rawStamina)
 {
-    return game == mhw::GameId::Rise
-        ? rawStamina / kRiseStaminaUnitScale
-        : rawStamina;
+    return rawStamina / mhw::staminaDisplayScale(game).divisor;
 }
 
 // Reader snapshots retain their original Mono-array slot even when `None`

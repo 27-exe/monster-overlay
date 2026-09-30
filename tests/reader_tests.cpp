@@ -532,6 +532,17 @@ Address OTHER 0xCAFE # inline comment
     check(staminaDisplayValue(mhw::GameId::World, 93.0F) == 93.0F
               && staminaDisplayValue(mhw::GameId::World, 150.0F) == 150.0F,
           "World stamina is passed through unscaled (already bar-domain)");
+    // The hazard is not that World is untested — it is, two lines above —
+    // but that BOTH games answering correctly makes a wrong answer for a
+    // third game look fine. These assertions pin the table each game reads
+    // from, which is the thing a ternary could not expose: there is no way
+    // to ask a ternary which games it actually has an answer for.
+    check(mhw::staminaDisplayScale(mhw::GameId::World).divisor == 1.0F
+              && mhw::staminaDisplayScale(mhw::GameId::Rise).divisor == 30.0F,
+          "each shipped game carries its own stamina divisor");
+    check(mhw::usesNormalisedPartGauges(mhw::GameId::World)
+              && mhw::usesNormalisedPartGauges(mhw::GameId::Rise),
+          "both shipped games report the shared part-gauge normalisation");
 
     // Rise lock-on reads the selected slot in two pointer stages. The helper
     // only derives the first slot address; keeping the actual dereferences in

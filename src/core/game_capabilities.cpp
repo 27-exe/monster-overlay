@@ -17,11 +17,19 @@ struct GameTraits {
     // ASCII fallback used when the key is missing from the locale table.
     const char *displayNameAscii;
     bool normalisedPartGauges;
+    // Divisor converting a raw reader stamina value to the human-scale bar
+    // value. 1.0 = no conversion. See staminaDisplayScale() in the header
+    // for why this is a column and not a ternary.
+    float staminaDivisor;
 };
 
 constexpr GameTraits kTraits[] = {
-    {"console.game.world", "WORLD", true},
-    {"console.game.rise", "RISE", true},
+    {"console.game.world", "WORLD", true, 1.0F},
+    // Rise's HUD stamina is in thirtieths of the human-scale bar, so the
+    // panel divides by 30. The measured vectors behind that number are
+    // recorded in src/ui/panel_player_metrics.h; this row is the single
+    // place that says so.
+    {"console.game.rise", "RISE", true, 30.0F},
 };
 
 // A new GameId must add a row here. Deriving the count from the array rather
@@ -57,6 +65,11 @@ QString gameDisplayName(GameId game)
 bool usesNormalisedPartGauges(GameId game)
 {
     return gameTraits(game).normalisedPartGauges;
+}
+
+DisplayScale staminaDisplayScale(GameId game)
+{
+    return DisplayScale{gameTraits(game).staminaDivisor};
 }
 
 } // namespace mhw

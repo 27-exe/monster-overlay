@@ -53,4 +53,22 @@ namespace mhw {
 // game had ever taken.
 [[nodiscard]] bool usesNormalisedPartGauges(GameId game);
 
+// A per-game display scale applied to a raw reader value before it reaches
+// the HUD. 1.0 means "the raw value is already the bar value".
+//
+// This exists because staminaDisplayValue() was a ternary with World as the
+// default arm: `game == Rise ? raw / 30 : raw`. A third game would have
+// inherited 1.0 and drawn an unconverted bar — and no test covered the
+// World arm, so nothing would have noticed. A scale is data, and data
+// belongs in a table a game fills in, not in a comparison the next game
+// silently fails to answer.
+struct DisplayScale {
+    // Multiplier applied to the raw value. Stored as a divisor so 1.0
+    // means "no conversion" and the field reads like the constant it
+    // replaces.
+    float divisor{1.0F};
+};
+
+[[nodiscard]] DisplayScale staminaDisplayScale(GameId game);
+
 } // namespace mhw
