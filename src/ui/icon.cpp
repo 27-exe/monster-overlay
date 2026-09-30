@@ -208,40 +208,39 @@ QString Icon::mantlePath(int toolType)
 
 QString Icon::monsterPath(int monsterId, GameId game)
 {
-    if (game == GameId::Rise) {
-        // v0.8: 78-ID set covering base Rise (0..19), Sunbreak main
-        // (20..45 + 76..78), the rest of Sunbreak's larger set (79..98),
-        // and Sunbreak's Risen elders + Primordial + Chaotic + Velkhana
-        // + Amatsu (107..115). Rise_46 (Giant Mechanized Toa) is
-        // intentionally absent: it is neither in kRiseKnown nor the
-        // qrc package set. IDs not listed here fall through to
-        // Unknown.png; no resource registration or behavior changes
-        // are made for missing IDs.
-        static const QSet<int> kRiseKnown = {
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-            20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
-            37, 38, 39, 40, 41, 42, 43, 44, 45,
-            // 46 omitted (no portrait, see comment above)
-            76, 77, 78,
-            79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98,
-            107, 108, 109, 110, 111, 112, 113, 114, 115
-        };
-        if (kRiseKnown.contains(monsterId))
-            return QStringLiteral(":/icons/Monsters/Rise_%1.png").arg(monsterId, 2, 10, QLatin1Char('0'));
-        return QStringLiteral(":/icons/Monsters/Unknown.png");
+    // Which portraits exist is answered by the resource system, not by a
+    // hand-kept id list. This file used to carry two of them — kRiseKnown
+    // (78 ids) and kKnown (71 ids) — each a manual transcription of the
+    // corresponding set in assets/icons.qrc, with no gate keeping them in
+    // step. Adding a portrait to the qrc without remembering the list left
+    // the new monster rendering as Unknown.png, silently.
+    //
+    // QFile::exists() on a :/ path answers exactly the question the lists
+    // were answering, from the same qrc that actually backs the render, so
+    // the two cannot disagree. Verified against the shipped resource set:
+    // Rise_00 and Rise_115 resolve, Rise_46 (deliberately absent, per the
+    // old comment) does not, and World_999 does not.
+    //
+    // The two games differ only in the file-name prefix, so the prefix is
+    // the one per-game fact left here. That is data, not a branch over
+    // behaviour — see core/game_capabilities.h for the distinction.
+    const QString prefix =
+        (game == GameId::Rise) ? QStringLiteral("Rise_") : QStringLiteral("World_");
+    const QString path = QStringLiteral(":/icons/Monsters/%1%2.png")
+                             .arg(prefix)
+                             .arg(monsterId, 2, 10, QLatin1Char('0'));
+    if (QFile::exists(path))
+        return path;
+    // ID 91 (金狮子) shares an icon with 92, and only World_92.png is in the
+    // qrc. The old kKnown list could not express that — it simply had no
+    // 91, and the alias was a separate `if` above the lookup. Probing the
+    // resource makes the alias fall out of the same mechanism: 91 misses,
+    // then 92 hits.
+    if (game == GameId::World && monsterId == 91) {
+        const QString alias = QStringLiteral(":/icons/Monsters/World_92.png");
+        if (QFile::exists(alias))
+            return alias;
     }
-    // ID 91 (金狮子) shares icon with ID 92
-    if (monsterId == 91) monsterId = 92;
-    static const QSet<int> kKnown = {
-        0, 1, 4, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
-        34, 35, 36, 37, 38, 39, 51,
-        61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74,
-        75, 76, 77, 78, 79, 80, 81,
-        87, 88, 89, 90, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101
-    };
-    if (kKnown.contains(monsterId))
-        return QStringLiteral(":/icons/Monsters/World_%1.png").arg(monsterId, 2, 10, QLatin1Char('0'));
     return QStringLiteral(":/icons/Monsters/Unknown.png");
 }
 
