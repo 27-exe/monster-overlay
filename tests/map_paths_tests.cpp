@@ -148,7 +148,7 @@ int main(int argc, char **argv)
     touch(riseDirInvalid, QStringLiteral("MonsterHunterRise.boom.map"));
     touch(riseDirLater, QStringLiteral("MonsterHunterRise.16.0.2.0.map"));
     const QString riseFallback = tmp + QStringLiteral("/src-tree/data/MonsterHunterRise.1.0.0.0.map");
-    check(mhw::riseMapCandidates(QString(), {riseDirInvalid, riseDirLater}, riseFallback)
+    check(mhw::versionedMapCandidates(QString(), QStringLiteral("MonsterHunterRise"), {riseDirInvalid, riseDirLater}, riseFallback)
               == QStringList{riseDirLater + QStringLiteral("/MonsterHunterRise.16.0.2.0.map"),
                              riseFallback},
           "invalid Rise filename in an earlier dir cannot mask a later valid map");
@@ -158,13 +158,14 @@ int main(int argc, char **argv)
     touch(risePriorityA, QStringLiteral("MonsterHunterRise.9.2.0.0.map"));
     touch(risePriorityA, QStringLiteral("MonsterHunterRise.10.0.0.0.map"));
     touch(risePriorityB, QStringLiteral("MonsterHunterRise.99.0.0.0.map"));
-    check(mhw::riseMapCandidates(QString(), {risePriorityA, risePriorityB}, riseFallback)
+    check(mhw::versionedMapCandidates(QString(), QStringLiteral("MonsterHunterRise"), {risePriorityA, risePriorityB}, riseFallback)
               == QStringList{risePriorityA + QStringLiteral("/MonsterHunterRise.10.0.0.0.map"),
                              risePriorityA + QStringLiteral("/MonsterHunterRise.9.2.0.0.map"),
                              risePriorityB + QStringLiteral("/MonsterHunterRise.99.0.0.0.map"),
                              riseFallback},
           "Rise candidates keep dir priority and sort four-part versions descending per dir");
-    check(mhw::riseMapCandidates(explicitBad, {risePriorityA, risePriorityB}, riseFallback)
+    check(mhw::versionedMapCandidates(explicitBad, QStringLiteral("MonsterHunterRise"),
+                                      {risePriorityA, risePriorityB}, riseFallback)
               == QStringList{explicitBad},
           "Rise explicit map is the only candidate (no implicit fallback)");
 

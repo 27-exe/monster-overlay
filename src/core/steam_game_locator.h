@@ -16,13 +16,14 @@ QStringList defaultSteamRoots();
 // entries are discarded. Both supported libraryfolders.vdf locations are read.
 QStringList steamLibraryPaths(const QStringList &steamRoots);
 
-// Locate the requested executable in Rise's Steam app (1446780).
-QString findRiseInstallDir(const QStringList &steamRoots);
-QString findRiseInstallDir();
-
 // Locate a Steam app under explicit Steam roots. The returned directory is
 // empty unless the app manifest names an install directory whose requested
 // executable exists.
+//
+// This is the game-agnostic form, and it is the only Steam-app lookup that
+// lives here. Rise's appId and exe name used to be hardcoded in a
+// findRiseInstallDir() wrapper in this header, which put one game's identity
+// inside the kernel; that wrapper now lives beside Rise's other code.
 QString findSteamGameInstallDir(quint64 appId, const QString &executableName,
                                 const QStringList &steamRoots = defaultSteamRoots());
 

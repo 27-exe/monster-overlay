@@ -6,6 +6,13 @@
 // The per-game configuration is in reader_descriptors.cpp, which does not
 // include either reader. This file includes both, so it is where "build a
 // reader for this game" is answered, and where a third game is wired in.
+//
+// The reader-factory-tests census entry used to be INDIRECT because the
+// target's object file left `createReader` undefined: this TU was then
+// compiled by the target itself. That coupling went away when the map
+// candidate resolution was generalised — reader_factory_tests.cpp now
+// exercises the descriptors and nothing here, so the census measures this
+// TU as ZERO until a test links it deliberately (see the census gate).
 
 #include "reader_factory.h"
 
@@ -36,7 +43,8 @@ GameReaderPtr createReader(GameId game, const QString &explicitMap,
         // versioned name by regex, because the build number moves with
         // every patch and a literal name would break each time.
         const QStringList candidates =
-            riseMapCandidates(explicitMap, dataDirs, fallback);
+            versionedMapCandidates(explicitMap, QStringLiteral("MonsterHunterRise"),
+                                    dataDirs, fallback);
         return std::make_unique<MhrReader>(MhrReader::findBestMap(candidates));
     }
     }

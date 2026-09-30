@@ -75,10 +75,9 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
-        "monster-control-rise-rf-smoke",
         "steam-game-locator-tests"
       ],
-      "symbols": 13
+      "symbols": 11
     },
     "src/core/string_table.cpp": {
       "class": "INDIRECT",
@@ -162,7 +161,7 @@
       "refs": [
         "reader-factory-tests"
       ],
-      "symbols": 8
+      "symbols": 6
     },
     "src/rise/data/mhr_monster_names_data.cpp": {
       "class": "ZERO",
@@ -283,6 +282,17 @@
         "rise-damage-roster-tests"
       ],
       "symbols": 12
+    },
+    "src/rise/rise_install_locator.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "steam-game-locator-tests"
+      ],
+      "refs": [
+        "monster-control-rise-rf-smoke",
+        "steam-game-locator-tests"
+      ],
+      "symbols": 7
     },
     "src/ui/control_panel.cpp": {
       "class": "INDIRECT",

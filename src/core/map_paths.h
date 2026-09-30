@@ -55,12 +55,19 @@ QStringList worldMapCandidates(const QString &explicitPath,
                                const QStringList &dirs,
                                const QString &fallbackPath = QString());
 
-// Build the complete Rise candidate list. Each data directory is considered
-// in priority order, and only exact four-component numeric version names are
-// included, newest first within that directory. The fallback is last.
-QStringList riseMapCandidates(const QString &explicitPath,
-                              const QStringList &dirs,
-                              const QString &fallbackPath = QString());
+// Build a complete candidate list for a game whose map files carry a
+// four-component numeric version in their name, newest first. Each data
+// directory is considered in priority order; the fallback is last.
+//
+// `fileStem` is the prefix before the version — e.g. "MonsterHunterRise". It
+// is supplied by the caller rather than written into the body, so a third
+// game's map search is a call, not an edit to this header. (World does not
+// use this path: worldMapCandidates() takes a whole file name because World's
+// map name is a single fixed build, not a version range.)
+QStringList versionedMapCandidates(const QString &explicitPath,
+                                   const QString &fileStem,
+                                   const QStringList &dirs,
+                                   const QString &fallbackPath = QString());
 
 // Replace complete HOME path occurrences in diagnostic text. Empty and root
 // HOME values are deliberately not redacted: replacing "/" would rewrite

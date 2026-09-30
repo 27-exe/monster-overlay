@@ -2,6 +2,7 @@
 // Unit tests for the QtCore-only Steam game installation locator.
 
 #include "core/steam_game_locator.h"
+#include "rise/rise_install_locator.h"
 
 #include <QCoreApplication>
 #include <QDir>

@@ -484,7 +484,8 @@ void sectionDataFiles()
         const QString fallback = entry.fallback;
         const bool isRise = qstrcmp(entry.title, "rise") == 0;
         const QStringList candidates = isRise
-            ? mhw::riseMapCandidates(QString(), dirs, fallback)
+            ? mhw::versionedMapCandidates(QString(), QStringLiteral("MonsterHunterRise"), dirs,
+                                fallback)
             : mhw::worldMapCandidates(QString(), QString::fromUtf8(entry.file), dirs,
                                       fallback);
         const QString resolved = isRise

@@ -87,6 +87,8 @@ target_compile_options(monster-core PRIVATE -Wall -Wextra -Wpedantic)
 # contract, this library holds the answers and is the only place that knows
 # a Rise offset. Nothing here may include a world/ header.
 add_library(game-rise STATIC
+    src/rise/rise_install_locator.h
+    src/rise/rise_install_locator.cpp
     src/rise/mhr_types.h
     src/rise/mhr_reader.h
     src/rise/mhr_reader.cpp
@@ -737,9 +739,14 @@ add_executable(world-severable-scan-tests
     add_executable(reader-factory-tests
         tests/reader_factory_tests.cpp
         src/reader_descriptors.cpp
+        src/reader_factory.cpp
     )
+    # game-rise and game-world are needed because createReader() constructs a
+    # concrete reader; the descriptors above are what this test is about, and
+    # the two libraries are how it reaches them. Linking the archive, not the
+    # .o files, so these are the same objects the executable links.
     target_link_libraries(reader-factory-tests PRIVATE
-        Qt6::Core monster-core game-rise)
+        Qt6::Core monster-core game-rise game-world)
     target_include_directories(reader-factory-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(reader-factory-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME reader-factory-tests COMMAND reader-factory-tests)
@@ -762,10 +769,14 @@ add_executable(world-severable-scan-tests
     # Steam/Rise installation discovery and REFramework lifecycle tests are
     # QtCore-only and link the same production core library used by the
     # console. They never touch the real Steam or game directory.
+    # steam-game-locator-tests now covers the Rise-specific wrapper too
+    # (rise_install_locator.cpp), so it links game-rise in addition to the
+    # kernel's generic Steam helper it tests first.
     add_executable(steam-game-locator-tests
         tests/steam_game_locator_tests.cpp
+        src/rise/rise_install_locator.cpp
     )
-    target_link_libraries(steam-game-locator-tests PRIVATE monster-core)
+    target_link_libraries(steam-game-locator-tests PRIVATE monster-core game-rise)
     target_include_directories(steam-game-locator-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(steam-game-locator-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME steam-game-locator-tests COMMAND steam-game-locator-tests)

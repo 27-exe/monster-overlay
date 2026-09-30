@@ -225,14 +225,4 @@ QString findSteamGameInstallDir(quint64 appId, const QString &executableName,
     return {};
 }
 
-QString findRiseInstallDir(const QStringList &steamRoots)
-{
-    return findSteamGameInstallDir(1446780, QStringLiteral("MonsterHunterRise.exe"), steamRoots);
-}
-
-QString findRiseInstallDir()
-{
-    return findRiseInstallDir(defaultSteamRoots());
-}
-
 } // namespace mhw

@@ -121,8 +121,8 @@ Address OTHER 0xCAFE # inline comment
     check(goodRise.open(QIODevice::WriteOnly), "good later Rise map fixture opens");
     goodRise.write("Address ROOT 0x5678\n");
     goodRise.close();
-    const QStringList riseCandidates = mhw::riseMapCandidates(
-        QString(), {firstDir, secondDir}, QString());
+    const QStringList riseCandidates = mhw::versionedMapCandidates(
+        QString(), QStringLiteral("MonsterHunterRise"), {firstDir, secondDir}, QString());
     check(mhw::MhrReader::findBestMap(riseCandidates) == riseGood,
           "Rise selection skips a bad-content earlier candidate and continues across dirs");
 

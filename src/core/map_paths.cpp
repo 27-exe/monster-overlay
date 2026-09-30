@@ -148,15 +148,22 @@ QStringList worldMapCandidates(const QString &explicitPath,
     return candidates;
 }
 
-QStringList riseMapCandidates(const QString &explicitPath,
-                              const QStringList &dirs,
-                              const QString &fallbackPath)
+QStringList versionedMapCandidates(const QString &explicitPath,
+                                   const QString &fileStem,
+                                   const QStringList &dirs,
+                                   const QString &fallbackPath)
 {
     if (!explicitPath.isEmpty())
         return {explicitPath};
 
-    const QRegularExpression versionPattern(
-        QStringLiteral("^MonsterHunterRise\\.(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)\\.map$"));
+    // Generic: the stem is a parameter, not a literal. This used to be
+    // riseMapCandidates() with "MonsterHunterRise" written into the body, so
+    // the kernel knew a game's file naming and no other game could reuse the
+    // search. Its World counterpart already took the name as an argument,
+    // which is what made the asymmetry visible.
+    const QString literalPattern = QStringLiteral("^%1\\.(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)\\.map$")
+                                       .arg(fileStem);
+    const QRegularExpression versionPattern(literalPattern);
     struct Candidate {
         QString path;
         std::array<qulonglong, 4> version{};
@@ -167,7 +174,7 @@ QStringList riseMapCandidates(const QString &explicitPath,
         QVector<Candidate> inDirectory;
         const QDir dir(dataDir);
         const QStringList names =
-            dir.entryList({QStringLiteral("MonsterHunterRise.*.map")}, QDir::Files);
+            dir.entryList({fileStem + QStringLiteral(".*.map")}, QDir::Files);
         for (const QString &name : names) {
             const QRegularExpressionMatch match = versionPattern.match(name);
             if (!match.hasMatch())

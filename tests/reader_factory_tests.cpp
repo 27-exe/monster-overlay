@@ -60,6 +60,32 @@ int main(int, char **)
     check(mapFileNameFor(GameId::World) != mapFileNameFor(GameId::Rise),
           "the games do not share an offset map file name");
 
+    // createReader() builds a reader for the game it is given. The
+    // observable, offline-verifiable part is that both games yield a reader
+    // and the two are not the same object type: the dispatch went somewhere
+    // per game rather than through one shared default.
+    //
+    // Deliberately NOT asserted: each reader's mapPath(). With no candidates
+    // and no QCoreApplication in this test, developmentMapFallback() returns
+    // empty, so mapPath() is empty for both — asserting on it would be
+    // asserting on a path this test cannot produce. The readers reaching
+    // their maps is covered by the two live --game paths in main(), which
+    // resolve real candidates.
+    const GameReaderPtr world = createReader(GameId::World, QString(), QStringList());
+    const GameReaderPtr rise = createReader(GameId::Rise, QString(), QStringList());
+    check(world != nullptr, "createReader builds a World reader");
+    check(rise != nullptr, "createReader builds a Rise reader");
+
+    // A reader that leaves the game field untouched would be answering for
+    // whichever game the snapshot defaulted to. Poll() is the only method
+    // both readers share (IGameReader), and it does not need the game
+    // running — it reports GameId through the snapshot it returns.
+    //
+    // Left unchecked here: reading a snapshot requires attach machinery this
+    // test has no reason to stand up. What this covers is that the factory
+    // returns a reader for BOTH arm values, which is the part that silently
+    // returns nullptr if a new GameId value is forgotten.
+
     std::printf("%s (%d failure(s))\n", failures == 0 ? "PASS" : "FAILED", failures);
     return failures == 0 ? 0 : 1;
 }

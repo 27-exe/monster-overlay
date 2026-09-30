@@ -25,6 +25,7 @@
 
 #include "core/game_detector.h"
 #include "core/steam_game_locator.h"
+#include "rise/rise_install_locator.h"
 #include "core/string_table.h"
 #include "rise/reframework/rise_reframework_manager.h"
 #include "ui/viewmodel/rise_reframework_status.h"
