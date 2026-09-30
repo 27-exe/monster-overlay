@@ -49,6 +49,7 @@
 
 #include <QHash>
 #include <QSet>
+#include <QString>
 #include <array>
 #include <optional>
 
@@ -76,6 +77,36 @@ struct CaptureTables {
     // semantics being preserved.
     const QSet<int> *notCapturable{nullptr};
 };
+
+// How a game colours one ailment: the status colour, and the trap icon when
+// the ailment is a trap item. The two shipped games use UNRELATED id tables
+// — Rise 4 is poison and World 2 is paralysis — so a colour keyed only by id
+// would be wrong for one of them no matter which value it picked.
+//
+// The colour is a packed ARGB int, NOT a QColor. This header lives in
+// monster-core, which links QtCore only; QColor is in QtGui, and naming it
+// here would drag QtGui down into the kernel. The View converts with
+// QColor::fromRgba at the point of painting, which is where a GUI type
+// belongs.
+struct AilmentStyle {
+    // Packed 0xAARRGGBB. 0x9E9E9E alpha-ff is the neutral grey the old
+    // switch used as its `default:` in both arms.
+    quint32 statusColorRgba{0xFF9E9E9EU};
+    QString trapIconPath; // empty for a non-trap ailment
+};
+
+// Registered per game. Absent entry = this game has no data, and
+// ailmentStyle() answers the neutral grey rather than borrowing another
+// game's palette — the old if/else defaulted to World's table, so an id no
+// game knew about was painted with World colours.
+AilmentStyle ailmentStyle(GameId game, int ailmentId);
+
+// The two tables live in the data translation units that own them:
+// registerWorldAilmentStyles() in src/monster/data/part_schemas_data.cpp,
+// registerRiseAilmentStyles() in src/rise/part_schemas.cpp. The UI asks
+// by (game, id) and never sees a switch.
+void registerAilmentStyles(GameId game,
+                           const QHash<int, AilmentStyle> &styles);
 
 // Registered tables per game. Absent entry = no data for that game.
 CrownTables crownTablesFor(GameId game);

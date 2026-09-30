@@ -695,6 +695,21 @@ add_executable(world-severable-scan-tests
     target_compile_options(reader-factory-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME reader-factory-tests COMMAND reader-factory-tests)
 
+    # S6: the ailment palette lives in per-game tables because the two id
+    # spaces are unrelated — poison is World 1 but Rise 4. This pins that
+    # hazard directly, so a future "simplification" to one id-keyed table
+    # fails here rather than silently mis-colouring every status card.
+    add_executable(ailment-style-tests
+        tests/ailment_style_tests.cpp
+        src/core/game_tables.cpp
+        src/monster/data/part_schemas_data.cpp
+        src/rise/part_schemas.cpp
+    )
+    target_link_libraries(ailment-style-tests PRIVATE Qt6::Core monster-core)
+    target_include_directories(ailment-style-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(ailment-style-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME ailment-style-tests COMMAND ailment-style-tests)
+
     # Steam/Rise installation discovery and REFramework lifecycle tests are
     # QtCore-only and link the same production core library used by the
     # console. They never touch the real Steam or game directory.

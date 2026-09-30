@@ -94,10 +94,27 @@ extern const QSet<int> kRiseNotCapturableMonsterIds = {
 
 };
 
-// Hand Rise's half of the static-metadata registry to core (S3). See
+// Hand Rise's half of the static-metadata registry to core (S3/S6). See
 // registerWorldTables() in src/monster/data/part_schemas_data.cpp for why
 // this sits beside the data, and why registration is a static initialiser
 // rather than a reader-constructor side effect.
+//
+// The ailment palette moved here from panel_monster.cpp:900 alongside
+// World's; every ailment has a different id in each game (毒 is World 1 but
+// Rise 4) and `else` was the silent fallthrough that would have given a third
+// game World colours. Colours are the originals packed to ARGB.
+const QHash<int, AilmentStyle> kRiseAilmentStyles = {
+    { 0, {0xFFF6A522U, QString()}},                                                  // 麻痹
+    { 1, {0xFF8CC34AU, QString()}},                                                  // 睡眠
+    { 2, {0xFFFFC107U, QString()}},                                                  // 眩晕
+    { 3, {0xFFFFFFFFU, QString()}},                                                  // 闪光
+    { 4, {0xFFA74FFFU, QString()}},                                                  // 毒
+    { 5, {0xFFFF5722U, QString()}},                                                  // 爆破
+    { 7, {0xFF4CAF50U, QString()}},                                                  // 乘骑
+    {12, {0xFF8BC34AU, QStringLiteral(":/icons/Traps/item_id_80.svg")}},             // 落穴
+    {13, {0xFFFFEB3BU, QStringLiteral(":/icons/Traps/item_id_81.svg")}},             // 麻痹陷阱
+};
+
 void registerRiseTables()
 {
     registerCrownThresholds(GameId::Rise, kRiseCrownThresholds);
@@ -106,6 +123,7 @@ void registerRiseTables()
     // absent — nullptr, not an empty table. An empty table would read as
     // "Rise has thresholds and none of them match".
     registerCaptureRules(GameId::Rise, nullptr, kRiseNotCapturableMonsterIds);
+    registerAilmentStyles(GameId::Rise, kRiseAilmentStyles);
 }
 
 namespace {

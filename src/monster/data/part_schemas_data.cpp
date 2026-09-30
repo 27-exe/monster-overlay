@@ -963,7 +963,7 @@ extern const QHash<int, int> kMonsterCaptureThresholds = {
     { 96,  0 }, { 97,  0 }, { 98,  0 }, { 99, 15 }, { 100, 20 }, { 101,  0 },
 };
 
-// Hand World's half of the static-metadata registry to core (S3).
+// Hand World's half of the static-metadata registry to core (S3/S6).
 //
 // This lives beside the data rather than in the registry, so the registry
 // never learns which game a table belongs to — it only stores what it is
@@ -977,12 +977,33 @@ extern const QHash<int, int> kMonsterCaptureThresholds = {
 // the tables above are constructed before the one that takes their address,
 // and nothing here dereferences them. Cross-TU order is irrelevant because
 // only pointers are stored.
+//
+// The ailment palette moved here from panel_monster.cpp:900, which held two
+// unrelated id tables in an if/else inside the View. Every ailment has a
+// DIFFERENT id in each game — poison is World 1 but Rise 4, paralysis is
+// World 2 but Rise 0 — so an id-keyed colour could not be shared even in
+// principle, and `else` was the silent fallthrough that would have given a
+// third game World colours. Colours are the originals, packed to ARGB;
+// 0xA74FFF=毒, 0xF6A522=麻痹, 0x8CC34A=睡眠, 0xFFFF5722=爆破,
+// 0x4CAF50=乘骑, 0xFFEB3B=麻痹陷阱, 0x8BC34A=落穴, 0x66BB6A=藤蔓陷阱.
+const QHash<int, AilmentStyle> kWorldAilmentStyles = {
+    { 1, {0xFFA74FFFU, QString()}},                                                  // 毒
+    { 2, {0xFFF6A522U, QString()}},                                                  // 麻痹
+    { 3, {0xFF8CC34AU, QString()}},                                                  // 睡眠
+    { 4, {0xFFFF5722U, QString()}},                                                  // 爆破
+    { 5, {0xFF4CAF50U, QString()}},                                                  // 乘骑
+    {14, {0xFFFFEB3BU, QStringLiteral(":/icons/Traps/item_id_81.svg")}},             // 麻痹陷阱
+    {15, {0xFF8BC34AU, QStringLiteral(":/icons/Traps/item_id_80.svg")}},             // 落穴
+    {16, {0xFF66BB6AU, QString()}},                                                  // 藤蔓陷阱
+};
+
 void registerWorldTables()
 {
     registerCrownThresholds(GameId::World, kCrownThresholds);
     // World expresses non-capturability inside the threshold table itself
     // (Elder Dragons carry Capture=0), so it registers no separate set.
     registerCaptureRules(GameId::World, &kMonsterCaptureThresholds, kNoNotCapturable());
+    registerAilmentStyles(GameId::World, kWorldAilmentStyles);
 }
 
 namespace {

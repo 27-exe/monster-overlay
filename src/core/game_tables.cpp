@@ -19,6 +19,8 @@ struct Tables {
     bool hasCapture{false};
     const QHash<int, int> *captureThresholds{nullptr};
     const QSet<int> *notCapturable{nullptr};
+    bool hasAilments{false};
+    const QHash<int, AilmentStyle> *ailmentStyles{nullptr};
 };
 
 Tables &tableFor(GameId game)
@@ -91,6 +93,27 @@ void registerCrownThresholds(GameId game, const QHash<int, std::array<float, 3>>
     Tables &t = tableFor(game);
     t.crowns = &table;
     t.hasCrowns = true;
+}
+
+void registerAilmentStyles(GameId game, const QHash<int, AilmentStyle> &styles)
+{
+    Tables &t = tableFor(game);
+    t.ailmentStyles = &styles;
+    t.hasAilments = true;
+}
+
+AilmentStyle ailmentStyle(GameId game, int ailmentId)
+{
+    // The neutral grey the old switch used as its `default:` in both arms.
+    // Keeping it here means an unknown id looks the same as before rather
+    // than inheriting another game's palette.
+    static const AilmentStyle kUnknown{0xFF9E9E9EU, QString()};
+
+    const Tables &t = tableFor(game);
+    if (!t.hasAilments || !t.ailmentStyles)
+        return kUnknown;
+    const auto it = t.ailmentStyles->constFind(ailmentId);
+    return it == t.ailmentStyles->cend() ? kUnknown : it.value();
 }
 
 void registerCaptureRules(GameId game, const QHash<int, int> *thresholdByMonster,

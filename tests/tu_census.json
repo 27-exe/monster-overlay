@@ -30,13 +30,15 @@
     "src/core/game_tables.cpp": {
       "class": "INDIRECT",
       "compiled_by": [
+        "ailment-style-tests",
         "rise-monster-metadata-tests"
       ],
       "refs": [
+        "ailment-style-tests",
         "rise-monster-metadata-tests",
         "rise-monster-name-tests"
       ],
-      "symbols": 6
+      "symbols": 10
     },
     "src/core/map_paths.cpp": {
       "class": "INDIRECT",
@@ -120,16 +122,18 @@
     "src/monster/data/part_schemas_data.cpp": {
       "class": "INDIRECT",
       "compiled_by": [
+        "ailment-style-tests",
         "rise-monster-metadata-tests"
       ],
       "refs": [
+        "ailment-style-tests",
         "mhw-reader-direct-tests",
         "monster-probe-parts",
         "monster-reader-tests",
         "rise-monster-metadata-tests",
         "rise-monster-name-tests"
       ],
-      "symbols": 45
+      "symbols": 52
     },
     "src/monster/target_selector.cpp": {
       "class": "INDIRECT",
@@ -228,13 +232,15 @@
     "src/rise/part_schemas.cpp": {
       "class": "INDIRECT",
       "compiled_by": [
+        "ailment-style-tests",
         "rise-monster-metadata-tests"
       ],
       "refs": [
+        "ailment-style-tests",
         "rise-monster-metadata-tests",
         "rise-monster-name-tests"
       ],
-      "symbols": 28
+      "symbols": 35
     },
     "src/rise/reframework/reframework_config.cpp": {
       "class": "INDIRECT",

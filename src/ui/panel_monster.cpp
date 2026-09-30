@@ -1,5 +1,6 @@
 #include "panel_monster.h"
 
+#include "core/game_tables.h"
 #include "core/string_table.h"
 #include "monster/monster_types.h"
 #include "ui/formatters.h"
@@ -895,36 +896,16 @@ void MonsterPanel::paintPanel(QPainter &p)
         ScEntry e;
         e.name = a.name;
         // --sc + icon path are looked up by ailment id; trap items keep
-        // their distinctive yellow/green from HunterPie. World and Rise
-        // use UNRELATED id tables, so branch on the snapshot's game.
-        if (monster_.game == mhw::GameId::Rise) {
-            switch (a.id) {
-            case  0: e.sc = QColor(246, 165,  34); break; // 麻痹
-            case  1: e.sc = QColor(140, 195,  74); break; // 睡眠
-            case  2: e.sc = QColor(255, 193,   7); break; // 眩晕
-            case  3: e.sc = QColor(255, 255, 255); break; // 闪光
-            case  4: e.sc = QColor(167,  79, 255); break; // 毒
-            case  5: e.sc = QColor(255,  87,  34); break; // 爆破
-            case  7: e.sc = QColor( 76, 175,  80); break; // 乘骑
-            case 12: e.sc = QColor(139, 195,  74);
-                     e.iconPath = QStringLiteral(":/icons/Traps/item_id_80.svg"); break; // 落穴
-            case 13: e.sc = QColor(255, 235,  59);
-                     e.iconPath = QStringLiteral(":/icons/Traps/item_id_81.svg"); break; // 麻痹陷阱
-            default: e.sc = QColor(158, 158, 158); break;
-            }
-        } else switch (a.id) {
-        case  1: e.sc = QColor(167,  79, 255); e.iconPath = QString(); break; // 毒
-        case  2: e.sc = QColor(246, 165,  34); e.iconPath = QString(); break; // 麻痹
-        case  3: e.sc = QColor(140, 195,  74); e.iconPath = QString(); break; // 睡眠
-        case  4: e.sc = QColor(255,  87,  34); e.iconPath = QString(); break; // 爆破
-        case  5: e.sc = QColor( 76, 175,  80); e.iconPath = QString(); break; // 乘骑
-        case 14: e.sc = QColor(255, 235,  59);
-                 e.iconPath = QStringLiteral(":/icons/Traps/item_id_81.svg"); break; // 麻痹陷阱
-        case 15: e.sc = QColor(139, 195,  74);
-                 e.iconPath = QStringLiteral(":/icons/Traps/item_id_80.svg"); break; // 落穴
-        case 16: e.sc = QColor(102, 187, 106); e.iconPath = QString();          break; // 藤蔓陷阱
-        default: e.sc = QColor(158, 158, 158); e.iconPath = QString();          break;
-        }
+        // their distinctive yellow/green from HunterPie. World and Rise use
+        // UNRELATED id tables — Rise 4 is poison, World 2 is paralysis — so
+        // this asks the game-keyed registry rather than branching here. The
+        // tables moved to the data translation units that own them (S6);
+        // before that a third game fell into the `else` arm and inherited
+        // World colours, which is the same silent-default trap the crown
+        // lookup had.
+        const mhw::AilmentStyle style = mhw::ailmentStyle(monster_.game, a.id);
+        e.sc = QColor::fromRgba(style.statusColorRgba);
+        e.iconPath = style.trapIconPath;
         // The card is "active" the moment the monster is being affected:
         //   - the ailment has triggered (timer counting down), or
         //   - the build-up is in progress (mini bar moving).

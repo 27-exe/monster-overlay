@@ -21,10 +21,36 @@ namespace mhw {
 namespace {
 
 constexpr qint64 kExpectedArchiveSize = 5280871;
+// The pinned REFramework build, in ONE place. It previously appeared three
+// times — as this tag, inside the download URL, and again inside the bundled
+// archive path — so upgrading meant editing three strings in three formats
+// and missing one installed a payload whose sha256 did not match the
+// kArchiveSha256 below. The failure was not loud: the installer reported a
+// checksum mismatch on a file it had just downloaded itself.
+constexpr auto kVersion = "1.5.9.1";
 constexpr auto kTag = "v1.5.9.1";
 constexpr auto kAssetName = "MHRISE.zip";
 constexpr auto kArchiveSha256 = "91a6089e8fa3a17faba81a43f14f5c1f54b27cdd24d5282fc069d2cdadd693c5";
-constexpr auto kArchiveUrl = "https://github.com/praydog/REFramework/releases/download/v1.5.9.1/MHRISE.zip";
+// Assembled from the pieces above rather than written out, so a version bump
+// cannot leave one of the three spellings behind.
+// Named buildArchiveUrl rather than archiveUrl: the class has a member of
+// that name, and a file-scope function with the same name would be found by
+// unqualified lookup from inside the member — i.e. it would call itself.
+[[nodiscard]] inline QString buildArchiveUrl()
+{
+    return QStringLiteral("https://github.com/praydog/REFramework/releases/download/")
+           + QLatin1String(kTag) + QLatin1Char('/') + QLatin1String(kAssetName);
+}
+// The bundled zip sits next to the app so an offline install works, named
+// MHRISE-v<version>.zip. Built from kVersion rather than written out: the
+// first attempt concatenated kAssetName here too and produced
+// "MHRISE-v1.5.9.1.MHRISE.zip", which the pinned-path test caught. That test
+// is the reason this is assembled at all.
+[[nodiscard]] inline QString bundledArchiveFileName()
+{
+    return QStringLiteral("MHRISE-v") + QLatin1String(kVersion)
+           + QLatin1String(".zip");
+}
 constexpr auto kProject = "monster-overlay";
 constexpr int kManifestSchema = 1;
 constexpr auto kGameExe = "MonsterHunterRise.exe";
@@ -1111,7 +1137,7 @@ QString RiseReFrameworkManager::archiveAssetName()
 
 QString RiseReFrameworkManager::archiveUrl()
 {
-    return QString::fromLatin1(kArchiveUrl);
+    return buildArchiveUrl();
 }
 
 qint64 RiseReFrameworkManager::expectedArchiveSize()
@@ -1127,7 +1153,7 @@ QByteArray RiseReFrameworkManager::expectedArchiveSha256()
 QString RiseReFrameworkManager::bundledArchivePath(const QString &applicationDir)
 {
     return QDir(applicationDir).filePath(
-        QStringLiteral("third_party/REFramework/MHRISE-v1.5.9.1.zip"));
+        QStringLiteral("third_party/REFramework/") + bundledArchiveFileName());
 }
 
 QString RiseReFrameworkManager::luaSourcePath(const QString &applicationDir)
