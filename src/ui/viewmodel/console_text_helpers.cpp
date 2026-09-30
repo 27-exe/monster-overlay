@@ -6,6 +6,7 @@
 // lines 85-403). Every line below the namespace opener is the original
 // text, byte for byte; the diff evidence is in F1-REPORT.md.
 
+#include "core/game_capabilities.h"
 #include "core/string_table.h"
 #include "ui/panel_sections.h"
 
@@ -31,17 +32,13 @@ QString consoleText(const QString &key)
 // ---- v0.9 i18n helpers ---------------------------------------------------
 // Game display name (WORLD/RISE). One resolver so the auto-detect badge,
 // the GAME column and the switching status line can never drift apart.
-// Falls back to the ASCII name when the key is missing (StringTable::tr()
-// returns the key itself for unknown keys).
+//
+// S4: this was `id == Rise ? rise_key : world_key`, a two-way binary with no
+// arm for a third game, so one would have rendered as "WORLD". The mapping
+// now lives in core/game_capabilities.h as a per-game table.
 QString gameName(mhw::GameId id)
 {
-    const bool rise = (id == mhw::GameId::Rise);
-    const QString key = rise ? QStringLiteral("console.game.rise")
-                             : QStringLiteral("console.game.world");
-    const QString val = mhw::StringTable::instance().tr(key);
-    if (val != key)
-        return val;
-    return rise ? QStringLiteral("RISE") : QStringLiteral("WORLD");
+    return mhw::gameDisplayName(id);
 }
 
 // Section-switch display label for (panel, bit index) — delegates to the

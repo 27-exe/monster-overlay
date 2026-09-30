@@ -15,6 +15,7 @@
 // pcHas*/pcGaugeExtraH predicates all stay in panel_monster.cpp with the
 // View.
 
+#include "core/game_capabilities.h"
 #include "core/string_table.h"
 #include "rise/mhr_part_names.h"
 
@@ -89,22 +90,20 @@ PartDisplayLayers partDisplayLayers(mhw::GameId game, const mhw::PartSnapshot &p
     // World Severable is sourced from its severable table; World Breakable
     // from its threshold table. Rise selects its sever or break array by
     // PartType. Rise's additional breakHealth pair is retained, not painted.
-    switch (game) {
-    case mhw::GameId::Rise:
-        if (part.partType == mhw::PartType::Severable)
-            return {flinch, {part.health, part.maxHealth}, PcEntry::Layer::Sever};
-        if (part.partType == mhw::PartType::Breakable)
-            return {flinch, {part.health, part.maxHealth}, PcEntry::Layer::Break};
-        return {flinch, flinch, PcEntry::Layer::Flinch};
-    case mhw::GameId::World:
-        if (part.partType == mhw::PartType::Severable)
-            return {flinch, {part.health, part.maxHealth}, PcEntry::Layer::Sever};
-        if (part.partType == mhw::PartType::Breakable)
-            return {flinch, {part.health, part.maxHealth}, PcEntry::Layer::Break};
-        return {flinch, flinch, PcEntry::Layer::Flinch};
-    default:
+    //
+    // S4: the World and Rise arms used to be two copies of the body below,
+    // with a `default` that took a different route through
+    // partHealthForDisplay — so a third game silently inherited the odd one
+    // out. Both shipped games normalise, so that is now one path with the
+    // raw fallback kept for a game that reports normalised gauges as false.
+    if (!mhw::usesNormalisedPartGauges(game)) {
         return {flinch, mhw::partHealthForDisplay(part), PcEntry::Layer::Flinch};
     }
+    if (part.partType == mhw::PartType::Severable)
+        return {flinch, {part.health, part.maxHealth}, PcEntry::Layer::Sever};
+    if (part.partType == mhw::PartType::Breakable)
+        return {flinch, {part.health, part.maxHealth}, PcEntry::Layer::Break};
+    return {flinch, flinch, PcEntry::Layer::Flinch};
 }
 
 QVector<PcEntry> MonsterPartListBuilder::build(

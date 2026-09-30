@@ -44,6 +44,14 @@ add_library(monster-core STATIC
     # has to know any game's data — it only holds pointers handed to it.
     src/core/game_tables.h
     src/core/game_tables.cpp
+    # Per-game traits the UI asks as questions instead of branching on
+    # GameId (S4). Deliberately narrow: the game-specific FEATURES stay as
+    # `if (game == GameId::Rise)` at their call sites, because a feature only
+    # one game has is honestly written as a feature check. What moves here is
+    # the per-game DATA (display name) and the behaviours that happen to be
+    # identical for every game today.
+    src/core/game_capabilities.h
+    src/core/game_capabilities.cpp
     src/rise/mhr_types.h
     src/rise/mhr_reader.h
     src/rise/mhr_reader.cpp
