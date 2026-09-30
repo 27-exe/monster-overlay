@@ -8,6 +8,7 @@
 #include "quest/quest_types.h"
 #include "rise/mhr_reader.h"
 #include "rise/mhr_types.h"
+#include "rise/rise_zones.h"
 #include "ui/panel_player_metrics.h"
 #include "world/world_types.h"
 
@@ -366,7 +367,7 @@ Address OTHER 0xCAFE # inline comment
           "other Rise villages are not hunting zones");
     check(mhw::isRiseHuntingZone(hunting),
           "normal Rise hunting stage remains a hunting zone");
-    check(mhw::isHuntingZone(mhw::WorldZone::RiseTrainingRoom),
+    check(mhw::isRiseHuntingZone(mhw::RiseZone::RiseTrainingRoom),
           "rebased Rise training room reaches the overlay hunting-zone gate");
 
     // Rise party roster gating deliberately differs from active-damage gating:
@@ -925,9 +926,9 @@ Address OTHER 0xCAFE # inline comment
           "zone 101 reads as Ancient Forest (en)");
     check(std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::SpecialArena), "Special Arena") == 0,
           "zone 201 reads as Special Arena (en)");
-    check(std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::RiseLoc1), "Shrine Ruins") == 0,
+    check(std::strcmp(mhw::riseZoneNameLocalized(mhw::RiseZone::RiseLoc1), "Shrine Ruins") == 0,
           "Rise hunting id 1 reads as Shrine Ruins (en)");
-    check(std::strcmp(mhw::zoneNameLocalized(static_cast<mhw::WorldZone>(700)), "Village") == 0,
+    check(std::strcmp(mhw::riseZoneNameLocalized(static_cast<mhw::RiseZone>(700)), "Village") == 0,
           "Rise village id 0 reads as Village (en)");
 
     check(mhw::monsterAilmentDisplayName(1) == QStringLiteral("Poison")
@@ -968,7 +969,7 @@ Address OTHER 0xCAFE # inline comment
     check(mhw::partDisplayName(zorah[0]) == QStringLiteral("击退"),
           "the cleaned PART_REPEL entry reads as 击退 (zh)");
     check(std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::WildspireWaste), "荒野大陆") == 0
-              && std::strcmp(mhw::zoneNameLocalized(mhw::WorldZone::RiseLoc14), "塔之秘境") == 0,
+              && std::strcmp(mhw::riseZoneNameLocalized(mhw::RiseZone::RiseLoc14), "塔之秘境") == 0,
           "zone labels keep 荒野大陆/塔之秘境 (zh)");
     check(mhw::monsterAilmentDisplayName(1) == QStringLiteral("毒")
               && mhw::monsterAilmentDisplayName(12) == QStringLiteral("异常12"),

@@ -41,6 +41,7 @@
 #include "rise/mhr_abnormalities.h"
 #include "rise/mhr_reader.h"
 #include "rise/mhr_types.h"
+#include "rise/rise_zones.h"
 #include "world/world_types.h"
 
 #include <QCommandLineParser>
@@ -116,6 +117,18 @@ QString fmtI64(std::int64_t value)
     return QStringLiteral("%1 (%2)")
         .arg(static_cast<qlonglong>(value))
         .arg(hexPadded(static_cast<std::uint64_t>(value), 16));
+}
+
+// Zone label for the [reader]/[hud] dumps. Mirrors what the overlay shows
+// (panel_player.cpp's zoneLabel): ask Rise's own vocabulary whether the id
+// the reader emitted has a name, and fall back to the raw id when it does
+// not — -2 (LoadingScreen) and 199 (CharSelection) never had one.
+QString riseZoneLabelForProbe(const mhw::ZoneRef &zone)
+{
+    const mhw::RiseZone riseZone = static_cast<mhw::RiseZone>(zone.id);
+    if (mhw::hasRiseZoneName(riseZone))
+        return QString::fromUtf8(mhw::riseZoneNameLocalized(riseZone));
+    return QStringLiteral("(no table entry) %1").arg(zone.id);
 }
 
 QString fmtF32(float value)
@@ -582,8 +595,8 @@ StageProbe probeStage(const mhw::ProcessMemory &memory, const mhw::AddressMap &m
     sub(QStringLiteral("isRiseHuntingZone = %1，isRiseTrainingRoom = %2")
             .arg(fmtBool(mhw::isRiseHuntingZone(value)), fmtBool(mhw::isRiseTrainingRoom(value))));
     sub(QStringLiteral("[reader] computeZoneId(经 MhrReader::poll) → zone = %1，名称 = \"%2\"")
-            .arg(static_cast<int>(snapshot.zone))
-            .arg(QString::fromUtf8(mhw::zoneName(snapshot.zone))));
+            .arg(snapshot.zone.id)
+            .arg(riseZoneLabelForProbe(snapshot.zone)));
     sub(QStringLiteral("        规则：type 0→-1 主菜单 · 3→199 选人 · 4→villageId+700 据点 · "
                        "5..11→huntingId+600 狩猎 · 12→-2 读盘 · 其它→-1"));
     dumpIntWindow(memory, trace.result, 0x50, 20,
@@ -1639,8 +1652,8 @@ void printReaderSummary(const mhw::GameSnapshot &snapshot, const QString &mapPat
             .arg(hexStr(snapshot.imageBase)));
     sub(QStringLiteral("status = %1").arg(snapshot.status));
     sub(QStringLiteral("zone = %1（\"%2\"）")
-            .arg(static_cast<int>(snapshot.zone))
-            .arg(QString::fromUtf8(mhw::zoneName(snapshot.zone))));
+            .arg(snapshot.zone.id)
+            .arg(riseZoneLabelForProbe(snapshot.zone)));
     sub(QStringLiteral("monsters = %1 个").arg(snapshot.monsters.size()));
     sub(QStringLiteral("player.valid=%1 name=\"%2\" MR=%3 HR=%4 weaponId=%5")
             .arg(fmtBool(snapshot.player.valid), snapshot.player.name)
@@ -1842,8 +1855,8 @@ int main(int argc, char *argv[])
                        "base before=%7 after=%8; attached before=%9 after=%10")
             .arg(snapshotBefore.player.abnormalities.size())
             .arg(snapshotAfter.player.abnormalities.size())
-            .arg(static_cast<int>(snapshotBefore.zone))
-            .arg(static_cast<int>(snapshotAfter.zone))
+            .arg(snapshotBefore.zone.id)
+            .arg(snapshotAfter.zone.id)
             .arg(snapshotBefore.pid)
             .arg(snapshotAfter.pid)
             .arg(hexStr(snapshotBefore.imageBase))

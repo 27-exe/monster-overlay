@@ -37,6 +37,7 @@
 // asks the World vocabulary directly rather than relying on GameSnapshot
 // re-exporting it (which S1 removed on purpose).
 #include "world/world_types.h"
+#include "rise/rise_zones.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
@@ -350,7 +351,7 @@ int main(int argc, char *argv[])
         snap.pid       = 31337;
         snap.status    = QStringLiteral("已连接 · 猎人状态");
         snap.zone      = mhw::ZoneRef{mhw::GameId::Rise,
-                                      static_cast<int>(mhw::WorldZone::RiseLoc3)};
+                                      static_cast<int>(mhw::RiseZone::RiseLoc3)};
         snap.player.valid      = true;
         snap.player.name       = QStringLiteral("Hunter");
         snap.player.health     = 7000.0F;

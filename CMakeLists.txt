@@ -87,6 +87,7 @@ target_compile_options(monster-core PRIVATE -Wall -Wextra -Wpedantic)
 # contract, this library holds the answers and is the only place that knows
 # a Rise offset. Nothing here may include a world/ header.
 add_library(game-rise STATIC
+    src/rise/rise_zones.h
     src/rise/rise_install_locator.h
     src/rise/rise_install_locator.cpp
     src/rise/mhr_types.h
@@ -1088,7 +1089,10 @@ add_executable(world-severable-scan-tests
         tests/rise_zone_mapping_tests.cpp
         src/resources/resources.qrc
     )
-    target_link_libraries(rise-zone-mapping-tests PRIVATE monster-core game-world)
+    # game-rise, not game-world: the vocabulary under test is Rise's
+    # (src/rise/rise_zones.h). It was game-world when Rise zones were
+    # enumerators in world_types.cpp.
+    target_link_libraries(rise-zone-mapping-tests PRIVATE monster-core game-rise)
     target_include_directories(rise-zone-mapping-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(rise-zone-mapping-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-zone-mapping-tests COMMAND rise-zone-mapping-tests)
@@ -1219,6 +1223,37 @@ target_link_libraries(rise-probe PRIVATE
     Qt6::Core monster-core game-rise game-world)
 target_include_directories(rise-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(rise-probe PRIVATE -Wall -Wextra -Wpedantic)
+
+# ---------------------------------------------------------------------------
+# Build-everything gate.
+#
+# The diagnostic targets in this file are EXCLUDE_FROM_ALL because they are
+# only MEANINGFUL with a running game — running them in CI would hang or fail.
+# That reasoning is sound for RUNNING them and wrong for COMPILING them, and
+# the difference cost real time: rise-probe was broken by the ZoneRef change
+# (S1) and stayed broken, because nothing ever compiled it. A default `ninja`
+# and a green `ctest` both said "fine" while the target could not build.
+#
+# This test compiles each one and runs none of them, so it catches the class
+# of breakage a default build structurally cannot see.
+#
+# Keep MHW_DIAGNOSTIC_TARGETS in sync with the real EXCLUDE_FROM_ALL list:
+# a new one must be added here too.
+set(MHW_DIAGNOSTIC_TARGETS
+    snap-world-mp
+    snap-gauge-fill
+    snap-empty-state
+    snap-player-offline
+    rise-probe
+)
+
+if(BASH_EXECUTABLE)
+    add_test(NAME diagnostic-targets-build
+        COMMAND ${BASH_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/assert_diagnostic_targets.sh
+                ${CMAKE_CURRENT_BINARY_DIR}
+    )
+endif()
 
 # ---------------------------------------------------------------------------
 # i18n gates as real tests.

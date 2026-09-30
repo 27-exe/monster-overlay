@@ -22,16 +22,21 @@ constexpr std::uintptr_t kPointerSize = sizeof(std::uintptr_t);
 // Mirrors mhw_reader.cpp's trMessage pattern.
 inline QString trMessage(const QString &key) { return StringTable::instance().tr(key); }
 
-// v0.8.4-r7 restore-reader: zone translation. The returned int is
-// cast into mhw::Zone in poll(). World zones occupy 1xx/3xx/4xx/5xx
-// so 2xx is unsafe; the project instead maps:
+// v0.8.4-r7 restore-reader: zone translation. The returned int is what the
+// snapshot's ZoneRef carries (ZoneRef{GameId::Rise, id}, core/zone_id.h); the
+// names for those ids live in rise_zones.h, which is Rise's own vocabulary.
+// World zones occupy 1xx/3xx/4xx/5xx so 2xx is unsafe; the project instead
+// maps:
 //   type  0     -> MainMenu       (-1)
 //   type  3     -> CharSelection  (199)
 //   type  4     -> Village        (villageId + 700)
-//   type 12     -> LoadingScreen  (-2)
+//   type  12     -> LoadingScreen  (-2)
 //   type 5..11  -> HuntingZone    (huntingId + 600)
-// (Rise uses HuntingId 0..16, so +600 puts us in 600..616 where the
-// Zone enum reserves RiseLoc0..RiseLoc16, overlap-free with World.)
+// (Rise uses HuntingId 0..16, so +600 puts us in 600..616, which rise_zones.h
+// names as RiseZone::RiseLoc0..16 — overlap-free with World, and no longer
+// stored in a World enum.) The zone id stays an int on the snapshot: -2 and
+// 199 have no name in any table, and that is a fact the data layer must be
+// able to report rather than hide behind an enumerator.
 // Returns -1 for any unknown stage.type so poll() stays on
 // Zone::MainMenu rather than fabricating a hunting zone.
 inline int computeZoneId(const MHRStageStructure &stage)

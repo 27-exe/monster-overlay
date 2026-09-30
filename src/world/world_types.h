@@ -1,5 +1,25 @@
 #pragma once
 
+// SPDX-License-Identifier: Apache-2.0
+//
+// world_types.h — the World zone vocabulary.
+//
+// This enum used to carry both games' named zones (RiseLoc0..16 and
+// RiseTrainingRoom sat at the bottom, and world_types.cpp's lookups answered
+// for the 600..616 / 700..799 bands). S1 replaced the snapshot field with
+// ZoneRef{GameId, int id} (src/core/zone_id.h) but left the vocabulary here,
+// so the file was the last place where one game answered for another. Rise's
+// zones now live in src/rise/rise_zones.h.
+//
+// What is NOT an enumerator, deliberately: the runtime value domain is wider
+// than any enumeration of it. readZone() passes the raw int32 through with
+// only a 0..1000 range filter, so an unmapped value arrives as a bare
+// integer. hasZoneName() is the honest answer to "can anyone name this id".
+//
+// World is unaffected: its own enumerators, strings, ids and call sites are
+// unchanged. A World caller now calls ZoneRef-agnostic helpers, not a
+// two-games-in-one table.
+
 namespace mhw {
 
 enum class WorldZone : int {
@@ -38,33 +58,6 @@ enum class WorldZone : int {
     TrainingArea = 504,
     ChamberOfFive = 505,
     SelianaRoom = 506,
-    // Rise stage.type == 4, villageId == 5.  Kept distinct from RiseLoc5
-    // (HuntingId 5) because the reader rebases VillageId values to 700..799.
-    RiseTrainingRoom = 705,
-    // Rise maps: HunterPie uses StageId = HuntingId + 200 and resolves the
-    // label from its localization table (MHRPlayer.cs:216-227); that table
-    // covers StageId 201..215 (holes at 200/206/208, v0.8.4-r18
-    // zone-names). 200..215 collides with World zones 201/202/203, so the
-    // reader rebases the same HuntingId into the unused 600..616 band
-    // (HuntingId + 600 instead of + 200). RiseLocN == HuntingId N ==
-    // StageId N + 200; names in zoneName() are that table's zh-CN strings.
-    RiseLoc0 = 600,
-    RiseLoc1 = 601,
-    RiseLoc2 = 602,
-    RiseLoc3 = 603,
-    RiseLoc4 = 604,
-    RiseLoc5 = 605,
-    RiseLoc6 = 606,
-    RiseLoc7 = 607,
-    RiseLoc8 = 608,
-    RiseLoc9 = 609,
-    RiseLoc10 = 610,
-    RiseLoc11 = 611,
-    RiseLoc12 = 612,
-    RiseLoc13 = 613,
-    RiseLoc14 = 614,
-    RiseLoc15 = 615,
-    RiseLoc16 = 616,
     Unknown = -1
 };
 
@@ -79,7 +72,7 @@ const char* zoneNameLocalized(WorldZone zone);
 // true  = the zone lookup hit a named entry (including the upstream hole
 //         markers, which are entries of their own).
 // false = no entry: an id passed straight to static_cast<WorldZone>() from a
-//         raw villageId (0..100), or a value outside both tables.
+//         raw villageId (0..100), or a value outside the table.
 //
 // UI logic must ask THIS instead of comparing a localized display label
 // against a sentinel: whether a zone is named is a property of the data,

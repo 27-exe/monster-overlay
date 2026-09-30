@@ -563,8 +563,7 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
-        "monster-reader-tests",
-        "rise-zone-mapping-tests"
+        "monster-reader-tests"
       ],
       "symbols": 9
     }
