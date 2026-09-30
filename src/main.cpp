@@ -29,6 +29,7 @@
 #include <QTimer>
 #include <functional>
 #include <array>
+#include <memory>
 
 #include <cstdio>
 
@@ -372,43 +373,66 @@ int main(int argc, char **argv)
     const QString explicitMap =
         parser.isSet(mapOption) ? parser.value(mapOption) : QString();
     const QStringList dataDirs = mhw::defaultDataSearchDirs();
-    const QStringList worldCandidates = mhw::worldMapCandidates(
-        explicitMap, QStringLiteral("MonsterHunterWorld.421810.map"), dataDirs,
-        mhw::developmentMapFallback(
-            QStringLiteral("MonsterHunterWorld.421810.map")));
-    const QString worldMapPath = mhw::MhwReader::selectLoadableMap(worldCandidates);
-    mhw::MhwReader worldReader(worldMapPath);
-    // Rise uses the same complete candidate list as monster-doctor. A running
-    // game keeps the live compatibility probe; offline selection takes the
-    // first map whose content loads rather than stopping at the first glob.
-    const QStringList riseCandidates = mhw::riseMapCandidates(
-        explicitMap, dataDirs,
-        mhw::developmentMapFallback(
-            QStringLiteral("MonsterHunterRise.16.0.2.0.map")));
-    const QString riseMapPath = mhw::MhrReader::findBestMap(riseCandidates);
-    mhw::MhrReader riseReader(riseMapPath);
-    // REFramework 1.5.9.1 sandboxes Lua files under reframework/data and has
-    // no rename primitive. The producer alternates two slots; read both and
-    // select the greatest valid sequence. Keep /tmp as the compatibility
-    // fallback for older producer builds.
-    const QString riseInstallDir = mhw::findRiseInstallDir();
-    const QString riseDataDir = riseInstallDir.isEmpty()
-        ? QString()
-        : QDir(riseInstallDir).filePath(QStringLiteral("reframework/data"));
-    std::array<mhw::RiseDamageReader, 3> riseDamageReaders{
-        mhw::RiseDamageReader(riseDataDir.isEmpty()
-                                  ? QStringLiteral("/tmp/mhr_damage_a.json")
-                                  : QDir(riseDataDir).filePath(
-                                        QStringLiteral("mhr_damage_a.json"))),
-        mhw::RiseDamageReader(riseDataDir.isEmpty()
-                                  ? QStringLiteral("/tmp/mhr_damage_b.json")
-                                  : QDir(riseDataDir).filePath(
-                                        QStringLiteral("mhr_damage_b.json"))),
-        mhw::RiseDamageReader(QStringLiteral("/tmp/mhr_damage.json")),
-    };
+
+    // S2: build only the reader this run will actually poll. Both reader
+    // constructors load an offset map from disk, and Rise additionally
+    // resolves its install directory for the damage feed, so the World-only
+    // path was paying for a Rise map load and a Steam lookup it never used.
+    //
+    // This is safe because gameId is decided once, above (--game, else
+    // detectGame(), else World) and never revisited: pollGame below is
+    // assigned exactly once and the tick only calls it. A future hot-swap
+    // between games would have to re-enter this block, not just re-point
+    // pollGame — the readers own per-game caches that assume a fixed game.
+    std::unique_ptr<mhw::MhwReader> worldReader;
+    std::unique_ptr<mhw::MhrReader> riseReader;
+    std::array<std::unique_ptr<mhw::RiseDamageReader>, 3> riseDamageReaders;
+
+    if (isRise) {
+        // Rise uses the same complete candidate list as monster-doctor. A
+        // running game keeps the live compatibility probe; offline selection
+        // takes the first map whose content loads rather than stopping at the
+        // first glob.
+        const QStringList riseCandidates = mhw::riseMapCandidates(
+            explicitMap, dataDirs,
+            mhw::developmentMapFallback(
+                QStringLiteral("MonsterHunterRise.16.0.2.0.map")));
+        riseReader = std::make_unique<mhw::MhrReader>(
+            mhw::MhrReader::findBestMap(riseCandidates));
+        // REFramework 1.5.9.1 sandboxes Lua files under reframework/data and
+        // has no rename primitive. The producer alternates two slots; read both
+        // and select the greatest valid sequence. Keep /tmp as the
+        // compatibility fallback for older producer builds.
+        const QString riseInstallDir = mhw::findRiseInstallDir();
+        const QString riseDataDir = riseInstallDir.isEmpty()
+            ? QString()
+            : QDir(riseInstallDir).filePath(QStringLiteral("reframework/data"));
+        riseDamageReaders = {
+            std::make_unique<mhw::RiseDamageReader>(
+                riseDataDir.isEmpty()
+                    ? QStringLiteral("/tmp/mhr_damage_a.json")
+                    : QDir(riseDataDir).filePath(
+                          QStringLiteral("mhr_damage_a.json"))),
+            std::make_unique<mhw::RiseDamageReader>(
+                riseDataDir.isEmpty()
+                    ? QStringLiteral("/tmp/mhr_damage_b.json")
+                    : QDir(riseDataDir).filePath(
+                          QStringLiteral("mhr_damage_b.json"))),
+            std::make_unique<mhw::RiseDamageReader>(
+                QStringLiteral("/tmp/mhr_damage.json")),
+        };
+    } else {
+        const QStringList worldCandidates = mhw::worldMapCandidates(
+            explicitMap, QStringLiteral("MonsterHunterWorld.421810.map"), dataDirs,
+            mhw::developmentMapFallback(
+                QStringLiteral("MonsterHunterWorld.421810.map")));
+        worldReader = std::make_unique<mhw::MhwReader>(
+            mhw::MhwReader::selectLoadableMap(worldCandidates));
+    }
+
     std::function<mhw::GameSnapshot()> pollGame =
-        isRise ? std::function<mhw::GameSnapshot()>([&riseReader] { return riseReader.poll(); })
-               : std::function<mhw::GameSnapshot()>([&worldReader] { return worldReader.poll(); });
+        isRise ? std::function<mhw::GameSnapshot()>([&riseReader] { return riseReader->poll(); })
+               : std::function<mhw::GameSnapshot()>([&worldReader] { return worldReader->poll(); });
     std::uintptr_t displayedMonsterAddress = 0;
     // P1 (v0.9.1): the reader's status string is the only explanation for
     // an empty panel (map missing/invalid, no game process, denied read).
@@ -537,9 +561,15 @@ int main(int argc, char **argv)
                 // TooLarge, Parse, Stale, Symlink ... — takes over. With two
                 // equally-informative errors the primary slot A wins, which
                 // is where the producer writes first.
+                //
+                // riseDamageReaders holds owning pointers (S2), so this
+                // borrows the pointed-to readers. The slots are created
+                // together in the isRise block above and never nulled, which
+                // front() still relies on.
                 const mhw::RiseDamageReader *diagnosticReader =
-                    &riseDamageReaders.front();
-                for (auto &reader : riseDamageReaders) {
+                    riseDamageReaders.front().get();
+                for (auto &readerPtr : riseDamageReaders) {
+                    auto &reader = *readerPtr;
                     if (reader.update()) {
                         if (!newestReader
                             || reader.snapshot().sequence
