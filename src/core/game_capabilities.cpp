@@ -32,20 +32,40 @@ constexpr GameTraits kTraits[] = {
     {"console.game.rise", "RISE", true, 30.0F},
 };
 
-// A new GameId must add a row here. Deriving the count from the array rather
-// than writing 2 means the assert states the invariant ("every game has a
-// row") rather than restating today's answer. Without it, gameTraits()
-// would return the first row for an unknown game and the UI would label it
-// WORLD — the same silent mislabelling the switch it replaces had, just
-// moved.
+// A new GameId must add a row here, and this is what forces it.
+//
+// The row total is not the useful number — the row total is whatever someone
+// typed. What matters is that every ENUMERATOR is covered, and only a switch
+// without a default can require that. With -Wall/-Wextra a missing case is a
+// warning, and that is loud enough to act on; there is no -Werror in the
+// tree by choice, so the warning is the mechanism, not a build break.
+//
+// gameTraits() has no fallback for the same reason: returning kTraits[0]
+// would hand an unknown game World's traits, which is the silent mislabelling
+// the old ternary had. It is unreachable for a covered enum.
 static_assert(std::size(kTraits) == 2,
-              "a new GameId needs a GameTraits row; without one the UI would "
-              "label it WORLD");
+              "the traits table and this assert are both edited when a game is added");
 
+// A switch, not an index into kTraits. The array form silently answered an
+// unknown game with row 0 (World's name and stamina divisor), and the
+// static_assert above cannot catch it — it compares against the row total,
+// which is unchanged by adding an enum value. A switch with no default is
+// covered by -Wswitch instead, which is the same mechanism the four other
+// per-game switches in this tree rely on.
 const GameTraits &gameTraits(GameId game)
 {
-    const auto index = static_cast<std::size_t>(game);
-    return index < std::size(kTraits) ? kTraits[index] : kTraits[0];
+    switch (game) {
+    case GameId::World:
+        return kTraits[0];
+    case GameId::Rise:
+        return kTraits[1];
+    }
+    // Every enumerator returns above. Without this, GCC warns that control
+    // reaches the end of a non-void function even though it cannot: the
+    // switch is exhaustive for a valid GameId, and an invalid one is
+    // undefined behaviour the caller already owns. Unreachable rather than a
+    // fallback return — a fallback would be the silent World default again.
+    __builtin_unreachable();
 }
 
 } // namespace

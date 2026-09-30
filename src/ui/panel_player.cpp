@@ -153,6 +153,12 @@ QString zoneLabel(mhw::ZoneRef z)
     // range (computeZoneId rebases villages to 700..799, so it never lands
     // here) and the 600..616/700..799 Rise ids never reach the World table
     // either — a mis-dispatched id degrades to "区域 N", not to a wrong name.
+    //
+    // No `default:` arm on purpose. A third game that reaches here must be
+    // given its own vocabulary table, and a default would have handed it the
+    // World one in silence — the same failure mode the other per-game
+    // switches in this tree avoid. An unhandled GameId is a -Wswitch warning
+    // and then the outpost/area fallback, which is visible, not a wrong name.
     switch (z.game) {
     case mhw::GameId::Rise: {
         const mhw::RiseZone riseZone = static_cast<mhw::RiseZone>(z.id);
@@ -160,8 +166,7 @@ QString zoneLabel(mhw::ZoneRef z)
             return QString::fromUtf8(mhw::riseZoneNameLocalized(riseZone));
         break;
     }
-    case mhw::GameId::World:
-    default: {
+    case mhw::GameId::World: {
         const mhw::WorldZone worldZone = static_cast<mhw::WorldZone>(z.id);
         if (mhw::hasZoneName(worldZone))
             return QString::fromUtf8(mhw::zoneNameLocalized(worldZone));
