@@ -33,6 +33,16 @@
 // The failure mode this replaces is silent: adding GameId::Wilds compiled
 // clean and every comparison fell into an existing arm, because the two
 // switches that exist have defaults and the tree carries no -Werror.
+//
+// What replaced it, measured rather than assumed. Adding a third enumerator
+// to GameId now produces a -Wswitch warning at all six per-game seams in this
+// tree — game_tables.cpp, game_profile.cpp, reader_descriptors.cpp,
+// reader_factory.cpp, game_capabilities.cpp, and panel_player.cpp's
+// zoneLabel() — 10 warnings between them. It is a WARNING and not a compile
+// error: with no -Werror, a new game still builds by default. An earlier
+// revision of this header and the commit that added the table both claimed a
+// compile-time failure; the audit measured that as false, so this note says
+// warning where it used to say error.
 
 #include "monster/monster_types.h"
 

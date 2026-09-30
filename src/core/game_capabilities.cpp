@@ -32,17 +32,21 @@ constexpr GameTraits kTraits[] = {
     {"console.game.rise", "RISE", true, 30.0F},
 };
 
-// A new GameId must add a row here, and this is what forces it.
+// A new GameId must add a row here.
 //
-// The row total is not the useful number — the row total is whatever someone
-// typed. What matters is that every ENUMERATOR is covered, and only a switch
-// without a default can require that. With -Wall/-Wextra a missing case is a
-// warning, and that is loud enough to act on; there is no -Werror in the
-// tree by choice, so the warning is the mechanism, not a build break.
+// What actually stops a new game slipping through, and what does not: the
+// static_assert below compares the row count against a LITERAL, so it cannot
+// fail — adding a GameId enumerator leaves this array at two rows, the assert
+// passes, and the array-index form that preceded this switch answered with
+// row 0: World's display name and stamina divisor, for a game nobody
+// registered.
 //
-// gameTraits() has no fallback for the same reason: returning kTraits[0]
-// would hand an unknown game World's traits, which is the silent mislabelling
-// the old ternary had. It is unreachable for a covered enum.
+// What does work is the switch below, with no default. A missing case is a
+// -Wswitch warning. That is a WARNING, not a compile error — this tree
+// deliberately carries no -Werror, so a new game builds by default and
+// announces itself only in the build log. An earlier revision of this
+// comment claimed the coverage was derived from the enum; the audit measured
+// it and the claim was false.
 static_assert(std::size(kTraits) == 2,
               "the traits table and this assert are both edited when a game is added");
 
