@@ -17,6 +17,7 @@
 #include "ui/panel_player.h"
 #include "ui/panel_sections.h"
 #include "monster/target_selector.h"
+#include "reader_factory.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
@@ -303,8 +304,8 @@ int main(int argc, char **argv)
     const bool isRise = (gameId == mhw::GameId::Rise);
     // Window/app title names the product and the game it is reading.
     QApplication::setApplicationDisplayName(
-        isRise ? QStringLiteral("Monster Overlay \u00b7 Rise")
-               : QStringLiteral("Monster Overlay \u00b7 World"));
+        isRise ? QStringLiteral("Monster Overlay · Rise")
+               : QStringLiteral("Monster Overlay · World"));
 
     PlayerPanel playerPanel;
     MonsterPanel monsterPanel;
@@ -374,35 +375,27 @@ int main(int argc, char **argv)
         parser.isSet(mapOption) ? parser.value(mapOption) : QString();
     const QStringList dataDirs = mhw::defaultDataSearchDirs();
 
-    // S2: build only the reader this run will actually poll. Both reader
-    // constructors load an offset map from disk, and Rise additionally
-    // resolves its install directory for the damage feed, so the World-only
-    // path was paying for a Rise map load and a Steam lookup it never used.
+    // S5: the reader comes from the factory, so main() does not know which
+    // class it received or how that game locates its map. Registering a new
+    // game is a case in reader_factory.cpp rather than another arm here.
     //
-    // This is safe because gameId is decided once, above (--game, else
-    // detectGame(), else World) and never revisited: pollGame below is
-    // assigned exactly once and the tick only calls it. A future hot-swap
-    // between games would have to re-enter this block, not just re-point
-    // pollGame — the readers own per-game caches that assume a fixed game.
-    std::unique_ptr<mhw::MhwReader> worldReader;
-    std::unique_ptr<mhw::MhrReader> riseReader;
-    std::array<std::unique_ptr<mhw::RiseDamageReader>, 3> riseDamageReaders;
+    // S2 kept this construction lazy and behind `isRise` because both
+    // readers loaded an offset map and Rise also resolved a Steam install
+    // directory. The factory preserves that: exactly one reader is built,
+    // for the game this run selected.
+    //
+    // isRise survives below for the genuinely Rise-only parts — the
+    // REFramework damage feed and the pet-damage panel gates. Those are
+    // per-game FEATURES, which read honestly as per-game checks; see
+    // game_capabilities.h for why they are not capability lookups.
+    mhw::GameReaderPtr reader = mhw::createReader(gameId, explicitMap, dataDirs);
 
+    // REFramework 1.5.9.1 sandboxes Lua files under reframework/data and has
+    // no rename primitive. The producer alternates two slots; read both and
+    // select the greatest valid sequence. Keep /tmp as the compatibility
+    // fallback for older producer builds.
+    std::array<std::unique_ptr<mhw::RiseDamageReader>, 3> riseDamageReaders;
     if (isRise) {
-        // Rise uses the same complete candidate list as monster-doctor. A
-        // running game keeps the live compatibility probe; offline selection
-        // takes the first map whose content loads rather than stopping at the
-        // first glob.
-        const QStringList riseCandidates = mhw::riseMapCandidates(
-            explicitMap, dataDirs,
-            mhw::developmentMapFallback(
-                QStringLiteral("MonsterHunterRise.16.0.2.0.map")));
-        riseReader = std::make_unique<mhw::MhrReader>(
-            mhw::MhrReader::findBestMap(riseCandidates));
-        // REFramework 1.5.9.1 sandboxes Lua files under reframework/data and
-        // has no rename primitive. The producer alternates two slots; read both
-        // and select the greatest valid sequence. Keep /tmp as the
-        // compatibility fallback for older producer builds.
         const QString riseInstallDir = mhw::findRiseInstallDir();
         const QString riseDataDir = riseInstallDir.isEmpty()
             ? QString()
@@ -421,18 +414,8 @@ int main(int argc, char **argv)
             std::make_unique<mhw::RiseDamageReader>(
                 QStringLiteral("/tmp/mhr_damage.json")),
         };
-    } else {
-        const QStringList worldCandidates = mhw::worldMapCandidates(
-            explicitMap, QStringLiteral("MonsterHunterWorld.421810.map"), dataDirs,
-            mhw::developmentMapFallback(
-                QStringLiteral("MonsterHunterWorld.421810.map")));
-        worldReader = std::make_unique<mhw::MhwReader>(
-            mhw::MhwReader::selectLoadableMap(worldCandidates));
     }
 
-    std::function<mhw::GameSnapshot()> pollGame =
-        isRise ? std::function<mhw::GameSnapshot()>([&riseReader] { return riseReader->poll(); })
-               : std::function<mhw::GameSnapshot()>([&worldReader] { return worldReader->poll(); });
     std::uintptr_t displayedMonsterAddress = 0;
     // P1 (v0.9.1): the reader's status string is the only explanation for
     // an empty panel (map missing/invalid, no game process, denied read).
@@ -491,7 +474,7 @@ int main(int argc, char **argv)
         // of defence; this is the last.
         mhw::GameSnapshot snap;
         try {
-            snap = pollGame();
+            snap = reader->poll();
         } catch (const std::exception &e) {
             qWarning("poll tick skipped (exception): %s", e.what());
             return;

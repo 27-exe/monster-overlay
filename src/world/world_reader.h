@@ -6,18 +6,21 @@
 // the World-side call sites, which spell them as MhwReader::staticMember.
 // The MhwReader class below keeps only World-specific state.
 #include "core/process_memory.h"
+#include "core/game_reader.h"
 #include "core/game_tables.h"
 #include "world/world_types.h"
 
 namespace mhw {
 
-class MhwReader {
+// Implements IGameReader (S5): poll() and mapPath() are the whole surface
+// main.cpp uses. The statics below and the private readers stay World-side.
+class MhwReader final : public IGameReader {
 public:
     explicit MhwReader(QString mapPath,
                        QString exeName = QStringLiteral("monsterhunterworld.exe"));
 
-    [[nodiscard]] GameSnapshot poll();
-    [[nodiscard]] const QString &mapPath() const;
+    [[nodiscard]] GameSnapshot poll() override;
+    [[nodiscard]] const QString &mapPath() const override;
 
     // The four helpers below are
     //   findGamePid / selectLoadableMap /

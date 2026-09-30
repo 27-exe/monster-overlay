@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/game_snapshot.h"
+#include "core/game_reader.h"
 #include "core/game_tables.h"
 #include "core/process_memory.h"
 #include "rise/mhr_types.h"
@@ -539,12 +540,15 @@ inline RiseSharpnessSegment riseSharpnessCurrentSegment(const SharpnessSnapshot 
 // the World reader's structure and reuses the generic ProcessMemory /
 // AddressMap and the namespace-level followPointerChain() helper. The
 // resulting GameSnapshot is tagged GameId::Rise.
-class MhrReader {
+// Implements IGameReader (S5) — see world_reader.h for the rationale.
+// findRisePid / findBestMap stay Rise-side: they answer "how do I find this
+// game", which is the factory's job, not the poll loop's.
+class MhrReader final : public IGameReader {
 public:
     explicit MhrReader(QString mapPath);
 
-    [[nodiscard]] GameSnapshot poll();
-    [[nodiscard]] const QString &mapPath() const;
+    [[nodiscard]] GameSnapshot poll() override;
+    [[nodiscard]] const QString &mapPath() const override;
 
     static std::optional<qint64> findRisePid();
 

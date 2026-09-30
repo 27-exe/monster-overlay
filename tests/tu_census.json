@@ -44,7 +44,8 @@
       "refs": [
         "map-path-tests",
         "monster-doctor",
-        "monster-reader-tests"
+        "monster-reader-tests",
+        "reader-factory-tests"
       ],
       "symbols": 15
     },
@@ -62,7 +63,8 @@
         "monster-probe-mantles-wide",
         "monster-probe-parts",
         "monster-reader-tests",
-        "monster-scan"
+        "monster-scan",
+        "reader-factory-tests"
       ],
       "symbols": 25
     },
@@ -105,7 +107,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 69
+      "symbols": 63
     },
     "src/main_control.cpp": {
       "class": "ZERO",
@@ -136,6 +138,26 @@
         "monster-reader-tests"
       ],
       "symbols": 1
+    },
+    "src/reader_descriptors.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "reader-factory-tests"
+      ],
+      "refs": [
+        "reader-factory-tests"
+      ],
+      "symbols": 2
+    },
+    "src/reader_factory.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "reader-factory-tests"
+      ],
+      "refs": [
+        "reader-factory-tests"
+      ],
+      "symbols": 8
     },
     "src/rise/data/mhr_monster_names_data.cpp": {
       "class": "ZERO",
@@ -182,9 +204,10 @@
       "refs": [
         "mhr-reader-direct-tests",
         "monster-doctor",
-        "monster-reader-tests"
+        "monster-reader-tests",
+        "reader-factory-tests"
       ],
-      "symbols": 100
+      "symbols": 108
     },
     "src/rise/mhr_reader_quest.cpp": {
       "class": "INDIRECT",
@@ -514,9 +537,10 @@
         "mhw-reader-direct-tests",
         "monster-doctor",
         "monster-probe-ailments-watch",
-        "monster-reader-tests"
+        "monster-reader-tests",
+        "reader-factory-tests"
       ],
-      "symbols": 39
+      "symbols": 47
     },
     "src/world/world_types.cpp": {
       "class": "INDIRECT",

@@ -52,6 +52,11 @@ add_library(monster-core STATIC
     # identical for every game today.
     src/core/game_capabilities.h
     src/core/game_capabilities.cpp
+    # The reader contract main() polls through. Two virtuals, no game
+    # knowledge: the alternative was a std::function wrapping two unrelated
+    # reader types, which type-erased the difference while leaving the
+    # wiring — which reader, which map, which lambda — game-specific.
+    src/core/game_reader.h
     src/rise/mhr_types.h
     src/rise/mhr_reader.h
     src/rise/mhr_reader.cpp
@@ -256,6 +261,14 @@ endif()
 
 add_executable(monster-overlay
     src/main.cpp
+    # The assembly point: the one translation unit that knows both the
+    # IGameReader contract and every implementation of it. Above the core
+    # contract and the games, so neither has to know the other exists.
+    src/reader_factory.cpp
+    src/reader_factory.h
+    # Per-game reader configuration, split out so it names no concrete
+    # reader and can be tested without the reader chain.
+    src/reader_descriptors.cpp
     src/resources/resources.qrc
     assets/icons.qrc
 )
@@ -667,6 +680,20 @@ add_executable(world-severable-scan-tests
     target_include_directories(game-profile-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(game-profile-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME game-profile-tests COMMAND game-profile-tests)
+
+    # S5: the reader descriptors are the one place that names every game, so
+    # they are the place a new game could be forgotten. This pins the two
+    # pure decisions per game. It links reader_descriptors.cpp, NOT
+    # reader_factory.cpp: the descriptors are deliberately free of the
+    # concrete reader types, so a data test does not drag in the reader chain.
+    add_executable(reader-factory-tests
+        tests/reader_factory_tests.cpp
+        src/reader_descriptors.cpp
+    )
+    target_link_libraries(reader-factory-tests PRIVATE Qt6::Core monster-core)
+    target_include_directories(reader-factory-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(reader-factory-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME reader-factory-tests COMMAND reader-factory-tests)
 
     # Steam/Rise installation discovery and REFramework lifecycle tests are
     # QtCore-only and link the same production core library used by the
