@@ -1,6 +1,5 @@
 # monster-overlay 架构 UML 图
 
-HEAD `dbbac03`（分支 `refactor/game-keyed-arch`），2026-10-01 生成。
 所有类名、方法签名、库边界、行号都从源码实测，不照抄 `docs/ARCHITECTURE.md`；
 凡本文与代码不一致处，见文末「与 ARCHITECTURE.md 的差异」。
 
@@ -54,27 +53,30 @@ fix_labels.py      把 label=TEXT<TAG/> 修成 label=<TEXT<TAG/>> 的半自动�
 
 ## 为什么不是统一一种格式
 
-机器上没有 PlantUML（无 jar、无 `plantuml` 可执行文件，父会话已实测），也没有
-mmdc；`dot`（Graphviz 16.1.0）可用。所以：
+这套图刻意混用了三种格式，因为每种格式在这一套图里的位置不同：
 
-- **PlantUML 源码**仍然写——它是这堆图里最有长期价值的产物：可维护、可进
+- **PlantUML 源码**是这堆图里最有长期价值的产物：可维护、可进
   GitHub/IDE、可加进 CI。图 1–5 用它表达（分层、类图、注册表、时序都合适）。
-- **实际渲染出的图片**用 Graphviz `dot`，因为只有它本机可用。图 1、3、5、6 里
-  HTML-like label 塞进了大量源码事实（行号、签名、开关兜底类型），`dot` 的
+  本机没装 PlantUML 也能写它——它是给人读的源码，合成 PNG 用下面那条。
+- **实际渲染出的图片**用 Graphviz `dot`，因为它是这几种里本机最常见的一个。
+  图 1、3、5、6 里 HTML-like label 塞进了大量源码事实（行号、签名、开关兜底类型），`dot` 的
   HTML label 表达力够了；时序图（4）`dot` 表达吃力，所以 PNG 版是**按时序分层
   重画的流程图**，与 04 的 PlantUML 时序图内容一致、形态不同。
 - **图 6 额外给了 Mermaid**：PlantUML 的生命周期时序带 loop/alt 嵌套在这个图里
   读起来不如 Mermaid 直观，`.mmd` 是 GitHub 原生渲染的补充件。
 
+如果你要换渲染器，`.puml` 是唯一需要人手改的；`.dot` / `.mmd` 都可以由
+`make_diagrams.py` 重新生成。
+
 ## 六张图的共同约定
 
-- 每条边、每个类名都带 `file:line`；行号在 `dbbac03` 上实测，改代码会漂移。
+- 每条边、每个类名都带 `file:line`；**行号会随代码漂移**，改代码后重新生成。
 - 图上不写「解耦良好」「架构清晰」这类评价，只写可复核的事实。
-- 标注为「measured」的都是本次 grep / `nm` / 读头文件得出的结论；
+- 标注为「measured」的都是 grep / `nm` / 读头文件得出的结论；
   少数引自 `docs/ARCHITECTURE.md` 的实测记录（如 730 像素差异），已在 note 里点名出处。
 - 颜色约定：蓝=core，绿=游戏库，橙=UI，紫=可执行/装配，黄=数据表与注册表。
 
-## 与 ARCHITECTURE.md 的差异（本次实测发现）
+## 与 ARCHITECTURE.md 的差异
 
 按「以代码为准」处理，图上均写的是实测结论：
 
@@ -86,14 +88,14 @@ mmdc；`dot`（Graphviz 16.1.0）可用。所以：
 3. **`src/ui/` 文件数**：文档 §1 写 41 文件 / 11839 行，实测 56 个 `.h`+`.cpp` /
    14273 行。
 4. **`src/core/game_tables.h` 顶部注释说「each reader's constructor registers its own tables」**：
-   与 `game_tables.h` 自身 §3.4.1（`ARCHITECTURE.md`）以及两个数据 TU 的实际机制矛盾；
+   与 `game_tables.h:45` 的注释以及两个数据 TU 的实际机制矛盾；
    实测 `world_reader.cpp` / `mhr_reader.cpp` 里 **0 处** register 调用，
    所以那条注释（`game_tables.h:45`）是过时的。图 3、图 5 都按「静态初始化器」画，
    并把这条列为反证。
 5. **`GameSnapshot` 字段数**：文档 §3.1 说「14 个字段」并列出 12 个。
    实测结构体是 12 个字段（`game`/`attached`/`pid`/`imageBase`/`status`/`zone`/
    `monsters`/`player`/`party`/`quest`/`playerCount`/`isMultiplayer`）。
-   数不出第 13、14 个，疑似把`#include`头文件里的类型算进去了。图上按 12 画。
+   数不出第 13、14 个，疑似把 `#include` 头文件里的类型算进去了。图上按 12 画。
 6. **`IGameReader` 的方法数**一致（2 个纯虚），文档 §3.2 无异议；
    但文档没写 `GameReaderPtr` 这个 using 别名，图 2 补上了（`game_reader.h:54`）。
 7. **`src/core/game_capabilities.cpp` 的 `static_assert` 位置**：文档 §7.1 表格写

@@ -131,9 +131,12 @@ CaptureTables captureTablesFor(GameId game);
 const std::array<float, 3> *crownThresholdsFor(GameId game, int monsterId);
 std::optional<int> captureThresholdFor(GameId game, int monsterId);
 
-// Registration. Called from each game's reader constructor, before its
-// first poll(). Calling twice for the same game replaces the previous
-// registration, so a restarted reader does not accumulate state.
+// Registration. Runs during loader startup, from a static initialiser in each
+// game's own data translation unit, before main() and therefore before the
+// first poll() — NOT from a reader constructor (the comment further up in this
+// header explains why that distinction is load-bearing). Calling twice for
+// the same game replaces the previous registration rather than accumulating
+// state.
 //
 // `thresholdByMonster` may be null: Rise publishes no Capture=N percentages
 // at all, and passing an empty table instead would make "no data" and "no

@@ -1,16 +1,14 @@
-# Monster Overlay 架构（HEAD `dbbac03`）
+# Monster Overlay 架构
 
-> 本文记录分支 `refactor/game-keyed-arch` HEAD `dbbac03` 的代码分层与数据流，目标是
-> 让下一个改这个项目的人一眼看到「我想加一个新面板 / 加一款游戏 / 改 DPS 算法 /
-> 加一种语言，该动哪些文件」。
+> 本文记录当前代码的分层与数据流，目标是让下一个改这个项目的人一眼看到
+> 「我想加一个新面板 / 加一款游戏 / 改 DPS 算法 / 加一种语言，该动哪些文件」。
 >
 > 每个论断都带 `file:line` 或可复现的 grep / wc 证据；行数是 `wc -l` 实测值，
 > 不是估算。**凡不能实测的，本文写「未测」或不写**——不写「已达成」「完全解耦」
 > 这类没有证据的断言。
 >
 > 相关文档：`docs/I18N.md` 是本地化的唯一规范（权威，本文不重复、不与之冲突），
-> `docs/USAGE.md` 是用户操作指南。重构过程的设计理由与逐阶段验证记录在
-> `~/experiment/workspaces/monster-overlay-arch-audit/`（仓库外，不在 git 里）。
+> `docs/USAGE.md` 是用户操作指南。按时间顺序看设计演进请读 `CHANGELOG.md`。
 
 ---
 
@@ -26,39 +24,42 @@
 | 读懂 reader 到画面的完整链路 | §4 |
 | 改门禁 / 加新 TU / 加测试 target | §9 |
 
-**这份文档描述什么状态。** HEAD `dbbac03`，`refactor/game-keyed-arch` 分支，`ctest` **51/51 全绿**（7 个无游戏进程的 probe 测试按设计 Skipped）。本文所有行号、计数、`wc -l` 都在这个 HEAD 上实测。
+**这份文档描述什么状态。** 它描述「当前 HEAD」——换言之就是你现在 clone 下来的
+这份代码。行号、计数、`wc -l` 都是切成对应版本后实测的，可以直接复跑。
+变更史（哪个阶段做了什么、为什么）属于 `CHANGELOG.md`，本文不重复。
 
 **什么时候必须回来更新它。** 下列任一改动发生后，本文的对应章节立即过期：
 `CMakeLists.txt` 增删库或改库的源列表，`src/core/` 下任何文件的增删或行号位移，
 新增 per-game seam，新增门禁脚本，`docs/` 引用的 gate 名字变更，i18n 域数量变化。
-上一次本文过期是 20 个 commit：记录停在 `90e41ce`，而记的三库结构、`part_schemas_data.cpp` 归属、
-三个文件路径全部与实物不符。**改完上面任何一类，回来改文档，不要等。**
+行号、文件行数这类随代码漂移的事实，本文尽量写成「可复跑的命令」而不是抄一份数字，
+这样你改完代码重跑一次就知道它还有没有跟上。**改完上面任何一类，回来改文档，
+不要等。**
 
 ---
 
-## 1. 目录树（HEAD `dbbac03` 实测）
+## 1. 目录树
 
 ```
-src/                                    总计 134 个文件 / 125 个 .h·.cpp / 30707 行
+src/                                    总计 134 个文件 / 125 个 .h·.cpp / 30716 行
 ├── main.cpp                   680       # overlay 装配 + 主循环
 ├── main_control.cpp           221       # monster-control 角色入口
 ├── reader_factory.{h,cpp}     65+54     # 装配点：契约 × 实现的唯一交汇 TU
 ├── reader_descriptors.cpp     49        # per-game 描述符，不含任何 reader
-├── core/                       21 文件 / 2287 行    → monster-core
+├── core/                       21 文件 / 2296 行    → monster-core
 │   ├── game_snapshot.h            40    # 契约：一次 poll 的全部输出
 │   ├── game_reader.h              56    # 契约：IGameReader（2 个虚函数）
 │   ├── zone_id.h                  79    # 契约：ZoneRef{GameId, int}
-│   ├── game_tables.{h,cpp}       144+128 # 契约 + 注册表实现
-│   ├── game_capabilities.{h,cpp}   84+99 # 契约 + 能力表实现
+│   ├── game_tables.{h,cpp}       153+128 # 契约 + 注册表实现
+│   ├── game_capabilities.{h,cpp}  84+99  # 契约 + 能力表实现
 │   ├── game_profile.{h,cpp}       37+46  # wire 名 "world"/"rise" 唯一定义
-│   ├── game_detector.{h,cpp}      21+49  # /proc 扫描 + exe 名行表
+│   ├── game_detector.{h,cpp}      36+83  # /proc 扫描 + exe 名行表
 │   ├── process_memory.{h,cpp}    142+268 # attach/read/指针链/PID 缓存
 │   ├── map_paths.{h,cpp}          77+239 # 数据文件查找（全参数化）
 │   ├── steam_game_locator.{h,cpp} 30+228 # VDF 解析 + 通用 install 查找
 │   ├── string_table.{h,cpp}       88+95  # i18n 运行时表
 │   ├── locale_conf.h             214    # ← 不在任何 add_library 里
 │   └── locale_sync.h              74    # ← 同上
-├── rise/                      20 文件 / 5346 行     → game-rise
+├── rise/                      28 文件 / 8654 行     → game-rise
 │   ├── mhr_reader.cpp           1355    # 本目录最大
 │   ├── mhr_reader_sharpness / _quest
 │   ├── mhr_abnormalities.{h,cpp}
@@ -90,7 +91,8 @@ src/                                    总计 134 个文件 / 125 个 .h·.cpp 
 │   ├── rise_reframework_card.cpp / screen_query.cpp / icon.cpp
 │   ├── panel_sections.h         242    # 每面板的 section 位掩码
 │   ├── panel_player_metrics.h           # 纯 inline 换算（stamina 缩放在这）
-│   └── viewmodel/              15 文件 / 2434 行
+│   ├── viewmodel/              15 文件 / 2434 行
+│   └── panel_mask_codec.h               # header-only，不入库
 └── resources/
     ├── resources.qrc                     # 只列 i18n，8 个文件
     └── i18n/{zh-CN,en-US}/{console,data,overlay,reader}.json
@@ -125,12 +127,13 @@ reader_factory.cpp                mhw-ui          ← 两者互相不知道对�
 
 | 库 | 源列表 | 源文件 | `wc -l` 合计 | 归档大小 |
 |---|---|---|---|---|
-| `monster-core` | `CMakeLists.txt:41` | 17 项 / 8 个 `.cpp` | 1880 | 5798.6 KiB |
+| `monster-core` | `CMakeLists.txt:41` | 17 项 / 8 个 `.cpp` | 1889 | 5798.6 KiB |
 | `game-rise` | `:89` | 28 项 / 15 个 `.cpp` | 8654 | 13607.4 KiB |
 | `game-world` | `:143` | 11 项 / 8 个 `.cpp` | 3742 | 8204.5 KiB |
 | `mhw-ui` | `:199` | 55 项 / 26 个 `.cpp` | 14030 | 29669.2 KiB |
 
-（归档大小来自 `bash scripts/assert_lib_purity.sh build` 的实测输出。）
+（文件数与行数用 `find src/<lib 的源> -name '*.h' -o -name '*.cpp' | xargs wc -l`
+自行复跑；归档大小来自 `bash scripts/assert_lib_purity.sh build` 的实测输出。）
 
 `target_link_libraries`：`monster-core PUBLIC Qt6::Core Threads::Threads`（`:75`）；
 `game-rise PUBLIC Qt6::Core monster-core`（`:131`）；
@@ -139,7 +142,7 @@ reader_factory.cpp                mhw-ui          ← 两者互相不知道对�
 
 ### 2.1 `monster-core`：游戏无关内核（15 个 TU 口径见下）
 
-契约头自身不算 TU。**编译单元实测 8 个 `.cpp`，加上 7 个契约头就是常说的 15 个 TU**：
+契约头自身不算 TU。**编译单元 8 个 `.cpp`，加上 7 个契约头就是常说的 15 个 TU**：
 
 ```
 string_table game_detector game_profile steam_game_locator map_paths
@@ -151,15 +154,16 @@ game_snapshot game_reader zone_id（+ monster_types.h）   ← 7 个头（5 契�
 `src/quest/`——即契约与共享词汇。
 
 **什么不许放进去**：任何具体游戏的 reader、数据表、类型、偏移常量。
-违禁的判据是符号面，不是源码文本：`nm -C --defined-only libmonster-core.a`
-导出的 94 个符号里，`mhw::` 顶层函数 44 个，全部是参数化的通用助手。
+违禁的判据是符号面，不是源码文本：`nm --defined-only libmonster-core.a`
+导出的符号里，`mhw::` 顶层函数全部是参数化的通用助手——
+`grep ' mhw::' | wc -l` 可以直接复跑（当前 44 个）。
 
 **「零游戏硬编码」的准确边界（如实记录）**：
 
 - **无**游戏文件名、Steam appId、exe 名的**硬编码调用**。`findRiseInstallDir()`
   连同 appId `1446780` 与 `MonsterHunterRise.exe` 已移到 `src/rise/rise_install_locator.{h,cpp}`；
   `riseMapCandidates()` 已改成参数化的 `versionedMapCandidates(explicitPath, fileStem, ...)`
-  （`src/core/map_paths.h:67`，版本正则与 glob 在 `.cpp:151` 起）。后者见 commit `67bcf4b`。
+  （`src/core/map_paths.h:67`，版本正则与 glob 在 `.cpp:151` 起）。
 - **有**：`src/core/game_detector.cpp:20-21` 的 `defaultGameExecutables()` 两行
   字面量——但它是**数据行表**，加游戏是加一行，且 `detectGame(executables)` 是可覆盖形式（`:29`）。
 - **有**：`src/core/process_memory.h:64` 与 `:119` 两个**默认实参**写死
@@ -197,9 +201,9 @@ CMake 注释说明放这里是「不是 core 契约」，迁进 core 同样说�
 ### 2.4 `mhw-ui`：整个 GUI 层，只编一次
 
 所有 `src/ui/**`。**依赖方向单向向上**：UI include core / world / rise 的头
-（实测 `src/ui/` 下 include `rise/` 或 `world/` 的 12 处，多为 `mhr_reader.h`
-只为取 `kRiseWirebugSlotCap` 这类常量），但没有任何 `core/`、`rise/`、`world/` 下的文件
-include `ui/`（实测 0 命中）。
+（`src/ui/` 下 include `rise/` 或 `world/` 的 13 行命中，
+多为 `mhr_reader.h` 只为取 `kRiseWirebugSlotCap` 这类常量），但没有任何 `core/`、`rise/`、`world/` 下的文件
+include `ui/`（复跑：`grep -rn 'include "ui/' src/core src/rise src/world src/monster src/player src/quest` → 0 命中）。
 
 **不许放**：reader 的具体实现。`nm` 断言：`libmhw-ui.a` 无
 `MhwReader|MhrReader|AddressMap|readMonsters|readParty|followPointerChain` 符号。
@@ -208,6 +212,8 @@ include `ui/`（实测 0 命中）。
 
 `src/resources/resources.qrc` 与 `assets/icons.qrc` 不在任何 `add_library` 里，
 只出现在 exe target 的源列表（首次例 `:318-319`）。加新 exe target 时**必须自己列这两个**。
+`src/ui/viewmodel/panel_mask_codec.h` 同理——它是 header-only，被 control_panel 的 target
+和它的测试 target 各自列进源列表。
 
 图标探测机制见 §8.2。
 
@@ -245,7 +251,7 @@ map、接哪个伤害 feed、装哪个 lambda，四处都要按游戏分叉，�
 `findRisePid`、`readZone`），归造 reader 的人，不归轮询循环。
 
 `poll()` 的契约：**不抛异常**，失败通过返回快照的 `status` / `attached` 报告
-（`src/main.cpp:476-490` 仍有异常屏障兜底，C1 审计产物）。
+（`src/main.cpp:476-490` 仍有异常屏障兜底）。
 
 ### 3.3 `core/zone_id.h`（79 行）——`ZoneRef{GameId game; int id}`
 
@@ -262,7 +268,7 @@ core 只回答「是不是 -1」（`isUnknownZone`）。
 默认构造是 `{GameId::World, kZoneUnknownId}`——为了让从未填过区域的快照
 还能参与比较，而不是读成一个真值。
 
-### 3.4 `core/game_tables.h`（144 行）——注册表
+### 3.4 `core/game_tables.h`（153 行）——注册表
 
 三个注册函数（`registerCrownThresholds` / `registerCaptureRules` / `registerAilmentStyles`）
 + 三个查询（`crownThresholdsFor` / `captureThresholdFor` / `ailmentStyle`），
@@ -284,7 +290,7 @@ core 只回答「是不是 -1」（`isUnknownZone`）。
 `registerWorldTables()` 在 `src/monster/data/part_schemas_data.cpp:1000`，
 `registerRiseTables()` 在 `src/rise/part_schemas.cpp:118`，各自由匿名命名空间里的
 一个 `struct Register…TablesAtStartup` 静态对象驱动
-（`part_schemas_data.cpp:1011`、`part_schemas.cpp:131`）。
+（`part_schemas_data.cpp:1010-1013`、`part_schemas.cpp:130-133`）。
 
 **这是被测试逼出来的**：放在 reader 构造函数里注册，会让 edit-mode demo 面板
 （不构造 reader）静默丢掉 crown 芯片，`all_monster.png` 730 像素差异。
@@ -296,14 +302,14 @@ core 只回答「是不是 -1」（`isUnknownZone`）。
 三个查询：`gameDisplayName(GameId)`、`usesNormalisedPartGauges(GameId)`、
 `staminaDisplayScale(GameId)`。
 
-**这份表刻意很窄**。UI 里原有 38 处 `game == GameId::X` 比较，实测剩 **27 处**
+**这份表刻意很窄**。UI 里原有 `game == GameId::X` 比较，实测剩 **27 处**
 `==`/`!=` 加 12 个 `case` 标签（§6.1 给分布），其中大部分是**合法的游戏专属视图**
 ——Rise 独有的 REFramework 卡、World 独有的血量条逻辑。这些**留在原处**：
 只有一款游戏有的功能，写成功能检查才是诚实形式，改成能力查询只是把同一个事实
 套一层间接。进这张表的只有两类：
 1. **per-game 数据**（显示名、stamina 除数）——数据属于表，不属于比较；
 2. **今天恰好每款游戏都一样的行为**（`usesNormalisedPartGauges`）——
-   `monster_view_model.cpp:99` 原来两个 arm 逐行相同，`default` 走的是第三条路；
+   `monster_view_model.cpp:86` 原来两个 arm 逐行相同，`default` 走的是第三条路；
    「两款游戏答案相同」不是「一款行为」，是「一份还没抽出来的行为」被 switch 遮住了。
 
 `AilmentStyle` 用打包的 ARGB `quint32` 而不是 `QColor`：这个头在 monster-core 里，
@@ -359,7 +365,7 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
           damagePanel.update(snap) / updateRiseDamage(...)  ← main.cpp:593/663
 ```
 
-逐段说明，带实测行号：
+逐段说明，带可复跑的行号：
 
 1. **Reader 取数**。`MhwReader::poll()`（`src/world/world_reader.cpp:215`）与
    `MhrReader::poll()`（`src/rise/mhr_reader.cpp:1311`）各填一个 `GameSnapshot`。
@@ -370,7 +376,7 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
 2. **契约边界**。`main.cpp` 只经 `createReader()`（`:392`）拿到
    `mhw::GameReaderPtr`，轮询只调 `reader->poll()`（`:478`）。整个异常屏障
    在 `:476-490`。装配处**不再**按游戏分叉造对象、选 map、接 feed——
-   这是 S5（commit `bf29401`）的收益。
+   这就是 IGameReader 契约换来的收益。
 
 3. **Panel 消费**。`PlayerPanel::update(const GameSnapshot&)`（`panel_player.cpp:539`）
    先做 9 行整结构体镜像（`player_` / `zone_` / `quest_` / `game_` / `attached_` /
@@ -394,10 +400,6 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
 ## 5. 六个 per-game seam（加新游戏报 `-Wswitch`）
 
 给 `GameId` 加第三个枚举值时，下列 6 处漏一个 → `-Wswitch` **警告**。
-**实测**：HEAD `dbbac03` 上把枚举改成 `{World, Rise, Wilds}` 全量构建，共 **10 条**
-`-Wswitch`，分布为 `game_tables.cpp` 3（被 3 个 target 各编一次）、
-`reader_descriptors.cpp` 2、`reader_factory.cpp` 2、`game_profile.cpp` 1、
-`game_capabilities.cpp` 1、`panel_player.cpp` 1（`zoneLabel()`）。
 
 | 文件 | seam | 形态 |
 |---|---|---|
@@ -411,12 +413,14 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
 **这是警告，不是编译错误。** 树中无 `-Werror`（四个库与 exe target 都是
 `-Wall -Wextra -Wpedantic`，没有 `-Werror`），加第三款游戏默认能构建，
 只在构建日志里宣布自己。**把「加游戏会编译失败」当保护是错的**——
-`cae0ed2` 之前的 `game_capabilities.cpp` 就同时犯过两个错：`static_assert(std::size(kTraits) == 2)`
+`game_capabilities.cpp` 曾经用 `static_assert(std::size(kTraits) == 2)`
 比较的是**行数与字面量 2**，加枚举值不改变行数，断言永远通过；而它守护的下标形式
 `gameTraits(static_cast<size_t>(game))` 会把新游戏索引到 `kTraits[0]`，即 World 的
-显示名与 stamina 除数。`dd6e3b0` 把它改成无 default 的 switch + `__builtin_unreachable()`。
+显示名与 stamina 除数。现在改成无 default 的 switch + `__builtin_unreachable()`。
+源码注释（`game_capabilities.cpp:38-58`）把这个失效模式完整写了一遍，
+值得在加游戏前读。
 
-四处的「switch 后兜底」都是**故意的**：GCC 对switch-return-无default-非void函数
+四处（表里标注的）「switch 后兜底」都是**故意的**：GCC 对switch-return-无default-非void函数
 会额外警告 control reaches end；这些兜底让那条警告消失，同时它们对合法枚举不可达
 （只有越界 cast 才命中，那是调用方的 UB）。
 
@@ -426,9 +430,9 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
 
 ### 6.1 仍按 GameId 分支的地方，以及为什么留着
 
-实测 `src/` 下 **27 处** `==`/`!=` `GameId` 比较 + **12 个 `case` 标签**（注释已排除）：
+`src/` 下 **27 处** `==`/`!=` `GameId` 比较 + **12 个 `case` 标签**（注释已排除）：
 
-- `src/ui/control_panel.cpp` 19 处：多为「第 3 个面板页只在 World 有」这类
+- `src/ui/control_panel.cpp` 10 处：多为「第 3 个面板页只在 World 有」这类
   每游戏视图布局，控制台本身就是按游戏列开关的。合法。
 - `src/ui/rise_reframework_card.cpp` 6 处：REFramework 卡是 Rise 独有功能。
   `owner_->currentGame() == GameId::Rise` 是诚实的功能检查。
@@ -437,30 +441,32 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
 - `src/ui/icon.cpp` 2 处：怪物头像的**文件名前缀**（`Rise_` / `World_`）——
   header 注释明确说「这是这里剩下的唯一 per-game 事实，是数据不是行为分支」。
 - `src/main.cpp` 1 处、`src/rise/rise_damage_roster.cpp` 1 处、
-  `src/ui/viewmodel/monster_view_model.cpp` 1 处、`src/ui/control_panel.cpp`
-  若干写入。全部是「这款游戏有这个功能」的直接表达。
+  `src/ui/viewmodel/monster_view_model.cpp` 1 处。全部是「这款游戏有这个功能」的直接表达。
+
+复跑：`grep -rn 'GameId::' src --include=*.cpp --include=*.h | grep -E '(==|!=)' | grep -v '://'`
+逐文件 `sort | uniq -c`，加 `grep -c 'case GameId'` 得到 case 数。
 
 **结论口径**：这不是「已完全解耦」，是「数据与共性行为进了表，功能判断留在原地」。
 
 ### 6.2 `MhwReader` 是一个跨文件 façade
 
-`grep -rn 'MhwReader::' src --include=*.cpp` → **19 处 / 5 个文件**：
-`src/world/player_reader.cpp` 6、`src/world/monster_reader.cpp` 3、
-`src/world/world_reader.cpp` 7、`src/world/quest_reader.cpp` 1、
+`grep -rn 'MhwReader::' src --include=*.cpp | grep -v '://'` → **17 处 / 5 个文件**：
+`src/world/world_reader.cpp` 7、`src/world/player_reader.cpp` 5、
+`src/world/monster_reader.cpp` 3、`src/world/quest_reader.cpp` 1、
 `src/reader_factory.cpp` 1。
 World 侧的 `src/core/process_memory.h` 四个助手经 `src/world/world_reader.h:20-55`
 的 static 委托成员保持 `MhwReader::` 旧拼写，实现在 core。
 
 ### 6.3 三个游戏库之间的循环依赖是零，但这是 `nm` 证明的当前状态
 
-`nm` 实测：`libgame-world.a` undefined 中无 `mhw::(Mhr|Rise|rise|ReFramework)`；
+`nm --undefined-only` 实测：`libgame-world.a` undefined 中无 `mhw::(Mhr|Rise|rise|ReFramework)`；
 `libgame-rise.a` undefined 中无 `mhw::(Mhw|World|world|zoneName|isHuntingZone)`。
 `libmonster-core.a` 对两边的 undefined 引用都是 0。这条由 `lib-purity-gate` 每跑
 `ctest` 都验一次，不是一次性的历史结论。
 
 ### 6.4 进程内 static PID 缓存被两个 reader 实例共享
 
-`src/core/process_memory.cpp` 里的 function-local static PID 缓存（约 `:173-184`）
+`src/core/process_memory.cpp:173-184` 里的 function-local static PID 缓存
 是一份，5 s 有效窗口，exe 变化即失效。`MhwReader` 与 `MhrReader` 各持实例、
 共用这份缓存。**已知隐患，未修。** 拆库没拆它——它是 core 实现细节，不是库边界问题。
 
@@ -477,18 +483,26 @@ World 侧的 `src/core/process_memory.h` 四个助手经 `src/world/world_reader
 - **反向 include 为零**：`grep -rn 'include "ui/' src/core src/rise src/world
   src/monster src/player src/quest` → 0 命中。这条每加一次反向依赖就破一次，
   `lib-purity-gate` 只查符号不查 include。
+- **「注册时机」曾经在三处有互相矛盾的注释**：`game_tables.h` 顶部说静态初始化器
+  （并记录了「若改成 reader 构造器注册，demo 面板会丢 crown 芯片」这个实测原因），
+  而注册函数声明前的注释曾说「Called from each game's reader constructor」。
+  实际机制以静态初始化器为准：两个数据 TU 各有一个 `Register…TablesAtStartup` 静态对象
+  （`part_schemas_data.cpp:1010-1013`、`part_schemas.cpp:130-133`），
+  `world_reader.cpp` / `mhr_reader.cpp` 里的 register 调用为 0 处。
+  **两处注释现已统一。** 这条留在「已知边界」里是因为同一种漂移会再发生：改注册时机时
+  只改了一处注释。
 - **census 的 11 个 ZERO TU** 靠 `scripts/zero_reference_gate.py` 的 `EXEMPT` 表逐条
-  说明理由；`tests/tu_census.json` 快照 61 个 TU。ZERO 集：`main.cpp`、`main_control.cpp`、
+  说明理由；`tests/tu_census.json` 快照 61 个 TU。ZERO 集（`EXEMPT` 的键，逐个对应）：
+  `src/main.cpp`、`src/main_control.cpp`、`viewmodel/overlay_process_controller.cpp`、
   两个 `src/rise/data/*_data.cpp`、`control_panel_styles.cpp`、`icon.cpp`、
   `rise_reframework_card.cpp`、`section_count_bar.cpp`、`toggle_chip.cpp`、
-  `viewmodel/overlay_process_controller.cpp`、`src/world/quest_reader.cpp`。
+  `src/world/quest_reader.cpp`。
 
 ---
 
 ## 7. 如何加第三款游戏（操作手册）
 
 这是本节存在的理由。**目标：`src/core/` 下一个文件都不改。**
-（这一条在 `dd6e3b0` 的审计中是实测成立的；本文照抄该结论，不重新证明。）
 
 总成本分四类：**必改**（不加就错）、**新写**（游戏的代码）、**按需**（有对应功能才做）、
 **验证**。
@@ -546,24 +560,27 @@ public:
 ### 7.4 验证清单
 
 ```bash
-# 1. 全量构建，确认能数出预期条数的 -Wswitch 警告
-ninja -C build 2>&1 | grep -c 'Wswitch'
+# 1. 全量构建，把 -Wswitch 警告逐条看完——数量本身不重要，漏没漏 seam 才重要
+ninja -C build 2>&1 | grep -n 'Wswitch'
 
 # 2. 门禁（三条结构性 + 三条 i18n）
 ctest --test-dir build -R "lib-purity-gate|zero-reference-gate|diagnostic-targets-build"
 ctest --test-dir build -R "i18n-gate"
 
 # 3. core 纯度：这条必须 0，否则你把游戏符号漏进了内核
-nm -C --defined-only build/libmonster-core.a | grep -E '^[0-9a-f]+ [TDBRCW] ' \
+nm --defined-only build/libmonster-core.a | grep ' T \| W \| D \| B \| R ' \
   | grep -Ei 'rise|mhr|world|monsterhunter|huntingzone|qurio' | wc -l
+#   注意 lib-purity-gate 对 worldMapCandidates 有一处显式豁免（§2.1）
 
 # 4. 新 TU 必须登记 census，否则 zero-reference-gate 直接失败
 python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
+
+# 5. 别忘了 §2.5：新 exe / 测试 target 自己列两个 qrc
 ```
 
 ### 7.5 手册里**不**保证什么
 
-- 不保证「编译失败会拦住你」。§5 已实测：只有警告。
+- 不保证「编译失败会拦住你」。§5 已说明：只有警告。
 - 不保证 `game_capabilities.cpp` 的 `static_assert` 能拦住遗漏——它比较行数与字面量，
   §5 记录了这是怎么失效的。
 - 不保证 UI 侧自动正确：control_panel 的每游戏列、图标前缀、词条派发（`panel_player.cpp:162`）
@@ -583,9 +600,9 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
   `:/i18n/<locale>/<domain>.json` 加载，`tr()` 单次 QHash 查找，缺 key **返回 key 本身**。
 - 域划分 4 个 × 2 locale = 8 个文件，按**谁重绘**划分（不按哪个进程读）：
   `overlay`（`ui.*`）/ `console`（`console.*`）/ `reader` / `data`。
-- **实测叶子 key 数**（逐层拍平，`_meta` 跳过）：console **155**、data **57**、
-  overlay **46**、reader **145**，每 locale 合计 **403**，zh-CN 与 en-US 数量全等、
-  无单边 key。
+- 叶子 key 数随发版增长，别抄本文。**要数字就跑**
+  `python3 scripts/i18n_gate.py`——它开头就打印 zh/en 各域的键数，
+  并校验「每个 locale 的 key 集合逐域相等」。当前 zh / en 数量全等、无单边 key。
 - 语言运行时切换：`load()` 可再次调用，表原地替换；缓存过字符串的 widget 必须重查——
   控制台走 `ControlPanel::retranslateUi()`，overlay 走 conf 轮询
   （`src/core/locale_sync.h`，`main.cpp` 的 locale poll 每 1 s 一次 mtime stat）。
@@ -613,7 +630,8 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 
 ## 9. 三道结构门禁 + 三条 i18n 门禁
 
-`ctest` 51 个用例中，最后 6 个是静态门禁（`CMakeLists.txt:1246-1332`）。
+`ctest` 的最后 6 个测试是静态门禁（`CMakeLists.txt:1246-1332`）：
+`diagnostic-targets-build`、三条 `i18n-gate-*`、`zero-reference-gate`、`lib-purity-gate`。
 三条结构门禁都**需要 `build/`**，全新 checkout 无构建目录时它们报 SKIP 而不是失败。
 
 ### 9.1 `lib-purity-gate`（`Test #51`）
@@ -631,7 +649,7 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 **不能查什么**：它只读**符号名**。它抓不到「core 里写死了一个游戏常量但函数名通用」这类
 耦合——例如 §2.1 记录的 `process_memory.h` 两个默认实参与
 `game_detector.cpp` 的 exe 名表。也抓不到 `#include` 方向（`src/ui/` include
-`src/rise/` 12 处，这是**设计允许**的，但反方向 core include game 头只能靠人看）。
+`src/rise/` 13 行，这是**设计允许**的，但反方向 core include game 头只能靠人看）。
 **它也不是万能的模式表**：`GENERIC_GAME_NAMED` 的豁免项必须**逐个核对确无定义**，
 曾经的过期项已随 `findRiseInstallDir` 迁出 core 一并收缩（§2.1）。
 
@@ -642,9 +660,9 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 `snap-player-offline` `rise-probe`），一个都不运行。
 
 **为什么存在**：这些 target 被排除在默认构建外，因为只在有游戏运行时才有意义。
-这个判断对「运行」成立，对「编译」不成立。`rise-probe` 曾被 ZoneRef 改动打断，
-整整一个重构周期里默认 `ninja` 从没编过它，而 ctest 一路绿灯。
-`CMakeLists.txt:1240` 的 `MHW_DIAGNOSTIC_TARGETS` 必须与真实的
+这个判断对「运行」成立，对「编译」不成立。曾经有 target 被契约改动打断，
+整整一个周期里默认 `ninja` 从没编过它，而 ctest 一路绿灯。
+`CMakeLists.txt:1242` 的 `MHW_DIAGNOSTIC_TARGETS` 必须与真实的
 `EXCLUDE_FROM_ALL` 列表一致。
 
 **不能查什么**：只编译，不执行——它验不出这五个工具的运行时行为。
@@ -653,8 +671,7 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 
 跑 `scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json`。
 **快照门禁**：比较磁盘上的 `src/*.cpp` 集合与 `tests/tu_census.json` 登记的集合，
-不需要构建。新 TU 未登记 → 直接失败。实测快照 **61 个 TU，11 个 ZERO**，
-每个 ZERO 都在脚本的 `EXEMPT` 表里有理由和解除条件。
+不需要构建。新 TU 未登记 → 直接失败。
 
 **这是「新 TU 必须声明自己」的不变量，不是覆盖率指标。** 它刻意不问「覆盖率够不够」：
 `--report` 才给实测数字，但那需要 `build/`，且从不当门禁用。
@@ -667,15 +684,15 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 
 ### 9.4 三条 i18n 门禁（`Test #47/#48/#49`）
 
-`scripts/i18n_gate.py` 依次跑 `check` / `parity` / `unused`，`-q`。
 `CMakeLists.txt:1272` 的 `MHW_I18N_GATES` 列表定义这三条。
 
 - `check`（`i18n_check_tr_keys.py`）：代码要的每个 key 在每个 locale 都存在。硬门禁。
 - `parity`（`i18n_key_parity.py`）：zh / en key 集合逐域相等。硬门禁。
 - `unused`（`i18n_unused_keys.py`）：报告没人引用的 key。**默认非严格**——
-  实测 23 个死 key（`data` 域 21 个退役 mantle 名 + `overlay` 域 2 个），
-  门禁仍 PASS。理由：死 key 玩家看不见，拿它当门禁只会把一次 cosmetic 清理变成
+  退役的 mantle 名会一直留在 `data` 域里当死 key，门禁仍 PASS。
+  理由：死 key 玩家看不见，拿它当门禁只会把一次 cosmetic 清理变成
   红色构建，然后训练所有人忽略门禁。`--strict` 在发版前用。
+  （`i18n_gate.py` 是这三条的 runner，直接把 key 数也打印出来，见 §8.1。）
 
 ---
 
@@ -705,62 +722,24 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 
 ---
 
-## 附录：验证记录
+## 附录：如何复核本文的数字
 
-以下命令在仓库 `/home/a27exe/Projects/games/monster-overlay`（HEAD `dbbac03`，
-分支 `refactor/game-keyed-arch`，工作树干净）实测。构建目录 `build/`
-（`RelWithDebInfo`）。
+本文的数字都在「当前 HEAD 的这份代码」上实测。想复核某一条，跑对应命令即可——
+如果结果和本文不一致，**大概率是本文没跟上代码**（§0 的更新清单列出了会过期的事项），
+请以你跑出来的为准并顺手修文档。
 
-| 命令 | 实测结果 |
-|---|---|
-| `git rev-parse HEAD` | `dbbac03`（同步本文时） |
-| `ctest --test-dir build` | **51/51 全绿**；7 个 probe（`monster-probe*` / `monster-scan`）Skipped（无 MHW 进程，设计行为） |
-| `ninja -C build` | `no work to do`；warning 计数 **0** |
-| `wc -l CMakeLists.txt` | 1333 |
-| `grep -n '^add_library' CMakeLists.txt` | 4 个：`:41` monster-core、`:89` game-rise、`:143` game-world、`:199` mhw-ui |
-| `grep -c 'add_executable' CMakeLists.txt` | 53 |
-| `grep -c 'add_test(NAME' CMakeLists.txt` | 48（其中 3 条 i18n 由 foreach 展开；`ctest -N` 实测 51 用例） |
-| `bash scripts/assert_lib_purity.sh build` | 6 项全 PASS，0 命中；归档 5798.6 / 13607.4 / 8204.5 / 29669.2 KiB |
-| `python3 scripts/zero_reference_gate.py --report` | TOTAL **61**，ZERO **11**，INDIRECT **50**，UNKNOWN 0 |
-| `ctest -R "diagnostic-targets-build"`（`-V`） | 5/5 target `built` |
-| `python3 scripts/i18n_gate.py` | 三域全 PASS |
-| `python3 scripts/i18n_unused_keys.py` | 23 unique dead key（report-only，非门禁） |
-| `find src -type f \| wc -l` | 134 文件；`.h`/`.cpp` 125 个，`.cpp` 61 个 |
-| `nm -C --defined-only build/libmonster-core.a` | 94 个导出符号，`mhw::` 顶层 44 个，无游戏词干命中（豁免项 `worldMapCandidates` 除外） |
-| `grep -rn 'include "ui/' src/core src/rise src/world src/monster src/player src/quest` | 0 命中 |
-| `grep -rn '#include "rise/\|#include "world/' src/ui/` | 12 行命中（最大块：`rise_reframework_card` / `rise_reframework_bridge`） |
-| `grep -rn 'MhwReader::' src --include=*.cpp` | 19 处 / 5 文件（`world_reader` 7、`player_reader` 6、`monster_reader` 3、`quest_reader` 1、`reader_factory` 1） |
-| `grep -c 'Monsters/' assets/icons.qrc` | 150（`Rise_` 78、`World_` 71、`Unknown` 1） |
-| 加 `GameId::Wilds` 后全量构建（scratch 副本） | 10 条 `-Wswitch`，分布见 §5；`ninja` exit 0、ctest 50/50 仍全绿 |
-| `wc -l docs/ARCHITECTURE.md` | 本文；上一版 605 行，记录停在 `90e41ce` |
+| 想复核什么 | 跑什么 | 本文的口径 |
+|---|---|---|
+| 库的划分与源列表 | `grep -n '^add_library' CMakeLists.txt` | 4 个库：`:41` / `:89` / `:143` / `:199` |
+| 每个库的行数与文件数 | `find <该库的源文件> -name '*.h' -o -name '*.cpp' \| xargs wc -l` | 见 §2 表「`wc -l` 合计」 |
+| 库之间的符号耦合 | `bash scripts/assert_lib_purity.sh build` | 6 项断言全 PASS、0 命中 |
+| core 导出的 `mhw::` 符号 | `nm --defined-only build/libmonster-core.a \| grep ' T \| W \| D \| B \| R ' \| grep -c 'mhw::'` | 44（判据是「必须全是参数化通用助手」，不是这个数——是**检查有没有游戏命名漏进去**） |
+| i18n 的域数、键数、zh/en 相等性 | `python3 scripts/i18n_gate.py` | check / parity PASS；unused 默认 report-only |
+| census 快照里的 TU 总数 | `python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json` | 门禁 PASS；快照集合与磁盘集合相等 |
+| 全部测试 | `ctest --test-dir build` | 需要 `build/`；无 `build/` 时结构门禁报 SKIP |
+| per-game seam 列表 | 本文 §5 的表格 | 加 `GameId` 枚举值时逐条对着 grep |
+| 按 GameId 分支的存量 | `grep -rn 'GameId::' src --include=*.cpp --include=*.h \| grep -E '(==\|!=') \| grep -v '://'` | 见 §6.1 分布 |
 
-### 与既有记录的矛盾（如实记录，不粉饰）
-
-写本文时发现以下既有记录与实测不符。它们大部分已被 `cae0ed2` / `dd6e3b0`
-的提交信息修正过，本文按实测口径重述；列出来是为了让下一个读者不必重新踩。
-
-1. **库数量**：本文上一版与多份提交信息说 `monster-core / mhw-reader / mhw-ui`
-   **三**库。实际 `f028712` 之后是 **四**库（`mhw-reader` 更名 `game-world` 并吸收
-   `world_types.{h,cpp}` 与 `src/monster/data/part_schemas_data.cpp`，新增 `game-rise`）。
-2. **`part_schemas_data.cpp` 归属**：旧版说它在 monster-core。它在 **game-world**
-   （`CMakeLists.txt:175-176`）。整个 `src/monster/` 下没有一个 `.cpp` 属于 monster-core。
-3. **三个文件路径已不存在**：`src/core/reframework_fetcher.cpp`、
-   `src/core/rise_reframework_manager.cpp` 在旧版出现；它们现在位于
-   `src/rise/reframework/`（`game-rise`）。
-4. **`game_capabilities` 的保护级别被高估**：`AUDIT-S1-DECOUPLING.md:43` 称
-   `static_assert(std::size(kTraits) == 2)` 是「全仓唯一一处加游戏必须编译失败的断言」。
-   实测它为假：断言比较行数与**字面量 2**，加枚举值不改变行数，断言永远通过；
-   真正守护该文件的是 `-Wswitch` **警告**（树中无 `-Werror`）。`cae0ed2` 之前的
-   `game_capabilities.cpp` 还因此把新游戏静默索引到 `kTraits[0]`（World 的显示名与除数）。
-   `dd6e3b0` 已修正注释；本文 §5 记录实测。
-5. **`EXECUTION-PROGRESS.md` 说「core 零改动成立，已达成」**：这句话的**技术结论**
-   （加第三款游戏不改 `src/core/` 源文件）在 `dd6e3b0` 的独立审计中实测成立。但同一份
-   文档 §「尚未完成」里还留着「S3 库拆分降级为可剪枝项」「Zone 词条分离未做」——
-   这两项后来都完成了（`f028712`、`40f19a4`），那份进度表**落后于 HEAD**。
-   本文只采用已被 commit 证实的部分。
-6. **FINAL-AUDIT 的结论口径**：`~/experiment/workspaces/monster-overlay-arch-audit/`
-   下没有名为 `FINAL-AUDIT.md` 的文件；最终审计的产出散落在 `dd6e3b0` 的提交信息
-   （「core proposition held — `src/core/` needed zero changes — but three statements
-   did not」）与 `AUDIT-S1-DECOUPLING.md` 里。本文按这个口径写：**解耦成立，
-   但仍是有 switch 表形式的硬编码**（§5 的六个 seam、§6.1 的 27+12 处分支），
-   不是「完全解耦」。
+**不复跑 / 不写在这份附录里的东西**：本文刻意不抄那些只要跑一次命令就能得到、
+但几周后必然漂移的快照数字（文件数、行数、符号计数各自会变）。需要它们的时候
+跑上面的命令，以你屏幕上的为准。

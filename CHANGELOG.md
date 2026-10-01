@@ -54,9 +54,9 @@ main..HEAD` 共 **14 个 commit**：13 个是重构本体（`5ab840e`..`dd6e3b0`
   `lib-purity-gate`。`mhw-reader-direct-tests` 更名 `game-world-direct-tests`。
 - **TU 登记**：`tests/tu_census.json` 56 → 61 个 src TU，`zero-reference-gate`
   的 ZERO 计数回到 11。
-- **构建健康度**：**洁净从零构建实测 339 条边、0 warning / 0 error**
+- **构建健康度**：**洁净从零构建 0 warning / 0 error**
   （`cmake -G Ninja` + `ninja`，RelWithDebInfo，`-Wall -Wextra -Wpedantic`）；
-  `lib-purity-gate` 6/6 PASS（本次实测），三个 i18n 门禁 PASS（本次实测）。
+  `lib-purity-gate` 6/6 PASS，三个 i18n 门禁 PASS。
   注意 commit 消息里的 target 数（「316」「336」）**不可复现也不该引用**——
   按边数计是 339，取决于 target 集合与 configure 时的 target 发现结果。
 
@@ -258,7 +258,7 @@ REFramework 10 个 characterization 用例）。此前这些统计与状态机�
 `monsters/{parts,ailments}.json`（内容还是 "v0.1 占位"）、
 `part_schemas.cpp.pre-PRA`、`spike_web.cpp`、孤儿测试
 `monster_probe_buildup_fast.cpp`。二进制体积减少约 1.5 MB。
-全部备份于工作区并附 sha256 校验清单（5/5 通过）。
+全部备份并附 sha256 校验清单（5/5 通过）。
 
 ### 安全网
 
