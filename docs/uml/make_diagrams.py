@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Regenerate the Graphviz renders in docs/uml/ from the canonical sources.
 
-Every fact below was measured on branch refactor/game-keyed-arch at HEAD
-dbbac03 (2026-10-01).  Class names, method signatures, include paths, CMake
-line numbers and the static-initialiser registration path were read out of
-the headers/sources themselves; nothing here is copied from
-docs/ARCHITECTURE.md without being checked against the code.
+Every fact below was measured against the tree this file lives in.  Class
+names, method signatures, include paths, CMake line numbers and the
+static-initialiser registration path were read out of the headers/sources
+themselves; nothing here is copied from docs/ARCHITECTURE.md without being
+checked against the code.  Line numbers drift as the code moves — re-check
+them against the tree before trusting a box that cites one.
 
     python3 docs/uml/make_diagrams.py            # render all *.png
     python3 docs/uml/make_diagrams.py --check    # warn on drift vs sources
@@ -25,7 +26,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parent.parent  # /home/a27exe/Projects/games/monster-overlay
+REPO = HERE.parent.parent  # repository root, derived from this file's location
 
 FONT = "Helvetica"
 DPI = "150"

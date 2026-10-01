@@ -340,7 +340,7 @@ target_compile_options(monster-overlay PRIVATE -Wall -Wextra -Wpedantic)
 # Offscreen snapshot of the player panel in edit/demo mode. Used for
 # visual regression testing without launching the layer-shell overlay
 # (which would steal keyboard focus and lock the user out of the
-# desktop — see ~/.hermes/memory KDE/overlay testing note).
+# desktop — see the note on offscreen testing in the project docs).
 add_executable(snap-player-demo
     tests/snap_player_demo.cpp
     src/resources/resources.qrc

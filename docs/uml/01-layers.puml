@@ -1,6 +1,6 @@
 @startuml 01-layers
 !theme plain
-title 1. 四库分层与依赖方向 — refactor/game-keyed-arch @ dbbac03
+title 1. 四库分层与依赖方向 — 当前 HEAD
 
 'skinparam backgroundColor white
 

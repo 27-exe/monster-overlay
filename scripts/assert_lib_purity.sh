@@ -21,8 +21,8 @@
 #   names legitimately mention a game (riseMapCandidates, worldMapCandidates,
 #   findRiseInstallDir) are excluded by name below; that is a deliberate,
 #   enumerated exception, not a gap in the pattern. The verbatim output of a
-#   run is kept outside the tree (experiment/workspaces/monster-overlay-arch-audit),
-#   so nothing here points at a path that is not in the repo.
+#   run is kept outside the tree, so nothing here points at a path that is
+#   not in the repo.
 #
 #   gmower-style stems are checked against DEFINED symbols only. The
 #   undefined-reference assertions stay narrow on purpose: a library
