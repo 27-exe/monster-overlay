@@ -1,6 +1,6 @@
-# Monster Overlay 架构（HEAD `cae0ed2`）
+# Monster Overlay 架构（HEAD `dbbac03`）
 
-> 本文记录分支 `refactor/game-keyed-arch` HEAD `cae0ed2` 的代码分层与数据流，目标是
+> 本文记录分支 `refactor/game-keyed-arch` HEAD `dbbac03` 的代码分层与数据流，目标是
 > 让下一个改这个项目的人一眼看到「我想加一个新面板 / 加一款游戏 / 改 DPS 算法 /
 > 加一种语言，该动哪些文件」。
 >
@@ -26,7 +26,7 @@
 | 读懂 reader 到画面的完整链路 | §4 |
 | 改门禁 / 加新 TU / 加测试 target | §9 |
 
-**这份文档描述什么状态。** HEAD `cae0ed2`，`refactor/game-keyed-arch` 分支，`ctest` **51/51 全绿**（7 个无游戏进程的 probe 测试按设计 Skipped）。本文所有行号、计数、`wc -l` 都在这个 HEAD 上实测。
+**这份文档描述什么状态。** HEAD `dbbac03`，`refactor/game-keyed-arch` 分支，`ctest` **51/51 全绿**（7 个无游戏进程的 probe 测试按设计 Skipped）。本文所有行号、计数、`wc -l` 都在这个 HEAD 上实测。
 
 **什么时候必须回来更新它。** 下列任一改动发生后，本文的对应章节立即过期：
 `CMakeLists.txt` 增删库或改库的源列表，`src/core/` 下任何文件的增删或行号位移，
@@ -36,7 +36,7 @@
 
 ---
 
-## 1. 目录树（HEAD `cae0ed2` 实测）
+## 1. 目录树（HEAD `dbbac03` 实测）
 
 ```
 src/                                    总计 134 个文件 / 125 个 .h·.cpp / 30707 行
@@ -394,7 +394,7 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
 ## 5. 六个 per-game seam（加新游戏报 `-Wswitch`）
 
 给 `GameId` 加第三个枚举值时，下列 6 处漏一个 → `-Wswitch` **警告**。
-**实测**：HEAD `cae0ed2` 上把枚举改成 `{World, Rise, Wilds}` 全量构建，共 **10 条**
+**实测**：HEAD `dbbac03` 上把枚举改成 `{World, Rise, Wilds}` 全量构建，共 **10 条**
 `-Wswitch`，分布为 `game_tables.cpp` 3（被 3 个 target 各编一次）、
 `reader_descriptors.cpp` 2、`reader_factory.cpp` 2、`game_profile.cpp` 1、
 `game_capabilities.cpp` 1、`panel_player.cpp` 1（`zoneLabel()`）。
@@ -707,13 +707,13 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 
 ## 附录：验证记录
 
-以下命令在仓库 `/home/a27exe/Projects/games/monster-overlay`（HEAD `cae0ed2`，
+以下命令在仓库 `/home/a27exe/Projects/games/monster-overlay`（HEAD `dbbac03`，
 分支 `refactor/game-keyed-arch`，工作树干净）实测。构建目录 `build/`
 （`RelWithDebInfo`）。
 
 | 命令 | 实测结果 |
 |---|---|
-| `git rev-parse HEAD` | `cae0ed2600633fe92040e3e0e7735afb5ddd86d4` |
+| `git rev-parse HEAD` | `dbbac03`（同步本文时） |
 | `ctest --test-dir build` | **51/51 全绿**；7 个 probe（`monster-probe*` / `monster-scan`）Skipped（无 MHW 进程，设计行为） |
 | `ninja -C build` | `no work to do`；warning 计数 **0** |
 | `wc -l CMakeLists.txt` | 1333 |

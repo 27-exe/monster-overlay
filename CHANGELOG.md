@@ -2,6 +2,102 @@
 
 本文件记录 monster-overlay 的变更。格式参考 Keep a Changelog。
 
+## [Unreleased] — 四库架构重构
+
+把 `monster-core` 拆成「游戏无关内核 + 每游戏一个库」。`git log --oneline
+main..HEAD` 共 **14 个 commit**：13 个是重构本体（`5ab840e`..`dd6e3b0`），
+末一个 `dbbac03` 是架构文档重写。每个 commit 都是独立可回滚的改动。
+
+（口径说明：按「阶段」算是 12 个，`dd6e3b0` 是对前 12 个阶段中三条已实测为假
+的陈述的修正，不是新阶段；下面提交列表按 git 顺序全列 14 条，不合并。）
+
+**用户可见变化为零。** 行为、快捷键、面板显示、配置格式、`--game` / `--map` /
+`--poll` / `--edit` / `--mask-*` / `--no-*` 的语义全部逐字未变；`panels.ini` 与
+`monster-overlay.conf` 的字段一个不多一个不少。这是纯内部重构——如果你的面板
+明天看起来和今天一模一样，那正是预期结果。想了解新架构请读
+`docs/ARCHITECTURE.md`（已同步重写），本文只记录工程账。
+
+### 做了什么
+
+一次「按游戏归属」的库切分。重构前 `monster-core` 是一个装了 56 个 TU 的
+单库，其中 26 个是 Rise、2 个 World：内核的 include graph 看起来没有游戏，
+但 `libmonster-core.a` 导出的 140 个符号里有 60 个属于两款具体游戏。文件搬动
+解决不了这件事——得先让内核停止*认识*具体游戏，然后才谈得上把代码搬出去。
+13 个 commit 的顺序正是这个方向：
+
+1. `5ab840e` ZoneRef 契约带 game 标签，砍掉 core→world 这条边
+2. `c81bfdf` 只构建本次要轮询的那个 reader
+3. `fd9368e` crown / capture 查表换成 GameId 注册表（`core/game_tables.*`）
+4. `63b6748` UI 问「支持什么」而不是「是哪个游戏」（`core/game_capabilities.*`）
+5. `bf29401` 轮询循环改为面向 `IGameReader` 契约 + `reader_factory`（不在 core）
+6. `c18373d` 异常状态色板按游戏分表；REFramework 版本号收敛为单一常量
+7. `b629ae5` 怪物头像改为向 qrc 资源系统查询存在性
+8. `12a3db3` 耐力缩放从三元表达式改为 traits 表的一列
+9. `f028712` 拆库：kernel / game-rise / game-world，附 `lib-purity-gate`
+10. `67bcf4b` 内核不再硬编码 Rise（map stem 参数化、Steam 查找移到 rise）
+11. `40f19a4` Rise 的 18 个区域词条从 `WorldZone` 搬到 `src/rise/rise_zones.h`
+12. `cae0ed2` 补齐两处「新 GameId 会静默漏过」的 seam
+13. `dd6e3b0` 修正审计实测为假的三处陈述
+   （`dbbac03` 重写架构文档，不计入阶段）
+
+### 可观察变化
+
+- **编译产物**：`libmonster-core.a` 20664 KiB → 5798 KiB（56 TU → 8 个 `.cpp`
+  / 15 TU 口径），游戏符号 0；新增 `libgame-rise.a` 13607 KiB、`libgame-world.a`
+  8205 KiB（原 `mhw-reader` 改名，仍是 World reader）； `libmhw-ui.a` 29669 KiB。
+  归档大小实测来源 `bash scripts/assert_lib_purity.sh build`。
+- **测试**：`ctest` 47 → 51。新增 `reader-factory-tests`（钉住两个 map 文件名
+  与两条选择规则）、`ailment-style-tests`（钉住 World 1 是中毒而 Rise 1 不是，
+  即异常 id 跨游戏不同号）、`diagnostic-targets-build`（编译但按设计不运行那
+  5 个需要真游戏的 target——此前 `rise-probe` 坏了一整个重构周期没人发现，
+  因为它是 `EXCLUDE_FROM_ALL`，默认 `ninja` 从不编它而 ctest 一路绿灯）、
+  `lib-purity-gate`。`mhw-reader-direct-tests` 更名 `game-world-direct-tests`。
+- **TU 登记**：`tests/tu_census.json` 56 → 61 个 src TU，`zero-reference-gate`
+  的 ZERO 计数回到 11。
+- **构建健康度**：**洁净从零构建实测 339 条边、0 warning / 0 error**
+  （`cmake -G Ninja` + `ninja`，RelWithDebInfo，`-Wall -Wextra -Wpedantic`）；
+  `lib-purity-gate` 6/6 PASS（本次实测），三个 i18n 门禁 PASS（本次实测）。
+  注意 commit 消息里的 target 数（「316」「336」）**不可复现也不该引用**——
+  按边数计是 339，取决于 target 集合与 configure 时的 target 发现结果。
+
+### 审计修正了什么
+
+13 个 commit 里有两条修正记录，留在这里是因为它们是「声称」而不是改动：
+
+- `gameDisplayName()` 对缺失 key 的保护被写成「编译期失败」。实测是假的：
+  traits 表的 `static_assert` 拿行数与字面量 `2` 比，加一个枚举器它照样通过；
+  真正兜住的是六个 per-game switch 上的 `-Wswitch` **警告**（10 条），而本仓
+  不设 `-Werror`，所以新游戏默认能编过、只在构建日志里自报。加入
+  `GameId::Wilds` 实测得此结果。
+- `lib-purity-gate` 的第一版只匹配 CamelCase 拼写，把
+  `src/rise/mhr_abnormalities.cpp` 注入内核后它报 0：那个 TU 导出
+  `riseAilmentNameEn` / `riseFindAbnormality` 等 24 个符号，没有一个被模式
+  点名。**不能在自己要抓的东西上失败的门禁比没有门禁更糟**，因为它的 PASS
+  会被当成证据。现改为大小写不敏感地匹配游戏名词干，三项合法豁免按名列举，
+  重放注入得 7 个符号且 exit 非零。
+
+### 🔗 提交列表（`git log --oneline main..HEAD`，按时间正序）
+
+| | commit | 主题 |
+|---|---|---|
+| 1 | `5ab840e` | refactor(core): give the zone contract a game tag, cut the core→world edge |
+| 2 | `c81bfdf` | perf(main): build only the reader this run will poll |
+| 3 | `fd9368e` | refactor(core): replace the GameId ternary table lookup with a registry |
+| 4 | `63b6748` | refactor(ui): ask what a game supports instead of branching on which it is |
+| 5 | `bf29401` | refactor(main): give the poll loop a reader contract instead of a ternary |
+| 6 | `c18373d` | refactor(ui): give each game its own ailment palette, pin the REFramework version |
+| 7 | `b629ae5` | refactor(ui): ask the resource system which monster portraits exist |
+| 8 | `12a3db3` | refactor(ui): make the stamina scale a per-game value, not a ternary |
+| 9 | `f028712` | build: split monster-core into kernel / game-rise / game-world |
+| 10 | `67bcf4b` | refactor(core): stop hardcoding Rise inside the kernel |
+| 11 | `40f19a4` | refactor(zone): give each game its own zone vocabulary |
+| 12 | `cae0ed2` | refactor(core): close the two per-game seams a new GameId could slip through |
+| 13 | `dd6e3b0` | fix(core): correct three claims the audit measured as false |
+| — | `dbbac03` | docs: rewrite ARCHITECTURE for the four-library architecture |
+
+`dd6e3b0` 是修正而非阶段，所以上表 1–12 即 12 个阶段；`dbbac03` 是本文档
+引用的那份架构文档。
+
 ## [0.11.2] — 2026-09-28
 
 把「能测的」和「测不到」之间的缝隙补上，再把库边界的方向扶正。

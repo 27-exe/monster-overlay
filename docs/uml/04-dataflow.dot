@@ -1,0 +1,60 @@
+digraph g04_dataflow {
+graph [bgcolor="white", pad="0.35", splines=polyline, nodesep="0.4", ranksep="0.55", fontname="Helvetica", fontsize=13];
+node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", color="#9CA3AF", fontcolor="#111827", margin="0.14,0.09"];
+edge [fontname="Helvetica", fontsize=10, color="#374151", fontcolor="#374151"];
+
+
+  labelloc="t";
+  label=<<B>4. 主数据流：一个 poll tick</B><BR/><FONT POINT-SIZE="10">line numbers measured at HEAD dbbac03; both games share one code path except where marked</FONT>>;
+
+  subgraph cluster_setup {
+    label=<<B>startup (once)</B>>; style="rounded,dashed"; color="#8B5CF6";
+    s1 [label=<<B>1</B> main.cpp:392<BR/>createReader(gameId,<BR/>explicitMap, dataDirs)>, fillcolor="#EDE9FE"];
+    s2 [label=<<B>2</B> reader_factory.cpp:24<BR/>switch(game) → one reader>, fillcolor="#EDE9FE"];
+    s3w [label=<<B>3a  World</B><BR/>make_unique&lt;MhwReader&gt;(<BR/>&#160;&#160;selectLoadableMap(<BR/>&#160;&#160;&#160;&#160;worldMapCandidates(…))))<BR/><FONT POINT-SIZE="9">factory :35-40</FONT>>, fillcolor="#DCFCE7"];
+    s3r [label=<<B>3b  Rise</B><BR/>make_unique&lt;MhrReader&gt;(<BR/>&#160;&#160;findBestMap(<BR/>&#160;&#160;&#160;&#160;versionedMapCandidates(…))))<BR/><FONT POINT-SIZE="9">factory :41-48</FONT>>, fillcolor="#DCFCE7"];
+    s1 -> s2;
+    s2 -> s3w [label="GameId::World"];
+    s2 -> s3r [label="GameId::Rise"];
+  }
+
+  subgraph cluster_tick {
+    label=<<B>QTimer tick (main.cpp:458-668, pollMs period)</B>>; style="rounded,dashed"; color="#6B7280";
+    t0 [label=<QTimer::timeout<BR/><FONT POINT-SIZE="9">main.cpp:458</FONT>>, fillcolor="#EDE9FE"];
+    t1 [label=<<B>4</B> try { snap = reader-&gt;poll() }<BR/>catch (…) → skip frame<BR/><FONT POINT-SIZE="9">main.cpp:476-485 — exception</FONT><BR/><FONT POINT-SIZE="9">barrier around whole tick</FONT>>, fillcolor="#EDE9FE"];
+    t2w [label=<<B>5a  World</B><BR/>MhwReader::poll()<BR/><FONT POINT-SIZE="9">world_reader.cpp:215</FONT><BR/>zone = ZoneRef{World,<BR/>&#160;&#160;(int)worldZone} :225<br/>>, fillcolor="#DCFCE7"];
+    t2r [label=<<B>5b  Rise</B><BR/>MhrReader::poll()<BR/><FONT POINT-SIZE="9">mhr_reader.cpp:1311</FONT><BR/>zone = ZoneRef{Rise,<BR/>&#160;&#160;rawId} :1320<br/>>, fillcolor="#DCFCE7"];
+    snap [label=<<B>GameSnapshot</B><BR/><FONT POINT-SIZE="9">the only type that crosses</FONT><BR/><FONT POINT-SIZE="9">reader → UI</FONT>>, fillcolor="#F3F4F6"];
+    t3 [label=<<B>6</B> playerPanel.update(snap)<BR/><FONT POINT-SIZE="9">main.cpp:505 → panel_player.cpp:539</FONT><BR/>mirrors 9 fields, then<BR/>PlayerViewModel::resolveIdentity(snap) :566<br/>>, fillcolor="#FFEDD5"];
+    t4 [label=<<B>7</B> selectMonsterTarget(<BR/>&#160;&#160;snap.monsters, displayedAddr)<BR/><FONT POINT-SIZE="9">target_selector.cpp — compiled</FONT><BR/><FONT POINT-SIZE="9">into game-world</FONT><BR/>→ monsterPanel.update(<BR/>&#160;&#160;&#160;snap.monsters[selected]) :527<br/>>, fillcolor="#FFEDD5"];
+    t5w [label=<<B>8a  World</B><BR/>visibleDamageParty(snap.party,<BR/>&#160;&#160;showOtherMembers) filter<BR/>→ damagePanel.update(snap) :663<BR/><FONT POINT-SIZE="9">petDamagePanel force-disabled</FONT>>, fillcolor="#FFEDD5"];
+    t5r [label=<<B>8b  Rise</B><BR/>3× RiseDamageReader::update()<BR/> arbitration (see diagram 6)<BR/>→ enrichRiseDamageSnapshot(dmg, snap)<BR/><FONT POINT-SIZE="9">rise_damage_roster.cpp:84</FONT><BR/>→ damagePanel.updateRiseDamage(dmg) :593<BR/>→ petDamagePanel.updateRiseDamage(dmg) :595<br/>>, fillcolor="#FFEDD5"];
+    t6 [label=<<B>9</B> setVisible(panelEnabled()<BR/>&#160;&#160;&amp;&amp; hasVisibleContent())<BR/>triggerUpdate() → paintEvent<BR/>→ paintPanel(QPainter&amp;) :142<br/>>, fillcolor="#FFEDD5"];
+
+    t0 -> t1;
+    t1 -> t2w [label="World reader"];
+    t1 -> t2r [label="Rise reader"];
+    t2w -> snap; t2r -> snap;
+    snap -> t3 [label="shared"];
+    snap -> t4;
+    snap -> t5w [label="World"];
+    snap -> t5r [label="Rise"];
+    t3 -> t6; t4 -> t6; t5w -> t6; t5r -> t6;
+  }
+
+  s3w -> t2w [style=dashed, label="same object,\npolled each tick"];
+  s3r -> t2r [style=dashed, label="same object,\npolled each tick"];
+
+  note [shape=plaintext, label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" COLOR="#D97706" BGCOLOR="#FFFBEB"><TR><TD ALIGN="LEFT" BALIGN="LEFT"><FONT POINT-SIZE="10">
+  <B>两条路径的差异只有这些（其余逐行相同）：</B><BR ALIGN="LEFT"/>
+  · 取 map：World 逐候选试到能解析（FirstLoadable）；Rise 先探测运行中游戏（BestWithProbe）<BR ALIGN="LEFT"/>
+  · 区域：World 传原始 int32（只过滤 0..1000）；Rise 还会产出 -2 LoadingScreen / 199 CharSelection<BR ALIGN="LEFT"/>
+  · DamagePanel 的源：World = 本帧 snap.party；Rise = REFramework JSON feed（out-of-band，3 个文件槽）<BR ALIGN="LEFT"/>
+  · PetDamagePanel：只有 Rise 会构造并推送<BR ALIGN="LEFT"/>
+  · 残留的 isRise（main.cpp:305）只为这两项 Rise 独有功能存在，按 §3.5 的理由不做成能力查询<BR ALIGN="LEFT"/>
+  <BR ALIGN="LEFT"/>
+  <B>edit/demo 模式：</B>skipUpdate(Panel) = editMode &amp;&amp; panel.demoPrimed()（main.cpp:496）——<BR ALIGN="LEFT"/>
+  &#160;&#160;只 triggerUpdate()，不投递 reader 快照，避免把 demo 状态擦掉<BR ALIGN="LEFT"/>
+  </FONT></TD></TR></TABLE>>];
+  note -> t0 [style=invis];
+}

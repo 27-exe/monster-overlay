@@ -56,7 +56,7 @@ sudo ./install-deps.sh      # 一次性:Qt 6 + layer-shell-qt
 | 方向键 | 在布局模式中,微调焦点面板 10 px(`Shift` + 方向键 = 50 px) |
 
 方向键微调属于布局模式(控制台可进入,或直接 `./monster-overlay --edit`)。
-完整的布局模式速查 —— 点击聚焦、滚轮缩放、`Ctrl+S` 保存 —— 见
+完整的布局模式速查 —— 点击聚焦、滚轮缩放、以及每次改动都会立即落盘(没有保存快捷键) —— 见
 [docs/USAGE.md §4](docs/USAGE.md)。
 
 ## 面板内容

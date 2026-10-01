@@ -1,0 +1,68 @@
+digraph g03_registry {
+graph [bgcolor="white", pad="0.35", splines=polyline, nodesep="0.4", ranksep="0.55", fontname="Helvetica", fontsize=13];
+node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", color="#9CA3AF", fontcolor="#111827", margin="0.14,0.09"];
+edge [fontname="Helvetica", fontsize=10, color="#374151", fontcolor="#374151"];
+
+
+  labelloc="t";
+  label=<<B>3. 注册表与能力表：谁在什么时候注册</B><BR/><FONT POINT-SIZE="10">registration runs as a STATIC INITIALISER inside the data TU — not in a reader constructor (measured: no register* call in world_reader.cpp / mhr_reader.cpp)</FONT>>;
+
+  subgraph cluster_core {
+    label=<<B>monster-core</B><BR/><FONT POINT-SIZE="9">core/game_tables.cpp · core/game_capabilities.cpp</FONT>>;
+    style="rounded,filled"; fillcolor="#EFF6FF"; color="#3B82F6"; fontsize=12;
+
+    reg_api [label=<<B>registration API (3)</B><BR/>registerCrownThresholds(GameId, const QHash&amp;)<BR/>registerCaptureRules(GameId, const QHash&lt;int,int&gt;*, const QSet&amp;)<BR/>registerAilmentStyles(GameId, const QHash&lt;int,AilmentStyle&gt;&amp;)<BR/><FONT POINT-SIZE="9">game_tables.h:140,141,108</FONT>>, fillcolor="#BFDBFE"];
+    qry_api [label=<<B>query API</B><BR/>crownThresholdsFor(GameId, int) → const array*<BR/>captureThresholdFor(GameId, int) → optional&lt;int&gt;<BR/>ailmentStyle(GameId, int) → AilmentStyle<BR/>crownTablesFor / captureTablesFor<BR/><FONT POINT-SIZE="9">game_tables.h:122,123,102</FONT>>, fillcolor="#BFDBFE"];
+
+    slots [label=<<B>static Tables slots</B><BR/>Tables world; Tables rise;<BR/><FONT POINT-SIZE="9">game_tables.cpp:33-34</FONT><BR/>hasCrowns · crowns<BR/>hasCapture · captureThresholds · notCapturable<BR/>hasAilments · ailmentStyles<BR/><FONT POINT-SIZE="9">:16-24 — stores POINTERS, no game's data</FONT>>, fillcolor="#FDE68A"];
+
+    switch_tt [label=<tableFor(GameId)<BR/><FONT POINT-SIZE="9">game_tables.cpp:26-42</FONT><BR/>switch, no default,<BR/><B>return world;</B> after<BR/>→ new GameId = -Wswitch>, fillcolor="#E0E7FF"];
+
+    caps [label=<<B>game_capabilities</B><BR/>kTraits[] — one row per game<BR/><FONT POINT-SIZE="9">game_capabilities.cpp:26-37</FONT><BR/>{displayNameKey, displayNameAscii,<BR/> normalisedPartGauges, staminaDivisor}<BR/>static_assert(std::size(kTraits) == 2)  :50<BR/>→ compares to the literal 2, so it<BR/><B>cannot</B> fail when an enumerator is added>, fillcolor="#FDE68A"];
+    caps_q [label=<<B>queries</B><BR/>gameDisplayName(GameId)<BR/>usesNormalisedPartGauges(GameId)<BR/>staminaDisplayScale(GameId)<BR/><FONT POINT-SIZE="9">game_capabilities.h:56,64,82</FONT>>, fillcolor="#BFDBFE"];
+    caps_sw [label=<gameTraits(GameId)<BR/><FONT POINT-SIZE="9">game_capabilities.cpp:61</FONT><BR/>switch, no default,<BR/><B>__builtin_unreachable()</B><BR/>→ new GameId = -Wswitch>, fillcolor="#E0E7FF"];
+  }
+
+  subgraph cluster_world {
+    label=<<B>game-world data TU</B><BR/><FONT POINT-SIZE="9">src/monster/data/part_schemas_data.cpp</FONT>>;
+    style="rounded,filled"; fillcolor="#F0FDF4"; color="#22C55E";
+    w_init [label=<<B>RegisterWorldTablesAtStartup</B><BR/><FONT POINT-SIZE="9">anonymous namespace, :1010-1013</FONT><BR/>ctor runs before main()>, fillcolor="#BBF7D0"];
+    w_reg [label=<<B>registerWorldTables()</B>  :1000<BR/>registerCrownThresholds(World, kCrownThresholds)<BR/>registerCaptureRules(World, &amp;kMonsterCaptureThresholds,<BR/>                          kNoNotCapturable())<BR/>registerAilmentStyles(World, kWorldAilmentStyles)>, fillcolor="#FDE68A"];
+  }
+
+  subgraph cluster_rise {
+    label=<<B>game-rise data TU</B><BR/><FONT POINT-SIZE="9">src/rise/part_schemas.cpp</FONT>>;
+    style="rounded,filled"; fillcolor="#F0FDF4"; color="#22C55E";
+    r_init [label=<<B>RegisterRiseTablesAtStartup</B><BR/><FONT POINT-SIZE="9">anonymous namespace, :129-133</FONT><BR/>ctor runs before main()>, fillcolor="#BBF7D0"];
+    r_reg [label=<<B>registerRiseTables()</B>  :118<BR/>registerCrownThresholds(Rise, kRiseCrownThresholds)<BR/>registerCaptureRules(Rise, <B>nullptr</B>,<BR/>                          kRiseNotCapturableMonsterIds)<BR/>registerAilmentStyles(Rise, kRiseAilmentStyles)>, fillcolor="#FDE68A"];
+  }
+
+  callers [label=<<B>callers (UI / readers / tests)</B><BR/>panel_monster.cpp:1125 crown chip · ailment cards<BR/>ui panel_player stamina · console display name<BR/>tests: rise_monster_metadata_tests.cpp:35-36,<BR/>rise_monster_name_tests.cpp:59-60,<BR/>ailment_style_tests.cpp:43-44 call registerWorldTables()/<BR/>registerRiseTables() explicitly>, fillcolor="#F3F4F6"];
+
+  w_init -> w_reg [label="ctor()"];
+  r_init -> r_reg [label="ctor()"];
+  w_reg -> reg_api [label="registers World rows", color="#B45309", fontcolor="#B45309", penwidth=1.6];
+  r_reg -> reg_api [label="registers Rise rows", color="#B45309", fontcolor="#B45309", penwidth=1.6];
+  reg_api -> switch_tt [label="writes the slot for (game)"];
+  switch_tt -> slots [label="&amp;world / &amp;rise"];
+  qry_api -> switch_tt;
+  callers -> qry_api;
+  callers -> caps_q;
+  caps_q -> caps_sw;
+  caps_sw -> caps;
+
+  note_a [shape=plaintext, label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" COLOR="#D97706" BGCOLOR="#FFFBEB"><TR><TD ALIGN="LEFT" BALIGN="LEFT"><FONT POINT-SIZE="10">
+  <B>注：为什么是静态初始化器而不是 reader 构造函数</B><BR ALIGN="LEFT"/>
+  · 实测：world_reader.cpp / mhr_reader.cpp 里没有任何 register* 调用（grep，HEAD dbbac03）<BR ALIGN="LEFT"/>
+  · 放进 reader 构造函数会让 edit-mode demo 面板（不构造 reader）丢掉 crown 芯片，<BR ALIGN="LEFT"/>
+  &#160;&#160;all_monster.png 像素差 730（ARCHITECTURE.md §3.4.1 记录的实测）<BR ALIGN="LEFT"/>
+  · 跨 TU 初始化顺序未指定，但安全：注册表只存指针；同一 TU 内先构造被取地址的表<BR ALIGN="LEFT"/>
+  <BR ALIGN="LEFT"/>
+  <B>注：注册表的查询语义（两台游戏答案不同，不是同一查询写两遍）</B><BR ALIGN="LEFT"/>
+  · World 查阈值表（Elder Dragons 的 Capture=0 在表内）；Rise 查不可捕获集合，成员答 0<BR ALIGN="LEFT"/>
+  · Rise 注册 nullptr 阈值表 — 空表会把「无数据」和「有数据但都不匹配」混为一谈<BR ALIGN="LEFT"/>
+  · nullptr / nullopt = 「这款游戏没有这项静态数据」，永远不是「退回另一款游戏」<BR ALIGN="LEFT"/>
+  · 重复注册同一游戏是替换，不是累积（game_tables.h:127）<BR ALIGN="LEFT"/>
+  </FONT></TD></TR></TABLE>>];
+  note_a -> slots [style=invis];
+}

@@ -20,19 +20,30 @@ sudo ./install-deps.sh      # one-time on Arch: Qt 6 + layer-shell-qt
 ```
 
 Start the game first and get past the main menu, then press **START** in the
-console. The console spawns `monster-overlay` with the current switch state as
-`--mask-*` / `--no-*` flags and hides itself; the panels appear over the game.
+console. The console saves the switch state, spawns `monster-overlay` with the
+current masks as `--mask-*` / `--no-*` flags plus `--game=<world|rise>`, and
+hides itself; the panels appear over the game. When the overlay exits (its own
+`Esc`), the console re-shows. A second START while one is running is refused
+rather than spawning a second overlay.
 
 ## 3. The control console
 
 | Element | What it does |
 |---|---|
 | panel cards (player / monster / damage / pets) | master switch plus per-section switches; the preview updates as you toggle |
-| `START` / `STOP` | starts / stops `monster-overlay` |
-| preview canvas | click a panel to focus it; drag to move; arrow keys nudge 10 px (`Shift` = 50 px) |
+| `START` / `STOP` | starts / stops `monster-overlay`; the console hides while it runs and returns when it exits |
+| `ENTER EDIT` | same as START, but with `--edit` |
+| preview canvas | click to select a panel, drag to move it, arrow keys nudge 10 px (Shift = 50 px); `Ctrl`+wheel zooms the canvas itself, not the panels |
 | display selector | which output the panels are placed on |
 | `中文 | EN` chip | switches the UI language; the overlay follows within ~1 s |
-| theme chip / `--light` | light or dark console theme |
+| theme chip | light or dark console theme |
+| `WORLD` / `RISE` buttons | which title the overlay is started against; also hot-swaps a running overlay's target game |
+| detect badge | scans `/proc` every 5 s and names the running Monster Hunter process (green = matches the selection, amber = mismatch, grey = none) |
+| `1` `2` `3` `4` | select the player / monster / damage / pets card |
+
+The pets rail card, its inspector page and its preview tile exist only in Rise
+mode — World has no data source for them, so selecting World removes them
+rather than showing an empty card.
 
 ## 4. Positioning panels (edit mode)
 
@@ -42,18 +53,22 @@ console. The console spawns `monster-overlay` with the current switch state as
 
 | Input | Action |
 |---|---|
-| click a panel | focus it |
 | `←` `↑` `↓` `→` | nudge 10 px (`Shift` = 50 px) — edit mode only |
-| mouse wheel | scale 0.5× – 2× — edit mode only |
-| `Ctrl+S` | persist to `~/.config/monster-overlay/panels.ini` — edit mode only |
+| mouse wheel | scale 0.5× – 3× — edit mode only |
 | `Space` | collapse the panel to a small block — works in edit **and** live mode |
 | `Esc` | quit the overlay and return focus to the console — works in edit **and** live mode |
 
-`Space` and `Esc` are reachable from the running overlay too: when the console
-spawns the overlay it hides itself, so the panels become the focused window and
-`Space` / `Esc` work without entering `--edit`. Arrow keys and the wheel only
-take effect in edit mode — the live overlay ignores them so it cannot drift
-while you hunt.
+Clicking a panel is what gives it keyboard focus (layer-shell interactivity goes
+None → OnDemand and the compositor is asked to activate the surface). In the
+overlay the arrow keys are the only repositioning control; dragging exists only
+in the console's preview canvas.
+
+**There is no `Ctrl+S`.** Position is persisted the moment it changes: every
+nudge and wheel step writes `~/.config/monster-overlay/panels.ini` immediately, so
+a SIGTERM or crash cannot lose it. Leaving edit mode (`Esc`, or quitting while
+`--edit` is on) writes all four panels again; that is the only point where the
+whole layout is flushed at once. In live mode the arrow keys and the wheel are
+ignored, so the panels cannot drift while you hunt.
 
 ## 5. Panel contents
 
@@ -75,9 +90,14 @@ while you hunt.
 | `--poll <ms>` | polling interval, default 250 |
 | `--locale <code>` | UI locale for this run (`zh-CN`, `en-US`) |
 | `--edit` | edit mode (§4) |
-| `--mask-player\|monster\|damage <hex32>` | per-section visibility; the console passes these |
-| `--no-player\|no-monster\|no-damage` | hide a whole panel |
+| `--mask-player\|monster\|damage\|pets <hex32>` | per-section visibility; the console passes these |
+| `--no-player\|no-monster\|no-damage\|no-pets` | hide a whole panel |
+| `--output-player\|monster\|damage\|pets <name>` | pin one panel to a `QScreen` name (empty = follow the OS primary); the console passes these |
 | `--version`, `--help` | |
+
+`--game auto` scans `/proc` for a running Monster Hunter process; `--game`
+`world` / `rise` forces one reader instead. `--no-pets` only matters in Rise:
+World never mounts the pet-damage surface regardless of the flag.
 
 ### `monster-control`
 
@@ -88,37 +108,52 @@ while you hunt.
 | `--snap <file>` | render the console to a PNG and exit |
 | `--print-locale` | print the resolved locale and source, then exit |
 | `--print-screen-info` | print the detected outputs, then exit |
-| `--version` / `--help` | print the version / usage and exit (no window) |
+| `--version` / `--help`, `-v` / `-h` | print the version / usage and exit (no window) |
 
 ### `monster-doctor`
 
 | Flag | Meaning |
 |---|---|
 | `--world` / `--rise` | restrict every section to one title |
-| `--out <file>` | report path (default `monster-doctor-<timestamp>.txt`) |
-| `--seconds <n>` | length of the overlay status run, default 6 |
+| `--out <file>` | report path (default `./monster-doctor-<timestamp>.txt`) |
+| `--seconds <n>` | length of the overlay status run, default 6, accepted 0–60 |
 | `--no-overlay-run` | skip that run (offline machines) |
+| `--version` | print the version and exit |
 
 ## 7. Files written
 
 | Path | Written by | Contents |
 |---|---|---|
-| `~/.config/monster-overlay/monster-overlay.conf` | console | `player=` / `monster=` / `damage=` masks, plus `locale=` once you pick a language |
-| `~/.config/monster-overlay/panels.ini` | overlay (`Ctrl+S` in edit mode) | panel positions and scale |
-| `monster-doctor-<timestamp>.txt` | doctor | the diagnostic report |
+| `~/.config/monster-overlay/monster-overlay.conf` | console | `player=` / `monster=` / `damage=` / `pets=` masks (hex32), plus `locale=` once you pick a language; unrelated lines are preserved |
+| `~/.config/monster-overlay/panels.ini` | overlay | per-panel geometry: one group per panel (`player`, `monster`, `dps`, `pet-damage`), each with `ml`/`mt`/`mr`/`mb` margins, `scale`, `opacity`, `bgAlpha`, `outputName`, `visible` |
+| `~/monster-doctor-<timestamp>.txt` | doctor | the diagnostic report |
+
+The console also keeps its own window geometry, window state, splitter sizes and
+canvas zoom in Qt's default settings file under the `monster-control` identity;
+the overlay reads none of those.
+
+The overlay never writes the conf file — it only reads `locale=` at startup and
+polls the file's mtime while running, so switching the console's language chip
+reaches a live overlay within about a second without any IPC.
 
 ## 8. Diagnostics
 
 ```bash
-./monster-doctor            # ~15 s, read-only, writes the report next to the CWD
+./monster-doctor            # under a second offline, writes the report to ./monster-doctor-<timestamp>.txt
 ```
 
-The report covers: where the address maps were found (search order and the
-source that won), whether a game process is visible and at which image base, the
-reader's verdict with the exact errno, the Proton build on the process's parent
-chain, Steam launch options, and the overlay's own status output. Attach it to
-an issue — paths under `~` print as `~`, and no environment variables, Steam
-account data or game memory are collected.
+The report is a flat text file with a section per question, in this order:
+host, binaries (versions of the three executables), address maps (the search
+directory list the overlay uses, marked with which of them hold a World / Rise
+`.map`, plus the dev-tree fallback), game processes, the read verdict — the one
+that decides whether the panels can work at all, with the exact errno and the
+remedy when a read was denied — the game runtime (Proton build, container,
+Steam launch options), an overlay status run (`--seconds 6` by default, so add
+a few seconds to the offline figures), and a privacy note.
+
+Attach it to an issue — paths under `~` print as `~`, nothing is attached to,
+written to or changed, and no environment variables, Steam account data or game
+memory are collected.
 
 ## 9. Language resolution
 
@@ -128,80 +163,114 @@ then `LANGUAGE`; `zh*` → `zh-CN`, anything else including `C`/unset → `en-US
 Saving panel switches never writes that row, so an untouched install keeps
 following the desktop language.
 
+The overlay re-reads the conf's mtime on its poll loop and reloads in place when
+the row changes — no restart. The console applies a chip switch to its own
+registered widgets immediately.
+
 ## 10. Rise live damage (REFramework)
 
 Rise does not expose live damage to memory reading; it is produced inside the
 game by a small REFramework Lua script. REFramework 1.5.9.1 restricts Lua file
 access to `reframework/data`, so the producer alternates two snapshots there
 (`mhr_damage_a.json` / `mhr_damage_b.json`) and the overlay consumes the newest
-valid sequence. The console manages that chain for you — select
-the Rise game and open the **Damage** card:
+valid sequence. The console manages that chain for you — select the Rise game and
+open the **REFramework** card on the rail (in World mode the card is not shown).
 
-| Card line | Meaning |
+The card header shows where the overlay thinks Rise is installed:
+
+| Header line | Meaning |
 |---|---|
-| `STEAM INSTALL: <dir>` | the Rise install was found; the status line also lists core / Lua / manifest state |
-| `RISE INSTALL NOT FOUND…` | no Steam library contains `MonsterHunterRise.exe` |
+| `STEAM INSTALL: <dir>` | `MonsterHunterRise.exe` was located in a Steam library |
+| `RISE INSTALL NOT FOUND IN STEAM LIBRARIES` | no library holds the game; the buttons stay disabled |
+| `RISE INSTALL IS NOT VALID: <dir>` | a path was found but is not usable |
+
+Then one state line, in this order of precedence:
+
+| State line | Meaning |
+|---|---|
+| `STATUS: REFRAMEWORK NOT INSTALLED` | the core is missing (the header line above still shows the install dir) |
+| `STATUS: INSTALLATION INCOMPLETE — REINSTALL RECOMMENDED` | the manifest is invalid, or the Lua differs from the bundled copy |
+| `STATUS: LUA NOT INSTALLED (no damage tracking)` | the core is fine, the producer is missing |
+| `STATUS: READY` | both installed and matching |
+
+Two further lines can appear at any time: `CLOSE THE GAME BEFORE CHANGING
+REFRAMEWORK FILES` while a Monster Hunter process is running, and the result of
+the last operation (success/failure with its detail).
 
 | Button | Effect |
 |---|---|
-| `INSTALL REFRAMEWORK + LUA` | installs the pinned REFramework build plus the overlay Lua. The archive bundled in this package is used first (offline-capable); if it is missing, the pinned upstream release is downloaded and SHA-256 verified before anything is written |
-| `REMOVE LUA` | removes only `reframework/autorun/mhr-overlay-damage.lua` |
-| `REMOVE REFRAMEWORK + LUA` | removes the overlay Lua and every file recorded by the installer; an externally installed REFramework and other mods are left alone |
+| `INSTALL REFRAMEWORK + LUA` | asks once, then installs the pinned REFramework build plus the overlay Lua. The archive bundled in this package is used first (offline-capable); if it is missing, the pinned upstream release is downloaded and SHA-256 verified before anything is written |
+| `REMOVE LUA` | removes only the overlay's managed Lua |
+| `REMOVE REFRAMEWORK + LUA` | removes the overlay Lua plus every file recorded in the installer's manifest; an externally installed REFramework core is left alone and the status line says so |
+| `Fix menu popup` / `Restore default (popup every launch)` | sets REFramework's `RememberMenuState` to true / false, writing it to every detected config location and keeping the first copy of each file as `.pre-monster-overlay` |
 
-Rules the console enforces:
+Rules the console enforces, each reported on the card:
 
-- close the game first — every card button is disabled while a Monster Hunter
-  process is running;
-- a hand-edited overlay Lua is never overwritten silently: remove it first,
-  then install again;
-- start (or restart) the game after installing so the Lua producer loads.
+- close the game before installing or removing anything;
+- a hand-edited overlay Lua is **never** overwritten — the install stops with
+  "the Lua differs from the bundled copy, remove it first" (the remove button
+  clears it, the install button then works);
+- if the managed manifest is invalid, the install refuses rather than removing
+  files it does not recognise;
+- a second operation while one is running is refused, not queued on top.
 
-**Proton / Linux:** a normal local `dinput8.dll` install is loaded automatically
-on many Proton setups. If `re2_framework_log.txt` is not created after starting
-the game, add this to Steam Launch Options and retry:
-
-```
-WINEDLLOVERRIDES="dinput8=n,b" %command%
-```
-
-When REFramework has attached, the log contains `ScriptRunner` and
-`[mhr-overlay-damage] loaded`; the producer files then appear under
-`reframework/data`.
+**After installing, start or restart the game** so the Lua producer loads. When
+it has attached, `reframework_revision.txt` and the two producer files under
+`reframework/data/` appear next to `dinput8.dll` in the game directory.
 
 ### What counts, and whose pet is that?
 
-Attribution follows the upstream (HunterPie) gates, verified live:
+The Lua producer classifies every damage event by attacker kind
+(Player / Companion / Pet / Palico / Palamute / Unknown). The overlay then
+decides what a row means, using the party roster the reader already has:
 
-- only damage **to a large monster** counts — small monsters, objects, and
-  damage dealt to players are filtered;
-- the source must be a **player** (`0`) or **a pet** (`0x15`/`0x16`/`0x17`);
-  monster-vs-monster brawls, terrain, the mounted monster's attacks during
-  Riding, and anything else the game does not mark as a player/pet source are
-  never credited to a hunter (deployables such as bombs count only when the
-  game reports a player/pet as their source);
-- pet rows are grouped **per owner** — no cat/dog split, matching upstream.
+- a **Companion** (another hunter's character) or a pet whose owner is another
+  hunter only shows when `other players` is enabled — they are not your damage;
+- your own pets show when `local pets` is enabled;
+- the producer already aggregates *all* of one owner's pets into a single
+  actor, so pet rows are **per owner** — there is no cat/dog split to make, and
+  the row is labelled with the owner's name rather than the animal's;
+- a follower's buddy row keeps the pet label (`<follower> · pet`) so it cannot
+  be read as that follower's own damage row;
+- `Unknown` attackers are never shown.
 
-The raw pet streams are layout-dependent; live sessions (MHR 16.0.2.0)
-settled the mapping:
+Owner attribution is resolved in this order, in `src/rise/rise_damage_roster.cpp`:
 
-| Layout | Streams | Meaning |
-|---|---|---|
-| solo (two buddies) | `0`, `4` | your two buddies |
-| solo + followers | `0`, `4`, `5`, `6` | `5`/`6` = follower slot 0 / 1 buddy |
-| multiplayer | `0`–`3`, one per hunter | each hunter's single buddy |
+1. the actor's own `ownerEntityIndex`, matched against the roster;
+2. owner-less pet streams, resolved from the raw entity index only in layouts
+   that have actually been measured live — **`4` = the local hunter's second
+   buddy**, `5`/`6` = follower slot 0 / 1's buddy when the party has a follower
+   layout;
+3. `5`–`9` with **no** measured follower layout fall back to the historical
+   `owner = id − 5` join (teammate parties);
+4. anything still unresolved stays an explicit generic row — never guessed,
+   never silently dropped.
 
-Your own buddies merge into one row (your name); a follower's buddy row reads
-`<follower> · pet` so it cannot be mistaken for the follower's own damage row.
-A stream that cannot be proven to belong to anyone stays an explicit generic
-row — never guessed, never silently dropped.
+The conditions that gate this are deliberately narrow: step 2 only applies when
+the roster has exactly one human hunter **and** that hunter is local, and
+step 3 only when there is no follower layout. A stream that cannot be proven to
+belong to a named hunter keeps its producer label instead.
 
 ## 11. Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| panels empty / `未连接` | run `monster-doctor`; the report names the cause |
-| `读取被拒绝` / errno in the panel | the panel prints the two remedies (`setcap`, `sysctl`) |
-| panels on the wrong screen | display selector in the console |
-| Rise: damage panel stays empty | install the REFramework producer from the Damage card (§10); the game must be closed while installing |
-| Rise: damage empty after a successful install | check `re2_framework_log.txt` for `[mhr-overlay-damage] loaded`, `hooked`, and publish errors; the current producer writes `reframework/data/mhr_damage_{a,b}.json` |
-| stale `未连接` after a game restart | the reader re-detects within ~5 s; if it persists, re-run the panel check |
+| panels empty / disconnected | run `monster-doctor`; its `read verdict` section names the cause |
+| memory read denied | the panel prints the two remedies verbatim (`setcap cap_sys_ptrace+ep` on the overlay binary, or temporarily `sysctl kernel.yama.ptrace_scope=0`) |
+| panels on the wrong screen | the display selector in the console; or `--output-*` on the command line |
+| Rise: damage panel stays empty | install the REFramework producer from the REFramework card (§10); the game must be closed while installing |
+| Rise: damage empty after a successful install | check `re2_framework_log.txt` for the producer's `loaded` and `hooked` lines, then look for `mhr_damage_{a,b}.json` under `reframework/data/` |
+| a hand-edited Lua blocks the install | the card refuses to overwrite it; remove the Lua first, then install again |
+| wrong game read | `--game world` / `--game rise` forces one reader; default `auto` scans `/proc` |
+
+## 12. Keyboard summary
+
+**Edit mode** (`--edit`, or the console's layout mode): arrows nudge 10 px
+(`Shift` = 50 px), mouse wheel scales 0.5×–3×.
+
+**Live and edit**: `Space` collapses a focused panel, `Esc` quits the overlay
+and returns focus to the console.
+
+**Console**: `1`/`2`/`3`/`4` select the player / monster / damage / pets card,
+`Ctrl`+wheel zooms the preview canvas, `←→↑↓` move the selected panel in the
+canvas (10 px, `Shift` = 50 px).

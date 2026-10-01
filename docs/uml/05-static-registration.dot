@@ -1,0 +1,57 @@
+digraph g05_static_registration {
+graph [bgcolor="white", pad="0.35", splines=polyline, nodesep="0.4", ranksep="0.55", fontname="Helvetica", fontsize=13];
+node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", color="#9CA3AF", fontcolor="#111827", margin="0.14,0.09"];
+edge [fontname="Helvetica", fontsize=10, color="#374151", fontcolor="#374151"];
+
+
+  labelloc="t";
+  label=<<B>5. 静态注册时机：为什么必须在第一次 poll 之前</B><BR/><FONT POINT-SIZE="10">the registration is a static initialiser in the data TU, executed by the runtime loader before main()</FONT>>;
+
+  subgraph cluster_pre {
+    label=<<B>before main() — dynamic-loader phase</B><BR/><FONT POINT-SIZE="9">order between the two TUs is UNSPECIFIED; that is safe here</FONT>>;
+    style="rounded,dashed"; color="#B45309";
+
+    wtu [label=<<B>game-world TU</B><BR/>src/monster/data/<BR/>part_schemas_data.cpp<br/>>, fillcolor="#DCFCE7"];
+    rtu [label=<<B>game-rise TU</B><BR/>src/rise/part_schemas.cpp<br/>>, fillcolor="#DCFCE7"];
+    wobj [label=<<B>kRegisterWorldTablesAtStartup</B><BR/><FONT POINT-SIZE="9">anonymous-namespace object, :1011-1012</FONT><BR/><FONT POINT-SIZE="9">defined AFTER every table it hands over</FONT>>, fillcolor="#FDE68A"];
+    robj [label=<<B>kRegisterRiseTablesAtStartup</B><BR/><FONT POINT-SIZE="9">anonymous-namespace object, :131-132</FONT><BR/><FONT POINT-SIZE="9">defined AFTER every table it hands over</FONT>>, fillcolor="#FDE68A"];
+    wfn [label=<<B>registerWorldTables()</B> :1000<BR/>→ registerCrownThresholds(World, kCrownThresholds)<BR/>→ registerCaptureRules(World, &amp;kMonsterCaptureThresholds,<BR/>&#160;&#160;&#160;&#160;kNoNotCapturable())<BR/>→ registerAilmentStyles(World, kWorldAilmentStyles)>, fillcolor="#FDE68A"];
+    rfn [label=<<B>registerRiseTables()</B> :118<BR/>→ registerCrownThresholds(Rise, kRiseCrownThresholds)<BR/>→ registerCaptureRules(Rise, nullptr,<BR/>&#160;&#160;&#160;&#160;kRiseNotCapturableMonsterIds)<BR/>→ registerAilmentStyles(Rise, kRiseAilmentStyles)>, fillcolor="#FDE68A"];
+    core [label=<<B>core registry slots</B><BR/>Tables world; Tables rise;<BR/><FONT POINT-SIZE="9">game_tables.cpp:33-34</FONT><BR/>hasCrowns / hasCapture /<BR/>hasAilments set true,<BR/>pointers stored<br/>>, fillcolor="#BFDBFE"];
+  }
+
+  subgraph cluster_main {
+    label=<<B>main() and each tick</B>>; style="rounded,dashed"; color="#6B7280";
+    m1 [label=<main.cpp:392<BR/>createReader(gameId, explicitMap,<BR/>&#160;&#160;dataDirs)<BR/>>, fillcolor="#EDE9FE"];
+    m2 [label=<reader ctor<BR/><FONT POINT-SIZE="9">MhwReader :132 / MhrReader :166</FONT><BR/><FONT POINT-SIZE="9"><B>no register* call here</B></FONT><BR/><FONT POINT-SIZE="9">(measured: grep = 0 hits)</FONT>>, fillcolor="#DCFCE7"];
+    m3 [label=<first reader-&gt;poll()<BR/><FONT POINT-SIZE="9">main.cpp:478</FONT>>, fillcolor="#EDE9FE"];
+    m4 [label=<first crown / ailment query<BR/><FONT POINT-SIZE="9">panel_monster.cpp:1125 etc.</FONT>>, fillcolor="#FFEDD5"];
+  }
+
+  subgraph cluster_test {
+    label=<<B>tests (no reader, no qrc)</B>>; style="rounded,dashed"; color="#6B7280";
+    x1 [label=<test init calls<BR/><B>registerWorldTables()</B><BR/><B>registerRiseTables()</B><BR/>explicitly<BR/><FONT POINT-SIZE="9">rise_monster_metadata_tests.cpp:35-36</FONT><BR/><FONT POINT-SIZE="9">rise_monster_name_tests.cpp:59-60</FONT><BR/><FONT POINT-SIZE="9">ailment_style_tests.cpp:43-44</FONT>>, fillcolor="#F3F4F6"];
+  }
+
+  wtu -> wobj; wobj -> wfn [label="ctor body"];
+  rtu -> robj; robj -> rfn [label="ctor body"];
+  wfn -> core [color="#B45309", fontcolor="#B45309", penwidth=1.6, label="pointer handover"];
+  rfn -> core [color="#B45309", fontcolor="#B45309", penwidth=1.6, label="pointer handover"];
+  core -> m3 [style=dashed, label="already populated"];
+  m1 -> m2 [label="constructs"];
+  m2 -> m3;
+  m3 -> m4;
+  x1 -> core [style=dashed, color="#6B7280"];
+
+  note [shape=plaintext, label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" COLOR="#D97706" BGCOLOR="#FFFBEB"><TR><TD ALIGN="LEFT" BALIGN="LEFT"><FONT POINT-SIZE="10">
+  <B>顺序约束（源码事实，不是推断）：</B><BR ALIGN="LEFT"/>
+  · 同一个 TU 内：初始化器自上而下执行，所以静态对象写在所有表定义之后——<BR ALIGN="LEFT"/>
+  &#160;&#160;ctor 里取地址时表已构造（part_schemas_data.cpp:1007 表 vs :1011 对象）<BR ALIGN="LEFT"/>
+  · 跨 TU 的顺序未指定，也不影响：注册表只存指针，任一顺序都得到同样的槽位内容<BR ALIGN="LEFT"/>
+  · 好处是显式的：edit-mode demo 面板不构造 reader，静态初始化照样把 World 数据注册进去<BR ALIGN="LEFT"/>
+  &#160;&#160;（放进 reader 构造函数的话，crown 芯片会静默消失，all_monster.png 差 730 像素）<BR ALIGN="LEFT"/>
+  · 目标文件侧的确认：nm -C build/libgame-world.a 有 mhw::registerWorldTables()，<BR ALIGN="LEFT"/>
+  &#160;&#160;libgame-rise.a 有 mhw::registerRiseTables()；两者都在各自的静态 init 里被调用<BR ALIGN="LEFT"/>
+  </FONT></TD></TR></TABLE>>];
+  note -> wtu [style=invis];
+}

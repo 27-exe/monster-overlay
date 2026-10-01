@@ -1,0 +1,70 @@
+@startuml 01-layers
+!theme plain
+title 1. 四库分层与依赖方向 — refactor/game-keyed-arch @ dbbac03
+
+'skinparam backgroundColor white
+
+package "monster-core" <<Qt6::Core only>> #EFF6FF {
+  class "GameSnapshot\ncore/game_snapshot.h:14" as CSnap
+  class "IGameReader\ncore/game_reader.h:39" as CRdr
+  class "ZoneRef\ncore/zone_id.h:54" as CZone
+  class "GameId · Snapshots\nmonster/monster_types.h" as CTypes
+  class "game_tables registry\ncore/game_tables.cpp — holds pointers,\nnames no game's table" as CTables #FDE68A
+  class "game_capabilities\ncore/game_capabilities.cpp\nkTraits[2] + 3 queries" as CCaps #FDE68A
+  class "string_table · game_detector · game_profile\nsteam_game_locator · map_paths · process_memory\n（process_memory default args name\n\"monsterhunterworld.exe\" — .h:64,:119）" as CSupport
+}
+
+package "game-rise" #F0FDF4 {
+  class "MhrReader\nmhr_reader.{h,cpp} + _sharpness + _quest" as RRdr
+  class "RiseDamageReader\nrise_damage_reader.cpp" as RDmg
+  class "RiseZone vocabulary\nrise_zones.h" as RZone
+  class "registerRiseTables()\npart_schemas.cpp:118 — run by static\ninitialiser at :131" as RReg #FDE68A
+  class "REFramework\ninstaller / config / fetcher" as RRf
+}
+
+package "game-world" #F0FDF4 {
+  class "MhwReader\nworld_reader.{h,cpp} + monster/player/quest\n_reader.cpp" as WRdr
+  class "WorldZone vocabulary\nworld_types.{h,cpp}" as WZone
+  class "registerWorldTables()\nmonster/data/part_schemas_data.cpp:1000\n— static initialiser at :1011" as WReg #FDE68A
+  class "target_selector.cpp\nshared target-pick rule\n(compiled into game-world)" as WMeta
+}
+
+package "mhw-ui" #FFF7ED {
+  class "Panel (QMainWindow)\npanel_player / _monster / _damage /\n_pet_damage .cpp" as UPanels
+  class "viewmodel/\nplayer / monster / damage\npure transforms, no QWidget" as Uvm
+  class "icon.cpp\nqrc probe: QFile::exists(\":/…\")\nicon.cpp:232 · no id list" as UIcon
+}
+
+package "monster-overlay (executable)" #F5F3FF {
+  class "main.cpp\nassembly + QTimer poll loop" as EMain
+  class "reader_factory.cpp\nswitch(game) → make_unique<MhwReader\nor MhrReader> — the ONE TU naming\nboth readers — :24" as EFact
+  class "reader_descriptors.cpp\nmapFileName / mapSelection per game" as EDesc
+}
+
+EFact ..> RRdr : includes rise/mhr_reader.h:19
+EFact ..> WRdr : includes world/world_reader.h:20
+UPanels ..> RRdr : 12 ui includes of\nrise/ or world/ headers
+UPanels ..> CSnap : consumes\nGameSnapshot
+
+RRdr --> CSnap : produces
+WRdr --> CSnap : produces
+RRdr ..> CRdr
+WRdr ..> CRdr
+
+RReg --> CTables : registerCrownThresholds /\nregisterCaptureRules /\nregisterAilmentStyles
+WReg --> CTables
+UPanels ..> CTables : crownThresholdsFor /\nailmentStyle
+UPanels ..> CCaps : gameDisplayName /\nstaminaDisplayScale
+
+note bottom of CTables
+  硬边界（nm 实测，scripts/assert_lib_purity.sh build 全 PASS）：
+  · libmonster-core.a 无任何游戏命名符号（0）
+  · libgame-rise.a 对 World 符号的未定义引用 = 0；game-world 对 Rise = 0
+  · libmhw-ui.a 无 MhwReader | MhrReader | readMonsters | readParty 符号
+  · 反向 include=0：core/ rise/ world/ 下没有文件 include ui/
+  · qrc 不进任何库，只在 exe target（CMakeLists.txt:318-319）
+  实测源：CMakeLists.txt:41/:89/:143/:199（add_library），
+        :75/:131/:176/:257-265（target_link_libraries）
+end note
+
+@enduml

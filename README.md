@@ -61,7 +61,8 @@ focused window. From there:
 
 The arrow-key nudge is the layout mode (`./monster-overlay --edit`, also entered
 from the console). The full edit-mode cheatsheet — click-to-focus, mouse-wheel
-scale, `Ctrl+S` to persist — lives in [docs/USAGE.md §4](docs/USAGE.md).
+scale, and the fact that every change persists immediately (there is no save
+shortcut) — lives in [docs/USAGE.md §4](docs/USAGE.md).
 
 ## Panels
 

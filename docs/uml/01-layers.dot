@@ -1,0 +1,92 @@
+digraph g01_layers {
+graph [bgcolor="white", pad="0.35", splines=polyline, nodesep="0.4", ranksep="0.55", fontname="Helvetica", fontsize=13];
+node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", color="#9CA3AF", fontcolor="#111827", margin="0.14,0.09"];
+edge [fontname="Helvetica", fontsize=10, color="#374151", fontcolor="#374151"];
+
+
+  labelloc="t";
+  label=<<B>1. 四库分层与依赖方向</B><BR/><FONT POINT-SIZE="10">measured: CMakeLists.txt:41 / :89 / :143 / :199, target_link_libraries at :75 / :131 / :176 / :257-265</FONT><BR/> >;
+
+  subgraph cluster_core {
+    label=<<B>monster-core</B><BR/><FONT POINT-SIZE="9">Qt6::Core only · CMakeLists.txt:41</FONT>>;
+    fontsize=12; style="rounded,filled"; fillcolor="#EFF6FF"; color="#3B82F6";
+    c_snap [label=<GameSnapshot<BR/><FONT POINT-SIZE="9">game_snapshot.h:14</FONT>>, fillcolor="#DBEAFE"];
+    c_reader [label=<IGameReader<BR/><FONT POINT-SIZE="9">game_reader.h:39</FONT>>, fillcolor="#DBEAFE"];
+    c_zone [label=<ZoneRef<BR/><FONT POINT-SIZE="9">zone_id.h:54</FONT>>, fillcolor="#DBEAFE"];
+    c_types [label=<GameId · Snapshots<BR/><FONT POINT-SIZE="9">monster_types.h</FONT>>, fillcolor="#DBEAFE"];
+    c_tables [label=<<B>game_tables registry</B><BR/><FONT POINT-SIZE="9">game_tables.cpp — holds pointers,</FONT><BR/><FONT POINT-SIZE="9">names no game's table</FONT>>, fillcolor="#FDE68A"];
+    c_caps [label=<<B>game_capabilities</B><BR/><FONT POINT-SIZE="9">kTraits[2] + 3 queries</FONT>>, fillcolor="#FDE68A"];
+    c_support [label=<string_table · game_detector · game_profile<BR/>steam_game_locator · map_paths · process_memory<BR/><FONT POINT-SIZE="9">6 support TU — process_memory default args name<BR/>"monsterhunterworld.exe" (process_memory.h:64,:119)</FONT>>, fillcolor="#DBEAFE"];
+  }
+
+  subgraph cluster_rise {
+    label=<<B>game-rise</B><BR/><FONT POINT-SIZE="9">CMakeLists.txt:89 · 28 sources</FONT>>;
+    fontsize=12; style="rounded,filled"; fillcolor="#F0FDF4"; color="#22C55E";
+    r_reader [label=<MhrReader<BR/><FONT POINT-SIZE="9">mhr_reader.{h,cpp} + _sharpness + _quest</FONT>>, fillcolor="#DCFCE7"];
+    r_dmg [label=<RiseDamageReader<BR/>rise_damage_reader.cpp<BR/><FONT POINT-SIZE="9">REFramework JSON feed</FONT>>, fillcolor="#DCFCE7"];
+    r_zones [label=<RiseZone vocabulary<BR/><FONT POINT-SIZE="9">rise_zones.h</FONT>>, fillcolor="#DCFCE7"];
+    r_reg [label=<<B>registerRiseTables()</B><BR/><FONT POINT-SIZE="9">part_schemas.cpp:118 — run by static</FONT><BR/><FONT POINT-SIZE="9">initialiser at :131</FONT>>, fillcolor="#FDE68A"];
+    r_rf [label=<REFramework<BR/><FONT POINT-SIZE="9">installer / config / fetcher</FONT>>, fillcolor="#DCFCE7"];
+  }
+
+  subgraph cluster_world {
+    label=<<B>game-world</B><BR/><FONT POINT-SIZE="9">CMakeLists.txt:143 · 11 sources</FONT>>;
+    fontsize=12; style="rounded,filled"; fillcolor="#F0FDF4"; color="#22C55E";
+    w_reader [label=<MhwReader<BR/><FONT POINT-SIZE="9">world_reader.{h,cpp} + monster/player/quest<BR/>_reader.cpp</FONT>>, fillcolor="#DCFCE7"];
+    w_zones [label=<WorldZone vocabulary<BR/><FONT POINT-SIZE="9">world_types.{h,cpp}</FONT>>, fillcolor="#DCFCE7"];
+    w_reg [label=<<B>registerWorldTables()</B><BR/><FONT POINT-SIZE="9">monster/data/part_schemas_data.cpp:1000</FONT><BR/><FONT POINT-SIZE="9">— static initialiser at :1011</FONT>>, fillcolor="#FDE68A"];
+    w_meta [label=<target_selector.cpp<BR/><FONT POINT-SIZE="9">shared target-pick rule</FONT><BR/><FONT POINT-SIZE="9">(compiled into game-world)</FONT>>, fillcolor="#DCFCE7"];
+  }
+
+  subgraph cluster_ui {
+    label=<<B>mhw-ui</B><BR/><FONT POINT-SIZE="9">CMakeLists.txt:199 · 56 sources, compiled once</FONT>>;
+    fontsize=12; style="rounded,filled"; fillcolor="#FFF7ED"; color="#F97316";
+    u_panels [label=<Panel (QMainWindow)<BR/><FONT POINT-SIZE="9">panel_player / _monster / _damage /<BR/>_pet_damage .cpp</FONT>>, fillcolor="#FFEDD5"];
+    u_vm [label=<viewmodel/<BR/><FONT POINT-SIZE="9">player / monster / damage</FONT><BR/><FONT POINT-SIZE="9">pure transforms, no QWidget</FONT>>, fillcolor="#FFEDD5"];
+    u_icon [label=<icon.cpp<BR/><FONT POINT-SIZE="9">qrc probe: QFile::exists(":/…")</FONT><BR/><FONT POINT-SIZE="9">icon.cpp:232 · no id list</FONT>>, fillcolor="#FFEDD5"];
+  }
+
+  subgraph cluster_exe {
+    label=<<B>monster-overlay (executable)</B><BR/><FONT POINT-SIZE="9">CMakeLists.txt:308</FONT>>;
+    fontsize=12; style="rounded,filled"; fillcolor="#F5F3FF"; color="#8B5CF6";
+    e_main [label=<main.cpp<BR/><FONT POINT-SIZE="9">assembly + QTimer poll loop</FONT>>, fillcolor="#EDE9FE"];
+    e_factory [label=<<B>reader_factory.cpp</B><BR/><FONT POINT-SIZE="9">switch(game) → make_unique&lt;MhwReader</FONT><BR/><FONT POINT-SIZE="9">&#160;&#160;&#160;or MhrReader&gt;</FONT><BR/><FONT POINT-SIZE="9">the ONE TU naming both readers — :24</FONT>>, fillcolor="#EDE9FE"];
+    e_desc [label=<reader_descriptors.cpp<BR/><FONT POINT-SIZE="9">mapFileName / mapSelection per game</FONT>>, fillcolor="#EDE9FE"];
+  }
+
+  // dependency edges (library → library, ltail/lhead draw cluster to cluster)
+  e_main  -> e_factory [ltail=cluster_exe];
+  e_factory -> r_reader [ltail=cluster_exe, lhead=cluster_rise, label="includes\nrise/mhr_reader.h:19"];
+  e_factory -> w_reader [ltail=cluster_exe, lhead=cluster_world, label="includes\nworld/world_reader.h:20"];
+  u_panels -> r_reader [ltail=cluster_ui, lhead=cluster_rise, label="12 ui includes of\nrise/ or world/ headers", style=dashed];
+  u_panels -> c_snap  [ltail=cluster_ui, lhead=cluster_core, label="consumes\nGameSnapshot"];
+
+  r_reader -> c_snap  [ltail=cluster_rise, lhead=cluster_core, label="produces"];
+  w_reader -> c_snap  [ltail=cluster_world, lhead=cluster_core, label="produces"];
+  r_reader -> c_reader [ltail=cluster_rise, lhead=cluster_core, style=dashed];
+  w_reader -> c_reader [ltail=cluster_world, lhead=cluster_core, style=dashed];
+  r_reg -> c_tables [ltail=cluster_rise, lhead=cluster_core, label="registerCrownThresholds /\nregisterCaptureRules /\nregisterAilmentStyles", color="#B45309", fontcolor="#B45309", penwidth=1.8];
+  w_reg -> c_tables [ltail=cluster_world, lhead=cluster_core, color="#B45309", fontcolor="#B45309", penwidth=1.8];
+
+  u_panels -> c_tables [ltail=cluster_ui, lhead=cluster_core, label="crownThresholdsFor /\nailmentStyle", color="#B45309", fontcolor="#B45309", style=dashed];
+  u_panels -> c_caps  [ltail=cluster_ui, lhead=cluster_core, label="gameDisplayName /\nstaminaDisplayScale", style=dashed];
+
+  c_support -> c_snap [style=invis];
+  r_dmg -> r_reader [style=invis];
+  r_zones -> r_reg [style=invis];
+  w_zones -> w_reg [style=invis];
+  u_vm -> u_icon [style=invis];
+  e_desc -> e_main [style=invis];
+
+  note_a [shape=note, fillcolor="#FFFBEB", color="#D97706", label=<
+    <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2"><TR><TD ALIGN="LEFT" BALIGN="LEFT"><FONT POINT-SIZE="10">
+    <B>硬边界（nm 实测，scripts/assert_lib_purity.sh build 全 PASS）：</B><BR ALIGN="LEFT"/>
+    · libmonster-core.a 无任何游戏命名符号（0）<BR ALIGN="LEFT"/>
+    · libgame-rise.a 对 World 符号的未定义引用 = 0；game-world 对 Rise = 0<BR ALIGN="LEFT"/>
+    · libmhw-ui.a 无 MhwReader | MhrReader | readMonsters | readParty 符号<BR ALIGN="LEFT"/>
+    · 反向 include=0：core/ rise/ world/ 下没有文件 include ui/<BR ALIGN="LEFT"/>
+    · qrc 不进任何库，只在 exe target（CMakeLists.txt:318-319）<BR ALIGN="LEFT"/>
+    </FONT></TD></TR></TABLE>>];
+  note_a -> c_tables [style=invis];
+
+}

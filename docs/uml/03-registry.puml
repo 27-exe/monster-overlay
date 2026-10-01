@@ -1,0 +1,118 @@
+@startuml 03-registry
+!theme plain
+title 3. 注册表与能力表：谁在什么时候注册\n注册发生在数据 TU 的 STATIC INITIALISER —— 不是 reader 构造函数
+
+package "monster-core" #EFF6FF {
+  class "registration API (3)" as RegApi <<game_tables.cpp>> #BFDBFE {
+    registerCrownThresholds(GameId, const QHash&)
+    registerCaptureRules(GameId, const QHash<int,int>*, const QSet&)
+    registerAilmentStyles(GameId, const QHash<int,AilmentStyle>&)
+    --
+    game_tables.h:140,141,108
+  }
+  class "query API" as QryApi <<game_tables.cpp>> #BFDBFE {
+    crownThresholdsFor(GameId, int) → const array*
+    captureThresholdFor(GameId, int) → optional<int>
+    ailmentStyle(GameId, int) → AilmentStyle
+    crownTablesFor / captureTablesFor
+    --
+    game_tables.h:122,123,102
+  }
+  class "static Tables slots" as Slots #FDE68A {
+    Tables world; Tables rise;
+    hasCrowns · crowns
+    hasCapture · captureThresholds · notCapturable
+    hasAilments · ailmentStyles
+    --
+    game_tables.cpp:33-34 / :16-24
+    只存 POINTERS，不含任何游戏的数据
+  }
+  class "tableFor(GameId)" as SwitchTT #E0E7FF {
+    game_tables.cpp:26-42
+    switch, no default,
+    return world; after
+    → new GameId = -Wswitch
+  }
+  class "game_capabilities" as Caps #FDE68A {
+    kTraits[] — one row per game
+    {displayNameKey, displayNameAscii,
+      normalisedPartGauges, staminaDivisor}
+    static_assert(std::size(kTraits) == 2) :50
+    → 比较的是字面量 2，加枚举值时它不可能失败
+  }
+  class "queries" as CapsQ #BFDBFE {
+    gameDisplayName(GameId)
+    usesNormalisedPartGauges(GameId)
+    staminaDisplayScale(GameId)
+    --
+    game_capabilities.h:56,64,82
+  }
+  class "gameTraits(GameId)" as CapsSw #E0E7FF {
+    game_capabilities.cpp:61
+    switch, no default,
+    __builtin_unreachable()
+    → new GameId = -Wswitch
+  }
+}
+
+package "game-world data TU\nsrc/monster/data/part_schemas_data.cpp" #F0FDF4 {
+  class "RegisterWorldTablesAtStartup" as WInit #BBF7D0 {
+    anonymous namespace, :1010-1013
+    ctor runs before main()
+    定义在所有表之后
+  }
+  class "registerWorldTables() :1000" as WReg #FDE68A {
+    registerCrownThresholds(World, kCrownThresholds)
+    registerCaptureRules(World, &kMonsterCaptureThresholds, kNoNotCapturable())
+    registerAilmentStyles(World, kWorldAilmentStyles)
+  }
+}
+
+package "game-rise data TU\nsrc/rise/part_schemas.cpp" #F0FDF4 {
+  class "RegisterRiseTablesAtStartup" as RInit #BBF7D0 {
+    anonymous namespace, :129-133
+    ctor runs before main()
+    定义在所有表之后
+  }
+  class "registerRiseTables() :118" as RReg #FDE68A {
+    registerCrownThresholds(Rise, kRiseCrownThresholds)
+    registerCaptureRules(Rise, nullptr, kRiseNotCapturableMonsterIds)
+    registerAilmentStyles(Rise, kRiseAilmentStyles)
+  }
+}
+
+class "callers (UI / readers / tests)" as Callers #F3F4F6 {
+  panel_monster.cpp:1125 crown chip · ailment cards
+  ui panel_player stamina · console display name
+  tests: rise_monster_metadata_tests.cpp:35-36,
+  rise_monster_name_tests.cpp:59-60,
+  ailment_style_tests.cpp:43-44 显式调用两者
+}
+
+WInit ..> WReg : ctor body
+RInit ..> RReg : ctor body
+WReg --> RegApi : registers World rows
+RReg --> RegApi : registers Rise rows
+RegApi --> SwitchTT : writes the slot for (game)
+SwitchTT --> Slots : &world / &rise
+QryApi --> SwitchTT
+Callers --> QryApi
+Callers --> CapsQ
+CapsQ --> CapsSw
+CapsSw --> Caps
+
+note bottom of Slots
+注：为什么是静态初始化器而不是 reader 构造函数
+· 实测 world_reader.cpp / mhr_reader.cpp 里没有任何 register* 调用（grep，HEAD dbbac03）
+· 放进 reader 构造函数会让 edit-mode demo 面板（不构造 reader）丢掉 crown 芯片，
+  all_monster.png 像素差 730（ARCHITECTURE.md §3.4.1 记录的实测）
+· 跨 TU 初始化顺序未指定，但安全：注册表只存指针；同一 TU 内先构造被取地址的表
+
+注：注册表的查询语义（两台游戏答案不同，不是同一查询写两遍）
+· World 查阈值表（Elder Dragons 的 Capture=0 在表内）；Rise 查不可捕获集合，成员答 0
+· Rise 注册 nullptr 阈值表 —— 空表会把「无数据」和「有数据但都不匹配」混为一谈
+· nullptr / nullopt = 这款游戏没有这项静态数据，永远不是「退回另一款游戏」
+· 重复注册同一游戏是替换，不是累积（game_tables.h:127）
+end note
+
+@enduml

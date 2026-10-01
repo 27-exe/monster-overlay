@@ -1,0 +1,63 @@
+digraph g06_damage_arbitration {
+graph [bgcolor="white", pad="0.35", splines=polyline, nodesep="0.4", ranksep="0.55", fontname="Helvetica", fontsize=13];
+node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", color="#9CA3AF", fontcolor="#111827", margin="0.14,0.09"];
+edge [fontname="Helvetica", fontsize=10, color="#374151", fontcolor="#374151"];
+
+
+  labelloc="t";
+  label=<<B>6. riseDamageReaders 三槽位仲裁（每个 tick，main.cpp:534-621）</B><BR/><FONT POINT-SIZE="10">the most subtle logic in the tree: which of three JSON feeds wins, and which failure gets reported</FONT>>;
+
+  start [label=<tick &amp;&amp; isRise<BR/><FONT POINT-SIZE="9">main.cpp:534</FONT>>, fillcolor="#EDE9FE"];
+  guard [label=<skipUpdate(damagePanel)<BR/>|| skipUpdate(petDamagePanel)<BR/><FONT POINT-SIZE="9">main.cpp:537-539</FONT>>, shape=diamond, fillcolor="#FEF9C3", height=1.0, width=2.4];
+  init [label=<newestReader = nullptr<BR/>diagnosticReader =<BR/>&#160;&#160;riseDamageReaders.front().get()<BR/><FONT POINT-SIZE="9">:553-554 — slot A starts as</FONT><BR/><FONT POINT-SIZE="9">the diagnostic candidate</FONT>>, fillcolor="#F3F4F6"];
+
+  loop [label=<for each of 3 readers:<BR/><FONT POINT-SIZE="9">[0] reframework/data/mhr_damage_a.json</FONT><BR/><FONT POINT-SIZE="9">[1] reframework/data/mhr_damage_b.json</FONT><BR/><FONT POINT-SIZE="9">[2] /tmp/mhr_damage.json (legacy)</FONT><BR/><FONT POINT-SIZE="9">main.cpp:404-417</FONT>>, fillcolor="#F3F4F6"];
+
+  upd [label=<reader.update() ?<BR/><FONT POINT-SIZE="9">rise_damage_reader.cpp — false when</FONT><BR/><FONT POINT-SIZE="9">missing / &gt;1 MiB / symlink / unparsable /</FONT><BR/><FONT POINT-SIZE="9">unsupported version / older than 5 s</FONT>>, shape=diamond, fillcolor="#FEF9C3", height=1.3, width=3.2];
+
+  cmp [label=<sequence &gt; current.seq ?<BR/>|| (sequence == &amp;&amp;<BR/>&#160;&#160;&#160;timestampMs &gt;)<BR/><FONT POINT-SIZE="9">:558-564</FONT>>, shape=diamond, fillcolor="#FEF9C3", height=1.2, width=2.6];
+  take [label=<<B>newestReader</B><BR/>= &amp;reader<br/>>, fillcolor="#DCFCE7"];
+  contender [label=<peer holds a real error ?<BR/><FONT POINT-SIZE="9">:574-577 — replaces only when</FONT><BR/><FONT POINT-SIZE="9">current candidate is Error::Missing</FONT>>, shape=diamond, fillcolor="#FEF9C3", height=1.2, width=3.0];
+  swap [label=<diagnosticReader<BR/>&#160;&#160;= &amp;reader<BR/><FONT POINT-SIZE="9">first real error sticks;</FONT><BR/><FONT POINT-SIZE="9">slot A wins ties</FONT>>, fillcolor="#FEE2E2"];
+
+  decide [label=<newestReader != nullptr ?<BR/><FONT POINT-SIZE="9">:582</FONT>>, shape=diamond, fillcolor="#FEF9C3", height=1.0, width=2.6];
+
+  ok [label=<<B>feed available</B><BR/>lastRiseDamageFeedError = None<BR/>damageSnapshot = newestReader-&gt;snapshot()<BR/><B>enrichRiseDamageSnapshot(dmg, snap)</B><BR/><FONT POINT-SIZE="9">rise_damage_roster.cpp:84 — merges the</FONT><BR/><FONT POINT-SIZE="9">GameSnapshot into the damage roster</FONT><BR/>damagePanel.updateRiseDamage(dmg) :593<BR/>petDamagePanel.updateRiseDamage(dmg) :595<br/>>, fillcolor="#DCFCE7"];
+
+  lost [label=<<B>feed lost</B><BR/>diagnosticReader-&gt;lastError() /<BR/>&#160;&#160;lastErrorText() → qInfo / qWarning<BR/><FONT POINT-SIZE="9">:597-611 — severity depends on the</FONT><BR/><FONT POINT-SIZE="9">error kind, Missing logs as info</FONT><BR/>deliver <B>invalid</B> RiseDamageSnapshot<BR/><FONT POINT-SIZE="9">:615 — panels clear old quest data</FONT><BR/><FONT POINT-SIZE="9">instead of freezing the last chart</FONT>>, fillcolor="#FEE2E2"];
+
+  vis [label=<<B>damagePanel.setVisible(</B><BR/>&#160;&#160;panelEnabled() &amp;&amp; hasVisibleContent())<BR/>petDamagePanel likewise :627-641<BR/>triggerUpdate() → paintPanel()>, fillcolor="#FFEDD5"];
+  done [label="end of tick", fillcolor="#E5E7EB"];
+  skipn [label=<no feed read this tick<BR/><FONT POINT-SIZE="9">panels keep their demo state</FONT>>, fillcolor="#E5E7EB"];
+
+  start -> guard;
+  guard -> skipn [label="true"];
+  guard -> init [label="false"];
+  init -> loop;
+  loop -> upd;
+  upd -> cmp [label="true"];
+  upd -> contender [label="false"];
+  cmp -> take [label="yes"];
+  cmp -> loop [label="no — keep current", style=dashed];
+  take -> loop [label="next slot", style=dashed];
+  contender -> swap [label="yes"];
+  contender -> loop [label="no", style=dashed];
+  swap -> loop [label="next slot", style=dashed];
+  loop -> decide [label="after 3rd slot"];
+  decide -> ok [label="yes"];
+  decide -> lost [label="no"];
+  ok -> vis;
+  lost -> vis;
+  vis -> done;
+
+  note [shape=plaintext, label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" COLOR="#D97706" BGCOLOR="#FFFBEB"><TR><TD ALIGN="LEFT" BALIGN="LEFT"><FONT POINT-SIZE="10">
+  <B>选择规则（按代码，不是按意图）：</B><BR ALIGN="LEFT"/>
+  · 数据源：活得最久的（sequence 最大，相同则 timestampMs 最大）——不是第一个更新的<BR ALIGN="LEFT"/>
+  · 报错源：从 slot A 出发，只有当前候选是 Missing 且这个槽有真实错误时才替换；<BR ALIGN="LEFT"/>
+  &#160;&#160;所以「两个同样有信息的错误」里 A 赢（producer 先写 A）<BR ALIGN="LEFT"/>
+  · 三个槽位是一起构造、永不为 null 的（main.cpp:549-552 的注释说明 front() 依赖这一点）<BR ALIGN="LEFT"/>
+  · REFramework 1.5.9.1 没有 rename，producer 只能交替写两个槽——所以读三个、取最新<BR ALIGN="LEFT"/>
+  · update() 失败也照样推进循环，不会提前退出<BR ALIGN="LEFT"/>
+  </FONT></TD></TR></TABLE>>];
+  note -> start [style=invis];
+}
