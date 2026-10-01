@@ -64,7 +64,7 @@ src/                                    总计 134 个文件 / 125 个 .h·.cpp 
 │   ├── mhr_abnormalities.{h,cpp}
 │   ├── mhr_part_names.{h,cpp} / mhr_monster_names.{h,cpp}
 │   ├── rise_damage_reader.{h,cpp} / rise_damage_roster.{h,cpp} / _types.h
-│   ├── part_schemas.cpp          96    # registerRiseTables()
+│   ├── part_schemas.cpp         135    # registerRiseTables()
 │   ├── rise_zones.h                      # Rise 区域词条（18 个具名区）
 │   ├── rise_install_locator.{h,cpp}      # appId 1446780 + exe 名，Rise 私有
 │   ├── mhr_types.h
@@ -82,7 +82,7 @@ src/                                    总计 134 个文件 / 125 个 .h·.cpp 
 │   └── data/part_schemas_data.cpp 1015    → game-world（World 全部数据表）
 ├── player/player_types.h         267    # 跨游戏契约纸，无 .cpp，不进任何库
 ├── quest/quest_types.h            76    # 同上
-├── ui/                         41 文件 / 11839 行    → mhw-ui
+├── ui/                         56 文件 / 14273 行    → mhw-ui
 │   ├── control_panel.cpp        2328
 │   ├── panel_player.cpp         1445 / panel_monster.cpp 1499 / panel_damage.cpp 585
 │   ├── panel.cpp / hud_canvas.cpp 602 / panel_pet_damage.cpp 448
@@ -220,7 +220,7 @@ core 就不再是 core——判据由 lib-purity-gate 用 `nm` 守（§9）。
 
 ### 3.1 `core/game_snapshot.h`（40 行）——一次 poll 的全部输出
 
-`struct GameSnapshot` 14 个字段：`game`（`GameId`）、`attached`、`pid`、`imageBase`、
+`struct GameSnapshot` 12 个字段：`game`（`GameId`）、`attached`、`pid`、`imageBase`、
 `status`、`zone`（`ZoneRef`）、`monsters`、`player`、`party`、`quest`、
 `playerCount`、`isMultiplayer`。
 

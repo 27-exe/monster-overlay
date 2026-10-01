@@ -40,10 +40,19 @@
 // "no data" — which is honest. The old ternary answered a World threshold
 // for an id it had never heard of, because the default arm was World.
 //
-// The cost is that registration must happen before the first query. See
-// kRegistrationOrder note at the bottom; in the current wiring main.cpp
-// constructs exactly one reader, and each reader's constructor registers
-// its own tables, so the tables are live before the first poll().
+// The cost is that registration must happen before the first query, and the
+// wiring does it with a static initialiser in each game's own data
+// translation unit — NOT from a reader constructor. That distinction is not
+// cosmetic: reader-constructor registration meant the edit-mode demo panels,
+// which construct no reader, silently lost their crown chips (730 differing
+// pixels in all_monster.png). Both data TUs run their initialiser during
+// dynamic-loader startup, before main(), so the tables are live before the
+// first poll() and before any crown query the panel makes.
+//
+// Cross-translation-unit order is deliberately unspecified and does not
+// matter: only pointers are stored, and nothing dereferences them until
+// after main() begins. Within one TU, initialisers run top to bottom, so a
+// table is constructed before the initialiser that takes its address.
 
 #include "monster/monster_types.h"
 
