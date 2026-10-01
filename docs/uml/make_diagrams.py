@@ -487,7 +487,7 @@ SEQUENCE = r'''
   s3w -> t2w [style=dashed, label="same object,\npolled each tick"];
   s3r -> t2r [style=dashed, label="same object,\npolled each tick"];
 
-  note [shape=plaintext, label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" COLOR="#D97706" BGCOLOR="#FFFBEB"><TR><TD ALIGN="LEFT" BALIGN="LEFT"><FONT POINT-SIZE="10">
+  note [shape=plaintext, rank=sink, margin="0.6,0.45", label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" COLOR="#D97706" BGCOLOR="#FFFBEB"><TR><TD ALIGN="LEFT" BALIGN="LEFT"><FONT POINT-SIZE="10">
   <B>两条路径的差异只有这些（其余逐行相同）：</B><BR ALIGN="LEFT"/>
   · 取 map：World 逐候选试到能解析（FirstLoadable）；Rise 先探测运行中游戏（BestWithProbe）<BR ALIGN="LEFT"/>
   · 区域：World 传原始 int32（只过滤 0..1000）；Rise 还会产出 -2 LoadingScreen / 199 CharSelection<BR ALIGN="LEFT"/>
