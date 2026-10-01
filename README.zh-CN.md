@@ -57,7 +57,7 @@ sudo ./install-deps.sh      # 一次性:Qt 6 + layer-shell-qt
 
 方向键微调属于布局模式(控制台可进入,或直接 `./monster-overlay --edit`)。
 完整的布局模式速查 —— 点击聚焦、滚轮缩放、以及每次改动都会立即落盘(没有保存快捷键) —— 见
-[docs/USAGE.md §4](docs/USAGE.md)。
+[docs/USAGE.zh-CN.md §4](docs/USAGE.zh-CN.md)。
 
 ## 面板内容
 
@@ -65,7 +65,7 @@ sudo ./install-deps.sh      # 一次性:Qt 6 + layer-shell-qt
 |---|---|
 | 玩家 | 名称、血量 / 耐力、斩味、武器、翔虫(崛起)、衣装(世界)、异常状态、猫饭技能 |
 | 怪物 | 当前目标、血量与部位破坏、异常状态、愤怒 / 体力(崛起)、体型金冠 |
-| 伤害 | 每位玩家的伤害与 DPS —— 世界直接读取;崛起需用随包发布的 REFramework Lua producer(见 [docs/USAGE.md](docs/USAGE.md)) |
+| 伤害 | 每位玩家的伤害与 DPS —— 世界直接读取;崛起需用随包发布的 REFramework Lua producer(见 [docs/USAGE.zh-CN.md](docs/USAGE.zh-CN.md)) |
 
 ## 语言
 
@@ -113,4 +113,4 @@ Apache-2.0,见 [LICENSE](LICENSE)。派生自
 [HunterPie v2](https://github.com/HunterPie/HunterPie);地址表与改编的图标
 数据署名见 [assets/NOTICE](assets/NOTICE)。
 
-完整使用说明:[docs/USAGE.md](docs/USAGE.md)。
+完整使用说明:[docs/USAGE.zh-CN.md](docs/USAGE.zh-CN.md)(英文版:[docs/USAGE.md](docs/USAGE.md))。

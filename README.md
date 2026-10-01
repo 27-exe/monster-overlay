@@ -123,4 +123,4 @@ Apache-2.0 — see [LICENSE](LICENSE). Derived from
 [HunterPie v2](https://github.com/HunterPie/HunterPie); address maps and adapted
 icon data are credited in [assets/NOTICE](assets/NOTICE).
 
-Full usage guide: [docs/USAGE.md](docs/USAGE.md).
+Full usage guide: [docs/USAGE.md](docs/USAGE.md) · 中文版: [docs/USAGE.zh-CN.md](docs/USAGE.zh-CN.md)
