@@ -25,7 +25,18 @@ public:
 
     // Convenience: weapon icon path from HunterPie weapon enum ID (0..13).
     // rank is the upgrade tier (1..12); higher rank = shinier icon.
+    // Returns an EMPTY string for every unresolved id (<0 or >13) — the
+    // caller must treat that as "no weapon data", never as a path.
     static QString weaponPath(int weaponId, int rank);
+
+    // Explicit placeholder for a weapon slot whose weaponId did not
+    // resolve. There is no unknown-weapon asset in the qrc (see
+    // assets/icons.qrc — the only Unknown.* file is a monster portrait,
+    // :/icons/Monsters/Unknown.png), so the marker is drawn procedurally:
+    // a muted grey "?" centred in a transparent `size`×`size` pixmap.
+    // Its colour is deliberately dimmer than any of the 14 weapon SVGs so
+    // the placeholder can never be mistaken for a real weapon glyph.
+    static QPixmap renderUnknownWeapon(int size);
 
     // Mantle icon path from the in-game item ID.
     static QString mantlePath(int itemId);

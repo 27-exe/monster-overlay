@@ -289,9 +289,19 @@ void DamagePanel::paintPanel(QPainter &p)
                        static_cast<float>(dmg) / static_cast<float>(partyDamage), dc);
 
         // Weapon icon slot.
+        // An unresolved weaponId (<0 or >13) is rendered as the explicit
+        // unknown-weapon placeholder instead of an empty slot. The
+        // blank-slot bug this replaces: a Rise ally row whose weaponId
+        // never resolved drew a featureless dark box, indistinguishable
+        // from "the icon failed to load" and from "this row is still
+        // loading". Now the user sees a grey "?" and knows the panel
+        // has no weapon data for this row.
         QPixmap wp;
-        if (vm.weaponIds().value(i, -1) >= 0)
-            wp = Icon::render(Icon::weaponPath(vm.weaponIds()[i], 1), kIconSize);
+        const int weaponId = vm.weaponIds().value(i, -1);
+        if (weaponId >= 0 && weaponId <= 13)
+            wp = Icon::render(Icon::weaponPath(weaponId, 1), kIconSize);
+        else
+            wp = Icon::renderUnknownWeapon(kIconSize);
         drawIconSlot(p, static_cast<int>(row.left()) + 4,
                      static_cast<int>(row.top()) + 3, wp);
 

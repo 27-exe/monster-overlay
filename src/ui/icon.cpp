@@ -196,6 +196,40 @@ QString Icon::weaponPath(int weaponId, int rank)
         .arg(r, 2, 10, QLatin1Char('0'));
 }
 
+QPixmap Icon::renderUnknownWeapon(int size)
+{
+    if (size <= 0)
+        return {};
+
+    QPixmap pix(size, size);
+    pix.fill(Qt::transparent);
+    QPainter p(&pix);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    // "?" as a glyph the panel's own UI font already ships, not as a new
+    // binary asset: assets/icons.qrc has no unknown-weapon file to add,
+    // and a vendor SVG would need a licence entry in assets/NOTICE.
+    //
+    // The font size is a hair under the slot so the glyph keeps its
+    // breathing room inside drawIconSlot()'s 24x26 rounded rect — 24px
+    // at the damage row's kIconSize. A 9pt face out of Chakra Petch /
+    // WorkSans resolves to roughly 12px em box, which reads "?" at a
+    // glance without competing with the 14 weapon silhouettes, whose
+    // glyph boxes fill the whole 24px.
+    QFont font(QStringLiteral("Chakra Petch"), 12, QFont::Medium);
+    font.setStyleStrategy(QFont::PreferAntialias);
+    p.setFont(font);
+
+    // --t3 (#5a5d5f) as used by the MR column is the panel's greyest
+    // text value; the same grey here says "no weapon data" in the same
+    // voice the rest of the panel uses for absent information. Full
+    // opacity would read as another glyph from the icon set.
+    p.setPen(QColor(0x5a, 0x5d, 0x5f));
+    p.drawText(pix.rect(), Qt::AlignCenter, QStringLiteral("?"));
+    p.end();
+    return pix;
+}
+
 QString Icon::mantlePath(int toolType)
 {
     // SpecializedToolType enum (0-21) → in-game item ID → SVG file.

@@ -126,6 +126,13 @@ private:
                                      // Fixes the v0.5.x bug where a member
                                      // dropping out zeroed their total
                                      // damage mid-chart.
+                                     //
+                                     // The flag is a per-ROW property, never
+                                     // per-array-index: rows are identified by
+                                     // player name (the compact snap.party
+                                     // renumbers everyone after a drop), so
+                                     // the row a name owns keeps that name's
+                                     // frozen data in place across ticks.
     bool hasData_{false};
     bool questEnded_{false};         // freeze after quest completes (Success/Completed/Failed)
     float lastElapsedSeconds_{0.0F};
