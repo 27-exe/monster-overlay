@@ -16,6 +16,8 @@
 
 #include "reader_factory.h"
 
+#include <QDebug>
+
 #include "rise/mhr_reader.h"
 #include "world/world_reader.h"
 
@@ -29,8 +31,12 @@ GameReaderPtr createReader(GameId game, const QString &explicitMap,
 
     // A switch, not a descriptor-indexed array: a new GameId has to be
     // handled here by hand, because only this file knows the concrete
-    // reader types. Forgetting is a compile error rather than a game that
-    // silently gets no reader.
+    // reader types. Forgetting is caught by -Wswitch, which is a WARNING,
+    // not a compile error — this tree carries no -Werror, so a new game
+    // builds by default and announces itself only in the build log. The
+    // qWarning below is the second net: if a GameId ever reaches the end of
+    // this switch, the log names it instead of the caller crashing on a
+    // nullptr it cannot attribute.
     switch (game) {
     case GameId::World: {
         const QStringList candidates =
@@ -48,6 +54,15 @@ GameReaderPtr createReader(GameId game, const QString &explicitMap,
         return std::make_unique<MhrReader>(MhrReader::findBestMap(candidates));
     }
     }
+    // Every enumerator returns above, so this is unreachable for a valid
+    // GameId — see the note in core/game_capabilities.cpp. The value is
+    // logged rather than dropped: with no static_name() on GameId, the
+    // raw int is the only identifier the log can carry, and it is enough
+    // to point at the missing arm. An invalid GameId is undefined behaviour
+    // the caller already owns; this keeps the diagnostic reachable instead
+    // of letting the compiler assume the path away.
+    qWarning("createReader: unhandled GameId %d — add a case in "
+             "src/reader_factory.cpp", static_cast<int>(game));
     return nullptr;
 }
 

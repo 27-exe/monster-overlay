@@ -14,10 +14,15 @@
 namespace mhw {
 namespace {
 
-// A switch rather than an array indexed by the enum: a new GameId fails to
-// compile here instead of silently reusing World's map file. This is the
-// single place a third game must be added, and it is a compile error if
-// that is forgotten.
+// A switch rather than an array indexed by the enum: adding a GameId has to
+// be visible here, where a third game's map file name is decided. Note the
+// honest limit of that protection — this tree carries no -Werror, so a new
+// enumerator produces a -Wswitch *warning* in the build log, not a compile
+// error, and the build still succeeds. The switch after the cases therefore
+// ends in __builtin_unreachable() rather than a fallback return: a
+// `return kWorld` here would hand a new game World's map file and parse its
+// structures with the wrong reader, which is the silent failure this file
+// exists to prevent.
 constexpr GameReaderDescriptor kWorld{"MonsterHunterWorld.421810.map",
                                       MapSelection::FirstLoadable};
 constexpr GameReaderDescriptor kRise{"MonsterHunterRise.16.0.2.0.map",
@@ -31,7 +36,10 @@ const GameReaderDescriptor &descriptorFor(GameId game)
     case GameId::Rise:
         return kRise;
     }
-    return kWorld;
+    // Every enumerator returns above. Reaching here means the caller passed a
+    // GameId this file does not know about, which is undefined behaviour the
+    // caller owns — not a case to answer with World's map file.
+    __builtin_unreachable();
 }
 
 } // namespace

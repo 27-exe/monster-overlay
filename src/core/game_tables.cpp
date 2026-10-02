@@ -25,11 +25,12 @@ struct Tables {
 
 Tables &tableFor(GameId game)
 {
-    // A switch, not an array indexed by the enum: adding a third game then
-    // fails to compile here rather than silently sharing World storage.
-    // (The old ternary had the opposite property — it compiled and answered
-    // with World data, which is how a Rise id could pick up a World
-    // threshold.)
+    // A switch, not an array indexed by the enum: adding a third game is
+    // caught here by -Wswitch, which is a WARNING, not a compile error —
+    // this tree carries no -Werror, so a new game builds by default and
+    // announces itself only in the build log. (The old ternary had the
+    // opposite property — it compiled and answered with World data, which
+    // is how a Rise id could pick up a World threshold.)
     static Tables world;
     static Tables rise;
     switch (game) {
@@ -38,7 +39,14 @@ Tables &tableFor(GameId game)
     case GameId::Rise:
         return rise;
     }
-    return world;
+    // Every enumerator returns above. Without this, the compiler warns that
+    // control reaches the end of a non-void function even though it cannot
+    // for a valid GameId. Unreachable rather than a fallback return — a
+    // fallback `return world;` would silently answer with World storage for
+    // a GameId nobody wired up here, which is exactly the failure this
+    // switch replaced. An invalid value is undefined behaviour the caller
+    // already owns.
+    __builtin_unreachable();
 }
 
 } // namespace
