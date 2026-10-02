@@ -1,8 +1,6 @@
 {
   "_meta": "悬浮窗面板 chrome：ui.* 中由各面板 paintPanel() 每次重绘重新 tr() 的文案（panel_* / *_title / *_header / status_* …）。注意 v0.11.0 起 key 名暂未三层化，改名批次（PLAN.md B8）另做，届时 reader/demo 的 ui. 前缀一并去掉。",
   "ui": {
-    "app_title": "Monster Overlay",
-    "context_hunting": "狩猎 · %1",
     "zone_unknown": "未知",
     "monster_title": "怪物",
     "player_title": "猎人状态",

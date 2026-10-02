@@ -1,8 +1,6 @@
 {
   "_meta": "Overlay panel chrome: the ui.* strings re-tr()'d by each panel's paintPanel() on every repaint. Key names keep the ui. prefix until the rename batch (PLAN.md B8).",
   "ui": {
-    "app_title": "Monster Overlay",
-    "context_hunting": "Hunting · %1",
     "zone_unknown": "Unknown",
     "monster_title": "Monster",
     "player_title": "Hunter Status",

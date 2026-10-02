@@ -267,26 +267,86 @@ target_link_libraries(mhw-ui PUBLIC
 target_compile_options(mhw-ui PRIVATE -Wall -Wextra -Wpedantic)
 
 # Private QtGui headers (qpa/qplatformscreen.h) live under
-# /usr/include/qt6/QtGui/<ver>/QtGui/qpa/. Locate the active
-# version's include root and expose it to mhw-ui so screen_query.cpp
-# can use QPlatformScreen::geometry() — the only public-ish way to get
-# the backend-native screen size in physical pixels without guessing from
-# QScreen::geometry() × devicePixelRatio(). It stays PRIVATE to mhw-ui:
-# a consumer only calls screen_query::detect()/listOutputs(), it does not
-# include qpa headers itself, so no consumer needs this path.
-file(GLOB _qt6_gui_version_dirs
-    LIST_DIRECTORIES true
-    "/usr/include/qt6/QtGui/*"
+# <root>/QtGui/<ver>/QtGui/qpa/. Locate that include root and expose it
+# to mhw-ui so screen_query.cpp can use QPlatformScreen::geometry() —
+# the only public-ish way to get the backend-native screen size in
+# physical pixels without guessing from QScreen::geometry() ×
+# devicePixelRatio(). It stays PRIVATE to mhw-ui: a consumer only calls
+# screen_query::detect()/listOutputs(), it does not include qpa headers
+# itself, so no consumer needs this path.
+#
+# <root> is NOT the same everywhere, and a GLOB over one fixed layout
+# used to hard-FAIL the configure step on every distro that packages Qt
+# differently:
+#
+#   Arch Linux            /usr/include/qt6/QtGui/6.11.2/QtGui/qpa/
+#   Fedora / openSUSE     /usr/include/qt6/QtGui/6.11.2/QtGui/qpa/
+#   Debian / Ubuntu       /usr/include/<triplet>/qt6/QtGui/6.8.2/
+#                                       QtGui/qpa/qplatformscreen.h
+#                         (multiarch: the whole Qt6 tree is prefixed with
+#                         the DEB_HOST_MULTIARCH triplet, e.g.
+#                         /usr/include/x86_64-linux-gnu/qt6/)
+#
+# So instead of enumerating a directory tree we let find_path() probe the
+# known roots. Both distro families must keep working, and the version
+# directory is a single directory level below <root>/QtGui on both
+# layouts, so a glob would not buy us anything find_path cannot do more
+# portably.
+set(_QT6_GUI_PRIVATE_PATH_SUFFIXES QtGui/${Qt6Gui_VERSION}/QtGui)
+list(APPEND _QT6_GUI_PRIVATE_PATH_SUFFIXES QtGui/${Qt6Gui_MAJOR_MINOR}/QtGui)
+list(REMOVE_DUPLICATES _QT6_GUI_PRIVATE_PATH_SUFFIXES)
+
+# Candidate include roots. QT6_QPA_HEADERS_ROOT is the escape hatch for a
+# locally-built / self-installed Qt (the usual reason the header is
+# somewhere else entirely): pass either the install prefix or the
+# "qt6" include root itself and both are probed.
+set(_QT6_GUI_ROOT_CANDIDATES "")
+if(QT6_QPA_HEADERS_ROOT)
+    list(APPEND _QT6_GUI_ROOT_CANDIDATES
+        "${QT6_QPA_HEADERS_ROOT}"
+        "${QT6_QPA_HEADERS_ROOT}/include"
+        "${QT6_QPA_HEADERS_ROOT}/include/qt6"
+    )
+endif()
+list(APPEND _QT6_GUI_ROOT_CANDIDATES
+    /usr/include/qt6
+    /usr/local/include/qt6
 )
-set(_QT6_GUI_PRIVATE_INCLUDE_DIR "")
-foreach(_d IN LISTS _qt6_gui_version_dirs)
-    if(IS_DIRECTORY ${_d}/QtGui/qpa)
-        set(_QT6_GUI_PRIVATE_INCLUDE_DIR ${_d}/QtGui)
-        break()
-    endif()
-endforeach()
+file(GLOB _QT6_GUI_MULTIARCH_ROOTS
+    LIST_DIRECTORIES true
+    "/usr/include/*/qt6"
+)
+list(APPEND _QT6_GUI_ROOT_CANDIDATES ${_QT6_GUI_MULTIARCH_ROOTS})
+
+find_path(_QT6_GUI_PRIVATE_INCLUDE_DIR
+    NAMES qpa/qplatformscreen.h
+    PATHS ${_QT6_GUI_ROOT_CANDIDATES}
+    PATH_SUFFIXES ${_QT6_GUI_PRIVATE_PATH_SUFFIXES}
+    DOC "Root holding the QtGui private qpa/ headers"
+)
+
 if(NOT _QT6_GUI_PRIVATE_INCLUDE_DIR)
-    message(FATAL_ERROR "Could not locate Qt6 qpa headers under /usr/include/qt6")
+    set(_searched "")
+    foreach(_root IN LISTS _QT6_GUI_ROOT_CANDIDATES)
+        foreach(_suf IN LISTS _QT6_GUI_PRIVATE_PATH_SUFFIXES)
+            list(APPEND _searched "${_root}/${_suf}")
+        endforeach()
+    endforeach()
+    list(REMOVE_DUPLICATES _searched)
+    string(REPLACE ";" "\n    " _searched "${_searched}")
+    message(FATAL_ERROR
+        "Could not locate Qt6's private QtGui headers "
+        "(qpa/qplatformscreen.h), which src/ui/screen_query.cpp compiles "
+        "against. Qt ships them in a SEPARATE package from the normal "
+        "devel headers.\n"
+        "  Searched (each suffixed with <QtGui version>):\n"
+        "    ${_searched}\n"
+        "  Install the package that provides them:\n"
+        "    Debian / Ubuntu   qt6-base-private-dev\n"
+        "    Fedora            qt6-qtbase-private-devel\n"
+        "    Arch              qt6-base (already includes them)\n"
+        "  If Qt was built or installed by hand, re-run cmake with\n"
+        "    -DQT6_QPA_HEADERS_ROOT=<prefix-or-qt6-include-dir>")
 endif()
 target_include_directories(mhw-ui PRIVATE
     ${_QT6_GUI_PRIVATE_INCLUDE_DIR}
@@ -833,6 +893,38 @@ add_executable(world-severable-scan-tests
     target_compile_options(map-path-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME map-path-tests COMMAND map-path-tests)
 
+    # ZoneRef is the game-agnostic zone contract that replaced a World-only
+    # enum on GameSnapshot (see core/zone_id.h for why the id is an int and
+    # not an enum). It is a pure header, so this target needs no library and
+    # no Qt: linking monster-core here would make the test depend on the very
+    # implementation it is meant to pin. What it asserts is the contract —
+    # identity is (game, id), the default is unknown rather than a plausible
+    # id 0, and isUnknownZone asks "was a zone read", not "does it have a
+    # name" (that is hasZoneName, on the game side).
+    add_executable(zone-id-tests
+        tests/zone_id_tests.cpp
+    )
+    target_link_libraries(zone-id-tests PRIVATE Qt6::Core)
+    target_include_directories(zone-id-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(zone-id-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME zone-id-tests COMMAND zone-id-tests)
+
+    # zoneLabel() (src/ui/panel_player.cpp:124) is a per-game seam that no
+    # test could reach: it sits in an anonymous namespace in a 1400-line UI
+    # translation unit and returns a translated QString. This target pins the
+    # dispatch instead — which vocabulary a given (game, id) consults, and that
+    # an id no vocabulary names falls back by range rather than borrowing
+    # another game's label. A new GameId would otherwise trip a -Wswitch here
+    # that nothing would notice. The wording itself is covered by the snapshot
+    # regression; this covers the decision.
+    add_executable(zone-label-tests
+        tests/zone_label_tests.cpp
+    )
+    target_link_libraries(zone-label-tests PRIVATE Qt6::Core)
+    target_include_directories(zone-label-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(zone-label-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME zone-label-tests COMMAND zone-label-tests)
+
     # Rise damage ingestion and pet-panel behavior are independent targets so
     # failures identify the feed or rendering contract directly.
     add_executable(rise-damage-reader-tests
@@ -1133,9 +1225,9 @@ add_executable(world-severable-scan-tests
     # own AddressMap plus -fno-access-control on the TEST TU only — so the
     # World monster path finally has the CI coverage the Rise side already had.
     #
-    # AddressMap is implemented in src/world/world_reader.cpp, which lives in
-    # game-world (monster-core must not depend on the World-only library), so
-    # this target links game-world for that plus the monster reader bodies.
+    # AddressMap is implemented in src/core/process_memory.cpp, alongside the
+    # header that declares it, so this target links it through monster-core.
+    # game-world is still linked for the monster reader bodies below.
     #
     # The 0x10000 scratch stride and the StringTable locale save/restore are
     # World-specific: the Monster struct spans ~0x1C500, and the reader picks

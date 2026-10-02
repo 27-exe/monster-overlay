@@ -47,10 +47,9 @@
 //     (v0.10.8): isMultiplayer comes from the session structure instead.
 //     There is nothing to assert about the roster, so this file does not touch
 //     readParty.
-//   * AddressMap is implemented in src/world/world_reader.cpp, which lives in
-//     the mhw-reader library (monster-core's Rise reader must not pull it in),
-//     so this target links mhw-reader even though the TU under test is
-//     src/world/monster_reader.cpp.
+//   * AddressMap is implemented in src/core/process_memory.cpp, so it arrives
+//     through monster-core. This target still links game-world, but for the
+//     World reader itself rather than for that parser.
 // ---------------------------------------------------------------------------
 
 #include "core/process_memory.h"
