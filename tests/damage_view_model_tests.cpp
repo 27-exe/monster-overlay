@@ -347,6 +347,113 @@ bool partyShrinkKeepsRowsAndNeverInvites()
     return true;
 }
 
+// World: 掉在中间的玩家。readParty 遍历 4 个 roster 槽位、空槽 continue
+// 跳过，所以 snap.party 是紧凑数组 —— 第 3 位一掉线，第 4 位就被压到 live
+// 下标 2。行必须按 name 认人：掉线者的行连同数据冻结在原行号，我（第 4
+// 行）的数据继续涨，其他玩家不错位。
+//
+// 这条 case 顺带 pin 住一个越界写：4 人 → 全空 → 重现时，旧实现先写
+// firstHitTick_[i] 才把向量 resize 到 layoutN，在 size==0 上越界（gdb:
+// QList::operator[] 撞 size 0）。
+bool middleDropOutKeepsEveryRowInPlace()
+{
+    DamageViewModel vm;
+    const QVector<mhw::PartyMemberSnapshot> four{
+        member(QStringLiteral("P1"),    0, 1000, false, 0),
+        member(QStringLiteral("Two"),   1,  800, false, 1),
+        member(QStringLiteral("Three"), 2,  300, false, 2),
+        member(QStringLiteral("Me"),    3,  400, true,  3),
+    };
+    vm.updateWorld(inQuestSnapshot(four, 10.0F));       // tick 0: 基线=当前计数器
+
+    // tick 1：firstHit 固化在 tick 1（tick 0 与「从未造成伤害」不可区分）。
+    QVector<mhw::PartyMemberSnapshot> rising = four;
+    rising[0].damage = 1500; rising[1].damage = 1200;
+    rising[2].damage = 600;  rising[3].damage = 800;
+    vm.updateWorld(inQuestSnapshot(rising, 15.0F));
+
+    // tick 2：第一个有意义样本（累计差 = 当前值 - tick 1 的基线）。
+    QVector<mhw::PartyMemberSnapshot> more = rising;
+    more[0].damage = 2000; more[1].damage = 1600;
+    more[2].damage = 900;  more[3].damage = 1200;
+    vm.updateWorld(inQuestSnapshot(more, 20.0F));
+
+    CHECK_EQ(vm.history().size(), 3);
+    CHECK_EQ(vm.history().last().damage.value(2), 300);   // 900 - 600
+    CHECK_EQ(vm.history().last().damage.value(3), 400);   // 1200 - 800
+    CHECK_EQ(vm.names()[3], QStringLiteral("Me"));
+
+    // ---- 第 3 位（"Three"，live 下标 2）掉线：Me 被压到 live 下标 2 ----
+    QVector<mhw::PartyMemberSnapshot> dropped{
+        member(QStringLiteral("P1"),  0, 2500, false, 0),
+        member(QStringLiteral("Two"), 1, 2000, false, 1),
+        member(QStringLiteral("Me"),  2, 1600, true,  3),  // 注意 slot 仍是 3
+    };
+    vm.updateWorld(inQuestSnapshot(dropped, 25.0F));       // tick 3
+
+    CHECK_EQ(vm.rowCount(), 4);
+    // 名字与行号一一对应：Three 的行还在第 2 行、名字没被接管。
+    CHECK_EQ(vm.names()[0], QStringLiteral("P1"));
+    CHECK_EQ(vm.names()[1], QStringLiteral("Two"));
+    CHECK_EQ(vm.names()[2], QStringLiteral("Three"));
+    CHECK_EQ(vm.names()[3], QStringLiteral("Me"));
+    CHECK_EQ(vm.left().value(0), false);
+    CHECK_EQ(vm.left().value(1), false);
+    CHECK_EQ(vm.left().value(2), true);     // Three 掉线 → 该行冻结
+    CHECK_EQ(vm.left().value(3), false);    // 我这一行没有被动过
+
+    // 数据不串行：Three 冻结在掉线那一刻（300），我的行接着涨。
+    CHECK_EQ(vm.history().last().damage.value(2), 300);   // 仍冻结
+    CHECK_EQ(vm.history().last().damage.value(3), 800);   // 1600 - 800 基线
+    CHECK_EQ(vm.history().last().damage.value(0), 1000);  // 2500 - 1500
+    CHECK_EQ(vm.history().last().damage.value(1), 800);   // 2000 - 1200
+    // DPS 从我这行自己的 firstHit tick（1）算起，没有被重置重开。
+    CHECK_EQ(vm.computeDps(3), 1600);        // 800 × 4 / (3 - 1)
+
+    // 再一 tick 仍然不错位、不回零。
+    QVector<mhw::PartyMemberSnapshot> afterMore{
+        member(QStringLiteral("P1"),  0, 3000, false, 0),
+        member(QStringLiteral("Two"), 1, 2400, false, 1),
+        member(QStringLiteral("Me"),  2, 2000, true,  3),
+    };
+    vm.updateWorld(inQuestSnapshot(afterMore, 30.0F));   // tick 4
+    CHECK_EQ(vm.names()[3], QStringLiteral("Me"));
+    CHECK_EQ(vm.left().value(3), false);
+    CHECK_EQ(vm.history().last().damage.value(2), 300);   // 冻结行纹丝不动
+    CHECK_EQ(vm.history().last().damage.value(3), 1200);  // 2000 - 800
+    CHECK_EQ(vm.computeDps(3), 1600);       // 1200 × 4 / (4 - 1)
+
+    // ---- 越界写回归：4 人 → 全空 → 重现 ----
+    // 全空那一 tick 早退：history_/tick_ 被清空，names_/left_ 保留。
+    // 图已经重开，所以冻结行此时带不回 300（没有历史可冻结）——这正是
+    // 早退分支注释里写的意图，本 case 只 pin 住「不崩、行还在、名字不串」。
+    vm.updateWorld(inQuestSnapshot({}, 35.0F));
+    CHECK_EQ(vm.hasData(), false);
+    CHECK_EQ(vm.history().size(), 0);
+    CHECK_EQ(vm.rowCount(), 4);
+    CHECK_EQ(vm.names()[0], QStringLiteral("P1"));
+    CHECK_EQ(vm.names()[2], QStringLiteral("Three"));
+
+    // 重现（只有 local 回来）：必须在 size==0 的 firstHitTick_ 上既不崩
+    // 也不写错行 —— Three 仍是冻结行，Me 仍在第 3 行。
+    vm.updateWorld(inQuestSnapshot(dropped, 40.0F));     // tick 0
+    vm.updateWorld(inQuestSnapshot(dropped, 41.0F));     // tick 1: 基线再取
+    QVector<mhw::PartyMemberSnapshot> back = dropped;
+    back[0].damage = 3500; back[2].damage = 2400;
+    vm.updateWorld(inQuestSnapshot(back, 45.0F));        // tick 2
+
+    CHECK_EQ(vm.rowCount(), 4);
+    CHECK_EQ(vm.names()[2], QStringLiteral("Three"));
+    CHECK_EQ(vm.names()[3], QStringLiteral("Me"));
+    CHECK_EQ(vm.left().value(2), true);
+    CHECK_EQ(vm.left().value(3), false);
+    CHECK_EQ(vm.history().last().damage.value(2), 0);    // 无历史可冻结
+    CHECK_EQ(vm.history().last().damage.value(3), 800);  // 2400 - 1600
+    CHECK_EQ(vm.history().last().damage.value(0), 1000); // 3500 - 2500
+    CHECK_EQ(vm.computeDps(3), 3200);        // 800 × 4 / (2 - 1)
+    return true;
+}
+
 // Rise: the row filter. Pets and Unknown actors never enter the main damage
 // table, and "other members off" leaves only the local player.
 bool riseRowFilterAndOptionGate()
@@ -526,6 +633,180 @@ bool counterRollbackIsAbsorbedByTheReBaseline()
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// "Stay in camp and keep exploring" must not leak a row into the next quest.
+//
+// User-reported, low rate, self-healing: quest A ends, several hunters stay in
+// camp, the player quits exploration, and the next quest's panel shows five rows
+// — one hunter who is in no quest at all, damage frozen at 0.
+//
+// The trap is a fall-through. On the frame where the state reads as a lobby,
+// `questEnded_ && atLobby` clears names_ *and* resets questEnded_, then
+// execution reaches the recording path in the same tick even though inQuest is
+// false. That path re-seeds names_ from the camp roster, and the next quest's
+// only identity-clearing path needs the questEnded_ that was just cleared.
+// Returning to the hub repairs the panel only because the roster happens to be
+// empty there, which is why the two routes behaved differently.
+namespace {
+
+// A frame with an explicit quest state/id, so the sequence below can walk the
+// settlement -> camp -> next-hunt transition without assuming inQuestSnapshot's
+// fixed id.
+mhw::GameSnapshot worldFrame(int state, int questId, float elapsed)
+{
+    mhw::GameSnapshot snap;
+    snap.quest.id = questId;
+    snap.quest.state = state;
+    snap.quest.maxTimerSeconds = 1800.0F;
+    snap.quest.elapsedSeconds = elapsed;
+    return snap;
+}
+
+} // namespace
+
+bool campSurvivorsDoNotLeakIntoTheNextQuest()
+{
+    DamageViewModel vm;
+
+    const QVector<mhw::PartyMemberSnapshot> questAFour{
+        member(QStringLiteral("A27exe"), 0, 1000, true,  0),
+        member(QStringLiteral("Second"),  1, 1000, false, 1),
+        member(QStringLiteral("Third"),   2, 1000, false, 2),
+        member(QStringLiteral("Fourth"),  3, 1000, false, 3),
+    };
+    // Quest A runs, then settles: state 3 freezes the panel.
+    auto running = worldFrame(2, 4242, 10.0F);
+    running.party = questAFour;
+    vm.updateWorld(running);
+
+    auto scoring = worldFrame(2, 4242, 20.0F);
+    scoring.party = questAFour;
+    for (int i = 0; i < 4; ++i) {
+        auto m = questAFour[i];
+        m.damage = 2000;
+        scoring.party[i] = m;
+    }
+    vm.updateWorld(scoring);
+
+    auto settled = worldFrame(3, 4242, 25.0F);
+    settled.party = scoring.party;
+    vm.updateWorld(settled);
+    CHECK_EQ(vm.rowCount(), 4);
+
+    // "Keep exploring": the local hunter and one co-stayer stay behind while
+    // the quest struct reads as a lobby. Several frames, because the fall-
+    // through only has a chance to seed the roster on a tick that reaches the
+    // recording path — and the panel keeps polling.
+    const QVector<mhw::PartyMemberSnapshot> stayers{
+        member(QStringLiteral("A27exe"),   0, 100, true,  0),
+        member(QStringLiteral("CoCamper"), 1,  50, false, 1),
+    };
+    for (int t = 0; t < 4; ++t) {
+        auto camp = worldFrame(0, 4242, 30.0F + t);
+        camp.party = stayers;
+        vm.updateWorld(camp);
+    }
+
+    // The exploration zone transition empties the roster for a tick.
+    vm.updateWorld(lobbySnapshot());
+
+    // Next quest: a fresh four-hunter party, new quest id.
+    // Quest B's roster: the local hunter is in it again, but the co-stayer is
+    // not, and the other three are new names. The local appearing in both is
+    // the shape that leaves a camp row unmatched and inflates the layout.
+    const QVector<mhw::PartyMemberSnapshot> questBFour{
+        member(QStringLiteral("A27exe"), 0, 1000, true,  0),
+        member(QStringLiteral("Xavier"),  1, 1000, false, 1),
+        member(QStringLiteral("Yolanda"), 2, 1000, false, 2),
+        member(QStringLiteral("Zed"),     3, 1000, false, 3),
+    };
+    auto next = worldFrame(2, 4243, 5.0F);
+    next.party = questBFour;
+    vm.updateWorld(next);
+
+    // Exactly the four hunters of quest B. Row 1 is where CoCamper's leftover
+    // row lands in the bug, so this pins the whole layout, not just the count.
+    CHECK_EQ(vm.rowCount(), 4);
+    CHECK_EQ(vm.names()[0], QStringLiteral("A27exe"));
+    CHECK_EQ(vm.names()[1], QStringLiteral("Xavier"));
+    CHECK_EQ(vm.names()[2], QStringLiteral("Yolanda"));
+    CHECK_EQ(vm.names()[3], QStringLiteral("Zed"));
+    return true;
+}
+
+// The self-healing route: the same states, but the roster is already empty
+// when the state dips to lobby. hasData_ stays false, the recording path
+// returns early, and the camp roster is never relayed — which is exactly why
+// "back at the hub" repaired the panel while "keep exploring" did not.
+bool campWithAnEmptyRosterLeavesNothingBehind()
+{
+    DamageViewModel vm;
+
+    const QVector<mhw::PartyMemberSnapshot> questAFour{
+        member(QStringLiteral("A27exe"), 0, 1000, true,  0),
+        member(QStringLiteral("Second"),  1, 1000, false, 1),
+        member(QStringLiteral("Third"),   2, 1000, false, 2),
+        member(QStringLiteral("Fourth"),  3, 1000, false, 3),
+    };
+    auto running = worldFrame(2, 4242, 10.0F);
+    running.party = questAFour;
+    vm.updateWorld(running);
+
+    auto settled = worldFrame(3, 4242, 25.0F);
+    settled.party = questAFour;
+    vm.updateWorld(settled);
+    CHECK_EQ(vm.rowCount(), 4);
+
+    // Lobby with an empty roster — the hub route.
+    vm.updateWorld(lobbySnapshot());
+    CHECK_EQ(vm.rowCount(), 0);
+
+    const QVector<mhw::PartyMemberSnapshot> questBFour{
+        member(QStringLiteral("A27exe"), 0, 1000, true,  0),
+        member(QStringLiteral("Second"),  1, 1000, false, 1),
+        member(QStringLiteral("Xavier"),  2, 1000, false, 2),
+        member(QStringLiteral("Yolanda"), 3, 1000, false, 3),
+    };
+    auto next = worldFrame(2, 4243, 10.0F);
+    next.party = questBFour;
+    vm.updateWorld(next);
+    CHECK_EQ(vm.rowCount(), 4);
+    return true;
+}
+
+// Solo camp cannot reproduce: one row, and it carries the same name as the
+// next quest's local, so the permutation folds it back in.
+bool soloStayerCarriesNothingOver()
+{
+    DamageViewModel vm;
+
+    const QVector<mhw::PartyMemberSnapshot> solo{
+        member(QStringLiteral("A27exe"), 0, 1000, true, 0),
+    };
+    auto running = worldFrame(2, 4242, 10.0F);
+    running.party = solo;
+    vm.updateWorld(running);
+
+    auto settled = worldFrame(3, 4242, 25.0F);
+    settled.party = solo;
+    vm.updateWorld(settled);
+    CHECK_EQ(vm.rowCount(), 1);
+
+    auto camp = worldFrame(0, 4242, 30.0F);
+    camp.party = solo;
+    vm.updateWorld(camp);
+    vm.updateWorld(lobbySnapshot());
+
+    const QVector<mhw::PartyMemberSnapshot> nextSolo{
+        member(QStringLiteral("A27exe"), 0, 500, true, 0),
+    };
+    auto next = worldFrame(2, 4243, 10.0F);
+    next.party = nextSolo;
+    vm.updateWorld(next);
+    CHECK_EQ(vm.rowCount(), 1);
+    return true;
+}
+
 int main()
 {
     struct { const char *name; bool (*fn)(); } cases[] = {
@@ -534,10 +815,14 @@ int main()
         {"quest end freezes dps",                      questEndFreezesDps},
         {"first-hit baseline excludes pre-hit dmg",    firstHitBaselineExcludesPreHitDamage},
         {"party shrink keeps rows, never invites",     partyShrinkKeepsRowsAndNeverInvites},
+        {"middle drop-out keeps every row in place",   middleDropOutKeepsEveryRowInPlace},
         {"rise row filter and option gate",            riseRowFilterAndOptionGate},
         {"rise lifecycle clear keep and freeze",       riseLifecycleClearKeepAndFreeze},
         {"demo seed matches the pixel baseline",       demoSeedMatchesBaseline},
         {"counter rollback absorbed by re-baseline",   counterRollbackIsAbsorbedByTheReBaseline},
+        {"camp survivors do not leak into next quest", campSurvivorsDoNotLeakIntoTheNextQuest},
+        {"camp w/ empty roster leaves nothing",      campWithAnEmptyRosterLeavesNothingBehind},
+        {"solo stayer carries nothing over",         soloStayerCarriesNothingOver},
     };
 
     int failed = 0;
