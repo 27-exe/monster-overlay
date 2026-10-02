@@ -66,7 +66,7 @@ int main(int argc, char **argv)
     if (!g_log) { std::fprintf(stderr, "cannot open %s\n", argv[1]); return 2; }
     std::setvbuf(g_log, nullptr, _IOLBF, 0);
 
-    auto pidOpt = mhw::MhwReader::findGamePid();
+    auto pidOpt = mhw::MhwReader::findGamePid(QStringLiteral("monsterhunterworld.exe"));
     if (!pidOpt) {
         std::fprintf(stderr, "no MHW process\n");
         // Exit 1: "MHW not running" — ctest's SKIP_RETURN_CODE for
@@ -83,7 +83,7 @@ int main(int argc, char **argv)
         return 4;
     }
 
-    const std::uintptr_t imageBase = mem.imageBase(nullptr);
+    const std::uintptr_t imageBase = mem.imageBase(nullptr, QStringLiteral("monsterhunterworld.exe"));
     std::fprintf(g_log, "imageBase=0x%" PRIxPTR "\n\n", imageBase);
 
     // v0.8.4-r23: the sharpness dump below mirrors MhwReader::readSharpness,

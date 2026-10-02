@@ -31,8 +31,7 @@ public:
     // probe/doctor tools under tests/ — keep their original spelling
     // without any behavioural change. The single implementation of each
     // lives in core/process_memory.cpp (monster-core).
-    static std::optional<qint64> findGamePid(
-        const QString &exeName = QStringLiteral("monsterhunterworld.exe"))
+    static std::optional<qint64> findGamePid(const QString &exeName)
     {
         return mhw::findGamePid(exeName);
     }

@@ -16,7 +16,7 @@ int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
 
-    auto pidOpt = mhw::MhwReader::findGamePid();
+    auto pidOpt = mhw::MhwReader::findGamePid(QStringLiteral("monsterhunterworld.exe"));
     if (!pidOpt) { std::printf("no MHW\n"); return 1; }
     const qint64 pid = *pidOpt;
 
@@ -24,7 +24,7 @@ int main(int argc, char **argv)
     QString err;
     if (!mem.attach(pid, &err)) { std::printf("attach: %s\n", err.toStdString().c_str()); return 2; }
 
-    const std::uintptr_t imageBase = mem.imageBase(nullptr);
+    const std::uintptr_t imageBase = mem.imageBase(nullptr, QStringLiteral("monsterhunterworld.exe"));
     const std::uintptr_t equipAbs = imageBase + 0x050139A0ULL;
     const std::vector<std::uintptr_t> equipOff = {0x50ULL, 0x80ULL, 0x80ULL, 0x18ULL, 0x460ULL};
     const std::uintptr_t equipBase = mhw::MhwReader::followPointerChain(mem, equipAbs, equipOff, nullptr);

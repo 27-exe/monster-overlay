@@ -16,6 +16,8 @@
 #include <QFileInfo>
 #include <QIODevice>
 #include <QRegularExpression>
+#include <QStringConverter>
+#include <QTextStream>
 
 #include <algorithm>
 #include <cerrno>
@@ -165,6 +167,105 @@ QString selectLoadableMap(const QStringList &candidates)
             return candidate;
     }
     return candidates.isEmpty() ? QString() : candidates.first();
+}
+
+// AddressMap: the .map address-table parser. Its declaration has been in
+// core/process_memory.h since the header moved into monster-core, but these
+// five bodies were left in src/world/world_reader.cpp — so libmonster-core
+// had an UNDEFINED mhw::AddressMap::load() reference that only game-world
+// could satisfy, and libgame-rise could not link without game-world in the
+// link line. The file is a plain text parser (QFile / QTextStream /
+// QStringConverter); it names no game and no World type, so it belongs in
+// the kernel beside the declaration. Bodies below are moved VERBATIM: same
+// statements, same order, same comments (only this explanatory block and the
+// blank separators were added).
+
+bool AddressMap::load(const QString &path, QString *error)
+{
+    addresses_.clear();
+    offsets_.clear();
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (error)
+            *error = trMessage("reader.address_table_open_failed").arg(path, file.errorString());
+        return false;
+    }
+
+    QTextStream stream(&file);
+    stream.setEncoding(QStringConverter::Utf8);
+    qsizetype lineNumber = 0;
+    while (!stream.atEnd()) {
+        ++lineNumber;
+        QString line = stream.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith('#'))
+            continue;
+
+        const auto comment = line.indexOf('#');
+        if (comment >= 0)
+            line = line.left(comment).trimmed();
+
+        const QStringList tokens = line.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+        if (tokens.size() < 3)
+            continue;
+
+        const QString type = tokens[0];
+        const std::string key = tokens[1].toStdString();
+        if (type == QStringLiteral("Address")) {
+            bool ok = false;
+            const qulonglong value = tokens[2].toULongLong(&ok, 0);
+            if (!ok) {
+                if (error)
+                    *error = trMessage("reader.address_table_bad_address").arg(lineNumber);
+                return false;
+            }
+            addresses_[key] = static_cast<std::uintptr_t>(value);
+        } else if (type == QStringLiteral("Offset")) {
+            QString valueText = tokens.mid(2).join(QStringLiteral(" "));
+            std::vector<std::uintptr_t> values;
+            for (const QString &part : valueText.split(',', Qt::SkipEmptyParts)) {
+                bool ok = false;
+                const qulonglong value = part.trimmed().toULongLong(&ok, 0);
+                if (!ok) {
+                    if (error)
+                        *error = trMessage("reader.address_table_bad_chain").arg(lineNumber);
+                    return false;
+                }
+                values.push_back(static_cast<std::uintptr_t>(value));
+            }
+            offsets_[key] = std::move(values);
+        }
+    }
+
+    if (addresses_.empty()) {
+        if (error)
+            *error = trMessage("reader.address_table_no_address");
+        return false;
+    }
+    return true;
+}
+
+std::uintptr_t AddressMap::address(const QString &key) const
+{
+    const auto it = addresses_.find(key.toStdString());
+    return it == addresses_.end() ? 0 : it->second;
+}
+
+const std::vector<std::uintptr_t> &AddressMap::offsets(const QString &key) const
+{
+    static const std::vector<std::uintptr_t> empty;
+    const auto it = offsets_.find(key.toStdString());
+    return it == offsets_.end() ? empty : it->second;
+}
+
+bool AddressMap::hasAddress(const QString &key) const
+{
+    return addresses_.contains(key.toStdString());
+}
+
+bool AddressMap::hasOffsets(const QString &key) const
+{
+    return offsets_.contains(key.toStdString());
 }
 
 

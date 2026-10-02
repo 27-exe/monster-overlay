@@ -178,7 +178,7 @@ int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
 
-    const auto pidOpt = mhw::MhwReader::findGamePid();
+    const auto pidOpt = mhw::MhwReader::findGamePid(QStringLiteral("monsterhunterworld.exe"));
     if (!pidOpt) {
         std::printf("no MHW process found\n");
         return 1;
@@ -193,7 +193,7 @@ int main(int argc, char *argv[])
         return 2;
     }
 
-    const std::uintptr_t imageBase = mem.imageBase(nullptr);
+    const std::uintptr_t imageBase = mem.imageBase(nullptr, QStringLiteral("monsterhunterworld.exe"));
     std::printf("imageBase=0x%" PRIxPTR "\n", imageBase);
 
     // Walk the MonsterList the same way MhwReader::readMonsters does.

@@ -36,7 +36,7 @@ int main(int argc, char **argv)
     if (!g_log) { std::fprintf(stderr, "open %s failed\n", path); return 1; }
     std::setvbuf(g_log, nullptr, _IOLBF, 0);
 
-    auto pidOpt = mhw::MhwReader::findGamePid();
+    auto pidOpt = mhw::MhwReader::findGamePid(QStringLiteral("monsterhunterworld.exe"));
     if (!pidOpt) { std::fprintf(g_log, "no MHW\n"); return 1; }
     const qint64 pid = *pidOpt;
     std::fprintf(g_log, "pid=%lld\n", (long long)pid);
@@ -45,7 +45,7 @@ int main(int argc, char **argv)
     QString err;
     if (!mem.attach(pid, &err)) { std::fprintf(g_log, "attach: %s\n", err.toStdString().c_str()); return 2; }
 
-    const std::uintptr_t imageBase = mem.imageBase(nullptr);
+    const std::uintptr_t imageBase = mem.imageBase(nullptr, QStringLiteral("monsterhunterworld.exe"));
     std::fprintf(g_log, "imageBase=0x%" PRIxPTR "\n", imageBase);
 
     int tick = 0;

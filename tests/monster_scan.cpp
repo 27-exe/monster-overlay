@@ -45,7 +45,7 @@ int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
 
-    const auto pidOpt = mhw::MhwReader::findGamePid();
+    const auto pidOpt = mhw::MhwReader::findGamePid(QStringLiteral("monsterhunterworld.exe"));
     if (!pidOpt) {
         std::cout << "no MHW process found\n";
         return 1;

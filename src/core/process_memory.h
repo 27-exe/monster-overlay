@@ -60,8 +60,14 @@ public:
     void detach();
     [[nodiscard]] bool attached() const;
     [[nodiscard]] qint64 pid() const;
-    [[nodiscard]] std::uintptr_t imageBase(QString *error = nullptr,
-                                           const QString &exeName = QStringLiteral("monsterhunterworld.exe")) const;
+    // exeName is required, not defaulted. A default here would be a World
+    // literal inside monster-core, and the failure it invites is quiet: a new
+    // reader written by habit (`mem.imageBase(&err)`) would scan /proc for
+    // monsterhunterworld.exe, find nothing, and report "no game running"
+    // instead of "you forgot to name the game". No production call site
+    // omits it; the probe tests pass it explicitly.
+    [[nodiscard]] std::uintptr_t imageBase(QString *error,
+                                           const QString &exeName) const;
     bool readBytes(std::uintptr_t address, void *destination, std::size_t size, QString *error = nullptr) const;
 
     template <typename T>
@@ -113,10 +119,12 @@ struct HpCluster { std::uintptr_t hpAddr = 0; float maxHealth = 0.0F; };
 // mhr_reader.cpp depend on symbols defined in mhw-reader — a library
 // dependency turned upside down.
 //
-// findGamePid keeps its default exe name so the World call sites that omit
-// the argument keep their original spelling.
-std::optional<qint64> findGamePid(
-    const QString &exeName = QStringLiteral("monsterhunterworld.exe"));
+// exeName is required for the same reason ProcessMemory::imageBase's is: a
+// World default here would let a new reader look for the wrong game and report
+// a misleading "not running". Every call site names the game it means —
+// world_reader.cpp passes its own exeName_, mhr_reader.cpp passes
+// "monsterhunterrise.exe", and the probe tests say which game they probe.
+std::optional<qint64> findGamePid(const QString &exeName);
 // Return the first candidate whose AddressMap parses. If none parses,
 // retain the first path so the caller can report an actionable error.
 [[nodiscard]] QString selectLoadableMap(const QStringList &candidates);

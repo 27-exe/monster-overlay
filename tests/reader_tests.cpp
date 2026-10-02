@@ -186,7 +186,7 @@ Address OTHER 0xCAFE # inline comment
               {0x20ULL}, &error) == 0,
           "ReadPtr chain rejects offset-address overflow before reading memory");
 
-    check(ownMemory.imageBase(nullptr) == 0, "non-MHW fixture has no MHW image base");
+    check(ownMemory.imageBase(nullptr, QStringLiteral("monsterhunterworld.exe")) == 0, "non-MHW fixture has no MHW image base");
 
     // Schema must include severable parts. Without them, multi-player quests
     // show 100% HP on severable parts (tails, horns, charges) because the
