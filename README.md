@@ -20,8 +20,11 @@ process from the outside — no DLL injection, no game files touched.
 
 - x86_64 Linux, Wayland session with a layer-shell compositor (KDE Plasma,
   Hyprland, niri, sway, …)
-- Qt 6.11 or newer (Widgets, Svg) and `layer-shell-qt` —
-  `sudo ./install-deps.sh` installs both on Arch
+- Qt 6.11 or newer (Widgets, Svg) **including its private QtGui headers** —
+  most distributions ship those in a separate `-private-` package, see
+  [Qt 6.11 outside Arch](#qt-611-outside-arch) below
+- `layer-shell-qt`
+- `sudo ./install-deps.sh` installs all of it on Arch, once
 - Steam, with **GE-Proton 10-34** recommended (other Proton 9+ builds work)
 - No mods and no special permissions. World needs nothing else at all;
   Rise damage tracking additionally uses the bundled REFramework Lua
@@ -116,6 +119,38 @@ Requires CMake ≥ 3.25, a C++20 compiler, Qt 6.11+ and `layer-shell-qt`.
 The build path is only documented and exercised on **Arch Linux**; other
 distros need to source the Qt 6 and `LayerShellQt` packages themselves.
 Prebuilt tarballs are the supported route elsewhere — see §Install.
+
+### Qt 6.11 outside Arch
+
+Two things to know before you compile on anything other than Arch.
+
+**Qt 6.11 is rare outside rolling distros.** The Ubuntu 24.04 and Debian 13
+LTS releases ship Qt 6.4.2 and 6.8.2; Ubuntu 26.04 and Fedora 44 ship 6.10.x.
+Only rolling releases (Fedora 43+/Rawhide, openSUSE Tumbleweed) track 6.11.
+
+**The private QtGui headers are a separate package.** `screen_query.cpp`
+reads the screen's real pixel size through `QPlatformScreen::geometry()`,
+which needs `qpa/qplatformscreen.h` — Qt does not guarantee that API's
+stability, so distributions move it out of the main devel package. Install
+that package explicitly:
+
+| Distribution | Private QtGui headers | `layer-shell-qt` |
+|---|---|---|
+| Arch | `qt6-base` (included) | `layer-shell-qt` |
+| Debian / Ubuntu | `qt6-base-private-dev` | `layer-shell-qt6` |
+| Fedora | `qt6-qtbase-private-devel` | `layer-shell-qt6` |
+| openSUSE | `qt6-base-private-devel` | `layer-shell-qt6` |
+
+Two naming traps on the Qt5-era names:
+
+- Ubuntu 24.04's `layer-shell-qt` is the **Qt 5** build (5.27.11, against
+  `liblayershellqtinterface5`) — it will not satisfy this project, which
+  links `libLayerShellQtInterface.so.6`. On Ubuntu 24.04 the Qt 6 package
+  is `layer-shell-qt6`; on Fedora/openSUSE the Qt 6 package is likewise
+  `layer-shell-qt6`, while `layer-shell-qt` stays the Qt 5 one.
+- The prebuilt binaries additionally link `libQt6Svg.so.6` and carry
+  `Qt_6.11` versioned symbols, so running them needs Qt ≥ 6.11 libraries no
+  matter which release you are on.
 
 ## License
 

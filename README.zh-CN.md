@@ -19,8 +19,10 @@
 
 - x86_64 Linux,Wayland 会话 + 支持 layer-shell 的合成器(KDE Plasma、
   Hyprland、niri、sway 等)
-- Qt 6.11 或更高(Widgets、Svg)与 `layer-shell-qt` —— Arch 上执行
-  `sudo ./install-deps.sh` 一次装好
+- Qt 6.11 或更高(Widgets、Svg),**并且要带上私有 QtGui 头** —— 大多数发行版
+  把私有头单独放在一个 `-private-` 包里,见下文[非 Arch 的 Qt 6.11](#非-arch-的-qt-611)
+- `layer-shell-qt`
+- Arch 上执行一次 `sudo ./install-deps.sh`,以上全部装好
 - Steam,推荐 **GE-Proton 10-34**(其他 Proton 9+ 也可)
 - 不需要 mod,默认不需要任何特殊权限。世界范畴零额外依赖;崛起的伤害
   统计另需随包发布的 REFramework Lua producer,由控制台代为安装
@@ -106,6 +108,36 @@ ctest --test-dir build          # 17 个套件中 7 个需要游戏在跑,会跳
 需要 CMake ≥ 3.25、C++20 编译器、Qt 6.11+ 与 `layer-shell-qt`。
 源码编译路径**仅在 Arch Linux 上验证过**;其他发行版需自行准备
 Qt 6 与 `LayerShellQt` 依赖。建议直接用上方预编译包(见「安装」)。
+
+### 非 Arch 的 Qt 6.11
+
+在 Arch 之外编译之前,有两件事要先知道。
+
+**出了滚动发行版,Qt 6.11 基本拿不到。**Ubuntu 24.04 与 Debian 13 分别是
+Qt 6.4.2 和 6.8.2;Ubuntu 26.04 与 Fedora 44 是 6.10.x。只有滚动发行版
+(Fedora 43+ / Rawhide、openSUSE Tumbleweed)才跟着 6.11 走。
+
+**私有 QtGui 头是一个独立的包。**`screen_query.cpp` 通过
+`QPlatformScreen::geometry()` 读取屏幕的真实像素尺寸,需要
+`qpa/qplatformscreen.h` —— Qt 不保证这个 API 的稳定性,所以发行版把它从
+主 devel 包里单独拆了出来。要显式装这个包:
+
+| 发行版 | 私有 QtGui 头 | `layer-shell-qt` |
+|---|---|---|
+| Arch | `qt6-base`(已包含) | `layer-shell-qt` |
+| Debian / Ubuntu | `qt6-base-private-dev` | `layer-shell-qt6` |
+| Fedora | `qt6-qtbase-private-devel` | `layer-shell-qt6` |
+| openSUSE | `qt6-base-private-devel` | `layer-shell-qt6` |
+
+两个 Qt5 时代的命名陷阱:
+
+- Ubuntu 24.04 的 `layer-shell-qt` 是 **Qt 5** 版本(5.27.11,依赖
+  `liblayershellqtinterface5`),满足不了本项目 —— 本项目链接的是
+  `libLayerShellQtInterface.so.6`。Ubuntu 24.04 上 Qt 6 的包叫
+  `layer-shell-qt6`;Fedora / openSUSE 的 Qt 6 包同样叫 `layer-shell-qt6`,
+  `layer-shell-qt` 留在 Qt 5 那边。
+- 预编译包还会额外链接 `libQt6Svg.so.6`,并带 `Qt_6.11` 版本化符号 ——
+  所以无论你在哪个发行版上,**运行**预编译包都需要 ≥ 6.11 的 Qt 库。
 
 ## 许可
 

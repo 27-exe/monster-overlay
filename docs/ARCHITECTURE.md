@@ -174,7 +174,7 @@ reader_factory.cpp                mhw-ui          ← 同为 exe 直接编译的
 `mhw-ui PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg LayerShellQt::Interface monster-core game-rise game-world`（`:257-265`）。
 
 `reader_factory.cpp` 与 `mhw-ui` 之间没有直接依赖：前者是 exe target 直接编译的
-TU（`CMakeLists.txt:310`），后者是静态库，二者的编译域不相交。实测同一源文件
+TU（`CMakeLists.txt:368`），后者是静态库，二者的编译域不相交。实测同一源文件
 里不存在对方的 include 或符号引用：
 
 ```
@@ -259,10 +259,29 @@ include `ui/`（复跑：`grep -rn 'include "ui/' src/core src/rise src/world sr
 **不许放**：reader 的具体实现。`nm` 断言：`libmhw-ui.a` 无
 `MhwReader|MhrReader|AddressMap|readMonsters|readParty|followPointerChain` 符号。
 
+**这个门禁查不到什么。** `assert_lib_purity.sh` 查的是「某库**导出**的符号里有没有
+游戏命名」和「world 与 rise 有没有互相引用」。它**不查**「core 的归档里有没有
+**未定义**符号指向 game 库」——那一类反向依赖恰好是最难察觉的。
+
+实测抓到过一次：`AddressMap` 的 class 声明在 `src/core/process_memory.h`，
+但它的 5 个成员函数实现在 `src/world/world_reader.cpp`；而
+`core/process_memory.cpp` 的 `selectLoadableMap()` 又调用 `AddressMap::load()`。
+于是 `libmonster-core.a` 里有指向 game-world 的 `U` 符号，
+`libgame-rise.a` 也得跟 game-world 借这 5 个符号——**六项断言全绿**。
+5 个实现现已在 `src/core/process_memory.cpp`（纯搬迁，函数体 md5 不变）。
+
+补一条断言只需一行：
+
+```bash
+nm -C --undefined-only build/libmonster-core.a | grep -cE 'AddressMap|MhwReader|MhrReader'
+# 期望 0
+```
+
 ### 2.5 qrc **不下沉**
 
 `src/resources/resources.qrc` 与 `assets/icons.qrc` 不在任何 `add_library` 里，
-只出现在 exe target 的源列表（首次例 `:318-319`）。加新 exe target 时**必须自己列这两个**。
+只出现在 exe target 的源列表（首次例 `:373-374`，全文 26 处）。
+加新 exe target 时**必须自己列这两个**。
 `src/ui/viewmodel/panel_mask_codec.h` 同理——它是 header-only，被 control_panel 的 target
 和它的测试 target 各自列进源列表。
 
@@ -354,7 +373,8 @@ core 只回答「是不是 -1」（`isUnknownZone`）。
 `staminaDisplayScale(GameId)`。
 
 **这份表刻意很窄**。UI 里原有 `game == GameId::X` 比较，实测剩 **27 处**
-`==`/`!=` 加 12 个 `case` 标签（§6.1 给分布），其中大部分是**合法的游戏专属视图**
+`==`/`!=` 加 **12 个 `case` 标签**（§6.1 给分布；case 数的复跑命令与口径坑见附录），
+其中大部分是**合法的游戏专属视图**
 ——Rise 独有的 REFramework 卡、World 独有的血量条逻辑。这些**留在原处**：
 只有一款游戏有的功能，写成功能检查才是诚实形式，改成能力查询只是把同一个事实
 套一层间接。进这张表的只有两类：
@@ -448,18 +468,36 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
 
 ---
 
-## 5. 六个 per-game seam（加新游戏报 `-Wswitch`）
+## 5. per-game seam（加新游戏报 `-Wswitch`）
 
-给 `GameId` 加第三个枚举值时，下列 6 处漏一个 → `-Wswitch` **警告**。
+给 `GameId` 加第三个枚举值时，下列 8 处漏一个 → `-Wswitch` **警告**。
+
+| 范围 | `case GameId::` 标签 | 所在文件 |
+|---|---|---|
+| `src/` | 14 | 7（下面表里前 7 行） |
+| `tests/` | 4 | 2（`monster_doctor.cpp`、`zone_label_tests.cpp`） |
+| 合计 | **18** | **9** |
+
+`tests/zone_label_tests.cpp` 也在内是有意的：它镜像 `zoneLabel()` 的 switch，
+一份没有穷举性保护的测试会跟着生产代码一起悄悄放过第三个游戏。
+
+核对命令（两种口径都要能复现）：
+
+```bash
+grep -rnE 'case (mhw::)?GameId' src   --include=*.cpp --include=*.h | wc -l   # 14
+grep -rnE 'case (mhw::)?GameId' tests --include=*.cpp --include=*.h | wc -l   # 4
+```
 
 | 文件 | seam | 形态 |
 |---|---|---|
-| `src/core/game_tables.cpp:35` | `tableFor()` 注册表槽位 | `switch` 无 default，**switch 后有 `return world` 兜底** |
-| `src/core/game_profile.cpp:11` | `gameIdToString()` wire 名 | `switch` 无 default，**switch 后有 `return "world"` 兜底** |
-| `src/reader_descriptors.cpp:28` | `descriptorFor()` map 描述符 | `switch` 无 default，**switch 后有 `return kWorld` 兜底** |
-| `src/reader_factory.cpp:34` | `createReader()` 造 reader | `switch` **有** `return nullptr` 兜底 |
-| `src/core/game_capabilities.cpp:61` | `gameTraits()` 能力表 | `switch` 无 default，**`__builtin_unreachable()`** |
-| `src/ui/panel_player.cpp:162` | `zoneLabel()` 区域词条派发 | `switch` **无** default，落到函数末尾的「据点 N / 区域 N」兜底 |
+| `src/core/game_tables.cpp:37` | `tableFor()` 注册表槽位 | `switch` 无 default，**switch 后 `__builtin_unreachable()`** |
+| `src/core/game_profile.cpp:15` | `gameIdToString()` wire 名 | `switch` 无 default，**switch 后 `__builtin_unreachable()`** |
+| `src/reader_descriptors.cpp:29` | `descriptorFor()` map 描述符 | `switch` 无 default，**switch 后有 `return kWorld` 兜底** |
+| `src/reader_factory.cpp:41` | `createReader()` 造 reader | `switch` **有** `qWarning` + `return nullptr` 兜底 |
+| `src/core/game_capabilities.cpp:62` | `gameTraits()` 能力表 | `switch` 无 default，**`__builtin_unreachable()`** |
+| `src/ui/panel_player.cpp:163` | `zoneLabel()` 区域词条派发 | `switch` **无** default，落到函数末尾的「据点 N / 区域 N」兜底 |
+| `src/ui/icon.cpp:30` | `monsterIconPrefix()` 图标名前缀 | `switch` 无 default，**`__builtin_unreachable()`** |
+| `tests/monster_doctor.cpp:396` | `steamAppIdFor()` appId 表 | `switch` 无 default，**`__builtin_unreachable()`** |
 
 **这是警告，不是编译错误。** 树中无 `-Werror`（四个库与 exe target 都是
 `-Wall -Wextra -Wpedantic`），加第三款游戏默认能构建，只在构建日志里宣布自己。
@@ -470,17 +508,38 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
 无 default 的 switch + `__builtin_unreachable()`。这个失效模式写在
 `game_capabilities.cpp:37-58` 的注释里。
 
-四处（表里标注的）「switch 后兜底」都是**故意的**：GCC 对 switch-return-无default-非void
-函数会额外警告 control reaches end；这些兜底让那条警告消失，同时它们对合法枚举不可达
-（只有越界 cast 才命中，那是调用方的 UB）。
+表中四处「switch 后兜底 / unreachable」是**故意的**，且形状并不统一：`game_tables`、
+`game_profile`、`game_capabilities` 三处已改为 `__builtin_unreachable()`
+（`game_tables.cpp:49`、`game_profile.cpp:26`、`game_capabilities.cpp:72`），
+理由是「兜底 return 会把没接线的 GameId 静默答成 World」；`reader_descriptors.cpp:34`
+仍保留 `return kWorld` 兜底，`reader_factory.cpp:66` 保留 `qWarning` +
+`return nullptr`（否则调用方拿到无法归因的空指针）。**这几行的具体写法随代码漂移，
+复核时以 `grep -n 'unreachable\|return kWorld\|return nullptr\|qWarning'` 为准。**
 
+给第三方贡献者的要点是：**这 8 处是编译器会提醒你的全部，不是你需要改的全部。**
 ---
 
 ## 6. 已知边界
 
 ### 6.1 仍按 GameId 分支的地方，以及为什么留着
 
-`src/` 下 **27 处** `==`/`!=` `GameId` 比较 + **12 个 `case` 标签**（注释已排除）：
+先给三套并存的命名画一张地图——它们是三个不同层级的名字，不是互相替代的选择：
+
+| 层级 | 名字 | 位置 | 是什么 |
+|---|---|---|---|
+| core 契约 | `ZoneRef{GameId, int}` | `src/core/zone_id.h:54` | **reader 到 UI 的唯一区域载体**。`GameId` + 原始 int id，不含词条；按值穿过库边界 |
+| 游戏侧词汇表 | `WorldZone` | `src/world/world_types.h:25` | World 的枚举词条，**由 reader 的原始 id 转来**，只在 World/UI 里出现 |
+| 游戏侧词汇表 | `RiseZone` | `src/rise/rise_zones.h:64` | Rise 的枚举词条，同上（Rise 侧另有 `raw - 700` 一类归一化，见 §10） |
+| reader 实现 | `MhwReader` | `src/world/world_reader.h:17` | World 的 reader（`IGameReader` 实现），名字里的 `Mhw` 是历史拼写，**不是类名语义** |
+| reader 实现 | `MhrReader` | `src/rise/mhr_reader.h:546` | Rise 的 reader |
+
+包含关系是 `ZoneRef ⊃ (WorldZone | RiseZone)`：`ZoneRef` 进 UI，
+`zoneLabel()`（`src/ui/panel_player.cpp:124`，switch 在 `:162`）负责按
+`z.game` 选一本词汇表，查不到就落到「据点 N / 区域 N」。
+`MhwReader` / `MhrReader` 是 reader 侧的旧命名，与新库名 `game-world` / `game-rise`
+**不对齐也无需对齐**——它们是实现类，不是库标识。
+
+`src/` 下 **27 处** `==`/`!=` `GameId` 比较 + **12 个 `case` 标签**（注释已排除；case 数的复跑命令与口径坑见附录）：
 
 - `src/ui/control_panel.cpp` 10 处：多为「第 3 个面板页只在 World 有」这类
   每游戏视图布局，控制台本身就是按游戏列开关的。合法。
@@ -494,7 +553,17 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
   `src/ui/viewmodel/monster_view_model.cpp` 1 处。全部是「这款游戏有这个功能」的直接表达。
 
 复跑：`grep -rn 'GameId::' src --include=*.cpp --include=*.h | grep -E '(==|!=)' | grep -v '://'`
-逐文件 `sort | uniq -c`，加 `grep -c 'case GameId'` 得到 case 数。
+逐文件 `sort | uniq -c`，得到上面每个文件的处数。
+case 数**不能**用 `grep -rn 'case GameId'`——`src/ui/panel_player.cpp:163,169`
+写的是限定名 `case mhw::GameId::Rise`，那个 grep 数不到这两行，会少报 2 个。
+用 `grep -rnE 'case (mhw::)?GameId' src --include=*.cpp --include=*.h`。
+
+**这两个命令都只是横向对照，不是门禁。** 编译器只为 §5 列的 8 个 switch 报
+`-Wswitch`；`==`、三元和硬编码表它一个都不报。**逐处对照 §5 与 §7.1 的表，比读
+build log 可靠。**
+
+（`case` 数是 `switch` 数的两倍不是 bug：每个 switch 对应两个 `case` ——
+`World` 和 `Rise`。全树 9 个 switch / 18 个 case，其中 8 个 switch 在 `src/`。）
 
 **结论口径**：这不是「已完全解耦」，是「数据与共性行为进了表，功能判断留在原地」。
 
@@ -513,6 +582,21 @@ World 侧的 `src/core/process_memory.h` 四个助手经 `src/world/world_reader
 `libgame-rise.a` undefined 中无 `mhw::(Mhw|World|world|zoneName|isHuntingZone)`。
 `libmonster-core.a` 对两边的 undefined 引用都是 0。这条由 `lib-purity-gate` 每跑
 `ctest` 都验一次，不是一次性的历史结论。
+
+**口径要说准：这条「零循环」的实测范围是三个游戏库之间，不含 `ui/` 内部。**
+`ui/` 自己有一处 header 级双向引用：
+
+- `src/ui/viewmodel/panel_mask_codec.h:44` 与
+  `src/ui/viewmodel/console_text_helpers.cpp:11` 都 include `ui/panel_sections.h`
+  （在 `src/ui/` 根）；
+- 而 `src/ui/*.cpp` 又大量反向 include `ui/viewmodel/*.h`——只 `control_panel.cpp`
+  一个文件就 include 4 个（`:19-22`：`console_text_helpers.h`、
+  `overlay_process_controller.h`、`console_layout_store.h`、`panel_mask_codec.h`）。
+
+这不是编译问题（都是 header，不是链接环），也没有造成事实上的循环：被 include 的
+`panel_sections.h` 只依赖 `core/string_table.h`，是**无状态常量表**（section 位掩码 +
+`sectionNames()` / `displayName()`），不 include 任何 `viewmodel/` 头，所以环在
+预处理层面就是断的。**「库间循环依赖为零」这句话不要外推成「整个树没有循环 include」。**
 
 ### 6.4 进程内 static PID 缓存被两个 reader 实例共享
 
@@ -557,23 +641,28 @@ World 侧的 `src/core/process_memory.h` 四个助手经 `src/world/world_reader
 总成本分四类：**必改**（不加就错）、**新写**（游戏的代码）、**按需**（有对应功能才做）、
 **验证**。
 
-### 7.1 必改：8 处
+§5 的 8 个 seam 全部是 `switch`，编译器会逐个报 `-Wswitch`；`==`、三元和
+硬编码表它一个都不报。
+
+### 7.1 必改：9 处
 
 | # | 文件 | 改什么 |
 |---|---|---|
 | 1 | `src/monster/monster_types.h:18` | `enum class GameId { World, Rise }` → 加枚举值。它是契约纸，不是 core 库的源列表文件 |
-| 2 | `src/core/game_profile.cpp:11` | `gameIdToString()` 加 `case`；`gameIdFromString()`（`:27`）加一条 if（不加则 `--game wild` 解析不出） |
+| 2 | `src/core/game_profile.cpp:14`（switch 在 11） | `gameIdToString()` 加 `case`；`gameIdFromString()`（`:29`）加一条 if（不加则 `--game wild` 解析不出） |
 | 3 | `src/reader_descriptors.cpp:21` | 加一个 `constexpr GameReaderDescriptor`（map 文件名 + 选择策略）+ `descriptorFor()` 加 `case` |
-| 4 | `src/reader_factory.cpp:34` | `createReader()` 加 `case`：`std::make_unique<WildReader>(...)`，必要时加候选路径构造 |
+| 4 | `src/reader_factory.cpp:40`（switch 在 40） | `createReader()` 加 `case`：`std::make_unique<WildReader>(...)`，必要时加候选路径构造 |
 | 5 | `src/core/game_capabilities.cpp:26` | `kTraits[]` 加一行（显示名 key + ASCII + normalised 标志 + stamina 除数），并把 `:50` 的 `static_assert(… == 2)` 改成 3 |
-| 6 | `src/core/game_tables.cpp:33` | `tableFor()` 加一个 `static Tables wild;` 与对应 `case`（漏加则新游戏静默共用 World 的 crown / capture 数据） |
-| 7 | `CMakeLists.txt:89` 附近 | 仿 `add_library(game-rise STATIC …)` 写 `add_library(game-wild STATIC …)` 源列表，并在其后照 `game-world` 的三行（`target_include_directories` / `target_link_libraries` / `target_compile_options`，`:175-178`）补同样三行；再把 `monster-overlay` 的产物链接（`:322-332`）与 `mhw-ui` 的 `target_link_libraries`（`:257-266`）各加一个 `game-wild` |
+| 6 | `src/core/game_tables.cpp:36`（switch 在 36） | `tableFor()` 加一个 `static Tables wild;` 与对应 `case`（漏加则新游戏静默共用 World 的 crown / capture 数据） |
+| 7 | `CMakeLists.txt:89` 附近 | 仿 `add_library(game-rise STATIC …)` 写 `add_library(game-wild STATIC …)` 源列表，并在其后照 `game-world` 的三行（`target_include_directories` / `target_link_libraries` / `target_compile_options`，`:175-177`）补同样三行；再把 `monster-overlay` 的产物链接（`:377` 起的块）与 `mhw-ui` 的 `target_link_libraries`（`:257-266`）各加一个 `game-wild` |
 | 8 | 该游戏自己的 `registerWildTables()` | 见 §7.3 静态数据表一行；`part_schemas.cpp` 是它的位置（`src/rise/part_schemas.cpp` 是模板） |
+| 9 | `tests/monster_doctor.cpp` 的 `steamAppIdFor()` | 加 `case`，否则 doctor 报告里根本没有这个游戏——用户报「读不到数据」时，最先跑的就是它 |
 
 注意 #3 的 `switch` 后**有兜底返回**，所以漏加时你只会看到 `-Wswitch` 警告，
-游戏拿 World 的 map 文件名——不是编译错。#4 漏加则 `createReader` 返回
-`nullptr`，`main.cpp:392` 拿到空指针，下一行 `reader->poll()` 段错误。**所以顺序是：
-先加枚举 → 立刻按 §5 六处 seam 的 `-Wswitch` 警告逐个补。**
+游戏拿 World 的 map 文件名——不是编译错。#4 漏加则 `createReader` 打到
+`:66` 的 `qWarning` + `return nullptr`，`main.cpp:392` 拿到空指针，
+下一行 `reader->poll()` 段错误。**所以顺序是：先加枚举 → 立刻按 §5 八处 seam 的
+`-Wswitch` 警告逐个补 → 再逐行走完 §7.4 的 grep 对照。**
 
 ### 7.2 新写：`src/wild/`
 
@@ -615,8 +704,16 @@ public:
 ### 7.4 验证清单
 
 ```bash
-# 1. 全量构建，把 -Wswitch 警告逐条看完——数量本身不重要，漏没漏 seam 才重要
+# 1. 全量构建，八处 seam 的 -Wswitch 逐条看完——数量本身不重要（8 个），
+#    漏没漏 seam 才重要。**但这 6 条全绿不等于改完了**：第 1b 条覆盖
+#    编译器不报的那部分。
 ninja -C build 2>&1 | grep -n 'Wswitch'
+
+# 1b. ← 真正的校验：逐个过一遍加游戏要动的每一处。这是加 Wilds 唯一值得
+#     逐行执行的一条。预期 27 处（src，注释已排除）+ 14 个 case 标签（src 口径），
+#     逐处问「这一行为 Wilds 改了吗」。比读 build log 可靠得多。
+grep -rn 'GameId::' src tests --include=*.cpp --include=*.h \
+  | grep -E '(==|!=)' | grep -v '://'
 
 # 2. 门禁（三条结构性 + 三条 i18n）
 ctest --test-dir build -R "lib-purity-gate|zero-reference-gate|diagnostic-targets-build"
@@ -636,19 +733,22 @@ nm --defined-only build/libmonster-core.a | grep ' T \| W \| D \| B \| R ' \
 python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 
 # 5. §2.5：新 exe / 测试 target 自己列两个 qrc
-#    （src/resources/resources.qrc 与 assets/icons.qrc，例见 CMakeLists.txt:318-319）
+#    （src/resources/resources.qrc 与 assets/icons.qrc，
+#     首次例 CMakeLists.txt:373-374，全文 26 处）
 ```
+
+**第 1 条的 `-Wswitch` 与第 1b 条的 grep 是互补关系，不是替代关系：**
+前者只覆盖 8 个 switch，后者覆盖 27 处 `==`/`!=` + 14 个 case（src 口径）。
 
 ### 7.5 手册里**不**保证什么
 
 - 不保证「编译失败会拦住你」。§5 已说明：只有 `-Wswitch` 警告，树中无 `-Werror`。
 - 不保证 `game_capabilities.cpp` 的 `static_assert` 能拦住遗漏——它比较行数与字面量 2，
   §5 记录了这是怎么失效的（加枚举值不改变行数，断言永远通过）。
-- 不保证 `game_tables.cpp` 的 `tableFor()` 静默兜底会被发现：它 switch 后 `return world`，
-  §5 表格里标了这一点，新游戏会静默共用 World 的表，只能靠 §7.4 第 3 条和实机观察发现。
-- 不保证 UI 侧自动正确：control_panel 的每游戏列（`control_panel.cpp` 10 处）、
-  图标前缀（`icon.cpp:228`）、词条派发（`panel_player.cpp:162`）都是**手写分支**，
-  新游戏要到那里逐处看过。
+- 不保证 UI 侧自动正确：`control_panel.cpp` 的每游戏列与游戏切换按钮（约 19 处
+  `GameId` 站点）、`QSettings` 写侧的 `isRise ? Rise : World` 三目，都是**手写分支**，
+  编译器一个也不报；新游戏要到那里逐处看过。§5 表里那 8 个 seam 现在都有
+  `-Wswitch` 兜底，这些没有。
 - 不保证双游戏同跑时的行为：`detectGame()` 的优先级是 `defaultGameExecutables()` 的
   **列表顺序**（World 优先），新游戏追加在末尾即最低优先。
 
@@ -689,6 +789,24 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 代价：`game` 到**文件名前缀**的三元留在 `icon.cpp:228`
 （`Rise_` / `World_`），加游戏要在这里加第三个前缀，并且把 `Wild_NN.png` 放进 qrc。
 这不是 switch，所以 **没有 `-Wswitch` 保护**——这是本篇手册在 §7.3 里单独列它的原因。
+
+### 8.2-bis 测试覆盖的已知缺口：`zoneLabel()` 零测试
+
+八个 per-game seam（§5）里，`src/ui/panel_player.cpp:163` 的 `zoneLabel()` 是
+**唯一没有任何测试覆盖的一个**。
+
+- 定义在 `src/ui/panel_player.cpp:124`，switch 在 `:162`；
+- 生产调用点只有 `:853`；
+- `tests/rise_probe.cpp:123-126` 有一段注释提到它
+  （「Mirrors what the overlay shows (panel_player.cpp's zoneLabel)」），
+  并因此写了一个 `riseZoneLabelForProbe()`——但那是给 probe 自己用的函数，
+  **不是 `zoneLabel()` 的测试**。`zoneLabel()` 本体没有测试。
+  `ui/` 下的测试其实存在（20 个测试文件 include `ui/` 头，其中
+  `damage-view-model-tests`、`rise-reframework-status-tests` 与
+  `monster-control-p0-test` 都链 `mhw-ui`），但它们的对象是 viewmodel 与控制台，
+  `panel_player.cpp` 不在任何测试 target 的源列表里——历史上它曾是
+  文本 include 进 reader 测试的（`CMakeLists.txt:355-357` 记录了这个搬离）。
+  **本文不声称它已覆盖。**
 
 ---
 
@@ -764,7 +882,7 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 
 | 想做的事 | 该动哪里 |
 |---|---|
-| **加一款游戏** | §7 全节。核心是 5 处必改 + 一个 `src/wild/` |
+| **加一款游戏** | §7 全节。核心是 §7.1 的 9 处 + 一个新的 `src/wild/` |
 | 加一个新 overlay 面板 | 新 `src/ui/panel_x.{h,cpp}`：继承 `Panel`、实现 `paintPanel()` 与 `update()` 重载；i18n key 进 `overlay.json`；源文件列进 `CMakeLists.txt` 的 mhw-ui 块，并在 `src/main.cpp` 装配 |
 | 改 DPS / 折线图算法 | `src/ui/viewmodel/damage_view_model.{h,cpp}`；测试 `tests/damage_view_model_tests.cpp` |
 | 改部位卡聚合 / AutoHide | `src/ui/viewmodel/monster_view_model.{h,cpp}`（守住 ONE call per paint） |
@@ -800,8 +918,17 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 | i18n 的域数、键数、zh/en 相等性 | `python3 scripts/i18n_gate.py` | check / parity PASS；unused 默认 report-only |
 | census 快照里的 TU 总数 | `python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json` | 门禁 PASS；快照集合与磁盘集合相等（61 个） |
 | 全部测试 | `ctest --test-dir build` | 需要 `build/`；无 `build/` 时结构门禁报 SKIP |
-| per-game seam 列表 | `grep -rn 'switch (game)\|switch (z.game)' src --include=*.cpp --include=*.h` | 6 个 switch、12 个 `case` 标签，见 §5 表格 |
-| 按 GameId 分支的存量 | `grep -rn 'GameId::' src --include=*.cpp --include=*.h \| grep -E '(==\|!=') \| grep -v '://'` | 27 处，见 §6.1 分布 |
+| per-game seam 列表 | `grep -rnE 'switch \((game\|z\.game)\)' src tests --include=*.cpp --include=*.h \| wc -l` | **9**（`src/` 7 + `tests/` 2），见 §5 表格 |
+| 按 GameId 分支的存量 | `grep -rn 'GameId::' src tests --include=*.cpp --include=*.h \| grep -E '(==\|!=\|\?.*:)' \| grep -v '://' \| grep '^src/' \| wc -l` | **26**（`src/` 口径），见 §6.1 分布 |
+| `case` 标签存量 | `grep -rnE 'case (mhw::)?GameId' src tests --include=*.cpp --include=*.h \| wc -l` | **18**（`src/` 14 + `tests/` 4） |
+
+**`case` 计数的口径坑，实测踩出来的：** `grep 'case GameId'` → **10**，
+`grep -E 'case (mhw::)?GameId'` → **18**。差的 8 个来自限定名写法——
+`src/ui/icon.cpp:30,32`、`src/ui/panel_player.cpp:163,169`、
+`tests/monster_doctor.cpp:396,398`、`tests/zone_label_tests.cpp:49,53` 写的是
+`case mhw::GameId::Rise` 而不是 `case GameId::Rise`，前一个命令数不到它们。
+**所以核对 seam 时必须用能匹配限定名的写法。**
+反过来，如果哪天门禁改成禁用限定名，两个命令就会收敛成同一个答案。
 
 需要本文刻意没有写进附录的快照数字（文件数、行数、符号计数各自会随代码漂移）时，
 跑上面的命令，以你屏幕上的为准。
