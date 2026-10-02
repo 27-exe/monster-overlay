@@ -79,6 +79,23 @@ ignored, so the panels cannot drift while you hunt.
 | Damage | per-player damage and DPS; on Rise it is fed by the REFramework producer (§10) |
 | Pets | pet damage grouped by owner — Rise only; in World mode the rail card, its options and the floating window are not shown at all |
 
+Two things in the Damage panel are worth knowing before you read its rows.
+
+**Somebody leaving does not re-order anyone.** Every hunter keeps the row they
+claimed for the whole hunt. In World mode, a hunter who drops out mid-quest
+keeps their row on the panel: their name, damage and DPS stop where they were —
+only the numbers stop moving, and the row itself is not greyed out or marked in
+any other way. The hunters still in the quest stay on their own rows and keep
+counting, so nobody's numbers end up labelled with somebody else's name. A
+rejoin under the same name resumes that row from a fresh baseline. (Rise rows
+are rebuilt each frame from what the producer reports.)
+
+**A grey `?` in a row's weapon slot means "no weapon data for this row"** — the
+overlay could not resolve that hunter's weapon. It is not a broken or missing
+icon, and it is not a placeholder while the panel loads. Some party make-ups (a
+host plus three hunters plus an ally, for example) hit this. Treat it as a
+signal to look into that row, not as a picture that failed to appear.
+
 ## 6. Command line
 
 ### `monster-overlay`
@@ -262,6 +279,7 @@ belong to a named hunter keeps its producer label instead.
 | Rise: damage empty after a successful install | check `re2_framework_log.txt` for the producer's `loaded` and `hooked` lines, then look for `mhr_damage_{a,b}.json` under `reframework/data/` |
 | a hand-edited Lua blocks the install | the card refuses to overwrite it; remove the Lua first, then install again |
 | wrong game read | `--game world` / `--game rise` forces one reader; default `auto` scans `/proc` |
+| damage panel shows more rows than the hunters in the hunt | every hunter claims one row for the whole hunt and keeps it; a hunter who left mid-quest keeps their frozen row. Rows from a previous group only survive if the panel never saw the hunt end — return to the hub (or restart the game) and the panel rebuilds its rows at the next quest. If it repeats, report the make-up of the hunt |
 
 ## 12. Keyboard summary
 
