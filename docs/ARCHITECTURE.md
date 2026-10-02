@@ -39,16 +39,16 @@ src/                                    134 个文件 / 125 个 .h·.cpp / 30719
 ├── main.cpp                   680       # overlay 装配 + 主循环
 ├── main_control.cpp           221       # monster-control 角色入口
 ├── reader_factory.{h,cpp}     65+54     # 装配点：契约 × 实现的唯一交汇 TU
-├── reader_descriptors.cpp     49        # per-game 描述符，不含任何 reader
-├── core/                       21 文件 / 2299 行    → monster-core（17 项 1892 行）
+├── reader_descriptors.cpp     57        # per-game 描述符，不含任何 reader
+├── core/                       21 文件 / 2425 行    → monster-core
 │   ├── game_snapshot.h            40    # 契约：一次 poll 的全部输出（纯头，未列源）
 │   ├── game_reader.h              56    # 契约：IGameReader（2 个虚函数）
 │   ├── zone_id.h                  79    # 契约：ZoneRef{GameId, int}（纯头，未列源）
-│   ├── game_tables.{h,cpp}       156+128 # 契约 + 注册表实现
+│   ├── game_tables.{h,cpp}       156+136 # 契约 + 注册表实现
 │   ├── game_capabilities.{h,cpp}  84+99  # 契约 + 能力表实现
-│   ├── game_profile.{h,cpp}       37+46  # wire 名 "world"/"rise" 唯一定义
+│   ├── game_profile.{h,cpp}       37+55  # wire 名 "world"/"rise" 唯一定义
 │   ├── game_detector.{h,cpp}      36+83  # /proc 扫描 + exe 名行表
-│   ├── process_memory.{h,cpp}    142+268 # attach/read/指针链/PID 缓存
+│   ├── process_memory.{h,cpp}    150+369 # attach/read/指针链/PID 缓存
 │   ├── map_paths.{h,cpp}          77+239 # 数据文件查找（全参数化）
 │   ├── steam_game_locator.{h,cpp} 30+228 # VDF 解析 + 通用 install 查找
 │   ├── string_table.{h,cpp}       88+95  # i18n 运行时表
@@ -110,8 +110,8 @@ src/                                    134 个文件 / 125 个 .h·.cpp / 30719
 │   ├── panel_player_metrics.h     92    # 纯 inline 换算（stamina 缩放在这）
 │   ├── panel_accent.h             69
 │   ├── panel_mask_codec.h        250    # header-only，不入库
-│   └── viewmodel/              15 文件 / 2434 行
-│       ├── damage_view_model.{h,cpp}     134+620
+│   └── viewmodel/              15 文件 / 2630 行
+│       ├── damage_view_model.{h,cpp}     141+809
 │       ├── monster_view_model.{h,cpp}     220+336
 │       ├── console_layout_store.{h,cpp}  127+125
 │       ├── overlay_process_controller.{h,cpp} 95+157
@@ -326,7 +326,7 @@ map、接哪个伤害 feed、装哪个 lambda，四处都要按游戏分叉，�
 ### 3.3 `core/zone_id.h`（79 行）——`ZoneRef{GameId game; int id}`
 
 **id 是 `int` 不是 enum，这是实测决定的**，理由在头注释 `:23-38`：
-- World：`readZone()`（`src/world/world_reader.cpp:296-302`）把 int32 原样透传，
+- World：`readZone()`（`src/world/world_reader.cpp:194`）把 int32 原样透传，
   只做 `0..1000` 范围过滤，未映射值就是裸整数。
 - Rise：`computeZoneId()`（`src/rise/mhr_reader.cpp:42-54`）会发 `-2`（LoadingScreen）、
   `199`（CharSelection），加上 `villageId + 700`、`huntingId + 600`。
@@ -412,7 +412,7 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
      │                                                     ▲
      ▼                                                     │ 像素回归
  MhwReader::poll()   MhrReader::poll()          PlayerPanel / MonsterPanel / DamagePanel /
- (world_reader.cpp:215) (mhr_reader.cpp:1311)    PetDamagePanel::update(...)
+ (world_reader.cpp:120) (mhr_reader.cpp:1311)    PetDamagePanel::update(...)
      │                       │                          ▲
      └───────────┬───────────┘                          │
                  ▼                                      │
@@ -436,9 +436,27 @@ IGameReader 要消除的耦合——core 从「我能轮询任何游戏」退回
           damagePanel.update(snap) / updateRiseDamage(...)  ← main.cpp:593/663
 ```
 
+**伤害面板的行身份按名字，不按数组下标。** `snap.party` 是紧凑数组 ——
+`readParty()` 遍历四个内存槽位、空槽 `continue` 跳过、存活成员压紧
+（`src/world/player_reader.cpp:523`）。所以数组下标在有人掉线时会整体前移。
+`DamageViewModel` 因此每 tick 用 `liveByName` 建一张「live 下标 → 行号」的置换表
+（`damage_view_model.cpp` 的 `updateWorld`），行号不变、数据跟着行号走；掉线者
+认领不到新行，于是那一行原地冻结。**改这块时不要把状态搬回下标索引**——
+那正是行错位的来源。
+
+Rise 走的是另一套：`updateRise` 用生产者给的稳定键 `kind:entity_index` 做重排，
+`left_` 完全不参与行语义。两条路径的状态机不要合并。
+
+测试：`tests/damage_view_model_tests.cpp`（13 个 case，target `damage-view-model-tests`），
+其中 `middleDropOutKeepsEveryRowInPlace` 与 `campSurvivorsDoNotLeakIntoTheNextQuest`
+分别钉住「中途掉线不错位」和「营地 roster 不泄漏到下一局」。
+
+**注意 View 不读 `left_`** —— 冻结行只是数字停住，视觉上没有置灰或标注，
+因为 `panel_damage.cpp` 的绘制循环不消费这个标志。
+
 逐段说明，带可复跑的行号：
 
-1. **Reader 取数**。`MhwReader::poll()`（`src/world/world_reader.cpp:215`）与
+1. **Reader 取数**。`MhwReader::poll()`（`src/world/world_reader.cpp:120`）与
    `MhrReader::poll()`（`src/rise/mhr_reader.cpp:1311`）各填一个 `GameSnapshot`。
    两者都把区域写 `ZoneRef`：World 在 `world_reader.cpp:225`
    `snapshot.zone = ZoneRef{GameId::World, static_cast<int>(worldZone)}`，
@@ -884,7 +902,7 @@ python3 scripts/zero_reference_gate.py --repo . --snapshot tests/tu_census.json
 |---|---|
 | **加一款游戏** | §7 全节。核心是 §7.1 的 9 处 + 一个新的 `src/wild/` |
 | 加一个新 overlay 面板 | 新 `src/ui/panel_x.{h,cpp}`：继承 `Panel`、实现 `paintPanel()` 与 `update()` 重载；i18n key 进 `overlay.json`；源文件列进 `CMakeLists.txt` 的 mhw-ui 块，并在 `src/main.cpp` 装配 |
-| 改 DPS / 折线图算法 | `src/ui/viewmodel/damage_view_model.{h,cpp}`；测试 `tests/damage_view_model_tests.cpp` |
+| 改 DPS / 折线图算法 | `src/ui/viewmodel/damage_view_model.{h,cpp}`；测试 `tests/damage_view_model_tests.cpp`（13 case）。行身份按名字、World/Rise 两条状态机不要合并，见 §4 图后那段 |
 | 改部位卡聚合 / AutoHide | `src/ui/viewmodel/monster_view_model.{h,cpp}`（守住 ONE call per paint） |
 | 改 reader 的地址 / 字段 | 该游戏目录下的域 reader `.cpp`（Rise 在 `src/rise/`，World 在 `src/world/`）；加 `GameSnapshot` 字段改 `src/core/game_snapshot.h` |
 | 改 PID 查找 / 指针链 / 地址表加载 | `src/core/process_memory.{h,cpp}`。World 侧写 `MhwReader::` 前缀（四个 static 委托在 `src/world/world_reader.h:20-55`）、Rise 侧写 `mhw::` 前缀，但只有这一份实现 |
