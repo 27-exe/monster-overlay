@@ -23,7 +23,10 @@
 // / AddressMap / ProcessMemory), so a report cannot disagree with the overlay
 // about what the overlay would do.
 
+#include "core/game_detector.h"
+#include "core/game_profile.h"
 #include "core/map_paths.h"
+#include "rise/rise_install_locator.h"
 #include "world/world_reader.h"
 #include "rise/mhr_reader.h"
 
@@ -354,11 +357,52 @@ std::vector<MapRow> mappingsFor(qint64 pid, const QString &exePatternRaw)
 struct GameTarget {
     QString title;      // "world" / "rise"
     QString exe;        // lowercase image basename
+    mhw::GameId game{mhw::GameId::World};
     qint64 pid = -1;
     std::vector<MapRow> rows;
     int matchCount = 0;
     QStringList allPids;
 };
+
+// Steam identity for one shipping game: the appId whose compatdata and
+// launch options this tool reports.
+//
+// This used to be two inline literals — {"world", "monsterhunterworld.exe"},
+// {"rise", "monsterhunterrise.exe"} at detectTargets() and
+// {("582010"), ("1446780")} at sectionRuntime() — with no source naming
+// both facts for the same game. Adding Wilds meant remembering four
+// separate places, and the compatdata lookup (:739) derived the appId with
+// `target.title == "rise" ? "1446780" : "582010"`, which answered
+// "582010" for a game nobody registered.
+//
+// The exe names and the game→canonical-spelling are NOT duplicated: both
+// come from core (mhw::detail::defaultGameExecutables() + gameIdToString()),
+// and this tool links that library, so the targets it inspects are literally
+// the ones the overlay's own detector scans for.
+//
+// The appId is the one fact with no owner in src/, because no product code
+// reads it — the overlay only ever needs the exe name. Rise's is borrowed
+// from its own library (src/rise/rise_install_locator.h) rather than copied;
+// World's has nowhere to live but here, since a World identity would be a
+// new src/world/ file and one literal in a diagnostic tool is not a reason
+// to add one.
+//
+// A switch with NO default, so adding a GameId enumerator is a -Wswitch
+// warning here instead of a report that silently omits the new game — the
+// exact failure mode this tool exists to catch for users.
+QString steamAppIdFor(mhw::GameId game)
+{
+    switch (game) {
+    case mhw::GameId::World:
+        return QStringLiteral("582010");
+    case mhw::GameId::Rise:
+        return QString::number(mhw::kRiseSteamAppId);
+    }
+    // Unreachable, exactly as core/game_capabilities.cpp's gameTraits() and
+    // ui/icon.cpp's monsterIconPrefix() do it. A fallback string would be
+    // World's appId reported for a game nobody registered.
+    __builtin_unreachable();
+}
 
 void sectionToolAndHost()
 {
@@ -543,11 +587,19 @@ void sectionDataFiles()
 std::vector<GameTarget> detectTargets()
 {
     std::vector<GameTarget> targets;
-    for (const auto &pair : {std::pair<const char *, const char *>{"world", "monsterhunterworld.exe"},
-                             {"rise", "monsterhunterrise.exe"}}) {
+    // The exe list is the overlay's OWN list, read from
+    // mhw::detail::defaultGameExecutables() — the single source the kernel's
+    // detector scans for. This used to be
+    //   {{"world", "monsterhunterworld.exe"}, {"rise", "monsterhunterrise.exe"}}
+    // written out again here, so the tool and the overlay could disagree
+    // about which processes exist and a new game appeared in neither.
+    // The title comes from gameIdToString() for the same reason: the
+    // canonical spelling must be one string, not two written by hand.
+    for (const auto &pair : mhw::detail::defaultGameExecutables()) {
         GameTarget target;
-        target.title = QString::fromLatin1(pair.first);
-        target.exe = QString::fromLatin1(pair.second);
+        target.game = pair.first;
+        target.title = mhw::gameIdToString(pair.first);
+        target.exe = pair.second;
         targets.push_back(target);
     }
 
@@ -736,8 +788,12 @@ void sectionRuntime(const std::vector<GameTarget> &targets)
             say(QStringLiteral("  compat tool  : %1").arg(tool));
             say(QStringLiteral("  tool version : %1").arg(version.isEmpty() ? QStringLiteral("<none>") : version));
         }
-        const QString appId = target.title == QLatin1String("rise") ? QStringLiteral("1446780")
-                                                                    : QStringLiteral("582010");
+        // Per-game appId, from the switch above. This used to be
+        // `target.title == "rise" ? "1446780" : "582010"` — a ternary whose
+        // World arm was the answer for any game whose title nobody wrote,
+        // which is precisely how a third game's compatdata would be
+        // reported under World's appId.
+        const QString appId = steamAppIdFor(target.game);
         const QString compatVersion =
             firstLine(readText(QStringLiteral("%1/.steam/root/steamapps/compatdata/%2/version").arg(g_home, appId)));
         if (!compatVersion.isEmpty())
@@ -747,31 +803,47 @@ void sectionRuntime(const std::vector<GameTarget> &targets)
     const QString vdf = readText(configVdf);
     say();
     say(QStringLiteral("forced compat tool (config.vdf):"));
-    for (const QString &appId : {QStringLiteral("582010"), QStringLiteral("1446780")}) {
-        if (!g_onlyGame.isEmpty()
-            && (appId == QLatin1String("582010")) == (g_onlyGame == QLatin1String("rise")))
+    // One row per shipping game, keyed by the game rather than by a bare
+    // appId string. The old
+    //   for (const QString &appId : {"582010", "1446780"})
+    // spelled World first and Rise second with nothing tying either to its
+    // game, and the --world / --rise filter compensated with
+    //   (appId == "582010") == (g_onlyGame == "rise")
+    // — arithmetic on two literals, which assigns any NEW appId to the rise
+    // side and therefore excludes it from the report. Walking the exe list
+    // instead keeps each appId attached to its game, so a third game is a
+    // row here automatically.
+    for (const auto &pair : mhw::detail::defaultGameExecutables()) {
+        const QString title = mhw::gameIdToString(pair.first);
+        const QString appId = steamAppIdFor(pair.first);
+        if (!g_onlyGame.isEmpty() && title != g_onlyGame)
             continue;   // --world / --rise narrows this list too
         const QRegularExpression re(
             QStringLiteral("\"%1\"\\s*\\{[^}]*?\"name\"\\s*\"([^\"]*)\"").arg(appId));
         const auto match = re.match(vdf);
-        say(QStringLiteral("  %1 : %2").arg(appId, match.hasMatch() ? match.captured(1)
-                                                                    : QStringLiteral("<no per-app override>")));
+        say(QStringLiteral("  %1 (%2) : %3").arg(appId, title,
+                                                 match.hasMatch() ? match.captured(1)
+                                                                  : QStringLiteral("<no per-app override>")));
     }
     say(QStringLiteral("steam client  : %1")
             .arg(processNamed(QStringLiteral("steam")) ? QStringLiteral("running")
                                                       : QStringLiteral("not running")));
     say(QStringLiteral("launch options (only these rows are read; the account dir is never printed):"));
-    for (const QString &appId : {QStringLiteral("582010"), QStringLiteral("1446780")}) {
-        const QString game = appId == QLatin1String("582010") ? QStringLiteral("World")
-                                                              : QStringLiteral("Rise");
-        if (!g_onlyGame.isEmpty() && game.toLower() != g_onlyGame)
+    for (const auto &pair : mhw::detail::defaultGameExecutables()) {
+        const QString title = mhw::gameIdToString(pair.first);
+        const QString appId = steamAppIdFor(pair.first);
+        if (!g_onlyGame.isEmpty() && title != g_onlyGame)
             continue;
         const LaunchOptions option = launchOptionsFor(appId);
         QString suffix = option.note;
         if (suffix.isEmpty() && option.accountIndex > 0)
             suffix = QStringLiteral("   [account #%1]").arg(option.accountIndex);
+        // The label is the canonical wire spelling, the one --game takes,
+        // so a reader can map this row straight back to the flag. It used
+        // to be hand-written "World" / "Rise" — two more literals that a
+        // third game missed.
         say(QStringLiteral("  %1 (%2) : %3%4")
-                .arg(appId, game,
+                .arg(appId, title,
                      option.value.isEmpty() ? QStringLiteral("<unknown>") : option.value, suffix));
     }
     const QDir toolsDir(QStringLiteral("%1/.steam/root/compatibilitytools.d").arg(g_home));

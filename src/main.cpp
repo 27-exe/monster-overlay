@@ -1,4 +1,5 @@
 #include "core/game_detector.h"
+#include "core/game_capabilities.h"
 #include "core/game_profile.h"
 #include "core/game_snapshot.h"
 #include "core/locale_conf.h"
@@ -304,9 +305,19 @@ int main(int argc, char **argv)
     }
     const bool isRise = (gameId == mhw::GameId::Rise);
     // Window/app title names the product and the game it is reading.
+    //
+    // This was `isRise ? "Monster Overlay · Rise" : "Monster Overlay ·
+    // World"` — a ternary whose only two arms made World the default for a
+    // game nobody wrote an arm for. The name is per-game DATA, and
+    // gameDisplayName() (core/game_capabilities.cpp:77) already answers it
+    // through a switch with no default, so a third GameId is a -Wswitch
+    // warning on that switch instead of a silent "World" here.
+    //
+    // Chinese window titles would name the game entirely in Chinese, so the
+    // zh locale keeps its game name from the same table rather than a
+    // hand-written zh string.
     QApplication::setApplicationDisplayName(
-        isRise ? QStringLiteral("Monster Overlay · Rise")
-               : QStringLiteral("Monster Overlay · World"));
+        QStringLiteral("Monster Overlay · %1").arg(mhw::gameDisplayName(gameId)));
 
     PlayerPanel playerPanel;
     MonsterPanel monsterPanel;

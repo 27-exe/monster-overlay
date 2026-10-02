@@ -10,6 +10,34 @@
 
 namespace {
 
+// The per-game file-name prefix under :/icons/Monsters/ (Rise_ / World_).
+//
+// A switch with NO default, so adding a GameId enumerator is a -Wswitch
+// warning on this line rather than a silent fall through to World's
+// portraits. That matters here because this used to be
+// `(game == GameId::Rise) ? "Rise_" : "World_"` — a ternary, which is the
+// one shape -Wswitch cannot see, so a third game compiled clean and every
+// unknown id rendered as Unknown.png with nothing in the build log.
+//
+// It lives here, not in core/game_capabilities.h: the capability table is
+// for what a game SUPPORTS (a display name, a stamina scale), and a
+// resource file name is a UI-asset fact this lookup is the only reader of.
+// It is still data rather than a branch over behaviour — see the
+// game_capabilities.h header for that distinction.
+const char *monsterIconPrefix(mhw::GameId game)
+{
+    switch (game) {
+    case mhw::GameId::World:
+        return "World_";
+    case mhw::GameId::Rise:
+        return "Rise_";
+    }
+    // Unreachable rather than a fallback return. Exactly the shape
+    // gameTraits() uses in core/game_capabilities.cpp:59-73 — a fallback
+    // would be the silent World default this switch exists to make loud.
+    __builtin_unreachable();
+}
+
 QHash<QString, QByteArray> &cache()
 {
     static QHash<QString, QByteArray> c;
@@ -223,9 +251,11 @@ QString Icon::monsterPath(int monsterId, GameId game)
     //
     // The two games differ only in the file-name prefix, so the prefix is
     // the one per-game fact left here. That is data, not a branch over
-    // behaviour — see core/game_capabilities.h for the distinction.
-    const QString prefix =
-        (game == GameId::Rise) ? QStringLiteral("Rise_") : QStringLiteral("World_");
+    // behaviour — see core/game_capabilities.h for the distinction. It is
+    // answered by monsterIconPrefix() above (a switch with no default), so
+    // a third game is a -Wswitch warning here rather than a silent fall to
+    // World_*, which was what the ternary this replaced did.
+    const QString prefix = QString::fromLatin1(monsterIconPrefix(game));
     const QString path = QStringLiteral(":/icons/Monsters/%1%2.png")
                              .arg(prefix)
                              .arg(monsterId, 2, 10, QLatin1Char('0'));
