@@ -237,6 +237,23 @@ add_library(mhw-ui STATIC
     # the single-panel mode stays byte-identical until the console opts in.
     src/ui/panel_player_split.cpp
     src/ui/panel_player_split.h
+    # v0.12 split, second wave: the player panel's remaining low-coupling
+    # blocks as their own layer-shell windows. Same contract as the strip
+    # above — independent settingsKey, setChromeVisible(false),
+    # isSubWindow() == true, hasContent() collapsing an empty window. Each
+    # is per-game by construction (mantles World-only, wirebugs Rise-only),
+    # so the wrong game's arm reads nothing and the window simply does not
+    # mount.
+    src/ui/panel_player_split_bars.cpp
+    src/ui/panel_player_split_bars.h
+    src/ui/panel_player_split_mantles.cpp
+    src/ui/panel_player_split_mantles.h
+    src/ui/panel_player_split_wirebug.cpp
+    src/ui/panel_player_split_wirebug.h
+    # The grid arithmetic every split window above shares: one definition of
+    # "how wide is a row of N items", so the width a window reserves and the
+    # slot width it draws into cannot drift apart again.
+    src/ui/panel_sizing.h
     src/ui/panel_player_sharpness.cpp
     src/ui/panel_player_sharpness.h
     src/ui/viewmodel/player_view_model.cpp
@@ -1044,6 +1061,42 @@ add_executable(world-severable-scan-tests
     target_include_directories(panel-mask-codec-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(panel-mask-codec-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME panel-mask-codec-tests COMMAND panel-mask-codec-tests)
+
+    # v0.12 sizing: the shared grid arithmetic every split window uses
+    # (src/ui/panel_sizing.h). Header-only and pure C++ — <cmath> is its
+    # only include — so like the layout tests this needs no widget library
+    # and no second translation unit. What it pins is the invariant that
+    # was broken in the first strip: the width a window reserved and the
+    # slot width it drew into were computed by two different formulas, so
+    # a 91px window ended up giving each of its three pills a 23px slot
+    # that could not hold a 9pt timer. gridContentWidth / gridSlotWidth are
+    # exact inverses by construction, and the tests sweep the whole input
+    # space to keep them that way.
+    add_executable(panel-sizing-tests
+        tests/panel_sizing_tests.cpp
+        src/ui/panel_sizing.h
+    )
+    target_link_libraries(panel-sizing-tests PRIVATE Qt6::Core)
+    target_include_directories(panel-sizing-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(panel-sizing-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME panel-sizing-tests COMMAND panel-sizing-tests)
+
+    # v0.12: the three split windows' content models — buildBarsModel /
+    # buildMantleModel / buildWirebugModel, each a pure GameSnapshot ->
+    # row-block transformation.
+    #
+    # This one links mhw-ui rather than compiling the sources itself,
+    # because those builders live in .cpp files next to panel classes that
+    # carry Q_OBJECT: listing the .cpp here as well would run AUTOMOC over
+    # the same headers twice and produce duplicate symbols. Linking keeps
+    # exactly one owner per symbol.
+    add_executable(player-split-strips-tests
+        tests/player_split_strips_tests.cpp
+    )
+    target_link_libraries(player-split-strips-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(player-split-strips-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(player-split-strips-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME player-split-strips-tests COMMAND player-split-strips-tests)
 
     # v0.12: the startup mask priority chain (explicit --mask-* CLI value >
     # the console's conf row > everything visible). Both headers are

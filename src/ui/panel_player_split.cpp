@@ -12,12 +12,14 @@
 #include "core/string_table.h"
 #include "player/player_types.h"
 #include "ui/panel_sections.h"
+#include "ui/panel_sizing.h"
 
 #include "rise/mhr_abnormalities.h"
 
 #include <QColor>
 #include <QFont>
 #include <QFontMetrics>
+#include <QKeyEvent>
 #include <QPainter>
 #include <QPen>
 #include <QRectF>
@@ -55,7 +57,47 @@ constexpr int kPillRowGap  = 4;     // wrapped-row pitch (panel_player.cpp:57)
 constexpr int kPillGap     = 5;     // horizontal gap inside a row
 constexpr int kBlockGap    = 9;     // between the debuff and buff blocks
 constexpr int kMinPillW    = 78;    // a one-glyph timer still readable
-constexpr int kStripMaxW   = 420;   // a fully buffed hunter stays sane
+
+// The columns dial's range. 1 = a single capsule per row (the tall,
+// narrowest option — every pill keeps its full measured width); 6 is
+// where a 3-col strip's natural row stops fitting most screens' left
+// half, and beyond that the elision does the user no favour anyway.
+// Below 1 is not a layout (it is a divide-by-zero), above 6 the window
+// is wider than the panel it was carved out of.
+constexpr int kMinColumns = mhw::kStatusStripMinColumns;
+constexpr int kMaxColumns = mhw::kStatusStripMaxColumns;
+
+// Keyboard step for the columns dial (see PlayerStatusStripPanel::
+// keyPressEvent): [ takes one column off the row, ] puts one back.
+constexpr int kColumnsStep = 1;
+
+// Absolute ceiling on the strip's window width, logical px.
+//
+// Retuned from the historical 420, which was sized for a ONE-CAPSULE
+// reservation: 420 - 2*6 = 408 was a single wide pill, and the 3-column
+// draw then divided that by 3 — that mismatch is exactly the bug being
+// fixed. Under grid maths the same 420 is not "a wide pill", it is a
+// ceiling on a whole row of pills.
+//
+// Measured, not guessed. Across all 95 Rise schema rows in both
+// locale columns, the natural pill width (3+6+name+12+timer, the
+// widest timer included) runs 97..232. A 3-column row therefore wants
+// 3*w + 2*5 + 12 = 313..663:
+//
+//     natural pill   3-col window
+//     97  (p50)          313
+//     166 (p90)          520
+//     190 (p95)          592
+//     232 (max)          663
+//
+// 560 covers up to a 180px pill at the default 3 columns — p90 and the
+// demo content included — and pins the widest case (663) by eliding the
+// NAME column, never the timer (see drawPill's interior layout). Past
+// 560 the strip is half again wider than the PlayerPanel it was carved
+// out of (378) and starts covering the panels it anchors beside; the
+// honest escape hatch for that trade is the [ / ] columns dial, not a
+// bigger ceiling. A 4-column row stays unclamped up to a 133px pill.
+constexpr int kStripMaxW = 560;   // a fully buffed hunter stays sane
 
 // ---- Colour palette ----------------------------------------------------------
 //
@@ -89,6 +131,28 @@ QString worldTimerText(float timer)
 
 // panel_player.cpp:326-361 — HTML .pill: dark body, 3px accent stripe,
 // 1px --line outline, name left, timer right.
+//
+// The TWO COLUMNS ARE MEASURED, NOT FIXED. The historical version drew
+// the name into `box.width() * 0.55` and the timer into
+// `box.x()+4 .. box.width()-8`, both as fractions of the slot — which
+// is a second, independent geometric model that agreed with nothing.
+// At the 23px slot the bug produced they overlapped by design: the
+// name's right edge was at 0.55*23 and the timer started at
+// 23-8-24 (a 9pt "12s"). At any slot width the two fractions can also
+// cross (55px slot: name ends at 39, timer starts at 27).
+//
+// So the interior is laid out the same way the window is: each column
+// takes the width it needs, and the leftover goes to the one that
+// should absorb it —
+//
+//     [3px stripe][6][ name ........ ][4][ timer ][4]
+//                                          ^-- its exact measured width
+//
+// The timer is never elided (a truncated countdown is a wrong
+// countdown) and the name is elided into whatever is left. That is the
+// same guarantee contentWidth()/gridSlotWidth() gives the whole
+// capsule: reserve from the measurement, draw inside the reservation,
+// and the two cannot disagree.
 void drawPill(QPainter &p, const QRectF &box, const QColor &pc,
               const QString &name, const QString &timer)
 {
@@ -111,19 +175,38 @@ void drawPill(QPainter &p, const QRectF &box, const QColor &pc,
     bFont.setStyleStrategy(QFont::PreferAntialias);
     p.setFont(bFont);
     p.setPen(QColor(245, 246, 247));
-    const QRectF nameRect(stripe.right() + 6, box.y(),
-                          box.width() * 0.55F, box.height());
-    p.drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
-               QFontMetrics(bFont).elidedText(
-                   name, Qt::ElideRight,
-                   static_cast<int>(nameRect.width())));
 
+    // Horizontal padding inside the capsule, after the stripe. Both are
+    // part of the pill arithmetic contentWidth() measures
+    // (3 + 6 + name + 12 + timer: 6 here, 12 = 4 gutter + 4 + 4).
+    const int kStripeGap = 6;
+    const int kEdgePad    = 4;
+    const int kGutter     = 4;
+
+    // The two columns, measured with the fonts they will be drawn in —
+    // a third font metric here is how a strip ends up one elided glyph
+    // short on every row.
     QFont tFont(QStringLiteral("Chakra Petch"), 9);
     tFont.setStyleStrategy(QFont::PreferAntialias);
+    const QFontMetrics nameMetrics(bFont);
+    const QFontMetrics timerMetrics(tFont);
+
+    const qreal textLeft  = stripe.right() + kStripeGap;
+    const qreal textRight = box.right() - kEdgePad;
+    const qreal timerW    = timerMetrics.horizontalAdvance(timer);
+    const qreal nameW     = std::max(0.0, textRight - timerW - kGutter
+                                         - textLeft);
+
+    const QRectF nameRect(textLeft, box.y(), nameW, box.height());
+    p.drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
+               nameMetrics.elidedText(name, Qt::ElideRight,
+                                      static_cast<int>(nameW)));
+
     p.setFont(tFont);
     p.setPen(QColor(210, 214, 216));
-    p.drawText(QRectF(box.x() + 4, box.y(), box.width() - 8, box.height()),
-               Qt::AlignRight | Qt::AlignVCenter, timer);
+    const QRectF timerRect(textRight - timerW, box.y(), timerW,
+                           box.height());
+    p.drawText(timerRect, Qt::AlignRight | Qt::AlignVCenter, timer);
 }
 
 // panel_player.cpp:373-386 — the single place a trait becomes a colour.
@@ -143,20 +226,57 @@ QColor accentFor(mhw::AbnormalityAccent accent)
 }
 
 // panel_player.cpp:488-502 — the wrapping grid arithmetic (rowIdx /
-// colIdx / itemsInRow / slotW / cx), so the strip's 3-per-row wrap is
-// pixel-identical to the panel's. The caller keeps ownership of what a
-// pill says.
+// colIdx / itemsInRow / cx), so the strip's wrap is pixel-identical
+// to the panel's. The caller keeps ownership of what a pill says.
+//
+// SLOT WIDTH COMES FROM panel_sizing.h, NOT FROM HERE. This function
+// used to compute
+//
+//     slotW = (width - pillGap * (itemsInRow - 1)) / itemsInRow
+//
+// which — although the formula is right — is fed a window width that
+// was NOT derived from `itemsInRow` capsules (contentWidth reserved the
+// width of ONE capsule), so a full 3-wide row got a third of a capsule
+// (23px in the shipped World strip) while the trailing incomplete row
+// got nearly a whole one. One pill per strip was readable, the rest
+// were clipped: the reserved width and the drawn slot disagreed about
+// what the same number meant.
+//
+// mhw::gridSlotWidth() is the exact inverse of the gridContentWidth()
+// the window is reserved with, so the two now agree by construction
+// rather than by coincidence. It also guards what the inline division
+// did not: on a zero/negative budget it answers 0 rather than a
+// negative slot.
+//
+// THE TRAILING ROW FILLS. With 4 pills at 3-per-row the window is
+// 3*w + 2*gap + 2*margin wide, so the fourth capsule measures the
+// leftover (the whole window) instead of a third of it. That is the
+// "content adapts its length and width to fill" behaviour the strip is
+// for, and it is why the division below is by `itemsInRow` and not by
+// `pillsPerRow`: a row that holds fewer capsules is not a full row, and
+// stretching them to fill it is correct here.
 void drawPillGrid(QPainter &p, int top, int count, int pillsPerRow,
                   int rowGap, int pillGap, int rowH, int left, int width,
                   const std::function<void(QPainter &, int, const QRectF &)>
                       &paint)
 {
+    if (count <= 0 || pillsPerRow <= 0 || width <= 0)
+        return;
+
     for (int i = 0; i < count; ++i) {
         const int rowIdx     = i / pillsPerRow;
         const int colIdx     = i % pillsPerRow;
         const int itemsInRow = std::min(pillsPerRow,
                                         count - rowIdx * pillsPerRow);
-        const int slotW = (width - pillGap * (itemsInRow - 1)) / itemsInRow;
+        // Floor at the minimum readable capsule so a row that cannot
+        // fit still renders (clipped at the right edge) instead of
+        // vanishing: a pill cut in half beats no pill. kMinPillW is
+        // 3+6+name+12+timer with the thinnest readable pieces, so it
+        // always leaves room for the timer inside the new interior
+        // layout in drawPill().
+        const int slotW = std::max(
+            mhw::panel_sizing::gridSlotWidth(width, itemsInRow, pillGap),
+            kMinPillW);
         const int cx    = left + colIdx * (slotW + pillGap);
         const QRectF box(cx, top + rowIdx * (rowH + rowGap), slotW, rowH);
         paint(p, i, box);
@@ -290,6 +410,41 @@ void PlayerStatusStripPanel::retranslateUi()
     if (editMode())
         resetDemoPrimed();
     triggerUpdate();
+}
+
+void PlayerStatusStripPanel::setPillsPerRow(int perRow)
+{
+    // Clamp first: a 0 would make statusStripRows() divide by zero, and
+    // anything above kStatusStripMaxColumns produces a window wider than
+    // the panel this one was carved out of.
+    const int clamped = std::clamp(perRow, kMinColumns, kMaxColumns);
+    if (clamped == columns_)
+        return;
+    columns_ = clamped;
+    // Repaint re-derives width and height from the new dial value, and
+    // setContentSize()'s idempotent guard makes the redundant call free.
+    triggerUpdate();
+}
+
+void PlayerStatusStripPanel::keyPressEvent(QKeyEvent *e)
+{
+    // [ / ] are the columns dial: fewer capsules per row = a narrower,
+    // taller strip; more = a wider, flatter one. They are the only two
+    // keys this panel claims, so every other key — Space (minimize),
+    // Esc (quit), the arrow-key margin nudge — still goes through
+    // Panel::keyPressEvent unchanged. NOT persisting is deliberate: the
+    // dial has no panels.ini key and the console has no widget for it
+    // yet, and writing a key nothing reads back is the mistake the
+    // `visible` key removal in Panel::saveConfig documents.
+    if (editMode() && (e->key() == Qt::Key_BracketLeft
+                       || e->key() == Qt::Key_BracketRight)) {
+        const int step = (e->key() == Qt::Key_BracketLeft)
+                             ? -kColumnsStep
+                             :  kColumnsStep;
+        setPillsPerRow(columns_ + step);
+        return;
+    }
+    Panel::keyPressEvent(e);
 }
 
 void PlayerStatusStripPanel::update(const mhw::GameSnapshot &snap)
@@ -440,11 +595,27 @@ QVector<mhw::StatusPill> PlayerStatusStripPanel::buffRows() const
 
 int PlayerStatusStripPanel::contentWidth() const
 {
-    // Content width, not a chrome width: pick the widest capsule the
-    // strip is about to draw and add the margin on both sides. `min`/`max`
-    // clamp it so a single 1-char pill is still readable and a hunter with
-    // twelve consumables does not produce a window wider than any screen
-    // corner anchor can sensibly serve.
+    // Content width, not a chrome width — but the content is a GRID, so
+    // this reserves the natural width of one full row and adds the
+    // margin on both sides:
+    //
+    //     gridW  = perRow * widest + (perRow - 1) * gap      [panel_sizing]
+    //     width  = gridW + 2 * kMargin
+    //
+    // and gridW / gridSlotWidth are exact inverses, so the draw side
+    // (drawPillGrid) recovers the very slot the widest capsule was
+    // measured at instead of a fraction of it. That inversion is the
+    // whole point: it is what makes the strip "adapt its length and
+    // width to fill" — one capsule adapts to 1 element, two to 2, seven
+    // to 3+3+1 — without the reservation and the draw ever having to
+    // be re-derived twice.
+    //
+    // The two clamps both survive, with the meanings the strip needs:
+    //   * a lone 1-char pill stays readable (kMinPillW floor)
+    //   * a hunter with twelve consumables does not produce a window
+    //     wider than any screen corner anchor can sensibly serve
+    //     (kStripMaxW ceiling)
+    const int perRow = columns_;
     int widest = 0;
     const auto measure = [&widest](const QVector<mhw::StatusPill> &block) {
         // The pill's own fonts, the same ones drawPill() sets — measuring
@@ -454,8 +625,8 @@ int PlayerStatusStripPanel::contentWidth() const
         const QFontMetrics nameMetrics(nameFont);
         const QFont timerFont(QStringLiteral("Chakra Petch"), 9);
         const QFontMetrics timerMetrics(timerFont);
-        // The column stack drawPill() lays out inside one capsule:
-        // stripe | 6 | name (55%) | ... | 6 | 6 | timer.
+        // The same column stack drawPill() lays out inside one capsule:
+        // stripe | 6 | name ... | 4 | timer | 4 →  3 + 6 + name + 12 + timer.
         for (const mhw::StatusPill &pill : block) {
             const int nameW = nameMetrics.horizontalAdvance(pill.name);
             const int timerW = timerMetrics.horizontalAdvance(pill.timer);
@@ -468,7 +639,23 @@ int PlayerStatusStripPanel::contentWidth() const
 
     if (widest == 0)
         return 2 * kMargin;
-    return std::clamp(widest + 2 * kMargin, 2 * kMargin + kMinPillW,
+
+    // The dial is clamped into [1, 6] by setPillsPerRow, so this is a
+    // defensive arm: a 0-column grid has no width to reserve, and
+    // answering kMinPillW keeps the pill area positive rather than
+    // dividing by it below.
+    if (perRow <= 0)
+        return std::max(2 * kMargin, kMinPillW);
+
+    // One full row of capsules, the widest of which wins. gridItemsPerRow
+    // is *not* used here: the row is exactly `prefix` wide even for a
+    // single capsule (the window must not shrink to a 2-col grid just
+    // because only one pill is active), which is the opposite of what
+    // that helper's "fit as many as possible" contract is for.
+    const int gridW = mhw::panel_sizing::gridContentWidth(
+        perRow, perRow, widest, kPillGap);
+    return std::clamp(gridW + 2 * kMargin,
+                      std::max(2 * kMargin, kMinPillW),
                       kStripMaxW);
 }
 
@@ -480,7 +667,7 @@ int PlayerStatusStripPanel::blockHeight(int count) const
     // went invisible (draw gate and reservation gate disagreeing), so
     // this is the strip's ONLY arithmetiser and contentWidth() runs in
     // the same paint, from the same rows.
-    const int rows = mhw::statusStripRows(count);
+    const int rows = mhw::statusStripRows(count, columns_);
     if (rows <= 0)
         return 0;
     return rows * kPillH + (rows - 1) * kPillRowGap;
@@ -535,7 +722,7 @@ void PlayerStatusStripPanel::paintPanel(QPainter &p)
     const int gridW = w - 2 * kMargin;
 
     if (!debuffs.isEmpty()) {
-        drawPillGrid(p, y, debuffs.size(), mhw::kStatusStripPillsPerRow,
+        drawPillGrid(p, y, debuffs.size(), columns_,
                      kPillRowGap, kPillGap, kPillH, kMargin, gridW,
                      [&debuffs](QPainter &p, int i, const QRectF &box) {
             const mhw::StatusPill &pill = debuffs[i];
@@ -549,7 +736,7 @@ void PlayerStatusStripPanel::paintPanel(QPainter &p)
     if (!buffs.isEmpty()) {
         if (!debuffs.isEmpty())
             y += kBlockGap;
-        drawPillGrid(p, y, buffs.size(), mhw::kStatusStripPillsPerRow,
+        drawPillGrid(p, y, buffs.size(), columns_,
                      kPillRowGap, kPillGap, kPillH, kMargin, gridW,
                      [&buffs](QPainter &p, int i, const QRectF &box) {
             const mhw::StatusPill &pill = buffs[i];

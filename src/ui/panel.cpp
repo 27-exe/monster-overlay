@@ -236,7 +236,20 @@ void Panel::loadConfig()
     margins_.setTop(settings().value(QStringLiteral("mt"), def.top()).toInt());
     margins_.setRight(settings().value(QStringLiteral("mr"), def.right()).toInt());
     margins_.setBottom(settings().value(QStringLiteral("mb"), def.bottom()).toInt());
-    scale_ = settings().value(QStringLiteral("scale"), 2.0).toDouble();   // v0.3: 2x scale to make icons undeniably visible
+    // The single source of truth for "what scale does a panel start at".
+    // It lives in panel.h as an inline constexpr so EVERY read of it — this
+    // line, the member initialiser, resetToDefaults() — resolves to the
+    // same value. Before this, the member initialiser said 1.0 and this
+    // line said 2.0, so a panel's scale depended on whether it had ever
+    // been through saveConfig(): the very first construction on a fresh
+    // install painted at 1.0, and the first loadConfig() after a write
+    // leapt to 2.0. (The 2.0 read default was a v0.3 leftover — it was
+    // introduced in 371cf4f when the panels were still 378px-wide chrome
+    // windows. It stayed on long after, which is why the [player-status]
+    // section the v0.12 split created has scale=2 written into it: the
+    // sub-window is ~91px wide, so x2 made 7pt text 14pt inside a 182px
+    // window and the strip was unusable. Reported by the user.)
+    scale_ = settings().value(QStringLiteral("scale"), kDefaultScale).toDouble();
     opacity_ = settings().value(QStringLiteral("opacity"), 1.0).toDouble();
     bgAlpha_ = std::clamp(settings().value(QStringLiteral("bgAlpha"), 170).toInt(), 0, 255);
     // v0.8: per-panel screen selection. Empty = use whatever the OS calls
@@ -971,7 +984,7 @@ void Panel::setBgAlpha(int a, bool persist)
 void Panel::resetToDefaults()
 {
     sectionMask_  = 0xFFFFFFFFu;
-    scale_        = 1.0;
+    scale_        = kDefaultScale;
     opacity_      = 0.85;
     bgAlpha_      = 170;
     margins_      = defaultMarginsFor(corner_);

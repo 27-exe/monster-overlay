@@ -21,6 +21,14 @@
 #include "ui/panel_pet_damage.h"
 #include "ui/panel_player.h"
 #include "ui/panel_player_split.h"
+// v0.12: the split's other three windows — HP/ST bars, mantles and
+// wirebug. Same includes shape as the pilot strip above them, and the
+// same reason for all four: the windows are declared in the header
+// (panel_sections.h's kPlayerSplitTargets) but constructed here, so this
+// is the one place that knows all four names.
+#include "ui/panel_player_split_bars.h"
+#include "ui/panel_player_split_mantles.h"
+#include "ui/panel_player_split_wirebug.h"
 #include "ui/panel_sections.h"
 // The four conf mask rows are parsed with the console's own codec, so
 // both sides of the console <-> overlay handshake share one format
@@ -482,19 +490,33 @@ int main(int argc, char **argv)
     // itself behind the switch, so with the default-off path the object exists
     // and draws nothing — it never reaches show() and never mounts a surface.
     //
-    // Why not construct it inside the Split-mode branch: it would need a
+    // Why not construct them inside the Split-mode branch: it would need a
     // different lifetime (unique_ptr / optional), and the split's next
     // sub-windows (mantles, wirebug) would each need the same dance. One
     // always-existing, never-shown object is the same trick the four base
     // panels already rely on for the disabled state (setPanelEnabled(false)
     // leaves the panel alive and unmounted).
+    //
+    // v0.12: the same object, for the split's three further windows. A
+    // window per section group, each stack-allocated like the four base
+    // panels and the strip: Panel's ctor is heavy (layer-shell surface +
+    // config), so ownership follows the same lifetime and there is
+    // nothing to delete. Their table rows are kPlayerSplitTargets[1..3],
+    // and PlayerSplitSlot names the index each main.cpp block below uses
+    // for playerSubWindowMask().
     PlayerStatusStripPanel playerStatusStripPanel;
+    PlayerBarsStripPanel playerBarsStripPanel;
+    PlayerMantlesStripPanel playerMantlesStripPanel;
+    PlayerWirebugStripPanel playerWirebugStripPanel;
 
     playerPanel.setEditMode(editMode);
     monsterPanel.setEditMode(editMode);
     damagePanel.setEditMode(editMode);
     petDamagePanel.setEditMode(editMode);
     playerStatusStripPanel.setEditMode(editMode);
+    playerBarsStripPanel.setEditMode(editMode);
+    playerMantlesStripPanel.setEditMode(editMode);
+    playerWirebugStripPanel.setEditMode(editMode);
 
     // L1: apply section masks BEFORE show() so the first paint reflects
     // them — no one-frame flash of "all visible" if a mask is restrictive.
@@ -511,11 +533,30 @@ int main(int argc, char **argv)
     // turned the buff row off in the console gets no buff window instead of
     // an empty one. The panel's bits were cleared only because the WINDOW
     // topology changed, never because of anything the user toggled.
+    //
+    // v0.12: the same verbatim-mask rule for the other three windows.
+    // Each of them intersects the CLEAN mask with its own section bit
+    // internally — PlayerBarsStripPanel::barsEnabled() reads
+    // PlayerSection::Bars, ::mantlesEnabled() reads ::Mantles and
+    // ::wirebugEnabled() reads ::Wirebug (the same role the pilot's
+    // debuffRows() plays) — so handing them maskPlayer rather than
+    // maskPlayerForPanel is what keeps the user's per-section toggles
+    // working: a hunter who switched 衣装 off in the console gets no
+    // mantle window, not an empty one, and the panel's mask and the
+    // window's mask stay answers to two different questions.
+    //
+    // There is NO third expression here. Every mask below is either
+    // maskPlayerForPanel (one call) or maskPlayer (verbatim), because
+    // the table in panel_sections.h is the only thing that knows which
+    // section belongs to which window, and it derives both.
     playerPanel.setSectionMask(maskPlayerForPanel);
     monsterPanel.setSectionMask(maskMonster);
     damagePanel.setSectionMask(maskDamage);
     petDamagePanel.setSectionMask(maskPets);
     playerStatusStripPanel.setSectionMask(maskPlayer);
+    playerBarsStripPanel.setSectionMask(maskPlayer);
+    playerMantlesStripPanel.setSectionMask(maskPlayer);
+    playerWirebugStripPanel.setSectionMask(maskPlayer);
     damagePanel.setRiseDisplayOptions(riseDamageDisplayOptions);
     petDamagePanel.setDisplayOptions(riseDamageDisplayOptions);
     // Master gate: maps to the control console's "面板启用"
@@ -531,22 +572,34 @@ int main(int argc, char **argv)
     // controls in World mode for the same reason.
     petDamagePanel.setPanelEnabled(isRise && !parser.isSet(noPetsOption));
 
-    // v0.12: THE MASTER GATE for the whole split — one line, and it is the
-    // single place the default path is decided. With the switch off (the
-    // default) the strip's panelEnabled_ is false, so Panel::setVisible()
-    // returns early at panel.cpp:355 ("!panelEnabled_ && visible -> return")
-    // for EVERY caller forever, including the live loop's setVisible()
-    // below. The strip therefore never mounts a layer-shell surface, never
-    // paints, and is indistinguishable from not existing at all — while
-    // still not needing a conditional lifetime.
+    // v0.12: THE MASTER GATES for the whole split — one predicate, four
+    // windows, and this is the single place the default path is decided.
+    // With the switch off (the default) each window's panelEnabled_ is
+    // false, so Panel::setVisible() returns early at panel.cpp:355
+    // ("!panelEnabled_ && visible -> return") for EVERY caller forever,
+    // including the live loop's setVisible() below. Each window therefore
+    // never mounts a layer-shell surface, never paints, and is
+    // indistinguishable from not existing at all — while still not
+    // needing a conditional lifetime.
     //
-    // It compounds with the two gates under it, all three of which must be
-    // crossed before a single capsule pixel appears:
-    //   1. this line           (the switch)
-    //   2. setSectionMask      (the user's own debuff/buff toggles)
-    //   3. hasVisibleContent() (HunterPie's "no data, no window")
-    playerStatusStripPanel.setPanelEnabled(
-        playerSplitLayoutMode == mhw::PlayerSection::PlayerLayoutMode::Split);
+    // The gate is the LAYOUT MODE and nothing else, so the split is one
+    // user decision: it is not derivable from the section mask, which
+    // would let `--mask-player 0` silently change window topology.
+    //
+    // Each of the four compounds with its own two gates on top, all three
+    // of which must be crossed before a single pixel appears:
+    //   1. this line             (the switch)
+    //   2. setSectionMask        (the user's own per-section toggles)
+    //   3. hasVisibleContent()   (HunterPie's "no data, no window")
+    //
+    // Extending to a fifth window: one line here, one row in
+    // kPlayerSplitTargets, one PlayerSplitSlot alias. Nothing else.
+    const bool playerSplitOn = playerSplitLayoutMode
+        == mhw::PlayerSection::PlayerLayoutMode::Split;
+    playerStatusStripPanel.setPanelEnabled(playerSplitOn);
+    playerBarsStripPanel.setPanelEnabled(playerSplitOn);
+    playerMantlesStripPanel.setPanelEnabled(playerSplitOn);
+    playerWirebugStripPanel.setPanelEnabled(playerSplitOn);
 
 
     // v0.8: CLI --output-* overrides whatever the persisted panels.ini
@@ -563,20 +616,35 @@ int main(int argc, char **argv)
     if (parser.isSet(outputPetsOption))
         petDamagePanel.setOutputName(parser.value(outputPetsOption), false);
 
-    // v0.12: retarget the strip's edit-mode demo preview at the game this run
-    // resolved. There is no equivalent call for playerPanel here today — the
-    // console's own ControlPanel::switchGame is what calls setGameForDemo()
-    // on ITS preview panels (control_panel.cpp:1806) — and deliberately none
-    // is added: telling PlayerPanel it is Rise when it has always been told
-    // nothing would swap the World mantles demo for the Rise wirebugs demo in
-    // every `--edit --game rise` launch, which is a default-path change.
+    // v0.12: retarget the strip's edit-mode demo preview at the game this
+    // run resolved. There is no equivalent call for playerPanel here today —
+    // the console's own ControlPanel::switchGame is what calls
+    // setGameForDemo() on ITS preview panels (control_panel.cpp:1806) —
+    // and deliberately none is added: telling PlayerPanel it is Rise when it
+    // has always been told nothing would swap the World mantles demo for the
+    // Rise wirebugs demo in every `--edit --game rise` launch, which is a
+    // default-path change.
     //
     // Gated on the layout mode, so on the default path nothing here runs at
     // all. And inert in live mode the same way PlayerPanel's call is: the
     // first update(snap) overwrites game_ from the snapshot anyway, so only
     // the edit preview cares.
-    if (playerSplitLayoutMode
-        == mhw::PlayerSection::PlayerLayoutMode::Split)
+    //
+    // The other three windows need NO call here, and that is a fact about
+    // their demo seeds rather than a gap in the wiring:
+    //   * 衣装 / HP+ST seed a World player snapshot, 翔虫 seeds a Rise one,
+    //     each hard-coded in setupDemoData(), because each of the three
+    //     mirrors exactly one block of exactly one game's panel. A game
+    //     switch would mean a whole different seed, not a retarget of this
+    //     one — and in the wrong game the model is empty, hasContent()
+    //     answers false and the window stays unmounted, which is the same
+    //     "no data, no window" rule the live path uses.
+    //   * The base class seeds demo data itself: Panel::paintEvent calls
+    //     setupDemoData() on the first paint once editMode_ is set
+    //     (panel.cpp:503-506). So all four windows are drivable with no
+    //     per-object call at all; the strip's setGameForDemo() is the extra
+    //     step it needs because its demo DOES vary by game.
+    if (playerSplitOn)
         playerStatusStripPanel.setGameForDemo(gameId);
 
     playerPanel.show();
@@ -585,7 +653,7 @@ int main(int argc, char **argv)
     // Never flash an empty fourth frame at startup. In edit mode Rise can
     // show its demo immediately; live mode waits for a visible pet row.
     petDamagePanel.setVisible(isRise && editMode);
-    // v0.12: the strip's first-show. Two things make this safe on the
+    // v0.12: the four windows' first-show. Two things make this safe on the
     // default path, where the answer is simply "nothing happens":
     //   * setPanelEnabled(false) was applied above, so Panel::setVisible()
     //     bails at panel.cpp:355 and no surface is mounted; and
@@ -593,10 +661,19 @@ int main(int argc, char **argv)
     //     seeded, or in edit mode the demo is only seeded on the first
     //     paint — and this call precedes it).
     // In edit mode with the split on, the demo is seeded by the first
-    // paint, so the strip appears immediately like the other four panels do.
-    if (playerSplitLayoutMode
-        == mhw::PlayerSection::PlayerLayoutMode::Split)
+    // paint, so each window appears immediately like the other four panels
+    // do.
+    //
+    // Two windows are still invisible in edit mode, and that is correct
+    // rather than a wiring miss: 衣装 seeds a World snapshot and 翔虫 a
+    // Rise one, so each answers false to hasContent() for the other game
+    // and stays unmounted until that game is selected.
+    if (playerSplitOn) {
         playerStatusStripPanel.setVisible(editMode);
+        playerBarsStripPanel.setVisible(editMode);
+        playerMantlesStripPanel.setVisible(editMode);
+        playerWirebugStripPanel.setVisible(editMode);
+    }
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
     // loop below stays game-agnostic.
@@ -702,11 +779,19 @@ int main(int argc, char **argv)
         monsterPanel.setWindowTitle(table.tr(QStringLiteral("ui.monster_title")));
         damagePanel.setWindowTitle(table.tr(QStringLiteral("ui.damage_title")));
         petDamagePanel.setWindowTitle(table.tr(QStringLiteral("ui.pet_damage_title")));
-        // v0.12: the strip has its own window title key (ui.player_strip_title)
-        // and its own cached strings. Unconditional because the object always
-        // exists and retranslateUi() on a never-shown panel only touches the
-        // title string and a repaint request — it is the same shape as the
+        // v0.12: the four split windows have their own cached strings.
+        // Unconditional because the objects always exist and
+        // retranslateUi() on a never-shown panel only touches the title
+        // string and a repaint request — it is the same shape as the
         // other four calls and costs one tr() on the default path.
+        //
+        // The pilot's setWindowTitle() below is the deliberate redundancy
+        // its own retranslateUi() documents: one panel, one title key
+        // (ui.player_strip_title). The three new windows need NO line
+        // here at all — they each set their own title from that same key
+        // inside their own retranslateUi(), and adding three more
+        // identical tr() calls would be three more chances to hand a
+        // window the wrong title.
         playerStatusStripPanel.setWindowTitle(
             table.tr(QStringLiteral("ui.player_strip_title")));
         playerPanel.retranslateUi();
@@ -714,6 +799,9 @@ int main(int argc, char **argv)
         damagePanel.retranslateUi();
         petDamagePanel.retranslateUi();
         playerStatusStripPanel.retranslateUi();
+        playerBarsStripPanel.retranslateUi();
+        playerMantlesStripPanel.retranslateUi();
+        playerWirebugStripPanel.retranslateUi();
     };
 
     QObject::connect(&timer, &QTimer::timeout, [&] {
@@ -772,35 +860,66 @@ int main(int argc, char **argv)
             playerPanel.setVisible(true);
         }
 
-        // v0.12: the split's strip. Three independent conditions in one
-        // expression, in the order that makes each one cheap to reason about:
+        // v0.12: the split's four windows. Three independent conditions in
+        // one expression, in the order that makes each one cheap to reason
+        // about:
         //
         //   layout mode         — the switch. With it Single (default) the whole
         //                        block is skipped: no update(), no visibility
         //                        change, no mask read. PlayerPanel, which kept
-        //                        both capsule rows this whole time, is the
-        //                        only thing that ever draws them.
+        //                        every block this whole time, is the only
+        //                        thing that ever drew them.
+        //   panelEnabled()      — the master gate set at startup (== Split),
+        //                        AND-ed here because the main loop is also
+        //                        where a mask-driven visibility change lands.
         //   hasVisibleContent() — HunterPie's "no data, no window" rule: an
-        //                        idle hunter (both rows empty, or both bits
-        //                        off) collapses the window rather than
-        //                        leaving a grabbable empty frame.
-        //   skipUpdate()       — the SAME edit-mode demo guard the four base
+        //                        idle hunter (all bars at zero, both mantle
+        //                        slots unequipped, every wirebug ready) collapses
+        //                        the window rather than leaving a grabbable
+        //                        empty frame.
+        //   skipUpdate()        — the SAME edit-mode demo guard the four base
         //                        panels use. Without it, reader.poll() would
-        //                        clobber the strip's demo rows with an empty
+        //                        clobber the demo rows with an empty
         //                        snapshot and the preview would vanish.
         //
-        // Note the ordering asymmetry with the base panels: the strip never
-        // gets a "keep it visible with a placeholder" branch. A capsule strip
-        // with nothing to say has nothing to say — it hides, which is the
-        // whole point of extracting it into its own window.
-        if (playerSplitLayoutMode
-            == mhw::PlayerSection::PlayerLayoutMode::Split) {
+        // Note the ordering asymmetry with the base panels: none of the four
+        // gets a "keep it visible with a placeholder" branch. A strip with
+        // nothing to say has nothing to say — it hides, which is the whole
+        // point of extracting it into its own window.
+        //
+        // Written as one line per window rather than a loop over the table,
+        // deliberately: the table is a MASK table (it knows which bits leave
+        // the panel) and these are typed, virtual, owned objects. A loop
+        // would need a heterogeneous container and an per-object update()
+        // override to do what four call sites do plainly.
+        if (playerSplitOn) {
             const bool keepStripDemo = skipUpdate(playerStatusStripPanel);
             if (!keepStripDemo)
                 playerStatusStripPanel.update(snap);
             playerStatusStripPanel.setVisible(
                 playerStatusStripPanel.panelEnabled()
                 && playerStatusStripPanel.hasVisibleContent());
+
+            const bool keepBarsDemo = skipUpdate(playerBarsStripPanel);
+            if (!keepBarsDemo)
+                playerBarsStripPanel.update(snap);
+            playerBarsStripPanel.setVisible(
+                playerBarsStripPanel.panelEnabled()
+                && playerBarsStripPanel.hasVisibleContent());
+
+            const bool keepMantlesDemo = skipUpdate(playerMantlesStripPanel);
+            if (!keepMantlesDemo)
+                playerMantlesStripPanel.update(snap);
+            playerMantlesStripPanel.setVisible(
+                playerMantlesStripPanel.panelEnabled()
+                && playerMantlesStripPanel.hasVisibleContent());
+
+            const bool keepWirebugDemo = skipUpdate(playerWirebugStripPanel);
+            if (!keepWirebugDemo)
+                playerWirebugStripPanel.update(snap);
+            playerWirebugStripPanel.setVisible(
+                playerWirebugStripPanel.panelEnabled()
+                && playerWirebugStripPanel.hasVisibleContent());
         }
 
         monsterPanel.setMultiplayer(snap.isMultiplayer);
@@ -966,17 +1085,27 @@ int main(int argc, char **argv)
         monsterPanel.saveConfig();
         damagePanel.saveConfig();
         petDamagePanel.saveConfig();
-        // v0.12: persist the strip's own position / scale / opacity. It has
-        // its own settingsKey ("player-status"), so this writes a section
-        // that did not exist before — it cannot touch the four existing
-        // sections, and calling it on the default path is harmless (it
-        // writes the panel's un-moved defaults to a new group nobody reads).
-        // Guarded on the switch anyway to keep the default path free of new
-        // writes to panels.ini, which is the same reason --output-* uses
-        // persist=false.
-        if (playerSplitLayoutMode
-            == mhw::PlayerSection::PlayerLayoutMode::Split)
+        // v0.12: persist the four windows' own position / scale / opacity.
+        // Each has its own settingsKey ("player-status" / "player-bars" /
+        // "player-mantles" / "player-wirebug") — reusing "player" would
+        // make two windows fight over one position / scale / opacity
+        // section — so each writes a group that did not exist before and
+        // cannot touch the four existing sections. Calling it on the
+        // default path is harmless (it writes the panel's un-moved
+        // defaults to a new group nobody reads). Guarded on the switch
+        // anyway to keep the default path free of new writes to
+        // panels.ini, which is the same reason --output-* uses persist=false.
+        //
+        // Only the switch is gated, NOT hasVisibleContent(): a window that
+        // was never shown (a mantle window in a Rise session) still has a
+        // draggable position the user never touched, and writing it makes
+        // the next launch find the same numbers the previous one saved.
+        if (playerSplitOn) {
             playerStatusStripPanel.saveConfig();
+            playerBarsStripPanel.saveConfig();
+            playerMantlesStripPanel.saveConfig();
+            playerWirebugStripPanel.saveConfig();
+        }
     }
 
     return code;

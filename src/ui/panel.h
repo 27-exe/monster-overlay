@@ -260,6 +260,37 @@ protected:
     void paintPanelChrome(QPainter &p, Accent accent) const;
     void drawV03Chrome(QPainter &p, Accent accent) const;
     QColor accentColor(Accent a) const;
+
+    // ─── the one default scale ───────────────────────────────────────
+    //
+    // 1.0 = "paint the layout as authored, no zoom". Declared here, next
+    // to the base class that owns it, because three places must agree on
+    // it and two of them are in a different TU's control:
+    //
+    //   1. the `scale_` member initialiser (panel.h, ~line 315),
+    //   2. Panel::loadConfig()'s "key absent" default (panel.cpp),
+    //   3. Panel::resetToDefaults()'s factory value (panel.cpp).
+    //
+    // They disagreed until now: (1) and (3) said 1.0, (2) said 2.0 — a
+    // v0.3 leftover from when a panel was a 378px-wide chrome window and
+    // doubling it oversized nothing. On a v0.12 sub-window (~91px wide)
+    // the same 2.0 turns 7pt text into 14pt inside a 182px surface, which
+    // is the "zoom too big, text unusable" defect the user reported.
+    //
+    // WHY 1.0 AND NOT SOMETHING ELSE: it is the value that needs no
+    // per-panel tuning, because 1.0 reproduces the authored CSS/HTML
+    // geometry every panel was measured against (kPanelW = 378 for
+    // player/monster/damage, kPillW tokens for the strips), and it is
+    // what all four existing sections in the user's own panels.ini sit
+    // near once the console's SCALE slider has been touched (0.8 / 0.91 /
+    // 0.99 / 1.0). The range [0.5, 3.0] stays available for anyone who
+    // wants bigger — that is what the wheel and the slider are for; a
+    // default's job is to be correct, not to make a point.
+    //
+    // Changing this constant is the ONLY way to move the default. Never
+    // re-introduce a literal at a call site: the whole defect was a
+    // literal that outlived its commit's justification.
+    static constexpr double kDefaultScale = 1.0;
     // Status-coloured bar (HTML: --c-hi gradient over --c).
     void drawBarV03(QPainter &p, const QRectF &rect, float pct,
                     const QColor &c, int radius = 3) const;
@@ -312,7 +343,7 @@ private:
     Corner corner_;
     QSize logicalSize_;
     QMargins margins_;
-    double scale_{1.0};
+    double scale_{Panel::kDefaultScale};
     double opacity_{0.85};
     int bgAlpha_{170};   // panel background alpha (0-255), default ~67%
     // v0.8: per-panel screen selection. Empty = follow primaryScreen().

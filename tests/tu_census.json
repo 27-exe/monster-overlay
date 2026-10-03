@@ -111,7 +111,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 65
+      "symbols": 73
     },
     "src/main_control.cpp": {
       "class": "ZERO",
@@ -318,7 +318,8 @@
         "console-text-helpers-tests"
       ],
       "refs": [
-        "console-text-helpers-tests"
+        "console-text-helpers-tests",
+        "player-split-strips-tests"
       ],
       "symbols": 6
     },
@@ -397,7 +398,32 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
-        "player-status-strip-tests"
+        "player-status-strip-tests",
+        "snapshot-regression-tests"
+      ],
+      "symbols": 31
+    },
+    "src/ui/panel_player_split_bars.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "player-split-strips-tests"
+      ],
+      "symbols": 25
+    },
+    "src/ui/panel_player_split_mantles.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "player-split-strips-tests"
+      ],
+      "symbols": 29
+    },
+    "src/ui/panel_player_split_wirebug.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "player-split-strips-tests"
       ],
       "symbols": 29
     },

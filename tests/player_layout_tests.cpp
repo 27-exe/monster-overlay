@@ -617,25 +617,57 @@ int main(int argc, char **argv)
         check(rowsOk, "table: every row is non-empty, a subset of "
                       "PlayerSection::kAll, and pairwise disjoint");
 
-        // THE literal. v0.12 splits exactly one window out, and it owns
-        // exactly Debuff|Buff. Adding a second window must change this
-        // expectation in a visible diff rather than silently widening
-        // what leaves PlayerPanel.
-        check(mhw::PlayerSection::playerSplitRemovedBits()
-                  == (mhw::PlayerSection::Debuff
-                      | mhw::PlayerSection::Buff),
-              "table: playerSplitRemovedBits() is exactly Debuff|Buff "
-              "(the v0.12 pilot's single window)");
+        // THE literal, kept deliberate: what leaves PlayerPanel is the OR
+        // of every row, NOT a value anyone types by hand. v0.12's first wave
+        // split exactly one window owning Debuff|Buff; the second wave added
+        // the mantles row. Asserting the OR-of-rows identity (rather than a
+        // hardcoded bit set) is what keeps this honest — a future window
+        // still cannot widen the removed bits without someone editing this
+        // table, and a hand-written expected set that drifts out of sync
+        // with the table now fails here instead of silently agreeing.
+        uint32_t orOfRows = 0;
+        for (int i = 0; i < rows; ++i)
+            orOfRows |= mhw::PlayerSection::kPlayerSplitTargets[i].mask;
+        check(mhw::PlayerSection::playerSplitRemovedBits() == orOfRows,
+              "table: playerSplitRemovedBits() is the OR of every row "
+              "(nothing leaves PlayerPanel that the table does not claim)");
 
-        // The one window that exists, and the bit set it owns.
-        bool statusOk = mhw::PlayerSection::PlayerSplitSlot::Status == 0
-                        && mhw::PlayerSection::PlayerSplitSlot::Status < mhw::PlayerSection::kPlayerSplitTargetCount
-                        && (mhw::PlayerSection::playerSubWindowMask(mhw::PlayerSection::PlayerSplitSlot::Status,
-                                                                   0xFFFFFFFFu)
-                            == (mhw::PlayerSection::Debuff
-                                | mhw::PlayerSection::Buff));
-        check(statusOk, "table: PlayerSplitSlot::Status names the window "
-                        "that owns Debuff|Buff");
+        // Each split slot owns a non-empty slice of that, and the slices
+        // tile it exactly: no bit is claimed twice, none is left unclaimed.
+        bool tiledOk = true;
+        uint32_t tiledUnion = 0;
+        for (int s = 0; s < mhw::PlayerSection::kPlayerSplitTargetCount; ++s) {
+            const uint32_t owned = mhw::PlayerSection::playerSubWindowMask(
+                s, 0xFFFFFFFFu);
+            if (owned == 0) {
+                tiledOk = false;
+                std::fprintf(stderr, "  split slot %d owns nothing\n", s);
+            }
+            if ((owned & tiledUnion) != 0) {
+                tiledOk = false;
+                std::fprintf(stderr,
+                             "  split slot %d claims a bit another slot "
+                             "already owns\n", s);
+            }
+            tiledUnion |= owned;
+        }
+        check(tiledOk && tiledUnion == mhw::PlayerSection::playerSplitRemovedBits(),
+              "table: the split windows' claims tile the removed bits "
+              "exactly — no overlap, no gap");
+
+        // The pilot window is unchanged by the second wave: it still owns
+        // exactly Debuff|Buff, so its saved position and content are still
+        // about status pills only.
+        check(mhw::PlayerSection::PlayerSplitSlot::Status == 0
+                  && mhw::PlayerSection::PlayerSplitSlot::Status
+                         < mhw::PlayerSection::kPlayerSplitTargetCount
+                  && (mhw::PlayerSection::playerSubWindowMask(
+                          mhw::PlayerSection::PlayerSplitSlot::Status,
+                          0xFFFFFFFFu)
+                      == (mhw::PlayerSection::Debuff
+                          | mhw::PlayerSection::Buff)),
+              "table: PlayerSplitSlot::Status names the window that owns "
+              "Debuff|Buff");
 
         // Out-of-range slots answer 0 (draw nothing) rather than reading
         // past the table, so a registry row naming a window the table

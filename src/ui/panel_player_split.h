@@ -43,6 +43,7 @@
 #include "core/game_snapshot.h"
 #include "player/player_types.h"
 
+#include <QKeyEvent>
 #include <QPainter>
 #include <QString>
 #include <QVector>
@@ -77,21 +78,36 @@ struct StatusStripModel {
     }
 };
 
-// Capsules per wrapped row — the same 3-per-row PlayerPanel uses for its
-// debuff / buff rows and its Rise 状态 grid, so a strip that grew up next
-// to the panel lines up with it. Its own constant rather than a shared
-// one: retuning the strip must not be able to move the panel it was
-// extracted from.
+// Capsules per wrapped row — the default the strip shipped with, and
+// what PlayerPanel uses for its debuff / buff rows and its Rise 状态
+// grid, so a strip that grew up next to the panel lines up with it.
+// Its own constant rather than a shared one: retuning the strip must
+// not be able to move the panel it was extracted from.
+//
+// RUNTIME-ADJUSTABLE: the value below is only the default. A
+// PlayerStatusStripPanel dials its own `columns_` (setPillsPerRow) so a
+// user can trade the strip's width for its height on a small screen
+// without touching the width-token arithmetic the panel still uses.
 inline constexpr int kStatusStripPillsPerRow = 3;
 
-// Rows needed to lay `count` pills out kStatusStripPillsPerRow-wide,
-// wrapping like PlayerPanel's debuff/buff rows. 0 and negatives answer 0
-// so callers never have to re-guard the divide.
-[[nodiscard]] inline constexpr int statusStripRows(int count) noexcept
+// The dial's range. 1 (a column of stacked capsules: tall, narrow,
+// every pill at full measured width) to 6 (three default-width rows
+// side by side). Below 1 is not a layout — it is a divide-by-zero —
+// and above 6 the window is wider than the panel it was carved out of.
+inline constexpr int kStatusStripMinColumns = 1;
+inline constexpr int kStatusStripMaxColumns = 6;
+
+// Rows needed to lay `count` pills out `perRow`-wide, wrapping like
+// PlayerPanel's debuff/buff rows. 0 and negatives answer 0 so callers
+// never have to re-guard the divide, which matters here because
+// `perRow` is now a runtime value: a 0-col strip must answer 0 rows,
+// not divide by zero.
+[[nodiscard]] inline constexpr int statusStripRows(int count,
+                                                   int perRow) noexcept
 {
-    return count > 0 ? (count + kStatusStripPillsPerRow - 1)
-                       / kStatusStripPillsPerRow
-                     : 0;
+    return (count > 0 && perRow > 0)
+               ? (count + perRow - 1) / perRow
+               : 0;
 }
 
 // The one pure transformation in this panel: GameSnapshot in, the two
@@ -142,6 +158,29 @@ public:
     // locale-watch loop after StringTable::load() swapped the locale.
     void retranslateUi() override;
 
+    // COLUMNS DIAL (v0.12): capsules per wrapped row. Defaults to
+    // mhw::kStatusStripPillsPerRow (=3) so an untouched strip renders
+    // exactly as it did before the dial existed.
+    //
+    // Why a setter on THIS panel rather than a virtual on Panel: the
+    // dial is a layout question, and the width/height arithmetic that
+    // answers it lives in panel_sizing.h, which this panel (and only
+    // this panel, for now) feeds. Putting `nudgeColumns(int)` on the
+    // base class would make every panel declare an opinion about a
+    // token it does not use — the same "borrow nothing at the symbol
+    // level" rule the panel already follows for drawPill(). The base
+    // class also has no columns member and no columns key in panels.ini,
+    // so a virtual there would be a pure hook with no default body and
+    // no storage. When a second panel needs the dial the shared form
+    // can be promoted out of this panel with its invariants already
+    // pinned here; until then it stays local.
+    //
+    // Clamped into [kStatusStripMinColumns, kStatusStripMaxColumns] —
+    // 0 would make statusStripRows() divide by zero and contentWidth()
+    // would answer a 0-wide grid.
+    void setPillsPerRow(int perRow);
+    [[nodiscard]] int pillsPerRow() const noexcept { return columns_; }
+
     // v0.12: this window was carved out of PlayerPanel, so it declares
     // itself a sub-window (Panel::isSubWindow, whose header comment names
     // a DebuffStrip as the example). That is what lets the console /
@@ -153,6 +192,20 @@ public:
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
+
+    // THE COLUMNS DIAL'S KEY HANDLER. Panel::keyPressEvent is an
+    // override on QMainWindow (panel.h:226) with no virtual hook and no
+    // column plumbing of its own, and Panel::keyPressEvent's edit-mode
+    // arm unconditionally forwards unhandled keys to QMainWindow — so
+    // deriving an override here is both legal and the narrowest place
+    // to intercept: this class handles [ / ] and then defers to
+    // Panel::keyPressEvent(e) for EVERY other key, which keeps Space
+    // (minimize), Esc (quit) and the arrow-key margin nudge exactly as
+    // they were. No base-class edit, no second virtual to keep in sync.
+    //
+    // Edit mode only, matching the other edit-mode affordances: a live
+    // hunter's keystrokes belong to the game, not the overlay.
+    void keyPressEvent(QKeyEvent *e) override;
 
     // HunterPie's core "no data, no window" mechanism, three layers deep
     // (§6.3 of the design report): with nothing to show the strip
@@ -181,15 +234,27 @@ private:
     // Width the strip needs for the pills it is currently showing, in
     // logical px, from the widest capsule's name + timer. Never a fixed
     // 378 — that was the whole PlayerPanel width and belongs to it.
+    //
+    // A GRID width, not a single-capsule width: see the definition in
+    // panel_player_split.cpp and docs/SIZING.md. It is the exact
+    // inverse of the gridSlotWidth() drawPillGrid() feeds each capsule,
+    // which is the invariant that makes the strip adaptive at all.
     [[nodiscard]] int contentWidth() const;
 
-    // Height of `count` pills laid out kStatusStripPillsPerRow-wide with
-    // inter-row gaps, using the same formula as panel_player.cpp:714-726
-    // so the strip and the panel it was cut from wrap identically.
+    // Height of `count` pills laid out `columns_`-wide with inter-row
+    // gaps, using the same formula as panel_player.cpp:714-726 so the
+    // strip and the panel it was cut from wrap identically at the
+    // default column count.
     [[nodiscard]] int blockHeight(int count) const;
 
     mhw::GameId            game_{mhw::GameId::World};
     mhw::StatusStripModel  rows_;
+    // Capsules per wrapped row: the columns dial's current value, the
+    // only one of the strip's layout numbers a user can change at
+    // runtime. Starts at kStatusStripPillsPerRow (=3) so the shipped
+    // behaviour is the default and no config migration is needed.
+    int                    columns_{
+        mhw::kStatusStripPillsPerRow};
     // True while the content on screen came from setupDemoData(). The
     // first authoritative snapshot clears it and the rows with it, so a
     // demo preview can never survive into a live session (same guard

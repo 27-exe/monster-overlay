@@ -151,9 +151,12 @@ enum class PlayerLayoutMode {
 namespace PlayerSplitSlot {
 enum : int {
     Status = 0,   // 异常 / 强化状态胶囊条 -> PlayerStatusStripPanel
+    Mantles = 1,  // 衣装两格 (World only)   -> PlayerMantlesStripPanel
+    Wirebug = 2,  // 翔虫胶囊 (Rise only)    -> PlayerWirebugStripPanel
+    Bars = 3,     // HP + ST 两条            -> PlayerBarsStripPanel
 };
 // The row count of kPlayerSplitTargets, cross-checked by static_assert.
-constexpr int kCount = 1;
+constexpr int kCount = 4;
 } // namespace PlayerSplitSlot
 
 // One split window's claim on PlayerSection bits: "these blocks leave
@@ -180,7 +183,45 @@ constexpr PlayerSplitTarget kPlayerSplitTargets[] = {
     // AbnormalityTray and carries the least state of the candidate
     // blocks (audit/06 §0.2).
     {mhw::PlayerSection::Debuff | mhw::PlayerSection::Buff},
+
+    // 衣装两格. World only; a Rise snapshot resolves no slot, so the
+    // window stays unmounted there by "no data, no window" rather than
+    // by a game branch. Clears the single tallest block out of the panel
+    // (kMantleGap + kMantleH = 2 + 60), and the two boxes carry a name
+    // column that never fits a 378px panel without either eliding or
+    // column arithmetic — as its own window the widest localized name
+    // sizes the window instead.
+    {mhw::PlayerSection::Mantles},
+
+    // 翔虫胶囊. Rise only; the World reader publishes no wirebugs, so
+    // this is the mirror of the mantle row. Same content-driven rule: the
+    // row shrinks as wirebugs become ready and collapses entirely when
+    // every one of them is, which is a width no panel column can express.
+    {mhw::PlayerSection::Wirebug},
+
+    // HP + ST 两条. Both games, both always-resolved whenever the player
+    // struct is, so the window is the one split target that never
+    // flickers on or off. It is 41 + 7 logical px tall and ~90px wide —
+    // the second-largest width return in the audit, paid for by a pair
+    // of bars whose numbers, not labels, are what actually matter to a
+    // player glancing at them mid-hunt.
+    {mhw::PlayerSection::Bars},
 };
+
+// NOT in this table, and why — the audit's remaining candidates are
+// named here so the omission is a recorded decision rather than an
+// oversight:
+//   Weapon — the audit measured no usable width return: the weapon row
+//            is already the panel's own natural column, and a window
+//            around a sharpness bar plus two names would be the widest
+//            split target with the least to gain.
+//   Conn    — the most-coupled block in the panel: it is the one the
+//            console's live-preview path and every "not connected"
+//            placeholder reads, so extracting it would move a lifecycle
+//            signal, not just pixels.
+//   Quest   — kept for the same coupling reason as Conn; it is the other
+//            half of the "is the reader alive" surface, and the panel
+//            shows a placeholder row for it that a window cannot.
 
 // Row count of the table, as a constant the functions below index with.
 inline constexpr int kPlayerSplitTargetCount =
@@ -250,13 +291,47 @@ static_assert(playerSplitTargetsAreValid(),
 static_assert(PlayerSplitSlot::kCount == kPlayerSplitTargetCount,
               "PlayerSplitSlot::kCount must match the kPlayerSplitTargets "
               "row count");
-// The removed bits are exactly the current table's claims. A new window
-// changes this, and the assert is what makes that a deliberate edit
-// instead of a silent one.
-static_assert(playerSplitRemovedBits()
-                  == (mhw::PlayerSection::Debuff | mhw::PlayerSection::Buff),
-              "the removed bits are the table's rows OR-ed together; update "
-              "this assert when a second window is split out");
+// Bits set in `bits`, counting the claims rather than trusting the OR's
+// habit of absorbing a duplicate. Exists for the disjointness proof below.
+[[nodiscard]] constexpr int playerSplitBitCount(uint32_t bits) noexcept
+{
+    int n = 0;
+    while (bits != 0) {
+        bits &= static_cast<uint32_t>(bits - 1);   // clear the lowest set bit
+        ++n;
+    }
+    return n;
+}
+
+// How many bits the table's rows claim in total, counted per row. Unlike
+// playerSplitRemovedBits() this does NOT fold the rows through an OR, so
+// two rows sharing a bit are counted twice here and once there — and the
+// difference between the two counts is exactly the failure being asserted.
+[[nodiscard]] constexpr int playerSplitClaimedBitCount() noexcept
+{
+    int n = 0;
+    for (const PlayerSplitTarget &t : kPlayerSplitTargets)
+        n += playerSplitBitCount(t.mask);
+    return n;
+}
+
+// The removed bits are the table's rows OR-ed together, and no row's
+// bit is claimed twice. This is the table's one invariants-as-an-assert:
+//
+//   * it holds for any number of rows and any masks, so adding a window
+//     is adding a row and NOT touching a hand-written bit list — the v0.12
+//     pilot asserted `== (Debuff|Buff)` here, which every new window had
+//     to remember to update, and a forgotten edit failed the build with
+//     a message about a value nobody had typed yet;
+//   * it FAILS the moment two rows' masks overlap, because the OR drops
+//     the duplicate bit and the two counts diverge. Two windows drawing
+//     one block is the failure a user notices immediately and a pixel
+//     baseline may not, so it belongs at compile time.
+static_assert(playerSplitBitCount(playerSplitRemovedBits())
+                  == playerSplitClaimedBitCount(),
+              "the removed bits must be exactly the table's rows, with no "
+              "bit claimed by two windows: an overlapping row's OR would "
+              "lose a duplicate and these two counts would diverge");
 // The whole pixel-identity argument, as two compile-time checks: in
 // Single mode the derived mask IS the input mask.
 static_assert(playerPanelMaskFor(PlayerLayoutMode::Single, 0xDEADBEEFu)
