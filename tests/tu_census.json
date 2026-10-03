@@ -96,6 +96,7 @@
         "monster-locale-tests",
         "monster-reader-tests",
         "monster-view-model-tests",
+        "player-info-strip-tests",
         "reframework-fetcher-tests",
         "rise-abnormality-tests",
         "rise-monster-name-tests",
@@ -111,7 +112,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 78
+      "symbols": 84
     },
     "src/main_control.cpp": {
       "class": "ZERO",
@@ -412,10 +413,12 @@
       "symbols": 25
     },
     "src/ui/panel_player_split_info.cpp": {
-      "class": "UNBUILT",
+      "class": "INDIRECT",
       "compiled_by": [],
-      "refs": [],
-      "symbols": 0
+      "refs": [
+        "player-info-strip-tests"
+      ],
+      "symbols": 30
     },
     "src/ui/panel_player_split_mantles.cpp": {
       "class": "INDIRECT",
@@ -609,7 +612,8 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
-        "monster-reader-tests"
+        "monster-reader-tests",
+        "player-info-strip-tests"
       ],
       "symbols": 9
     }

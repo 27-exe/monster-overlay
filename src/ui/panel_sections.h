@@ -178,9 +178,18 @@ enum : int {
     // index would silently answer 0 ("draw nothing") at runtime with no
     // compile-time complaint beyond the shared row-count assert.
     Weapon = 4,   // 武器身份三件套            -> PlayerWeaponStripPanel
+    // 「任务/进程」: the Quest block and the Conn block as ONE window
+    // (design 02-interaction-design.md §4.2 「方案 A」). The only split
+    // target that claims two sections, and the only one built around
+    // re-typing them: the two halves share a qrow stream in the panel
+    // (panel_player.cpp:732-734) and the window gives the PID/BASE meta
+    // line its own 11px pitch instead.
+    // Same warning as Weapon above: the value MUST be the subscript of the
+    // row appended to kPlayerSplitTargets below.
+    Info = 5,     // 任务四行 + 进程信息        -> PlayerInfoStripPanel
 };
 // The row count of kPlayerSplitTargets, cross-checked by static_assert.
-constexpr int kCount = 5;
+constexpr int kCount = 6;
 } // namespace PlayerSplitSlot
 
 // One split window's claim on PlayerSection bits: "these blocks leave
@@ -247,6 +256,27 @@ constexpr PlayerSplitTarget kPlayerSplitTargets[] = {
     // centred block left the name column a 49px band and elided every
     // non-empty player name in single mode.
     {mhw::PlayerSection::Weapon},
+    // 「任务/进程」: the Quest block and the Conn block as ONE window
+    // (design 02-interaction-design.md §4.2 「方案 A」). The only split
+    // target that claims two sections, and the only one built around
+    // re-typing them rather than moving them: in the panel the two halves
+    // share one qrow stream (panel_player.cpp:732-734) and so are forced
+    // to share its 14px pitch, which is why a diagnostic line — "PID
+    // 1234 · BASE 0x7ff…", the thing that answers "is the reader alive?"
+    // — cost as much vertical space as a quest name. The window gives
+    // the meta line its own 11px pitch and lets the countdown take the
+    // large type it deserves.
+    //
+    // The coupling that kept both behind is real but not blocking: the
+    // window re-reads snap.pid / snap.imageBase / snap.party.size()
+    // itself rather than the view model's cached copies, and the panel's
+    // "not connected" placeholder stays behind (a window cannot show a
+    // placeholder row the way a panel can, and the no-data state is a
+    // panel-level concern).
+    //
+    // Worth 82px of the single panel's 361 — 22.7%, the largest single
+    // win left in it.
+    {mhw::PlayerSection::Conn | mhw::PlayerSection::Quest},
 };
 
 // NOT in this table, and why — the audit's remaining candidates are
@@ -259,13 +289,20 @@ constexpr PlayerSplitTarget kPlayerSplitTargets[] = {
 //            welded to the name column that just left. Its own bit
 //            exists so the console's weapon toggle and the bar's
 //            visibility are two questions again.
-//   Conn    — the most-coupled block in the panel: it is the one the
-//            console's live-preview path and every "not connected"
-//            placeholder reads, so extracting it would move a lifecycle
-//            signal, not just pixels.
-//   Quest   — kept for the same coupling reason as Conn; it is the other
-//            half of the "is the reader alive" surface, and the panel
-//            shows a placeholder row for it that a window cannot.
+//
+// Conn and Quest are NOT listed here any more — they moved, together, in
+// the row above. The coupling argument that kept them behind was that
+// they are what the console's live preview and the panel's "not
+// connected" placeholder read; the window reads the snapshot directly
+// and the placeholder stays in the panel, so the argument no longer
+// applies. What survives of it is narrower and is written on the row.
+//
+// (The older note that followed here argued for leaving Conn and Quest
+// behind because the console's live preview and the panel's placeholder
+// read them. Both are answered on the row: the window reads the snapshot
+// itself, and the placeholder is a panel-level state a window cannot
+// express. Deleting the argument rather than contradicting it seemed
+// better than leaving a decision and its reversal in the same file.)
 
 // Row count of the table, as a constant the functions below index with.
 inline constexpr int kPlayerSplitTargetCount =

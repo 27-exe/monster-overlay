@@ -37,6 +37,7 @@
 // leaves PlayerSection::Sharpness behind, and panel_player.cpp's prow
 // block reads that bit on its own.
 #include "ui/panel_player_split_weapon.h"
+#include "ui/panel_player_split_info.h"
 #include "ui/panel_sections.h"
 // The four conf mask rows are parsed with the console's own codec, so
 // both sides of the console <-> overlay handshake share one format
@@ -517,6 +518,7 @@ int main(int argc, char **argv)
     PlayerMantlesStripPanel playerMantlesStripPanel;
     PlayerWirebugStripPanel playerWirebugStripPanel;
     PlayerWeaponStripPanel playerWeaponStripPanel;
+    PlayerInfoStripPanel playerInfoStripPanel;
 
     playerPanel.setEditMode(editMode);
     monsterPanel.setEditMode(editMode);
@@ -527,6 +529,7 @@ int main(int argc, char **argv)
     playerMantlesStripPanel.setEditMode(editMode);
     playerWirebugStripPanel.setEditMode(editMode);
     playerWeaponStripPanel.setEditMode(editMode);
+    playerInfoStripPanel.setEditMode(editMode);
 
     // L1: apply section masks BEFORE show() so the first paint reflects
     // them — no one-frame flash of "all visible" if a mask is restrictive.
@@ -568,6 +571,7 @@ int main(int argc, char **argv)
     playerMantlesStripPanel.setSectionMask(maskPlayer);
     playerWirebugStripPanel.setSectionMask(maskPlayer);
     playerWeaponStripPanel.setSectionMask(maskPlayer);
+    playerInfoStripPanel.setSectionMask(maskPlayer);
     damagePanel.setRiseDisplayOptions(riseDamageDisplayOptions);
     petDamagePanel.setDisplayOptions(riseDamageDisplayOptions);
     // Master gate: maps to the control console's "面板启用"
@@ -612,6 +616,7 @@ int main(int argc, char **argv)
     playerMantlesStripPanel.setPanelEnabled(playerSplitOn);
     playerWirebugStripPanel.setPanelEnabled(playerSplitOn);
     playerWeaponStripPanel.setPanelEnabled(playerSplitOn);
+    playerInfoStripPanel.setPanelEnabled(playerSplitOn);
 
 
     // v0.8: CLI --output-* overrides whatever the persisted panels.ini
@@ -686,6 +691,7 @@ int main(int argc, char **argv)
         playerMantlesStripPanel.setVisible(editMode);
         playerWirebugStripPanel.setVisible(editMode);
         playerWeaponStripPanel.setVisible(editMode);
+        playerInfoStripPanel.setVisible(editMode);
     }
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
@@ -816,6 +822,7 @@ int main(int argc, char **argv)
         playerMantlesStripPanel.retranslateUi();
         playerWirebugStripPanel.retranslateUi();
         playerWeaponStripPanel.retranslateUi();
+        playerInfoStripPanel.retranslateUi();
     };
 
     QObject::connect(&timer, &QTimer::timeout, [&] {
@@ -948,6 +955,12 @@ int main(int argc, char **argv)
             playerWeaponStripPanel.setVisible(
                 playerWeaponStripPanel.panelEnabled()
                 && playerWeaponStripPanel.hasVisibleContent());
+            const bool keepInfoDemo = skipUpdate(playerInfoStripPanel);
+            if (!keepInfoDemo)
+                playerInfoStripPanel.update(snap);
+            playerInfoStripPanel.setVisible(
+                playerInfoStripPanel.panelEnabled()
+                && playerInfoStripPanel.hasVisibleContent());
         }
 
         monsterPanel.setMultiplayer(snap.isMultiplayer);
@@ -1134,6 +1147,7 @@ int main(int argc, char **argv)
             playerMantlesStripPanel.saveConfig();
             playerWirebugStripPanel.saveConfig();
             playerWeaponStripPanel.saveConfig();
+            playerInfoStripPanel.saveConfig();
         }
     }
 

@@ -1,0 +1,298 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// The v0.12 split's sixth pure core: mhw::buildInfoModel — the
+// transformation that turns one GameSnapshot into what the 「任务/进程」
+// window draws (design 02-interaction-design.md §4.2 「方案 A」).
+//
+// Like player-split-strips-tests, this target deliberately does NOT link
+// mhw-ui: the header is pulled in for its inline/model half only, the
+// same way player-status-strip-tests takes a header's pure functions
+// without dragging in a widget library. The panel in the OTHER half of
+// the same translation unit would pull in QMainWindow,
+// LayerShellQt::Window and six more headers, and none of what this file
+// pins is about pixels.
+//
+// What is pinned here:
+//   * the two halves' FIELD SELECTION — Quest reads `snap.quest` (8
+//     fields), Conn reads `snap.pid` / `snap.imageBase` /
+//     `snap.party.size()` / `snap.attached` — and that Conn's party count
+//     is computed HERE rather than inherited from PlayerViewModel, whose
+//     local-member override exists for MR/name/weaponId;
+//   * the three conditions the panel applies to one quest row:
+//     `active && id > 0` for the row's value AND for the "#%1" suffix,
+//     the anomaly flag over the star threshold, and `timeLeft <= 0`
+//     printing "--:--" instead of a garbage timer;
+//   * the empty snapshot still answering connected/pid/base (NOT
+//     isEmpty) — the window's hasContent() keeps the meta line alive for
+//     a hunter who never entered a quest, which is the one place this
+//     window deliberately differs from the other five split windows;
+//   * the zone LABEL dispatch, by the data layer (has<game>ZoneName) and
+//     never by a translated string: a snapshot carrying the OTHER game's
+//     zone id must fall through to the range fallback rather than render
+//     the wrong game's name.
+//
+// The last group is the one that actually breaks: the door number table
+// changes with a game patch, and a zone id from the other game's band
+// landing in the vocabulary is silent, wrong, and invisible to a pixel
+// baseline that only ever ran World.
+
+#include "ui/panel_player_split_info.h"
+
+#include "core/zone_id.h"
+#include "quest/quest_types.h"
+#include "rise/rise_zones.h"
+#include "world/world_types.h"
+
+#include <QCoreApplication>
+#include <QString>
+
+#include <cstdio>
+
+namespace {
+int gFailures = 0;
+
+void check(bool ok, const char *what)
+{
+    if (!ok) {
+        std::printf("FAIL: %s\n", what);
+        ++gFailures;
+    }
+}
+
+// The shipped demo numbers the panel itself seeds for the same block
+// (panel_player.cpp:1261-1266 / :1294): World, attached, PID 12345, base
+// 0x7FFE00000000, a 4-man party, quest #66801 ★6 HR in progress with 3
+// carts allowed. The window's demo seeds the same values so a test and a
+// preview cannot drift.
+mhw::GameSnapshot demoSnapshot()
+{
+    mhw::GameSnapshot snap;
+    snap.game      = mhw::GameId::World;
+    snap.attached  = true;
+    snap.pid       = 12345;
+    snap.imageBase = 0x7FFE00000000ULL;
+    snap.party.resize(4);
+    snap.zone      = mhw::ZoneRef{mhw::GameId::World,
+                                  static_cast<int>(mhw::WorldZone::AncientForest)};
+    snap.quest     = {66801, 6, false, 2, 2, 0, 0, 3, 2497.0F, 0.0F, 0.0F, true};
+    return snap;
+}
+
+} // namespace
+
+int main(int argc, char *argv[])
+{
+    QCoreApplication app(argc, argv);
+
+    // ---- the shipped demo snapshot: every field, one assertion each ----
+    {
+        const mhw::InfoRow r = mhw::buildInfoModel(demoSnapshot());
+
+        check(r.hasQuest, "active quest with an id -> hasQuest");
+        check(r.questId == 66801, "quest id travels through");
+        check(r.connected, "attached snapshot -> connected");
+        check(r.pid == 12345, "pid travels through unmangled");
+        check(r.imageBase == 0x7FFE00000000ULL,
+              "image base travels through unmangled (64-bit)");
+        check(r.partyCount == 4, "party count is party.size()");
+        check(r.deaths == 0, "deaths travel through");
+        check(r.maxDeaths == 3, "maxDeaths travel through");
+        check(!r.isEmpty(), "demo snapshot is not empty");
+    }
+
+    // ---- 41:37: 2497s is 41m 37s, and the format is mm:ss ------------
+    {
+        const mhw::InfoRow r = mhw::buildInfoModel(demoSnapshot());
+        check(r.timeLeft == QStringLiteral("41:37"),
+              "2497 seconds prints 41:37");
+        check(r.zoneLabel == QString::fromUtf8(mhw::zoneNameLocalized(
+                  mhw::WorldZone::AncientForest)),
+              "zone label resolves through the localized data table");
+    }
+
+    // ---- state label, and that it is the state WORD alone -------------
+    // Composed at paint time into "<rank> <stars> · <state>"; the model
+    // carries the two halves separately so the measurement and the draw
+    // agree on one string. `state` is 2 == in progress.
+    {
+        mhw::GameSnapshot snap = demoSnapshot();
+        snap.quest.state = 2;
+        const mhw::InfoRow r = mhw::buildInfoModel(snap);
+        check(!r.questState.isEmpty(),
+              "an in-progress quest resolves a state word");
+        check(r.questName.endsWith(QStringLiteral("★6")),
+              "a normal quest's name half ends with the star count");
+    }
+
+    // ---- the anomaly branch: Lv<stars>, not ★<stars> ------------------
+    // The flag is explicit because a numeric threshold would be
+    // ambiguous (normal quests can have a three-digit display value) —
+    // quest_types.h:27-30.
+    {
+        mhw::GameSnapshot snap = demoSnapshot();
+        snap.quest.isAnomaly = true;
+        snap.quest.stars = 140;
+        const mhw::InfoRow r = mhw::buildInfoModel(snap);
+        check(r.questName.endsWith(QStringLiteral("Lv140")),
+              "an anomaly quest prints Lv<stars>");
+        check(!r.questName.endsWith(QStringLiteral("★140")),
+              "an anomaly quest does NOT print a star count");
+    }
+
+    // ---- the rank prefix: 1/2/3 -> LR / HR / MR, else nothing ---------
+    {
+        struct { int rank; const char *prefix; const char *what; } cases[] = {
+            {1, "LR ", "rank 1 -> LR"},
+            {2, "HR ", "rank 2 -> HR"},
+            {3, "MR ", "rank 3 -> MR"},
+            {0, "",    "rank 0 -> no prefix"},
+            {9, "",    "an out-of-range rank -> no prefix, not a crash"},
+        };
+        for (const auto &c : cases) {
+            mhw::GameSnapshot snap = demoSnapshot();
+            snap.quest.rank = c.rank;
+            const mhw::InfoRow r = mhw::buildInfoModel(snap);
+            const QString expected = QString::fromUtf8(c.prefix);
+            if (expected.isEmpty()) {
+                check(r.questName.startsWith(QStringLiteral("★"))
+                         || r.questName.startsWith(QStringLiteral("Lv")),
+                      c.what);
+            } else {
+                check(r.questName.startsWith(expected), c.what);
+            }
+        }
+    }
+
+    // ---- no active quest: idle wording, and NO state word -------------
+    // The idle placeholder already means 「空闲」, so appending the state
+    // name would print "空闲 · 空闲".
+    {
+        mhw::GameSnapshot snap = demoSnapshot();
+        snap.quest.active = false;
+        const mhw::InfoRow r = mhw::buildInfoModel(snap);
+        check(!r.hasQuest, "inactive quest -> !hasQuest");
+        check(r.questState.isEmpty(),
+              "inactive quest carries no state word (no idle · idle)");
+        check(r.timeLeft == QStringLiteral("--:--"),
+              "inactive quest prints the --:-- timer placeholder");
+        check(r.maxDeaths == 3,
+              "an inactive quest keeps maxDeaths for the 0 / 3 row");
+    }
+
+    // ---- id <= 0 with active ON: the id must not appear ---------------
+    // panel_player.cpp:854 puts exactly this test on the id before
+    // appending "#%1" to the meta line.
+    {
+        mhw::GameSnapshot snap = demoSnapshot();
+        snap.quest.id = 0;
+        const mhw::InfoRow r = mhw::buildInfoModel(snap);
+        check(!r.hasQuest, "active quest with id 0 -> !hasQuest (no '#0')");
+        check(r.questId == 0, "the zero id still travels through");
+    }
+
+    // ---- timeLeft <= 0 with the quest ON: placeholder, not 0:00 ------
+    {
+        mhw::GameSnapshot snap = demoSnapshot();
+        snap.quest.timeLeftSeconds = 0.0F;
+        const mhw::InfoRow r = mhw::buildInfoModel(snap);
+        check(r.timeLeft == QStringLiteral("--:--"),
+              "a live quest at zero seconds prints --:--");
+    }
+
+    // ---- a questless snapshot still says who we are attached to -------
+    // THE load-bearing case for this window's hasContent(): PID / BASE /
+    // party is our own diagnostic surface (HunterPie has no such
+    // concept), and a hunter who never entered a quest is exactly the
+    // case that used to produce an unreadable empty overlay
+    // (panel_player.cpp:582-585). The model must therefore NOT be empty.
+    {
+        mhw::GameSnapshot snap;   // attached=false, everything else default
+        snap.attached = true;
+        snap.pid      = 24601;
+        snap.imageBase = 0x7FFE12340000ULL;
+        const mhw::InfoRow r = mhw::buildInfoModel(snap);
+        check(!r.hasQuest, "no quest -> !hasQuest");
+        check(r.connected, "attached -> connected");
+        check(r.pid == 24601, "no quest does not cost the pid");
+        check(r.imageBase == 0x7FFE12340000ULL,
+              "no quest does not cost the image base");
+        check(!r.isEmpty(),
+              "attached without a quest is NOT empty — the meta line survives");
+        check(r.partyCount == 0, "an empty party counts 0, not -1");
+    }
+
+    // ---- neither half: empty, so hasContent() may collapse the window -
+    {
+        mhw::GameSnapshot snap;   // attached=false, quest default
+        const mhw::InfoRow r = mhw::buildInfoModel(snap);
+        check(r.isEmpty(), "a cold-process snapshot is empty");
+        check(r.timeLeft == QStringLiteral("--:--"),
+              "a cold-process snapshot prints the timer placeholder");
+    }
+
+    // ---- the party count is party.size(), NOT the view model ----------
+    // resolveIdentity() would carry the local member's override; this
+    // window draws none of what that override is for, and an empty party
+    // is the honest "not in a session" answer.
+    {
+        mhw::GameSnapshot snap = demoSnapshot();
+        snap.party.resize(2);
+        mhw::PartyMemberSnapshot self;
+        self.local = true;
+        self.masterRank = 888;
+        snap.party.append(self);
+        const mhw::InfoRow r = mhw::buildInfoModel(snap);
+        check(r.partyCount == 3,
+              "party count counts every filled slot (3), not 1 local member");
+    }
+
+    // ---- the zone dispatch: the other game's id falls through ---------
+    // panel_player.cpp:162-175 dispatches on z.game and asks THAT game's
+    // data layer whether the id is named. A Rise snapshot carrying a
+    // World id must not render a World name, and an id neither table
+    // names must land in the outpost/area fallback rather than on a
+    // wrong entry.
+    {
+        mhw::GameSnapshot snap = demoSnapshot();
+        snap.zone = mhw::ZoneRef{mhw::GameId::Rise,
+                                 static_cast<int>(mhw::WorldZone::AncientForest)};
+        const mhw::InfoRow r = mhw::buildInfoModel(snap);
+        check(r.zoneLabel != QString::fromUtf8(mhw::zoneNameLocalized(
+                  mhw::WorldZone::AncientForest)),
+              "a World zone id in a Rise snapshot does not render a World name");
+    }
+    {
+        mhw::GameSnapshot snap = demoSnapshot();
+        snap.zone = mhw::ZoneRef{mhw::GameId::World, 42};   // Rise village band
+        const mhw::InfoRow r = mhw::buildInfoModel(snap);
+        check(!r.zoneLabel.isEmpty(),
+              "an unnamed village-band id still renders a fallback label");
+    }
+    {
+        mhw::GameSnapshot snap = demoSnapshot();
+        snap.zone = mhw::ZoneRef{mhw::GameId::Rise,
+                                 static_cast<int>(mhw::RiseZone::RiseLoc3)};
+        const mhw::InfoRow r = mhw::buildInfoModel(snap);
+        check(r.zoneLabel == QString::fromUtf8(mhw::riseZoneNameLocalized(
+                  mhw::RiseZone::RiseLoc3)),
+              "a Rise zone id in a Rise snapshot resolves through Rise's table");
+    }
+
+    // ---- the same snapshot twice gives the same answer -----------------
+    // Cheap determinism check: buildInfoModel must not read any mutable
+    // global (a cached locale index, a static buffer).
+    {
+        const mhw::GameSnapshot snap = demoSnapshot();
+        const mhw::InfoRow a = mhw::buildInfoModel(snap);
+        const mhw::InfoRow b = mhw::buildInfoModel(snap);
+        check(a.zoneLabel == b.zoneLabel
+                  && a.questName == b.questName
+                  && a.timeLeft == b.timeLeft
+                  && a.pid == b.pid,
+              "building the same snapshot twice is deterministic");
+    }
+
+    std::printf("%s (%d failure(s))\n",
+                gFailures == 0 ? "PASS" : "FAILED", gFailures);
+    return gFailures == 0 ? 0 : 1;
+}

@@ -17,6 +17,7 @@
 #include <QVector>
 
 #include "ui/control_panel.h"
+#include "ui/panel_sections.h"
 #include "ui/panel_damage.h"
 #include "ui/panel_pet_damage.h"
 #include "ui/section_row.h"
@@ -113,6 +114,29 @@ bool checked(ControlPanel *cp, const QString &key)
     SectionRow *row = findRow(cp, key);
     return row && row->isChecked();
 }
+
+// The player mask this test expects after its one "switch Weapon off"
+// flip, derived from the section bits rather than written down.
+//
+// It was "fb" — an 8-bit literal from when PlayerSection had exactly
+// eight members. Every section added since (Sharpness, and the split
+// table's own bookkeeping) pushed the real mask past it, and the test
+// then failed on a value that was correct: a section that exists must
+// have a bit in the mask, or the console's row for it is uncheckable.
+// Deriving it means a new section changes this expression and nothing
+// else, which is the visible half of a change that is otherwise silent.
+constexpr uint32_t playerMaskWithWeaponOff() noexcept
+{
+    return mhw::PlayerSection::kAll & ~mhw::PlayerSection::Weapon;
+}
+
+// The mask conf writes lowercase hex, the same shape the console's
+// saveMaskToDisk produces. Kept as a helper so the expected strings below
+// and the seeded one cannot drift apart in casing or padding.
+QString hexOf(uint32_t v)
+{
+    return QStringLiteral("%1").arg(v, 0, 16);
+}
 } // namespace
 
 int main(int argc, char *argv[])
@@ -134,8 +158,16 @@ int main(int argc, char *argv[])
 
     // A pre-pets three-row config must migrate Damage to include the new
     // OtherMembers bit while Pets keeps its all-on default.
-    if (!writeConfig(QStringLiteral(
-            "player=fb\nmonster=2f\ndamage=7\n"))) {
+    //
+    // The player seed is DERIVED, not typed. It is "every section on
+    // except Weapon", which is what the flips further down produce; the
+    // literal it replaced was "fb", a 24-bit-era constant that silently
+    // stopped covering the sections added since. Adding a PlayerSection
+    // bit should make this expression change, not make this test fail —
+    // though it should be noticed when it does, because the mask layout
+    // assertions further down compare against the same number.
+    if (!writeConfig(QStringLiteral("player=%1\nmonster=2f\ndamage=7\n")
+                         .arg(hexOf(playerMaskWithWeaponOff())))) {
         fprintf(stderr, "FAIL: could not seed legacy config\n");
         return 20;
     }
@@ -161,7 +193,8 @@ int main(int argc, char *argv[])
     // Invalid and overflowing hexadecimal masks are ignored independently;
     // they must retain each panel's all-on default rather than parse as zero.
     if (!writeConfig(QStringLiteral(
-            "player=fb\nmonster=2f\ndamage=not-hex\npets=100000000\n"))) {
+            "player=%1\nmonster=2f\ndamage=not-hex\npets=100000000\n")
+            .arg(hexOf(playerMaskWithWeaponOff())))) {
         fprintf(stderr, "FAIL: could not seed invalid config\n");
         return 23;
     }
@@ -194,10 +227,10 @@ int main(int argc, char *argv[])
             "player=ff\n"
             "# keep this comment\n"
             "monster=3f\n"
-            "player=fb\n"
+            "player=%1\n"
             "damage=f\n"
             "pets=3\n"
-            "locale=en-US\n"))) {
+            "locale=en-US\n").arg(hexOf(playerMaskWithWeaponOff())))) {
         fprintf(stderr, "FAIL: could not seed forward-compatible config\n");
         return 36;
     }
@@ -221,7 +254,7 @@ int main(int argc, char *argv[])
             || preserved.count(QStringLiteral("damage=")) != 1
             || preserved.count(QStringLiteral("pets=")) != 1
             || lines.size() < 7
-            || lines[0] != QStringLiteral("player=fb")
+            || lines[0] != QStringLiteral("player=%1").arg(hexOf(playerMaskWithWeaponOff()))
             || lines[1] != QStringLiteral("monster=3f")
             || lines[2] != QStringLiteral("damage=f")
             || lines[3] != QStringLiteral("pets=3")) {
@@ -336,7 +369,8 @@ int main(int argc, char *argv[])
         flipViaKey(&cp, QStringLiteral("weapon"),      false); // PlayerSection::Weapon OFF
         flipViaKey(&cp, QStringLiteral("parts"),       false); // MonsterSection::Parts OFF
         // After all flips the file must read:
-        //   player=fb  (0xff & ~(1<<2))
+        //   player=<kAll & ~Weapon>  (a literal "fb" here went stale the
+//                         moment PlayerSection grew past 8 bits)
         //   monster=2f (0x3f & ~(1<<4))
         //   damage=7   (0x0f & ~(1<<3))
         //   pets=1     (0x03 & ~(1<<1))
@@ -396,7 +430,7 @@ int main(int argc, char *argv[])
         const QString text = readBack();
         const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
         if (lines.size() != 4
-            || lines[0] != QStringLiteral("player=fb")
+            || lines[0] != QStringLiteral("player=%1").arg(hexOf(playerMaskWithWeaponOff()))
             || lines[1] != QStringLiteral("monster=2f")
             || lines[2] != QStringLiteral("damage=7")
             || lines[3] != QStringLiteral("pets=1")) {
@@ -470,7 +504,7 @@ int main(int argc, char *argv[])
         }
         const QString afterEn = readBack();
         if (!afterEn.contains(QStringLiteral("locale=en-US"))
-            || !afterEn.contains(QStringLiteral("player=fb"))
+            || !afterEn.contains(QStringLiteral("player=%1").arg(hexOf(playerMaskWithWeaponOff())))
             || !afterEn.contains(QStringLiteral("monster=2f"))
             || !afterEn.contains(QStringLiteral("damage=7"))
             || !afterEn.contains(QStringLiteral("pets=1"))) {

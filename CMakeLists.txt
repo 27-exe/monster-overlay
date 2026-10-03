@@ -250,6 +250,8 @@ add_library(mhw-ui STATIC
     src/ui/panel_player_split_mantles.h
     src/ui/panel_player_split_weapon.cpp
     src/ui/panel_player_split_weapon.h
+    src/ui/panel_player_split_info.cpp
+    src/ui/panel_player_split_info.h
     src/ui/panel_player_split_wirebug.cpp
     src/ui/panel_player_split_wirebug.h
     # The grid arithmetic every split window above shares: one definition of
@@ -1111,6 +1113,19 @@ add_executable(world-severable-scan-tests
     target_include_directories(player-weapon-strip-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(player-weapon-strip-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME player-weapon-strip-tests COMMAND player-weapon-strip-tests)
+
+    # v0.12: the 「任务/进程」 window's content model — what the snapshot's
+    # quest block and connection block resolve to, and which half of them
+    # is allowed to be empty. The window exists to give the diagnostic
+    # line its own 11px pitch, so "an attached reader with no quest still
+    # counts as content" is the load-bearing claim, not a detail.
+    add_executable(player-info-strip-tests
+        tests/player_info_strip_tests.cpp
+    )
+    target_link_libraries(player-info-strip-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(player-info-strip-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(player-info-strip-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME player-info-strip-tests COMMAND player-info-strip-tests)
 
     # v0.12: the startup mask priority chain (explicit --mask-* CLI value >
     # the console's conf row > everything visible). Both headers are
