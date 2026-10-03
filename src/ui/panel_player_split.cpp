@@ -431,11 +431,8 @@ void PlayerStatusStripPanel::keyPressEvent(QKeyEvent *e)
     // [ / ] are the columns dial: fewer capsules per row = a narrower,
     // taller strip; more = a wider, flatter one. They are the only two
     // keys this panel claims, so every other key — Space (minimize),
-    // Esc (quit), the arrow-key margin nudge — still goes through
-    // Panel::keyPressEvent unchanged. NOT persisting is deliberate: the
-    // dial has no panels.ini key and the console has no widget for it
-    // yet, and writing a key nothing reads back is the mistake the
-    // `visible` key removal in Panel::saveConfig documents.
+    // Esc (quit), the arrow-key margin nudge, the min-size dial added
+    // later — still goes through Panel::keyPressEvent unchanged.
     if (editMode() && (e->key() == Qt::Key_BracketLeft
                        || e->key() == Qt::Key_BracketRight)) {
         const int step = (e->key() == Qt::Key_BracketLeft)
@@ -445,6 +442,42 @@ void PlayerStatusStripPanel::keyPressEvent(QKeyEvent *e)
         return;
     }
     Panel::keyPressEvent(e);
+}
+
+void PlayerStatusStripPanel::saveConfig()
+{
+    // Written on the way out of edit mode only, same trigger as every
+    // other sub-window's.
+    //
+    // The QSettings instance is rebuilt here rather than inherited:
+    // Panel::settings() is a TU-local free function in panel.cpp over a
+    // function-local static, so a subclass cannot reach it — and
+    // duplicating it in a header was deliberately not done either. Two
+    // QSettings on the same IniFormat/UserScope/org/app params address
+    // the same file, and each flushes on destruction, so this writes the
+    // same bytes the base class would have. (Panel::saveConfig() is
+    // called first so the base keys are already on disk before this one
+    // adds to them.)
+    Panel::saveConfig();
+    QSettings s(QSettings::IniFormat, QSettings::UserScope,
+                QStringLiteral("monster-overlay"),
+                QStringLiteral("panels"));
+    s.setValue(QStringLiteral("columns"), columns_);
+    s.sync();
+}
+
+void PlayerStatusStripPanel::loadConfig()
+{
+    // Persisted since v0.12, unpersisted for one release before it. A
+    // section missing this key reads the same default the constructor
+    // installs, which is what makes the first read of an older
+    // panels.ini behave exactly as before.
+    Panel::loadConfig();
+    QSettings s(QSettings::IniFormat, QSettings::UserScope,
+                QStringLiteral("monster-overlay"),
+                QStringLiteral("panels"));
+    setPillsPerRow(s.value(QStringLiteral("columns"),
+                           mhw::kStatusStripPillsPerRow).toInt());
 }
 
 void PlayerStatusStripPanel::update(const mhw::GameSnapshot &snap)

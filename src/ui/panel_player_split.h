@@ -181,6 +181,20 @@ public:
     void setPillsPerRow(int perRow);
     [[nodiscard]] int pillsPerRow() const noexcept { return columns_; }
 
+    // The columns dial survives an exit. Public because main.cpp calls
+    // saveConfig() on this panel the same way it calls it on every other
+    // sub-window when the user leaves edit mode — that call is the trigger
+    // for persisting, not an implementation detail.
+    //
+    // Not `virtual` and not `override`: Panel's versions are plain
+    // non-virtual members reached through Panel*, so these would hide
+    // rather than extend them, and every call site would have to know
+    // which of the two it is talking to. Both bodies therefore call the
+    // base explicitly — the same discipline Panel::loadConfig() documents
+    // for its own callers.
+    void loadConfig();
+    void saveConfig();
+
     // v0.12: this window was carved out of PlayerPanel, so it declares
     // itself a sub-window (Panel::isSubWindow, whose header comment names
     // a DebuffStrip as the example). That is what lets the console /

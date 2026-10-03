@@ -396,6 +396,37 @@ struct GridSize {
                     scaleRound(logicalHeight, scale)};
 }
 
+// ─── the user's size floor ────────────────────────────────────────────
+
+// What a window ends up being once the user's minimum size is honoured:
+// the content's own answer, raised to the floor and never lowered by it.
+//
+// The floor is a *minimum*, not a target and not a lock, which is the
+// whole reason this is a one-line std::max rather than an assignment:
+//   - 0 (the default, and what every pre-v0.12 config reads) is an
+//     identity, so a panel nobody has dialled is bit-for-bit unchanged;
+//   - content larger than the floor still wins, so adding a long quest
+//     name grows the window instead of clipping it;
+//   - a negative floor — a corrupt key, a .toInt() on garbage — is
+//     treated as absent rather than shrinking the window to nothing.
+//
+// Panel::setContentSize() applies this to the size it hands the
+// compositor; a sub-window's paint path applies it to the width it draws
+// into. Both must use it, because a window that widened while its
+// content kept the old number is the exact "bars are still too narrow"
+// complaint the floor was added to answer.
+[[nodiscard]] inline int effectiveWidth(int contentWidth, int minWidth) noexcept
+{
+    return contentWidth > 0 && minWidth > contentWidth ? minWidth
+                                                       : contentWidth;
+}
+
+[[nodiscard]] inline int effectiveHeight(int contentHeight, int minHeight) noexcept
+{
+    return contentHeight > 0 && minHeight > contentHeight ? minHeight
+                                                          : contentHeight;
+}
+
 // ─── diagnostics ─────────────────────────────────────────────────────
 
 // width / height as a ratio, 0 when either side is not a real size.

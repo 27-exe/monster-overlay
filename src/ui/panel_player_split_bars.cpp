@@ -17,6 +17,7 @@
 // this block (panel_player.cpp:645) and the pilot strip reads for its own
 // (:429 / :436). Declared in namespace PlayerSection, not mhw.
 #include "ui/panel_sections.h"
+#include "ui/panel_sizing.h"
 
 #include <QFontMetrics>
 #include <QLinearGradient>
@@ -364,13 +365,22 @@ void PlayerBarsStripPanel::paintPanel(QPainter &p)
     // per repaint (and therefore per drag frame) is free.
     setContentSize(w, h);
 
+    // Re-read the width the window actually got. setContentSize() applied
+    // the user's minimum-width floor to its arguments, but `w` is still
+    // the pre-floor content number — using it here is exactly the bug the
+    // floor was added to fix: the window would widen and the gauge would
+    // stay 89px, leaving empty background to the right of the bar.
+    //
+    // The window only ever grows, so the same max() the base class applied
+    // reproduces it without asking the compositor anything.
+    const int drawnW = mhw::panel_sizing::effectiveWidth(w, minWidth());
+
     // Chrome: NONE. drawV03Chrome() is deliberately not called — a bar
     // pair is a fragment of the player panel, and a panel frame around
     // two progress bars is the shape the split exists to remove. This
     // panel calls neither drawV03Chrome() nor paintPanelChrome(), exactly
     // like the pilot status strip.
-
-    const int innerW = w - 2 * kMargin;
+    const int innerW = drawnW - 2 * kMargin;
     int y = kMargin + kBarsGap;
 
     // ---- HP bar ----

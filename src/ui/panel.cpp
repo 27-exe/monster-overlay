@@ -1,6 +1,7 @@
 #include "panel.h"
 
 #include "panel_accent.h"
+#include "panel_sizing.h"
 
 #include <LayerShellQt/Window>
 
@@ -250,6 +251,17 @@ void Panel::loadConfig()
     // sub-window is ~91px wide, so x2 made 7pt text 14pt inside a 182px
     // window and the strip was unusable. Reported by the user.)
     scale_ = settings().value(QStringLiteral("scale"), kDefaultScale).toDouble();
+    // Minimum size floors, read verbatim like the margins above and
+    // clamped only to a sane range. NO clamp against the screen: a
+    // floor wider than the attached display is still the user's
+    // intent, and silently reducing it here is the same data loss that
+    // made a 4K margin unrecoverable. A corrupt value yields 0 from
+    // .toInt(), which reads as "no floor" — the same fallback every
+    // other key here relies on.
+    minW_ = std::clamp(settings().value(QStringLiteral("minW"), 0).toInt(),
+                       0, kMaxMinSize);
+    minH_ = std::clamp(settings().value(QStringLiteral("minH"), 0).toInt(),
+                       0, kMaxMinSize);
     opacity_ = settings().value(QStringLiteral("opacity"), 1.0).toDouble();
     bgAlpha_ = std::clamp(settings().value(QStringLiteral("bgAlpha"), 170).toInt(), 0, 255);
     // v0.8: per-panel screen selection. Empty = use whatever the OS calls
@@ -282,6 +294,8 @@ void Panel::saveConfig()
     settings().setValue(QStringLiteral("mr"), margins_.right());
     settings().setValue(QStringLiteral("mb"), margins_.bottom());
     settings().setValue(QStringLiteral("scale"), scale_);
+    settings().setValue(QStringLiteral("minW"), minW_);
+    settings().setValue(QStringLiteral("minH"), minH_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
     settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
     // A `visible` key used to be written here. It was removed because
@@ -310,6 +324,8 @@ void Panel::saveAppearance()
 {
     settings().beginGroup(key_);
     settings().setValue(QStringLiteral("scale"), scale_);
+    settings().setValue(QStringLiteral("minW"), minW_);
+    settings().setValue(QStringLiteral("minH"), minH_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
     settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
     // v0.5: also persist margins so the overlay's loadConfig()
@@ -390,6 +406,12 @@ void Panel::setPanelEnabled(bool on)
 
 void Panel::setContentSize(int w, int h)
 {
+    // The floor goes on FIRST, before logicalSize_ is recorded, so every
+    // downstream reader — the compositor request below, and the
+    // normalSize_ that Space captures when the panel folds — sees the
+    // size the user actually asked for rather than the content's
+    // opinion of it.
+    applyMinSizeFloor(w, h);
     logicalSize_ = QSize(w, h);
     // Actual window size tracks the zoom so painted content is
     // never clipped at scale != 1.0.
@@ -566,6 +588,35 @@ void Panel::keyPressEvent(QKeyEvent *e)
 
     if (!editMode_)
         return QMainWindow::keyPressEvent(e);
+
+    // `-` and `=` dial the minimum width; with Shift they dial the
+    // minimum height. They sit here, after the live-mode bail-out, so a
+    // stray press in-game cannot resize an overlay over the action, and
+    // BEFORE the arrow switch so a subclass overriding keyPressEvent still
+    // gets every key it did not claim — the same passthrough contract the
+    // strip's [ ] dial relies on.
+    //
+    // Why this pair and not , and . or Shift+arrows: `-` and `=` are the
+    // unshifted and shifted faces of ONE physical key on a US layout, so
+    // the two halves cost a single hand position, and they read as "minus
+    // / plus" the way the arrow keys read as "left / right". Shift means
+    // the same thing it already means for the arrows — the other axis of
+    // the same quantity — instead of a mode the user has to be inside.
+    {
+        const bool shift = (e->modifiers() & Qt::ShiftModifier) != 0;
+        int delta = 0;
+        if (e->key() == Qt::Key_Minus || e->key() == Qt::Key_Underscore)
+            delta = -kMinSizeStep;
+        else if (e->key() == Qt::Key_Equal || e->key() == Qt::Key_Plus)
+            delta = kMinSizeStep;
+        if (delta != 0) {
+            if (shift)
+                nudgeMinHeight(delta);
+            else
+                nudgeMinWidth(delta);
+            return;
+        }
+    }
 
     // Arrow keys: nudge panel margins (edit mode only).
     constexpr int kStep = 10;
@@ -988,8 +1039,46 @@ void Panel::resetToDefaults()
     opacity_      = 0.85;
     bgAlpha_      = 170;
     margins_      = defaultMarginsFor(corner_);
+    // The size floors are user intent, so "reset" has to clear them: a
+    // window left at minW=356 would otherwise survive a factory reset
+    // and the user would have to rediscover the same sixteen presses.
+    minW_ = 0;
+    minH_ = 0;
     if (logicalSize_.isValid())
         setContentSize(logicalSize_.width(), logicalSize_.height());
     update();   // paintEvent re-composites at the reset alpha (0.85)
     saveConfig();
+}
+
+void Panel::applyMinSizeFloor(int &w, int &h) const
+{
+    // The shared helper, not a bare std::max here: a sub-window's paint
+    // path has to reach the same answer (see effectiveWidth's note), and
+    // two spellings of one rule is how the strip's reserve/draw pair
+    // drifted apart in the first place. minW_/minH_ are already clamped
+    // to [0, kMaxMinSize] on read, so the "negative floor means absent"
+    // branch inside the helper is belt-and-braces for a direct caller.
+    w = mhw::panel_sizing::effectiveWidth(w, minW_);
+    h = mhw::panel_sizing::effectiveHeight(h, minH_);
+}
+
+void Panel::nudgeMinWidth(int delta)
+{
+    const int next = std::clamp(minW_ + delta, 0, kMaxMinSize);
+    if (next == minW_)
+        return;
+    minW_ = next;
+    // Repaint re-derives the content size and setContentSize() applies
+    // the new floor, so the window follows on the next frame. The same
+    // idempotent guard that stops the compositor flicker applies here.
+    update();
+}
+
+void Panel::nudgeMinHeight(int delta)
+{
+    const int next = std::clamp(minH_ + delta, 0, kMaxMinSize);
+    if (next == minH_)
+        return;
+    minH_ = next;
+    update();
 }

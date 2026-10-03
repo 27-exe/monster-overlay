@@ -299,11 +299,62 @@ protected:
     // first letter instead of the full layout. Toggle with Space.
     bool minimized() const { return minimized_; }
 
+    // ─── minimum size: the floor under a content-sized panel ─────────
+    //
+    // A sub-window's width is normally whatever its content needs, which
+    // is right for a pill grid and wrong for a pair of gauges: the HP bar
+    // measured "150 / 150" and "100.0%" and came out 89px of ink, a
+    // quarter of the 356px the same bar gets inside the single panel.
+    // The user cannot reach layer-shell's own resize (the protocol has
+    // no resize semantic and the compositor does not arbitrate our
+    // extent), so the adjustment has to be a value we own.
+    //
+    // WHY A FLOOR AND NOT A LOCK: a lock freezes one instant's answer, so
+    // the next debuff — or a longer player name — either gets clipped or
+    // leaves a gap. A floor only ever raises the content's number, so
+    // content still wins whenever it is larger, and setting it back to 0
+    // restores the content-driven behaviour exactly. One int, three
+    // states, no mode to remember.
+    //
+    // 0 is the default and is the whole migration story: a section that
+    // has never been dialled has no key, reads 0, and max(w, 0) == w —
+    // which is why the four shipped panels' pixel baselines are
+    // unaffected by any of this.
+    int  minWidth() const { return minW_; }
+    int  minHeight() const { return minH_; }
+    // The dial's step. 16px because it is about a fifth of one capsule,
+    // so six or seven presses take a strip from its content width to a
+    // 300px window without the first press jumping past what the user
+    // could see they were aiming at.
+    static constexpr int kMinSizeStep = 16;
+    // 4096, not a screen dimension: a value larger than the display is
+    // legal (the window is simply wider than the output) and clamping to
+    // the screen here is what made margins unrecoverable — see the
+    // matching note in loadConfig(). What must be rejected is a negative
+    // or absurd one, and only that.
+    static constexpr int kMaxMinSize = 4096;
+
+protected:
+    // Edit-mode keys `-` / `=` and their Shift forms. Virtual so a
+    // sub-window can react to a size change it renders specially — the
+    // bars panel's gauge has to re-measure its ink, which is not
+    // something the base class can do for it.
+    virtual void nudgeMinWidth(int delta);
+    virtual void nudgeMinHeight(int delta);
+
 private:
     void applyGeometry();
     void setLayerKeyboardInteractivity(bool interactive);
     void nudgeMargins(int dx, int dy);
     void paintMinimized(QPainter &p);
+    // max() against the floors, applied inside setContentSize() — the
+    // one funnel both paintPanel() and a size nudge pass through, and
+    // the only place where the value Space captures into normalSize_ has
+    // already seen the floor. A panel that took the max itself would be
+    // correct today and wrong the first time a subclass forgot.
+    void applyMinSizeFloor(int &w, int &h) const;
+    int  minW_{0};
+    int  minH_{0};
 
     // Push pushedMargins() (declared public) at the layer-shell surface.
     // Called from applyGeometry() so a surface (re)created because an
