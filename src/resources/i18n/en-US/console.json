@@ -174,7 +174,8 @@
         "mantles": "Mantles",
         "debuff": "Debuffs",
         "buff": "Buffs",
-        "wirebug": "Wirebugs"
+        "wirebug": "Wirebugs",
+        "sharpness": "Sharpness bar"
       },
       "monster": {
         "info": "Portrait",

@@ -648,6 +648,16 @@ void PlayerPanel::paintPanel(QPainter &p)
     // era row that has no data backing it. World still uses Mantles.
     const bool onMantles     = (smask & mhw::PlayerSection::Mantles)
                                && (game_ != mhw::GameId::Rise);
+    // v0.12: the sharpness gauge's OWN bit. `Weapon` used to mean "weapon
+    // slot + name + MR + sharpness bar" — four things behind one toggle,
+    // which is the design's own finding (02-interaction-design.md §3.3).
+    // As the identity trio moves into its own window, the split's mask
+    // derivation clears `Weapon` for this panel, so the gauge had to be
+    // told apart from the trio or turning the weapon row off in the
+    // console would have hidden it too. Single mode has both bits in
+    // kAll, so the default path is unchanged; Split clears Weapon only,
+    // which is exactly what sends the trio away and keeps the bar.
+    const bool onSharpness   = smask & mhw::PlayerSection::Sharpness;
     // v0.12: THE TWO LINES THAT MOVE THE CAPSULES INTO THEIR OWN WINDOW.
     //
     // `smask & PlayerSection::Debuff` / `::Buff` is the ONLY gate on those
@@ -757,7 +767,12 @@ void PlayerPanel::paintPanel(QPainter &p)
 
     int totalH = kMargin + kTitleH;   // title always drawn
     totalH += qrowStreamH;
-    if (onWeapon)                        totalH += kWeaponGap + kWeaponH;
+    // v0.12: the prow block's reservation follows the same OR the paint
+    // uses (`onWeapon || onSharpness`), so the row's height cannot be
+    // reserved for a block that no longer draws, or dropped from a block
+    // that still does. In single mode both bits are set for every
+    // pre-v0.12 mask, so this is the same number it always was.
+    if (onWeapon || onSharpness)           totalH += kWeaponGap + kWeaponH;
     if (onBars)                          totalH += kBarsGap  + kBarsH;
     if (onMantles && mantleCount > 0)    totalH += kMantleGap + kMantleH;
     if (onWirebug && wirebugActiveCount > 0)   totalH += kWirebugGap + kWirebugH;
@@ -941,17 +956,33 @@ void PlayerPanel::paintPanel(QPainter &p)
     if (n_qrow > 0)
         y -= kGapQrow;      // last qrow has no trailing inter-row gap
 
-    // ---- prow: weapon slot + name + MR ----
-    if (onWeapon) {
+    // ---- prow: weapon slot + name + MR + sharpness ----
+    //
+    // v0.12: THREE gates for one row, after the identity trio (slot +
+    // name + MR) moved into its own window. The trio is still gated on
+    // `Weapon` below; the SHARPNESS GAUGE reads its OWN bit now.
+    //
+    // Why: `Weapon` used to mean all four things at once, and the split's
+    // mask derivation clears `Weapon` for this panel. Left as it was,
+    // turning the weapon row off in the console would have hidden the bar
+    // too — the user who asked "why is my sharpness gone" had switched
+    // off weapon INFO, not "is my blade about to bounce"
+    // (design 02-interaction-design.md §3.3). So the gauge follows
+    // `Sharpness` and the trio follows `Weapon`, and each toggle answers
+    // its own question.
+    //
+    // DEFAULT SINGLE IS UNTOUCHED: `Sharpness` is inside kAll and
+    // Single resolves the panel's mask to the user's mask VERBATIM
+    // (playerPanelMaskFor's Single arm), so every pre-v0.12 mask has the
+    // bit set and the bar draws exactly as before. The ten single-mode
+    // pixel baselines do not move.
+    if (onWeapon || onSharpness) {
         y += kGapSection;   // gap before prow (moved out of serial layout)
         const int prowH = 26;             // .wslot height
-        const QRectF slotRect(innerLeft, y, kWslot, prowH);
-        const QString wp = weaponId_ >= 0
-            ? Icon::weaponPath(weaponId_, 1) : QString();
-        drawWslot(p, slotRect, Icon::render(wp, kWslot));
 
         QFont nFont(QStringLiteral("Chakra Petch"), 12, QFont::Medium);
         nFont.setStyleStrategy(QFont::PreferAntialias);
+
         // Layout, left→right: [wslot] [name] [MR] ... [gauge] [47]
         // Per HTML v8 .pname/.mr sit in the same flex row with gap:8,
         // so MR is glued to the name (not the right edge).
@@ -962,64 +993,98 @@ void PlayerPanel::paintPanel(QPainter &p)
         // Center the [gauge + gap + badge] block horizontally in the
         // inner row. The width comes from the sharpness TU itself, so
         // what gets centered is by definition what gets drawn.
-        const int shpTotalW = playerSharpnessBarTotalWidth();
-        const int shpCenterX = innerLeft + (innerW - shpTotalW) / 2;
-        const int compRightX = shpCenterX + shpTotalW;
-        const int gaugeLeftX = drawPlayerSharpnessBar(p, player_.sharpness,
+        //
+        // v0.12: the mount is conditional on the bar's own bit. When it
+        // is off, `gaugeLeftX` is set to `compRightX`, which is exactly
+        // the value the painter returns for an invalid / ranged-weapon
+        // snapshot — "no shrink" — so `gaugeLeftEffective` falls through
+        // to innerRight and the trio keeps the full row. The identical
+        // hand-off, reached without drawing a single gauge pixel.
+        int gaugeLeftX = 0;
+        int compRightX = 0;
+        if (onSharpness) {
+            const int shpTotalW = playerSharpnessBarTotalWidth();
+            const int shpCenterX = innerLeft + (innerW - shpTotalW) / 2;
+            compRightX = shpCenterX + shpTotalW;
+            gaugeLeftX = drawPlayerSharpnessBar(p, player_.sharpness,
                                                 compRightX, y, prowH);
+        } else {
+            // Bit off: the same "no shrink" answer the painter gives.
+            // compRightX must exist for the comparison below even though
+            // nothing was drawn, so it takes the value the centering
+            // math would have produced and gaugeLeftX is pinned to it.
+            const int shpTotalW = playerSharpnessBarTotalWidth();
+            compRightX = innerLeft + (innerW - shpTotalW) / 2 + shpTotalW;
+            gaugeLeftX = compRightX;
+        }
         const int gaugeLeftEffective = (gaugeLeftX < compRightX)
             ? gaugeLeftX - gapToMR : innerRight;
-        const int nameLeftX = static_cast<int>(slotRect.right()) + 8;
 
-        // Compute name width so we can place MR right after it.
-        const QString nm = playerName_.isEmpty()
-            ? QStringLiteral("--")   // no local player in party yet
-            : playerName_;
-        p.setFont(nFont);
-        const QFontMetrics fmName(nFont);
-        const int nameWidth = fmName.horizontalAdvance(nm);
+        if (onWeapon) {
+            // ---- identity trio: slot + name + MR ----
+            // In split mode this whole arm is dead — the mask derivation
+            // cleared Weapon, and the trio is drawn by
+            // PlayerWeaponStripPanel instead. It is left in place rather
+            // than deleted so single mode (the default) keeps drawing
+            // exactly what it drew before, which is the promise the baselines
+            // are measured against.
+            const QRectF slotRect(innerLeft, y, kWslot, prowH);
+            const QString wp = weaponId_ >= 0
+                ? Icon::weaponPath(weaponId_, 1) : QString();
+            drawWslot(p, slotRect, Icon::render(wp, kWslot));
 
-        // MR text + width
-        const int mr = playerMR_ > 0 ? playerMR_ : 0;
-        const QString mrTxt = playerMR_ > 0
-            ? QStringLiteral("MR %1").arg(mr)
-            : QStringLiteral("MR --");
-        QFont mrFont(QStringLiteral("Chakra Petch"), 9);
-        mrFont.setStyleStrategy(QFont::PreferAntialias);
-        p.setFont(mrFont);
-        const QFontMetrics fmMr(mrFont);
-        const int mrWidth = fmMr.horizontalAdvance(mrTxt);
+            const int nameLeftX = static_cast<int>(slotRect.right()) + 8;
 
-        // MR sits flush after the name (gapNameMR). If it would
-        // overlap the gauge, fall back to the trimmed right-aligned
-        // layout to avoid colliding. nameRect stays a single rect for
-        // text drawing only (MR position is computed separately).
-        const int mrLeftX = nameLeftX + nameWidth + gapNameMR;
-        const int mrRightX = nameLeftX + nameWidth + gapNameMR + mrWidth;
-        const bool fits = mrRightX <= gaugeLeftEffective;
-        if (fits) {
-            // MR glued to name
-            p.setPen(QColor(245, 246, 247));
-            p.drawText(QRectF(nameLeftX, y, nameWidth, prowH),
-                       Qt::AlignLeft | Qt::AlignVCenter, nm);
+            // Compute name width so we can place MR right after it.
+            const QString nm = playerName_.isEmpty()
+                ? QStringLiteral("--")   // no local player in party yet
+                : playerName_;
+            p.setFont(nFont);
+            const QFontMetrics fmName(nFont);
+            const int nameWidth = fmName.horizontalAdvance(nm);
+
+            // MR text + width
+            const int mr = playerMR_ > 0 ? playerMR_ : 0;
+            const QString mrTxt = playerMR_ > 0
+                ? QStringLiteral("MR %1").arg(mr)
+                : QStringLiteral("MR --");
+            QFont mrFont(QStringLiteral("Chakra Petch"), 9);
+            mrFont.setStyleStrategy(QFont::PreferAntialias);
             p.setFont(mrFont);
-            p.setPen(QColor(146, 148, 149));
-            p.drawText(QRectF(mrLeftX, y, mrWidth, prowH),
-                       Qt::AlignLeft | Qt::AlignVCenter, mrTxt);
-        } else {
-            // Overflow: trim name with ellipsis, push MR flush right
-            // of the (trimmed) name, before the gauge.
-            QString trimmed = fmName.elidedText(nm, Qt::ElideRight,
-                                                std::max(0, gaugeLeftEffective - nameLeftX - mrWidth - gapNameMR));
-            const int trimmedW = fmName.horizontalAdvance(trimmed);
-            p.setPen(QColor(245, 246, 247));
-            p.drawText(QRectF(nameLeftX, y, trimmedW, prowH),
-                       Qt::AlignLeft | Qt::AlignVCenter, trimmed);
-            const int overflowMRX = nameLeftX + trimmedW + gapNameMR;
-            p.setFont(mrFont);
-            p.setPen(QColor(146, 148, 149));
-            p.drawText(QRectF(overflowMRX, y, mrWidth, prowH),
-                       Qt::AlignLeft | Qt::AlignVCenter, mrTxt);
+            const QFontMetrics fmMr(mrFont);
+            const int mrWidth = fmMr.horizontalAdvance(mrTxt);
+
+            // MR sits flush after the name (gapNameMR). If it would
+            // overlap the gauge, fall back to the trimmed right-aligned
+            // layout to avoid colliding. nameRect stays a single rect for
+            // text drawing only (MR position is computed separately).
+            const int mrLeftX = nameLeftX + nameWidth + gapNameMR;
+            const int mrRightX = nameLeftX + nameWidth + gapNameMR + mrWidth;
+            const bool fits = mrRightX <= gaugeLeftEffective;
+            if (fits) {
+                // MR glued to name
+                p.setPen(QColor(245, 246, 247));
+                p.drawText(QRectF(nameLeftX, y, nameWidth, prowH),
+                           Qt::AlignLeft | Qt::AlignVCenter, nm);
+                p.setFont(mrFont);
+                p.setPen(QColor(146, 148, 149));
+                p.drawText(QRectF(mrLeftX, y, mrWidth, prowH),
+                           Qt::AlignLeft | Qt::AlignVCenter, mrTxt);
+            } else {
+                // Overflow: trim name with ellipsis, push MR flush right
+                // of the (trimmed) name, before the gauge.
+                QString trimmed = fmName.elidedText(nm, Qt::ElideRight,
+                                                    std::max(0, gaugeLeftEffective - nameLeftX - mrWidth - gapNameMR));
+                const int trimmedW = fmName.horizontalAdvance(trimmed);
+                p.setPen(QColor(245, 246, 247));
+                p.drawText(QRectF(nameLeftX, y, trimmedW, prowH),
+                           Qt::AlignLeft | Qt::AlignVCenter, trimmed);
+                const int overflowMRX = nameLeftX + trimmedW + gapNameMR;
+                p.setFont(mrFont);
+                p.setPen(QColor(146, 148, 149));
+                p.drawText(QRectF(overflowMRX, y, mrWidth, prowH),
+                           Qt::AlignLeft | Qt::AlignVCenter, mrTxt);
+            }
         }
         y += prowH;
     }

@@ -174,7 +174,8 @@
         "mantles": "衣装",
         "debuff": "异常状态",
         "buff": "正面状态",
-        "wirebug": "翔虫"
+        "wirebug": "翔虫",
+        "sharpness": "锋利度条"
       },
       "monster": {
         "info": "六角肖像",

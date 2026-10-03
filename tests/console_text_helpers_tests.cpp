@@ -189,13 +189,13 @@ int main(int argc, char *argv[])
           "sectionLabel: index 4 differs per panel (衣装 vs 部位) — the "
           "player table's mantles row is not the monster table's parts row");
 
-    // The four panels' counts differ (8/6/4/2), so the same index maps to
+    // The four panels' counts differ (9/6/4/2), so the same index maps to
     // different rows; that asymmetry is precisely what a dispatch bug hides.
-    check(mhw::PlayerSection::kCount == 8
+    check(mhw::PlayerSection::kCount == 9
               && mhw::MonsterSection::kCount == 6
               && mhw::DamageSection::kCount == 4
               && mhw::PetDamageSection::kCount == 2,
-          "sectionLabel: the four tables have distinct sizes (8/6/4/2)");
+          "sectionLabel: the four tables have distinct sizes (9/6/4/2)");
 
     // An out-of-range panel is a programming error and must return a null
     // QString rather than reading off the end of some table.

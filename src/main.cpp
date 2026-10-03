@@ -29,6 +29,14 @@
 #include "ui/panel_player_split_bars.h"
 #include "ui/panel_player_split_mantles.h"
 #include "ui/panel_player_split_wirebug.h"
+// v0.12: the weapon identity trio (icon + name + MR). Same shape as the
+// four above and the same reason — the window is declared by
+// kPlayerSplitTargets (its row claims PlayerSection::Weapon) but
+// constructed here, so this is the one place that knows all five names.
+// The sharpness gauge does NOT travel with it: its table row deliberately
+// leaves PlayerSection::Sharpness behind, and panel_player.cpp's prow
+// block reads that bit on its own.
+#include "ui/panel_player_split_weapon.h"
 #include "ui/panel_sections.h"
 // The four conf mask rows are parsed with the console's own codec, so
 // both sides of the console <-> overlay handshake share one format
@@ -508,6 +516,7 @@ int main(int argc, char **argv)
     PlayerBarsStripPanel playerBarsStripPanel;
     PlayerMantlesStripPanel playerMantlesStripPanel;
     PlayerWirebugStripPanel playerWirebugStripPanel;
+    PlayerWeaponStripPanel playerWeaponStripPanel;
 
     playerPanel.setEditMode(editMode);
     monsterPanel.setEditMode(editMode);
@@ -517,6 +526,7 @@ int main(int argc, char **argv)
     playerBarsStripPanel.setEditMode(editMode);
     playerMantlesStripPanel.setEditMode(editMode);
     playerWirebugStripPanel.setEditMode(editMode);
+    playerWeaponStripPanel.setEditMode(editMode);
 
     // L1: apply section masks BEFORE show() so the first paint reflects
     // them — no one-frame flash of "all visible" if a mask is restrictive.
@@ -557,6 +567,7 @@ int main(int argc, char **argv)
     playerBarsStripPanel.setSectionMask(maskPlayer);
     playerMantlesStripPanel.setSectionMask(maskPlayer);
     playerWirebugStripPanel.setSectionMask(maskPlayer);
+    playerWeaponStripPanel.setSectionMask(maskPlayer);
     damagePanel.setRiseDisplayOptions(riseDamageDisplayOptions);
     petDamagePanel.setDisplayOptions(riseDamageDisplayOptions);
     // Master gate: maps to the control console's "面板启用"
@@ -600,6 +611,7 @@ int main(int argc, char **argv)
     playerBarsStripPanel.setPanelEnabled(playerSplitOn);
     playerMantlesStripPanel.setPanelEnabled(playerSplitOn);
     playerWirebugStripPanel.setPanelEnabled(playerSplitOn);
+    playerWeaponStripPanel.setPanelEnabled(playerSplitOn);
 
 
     // v0.8: CLI --output-* overrides whatever the persisted panels.ini
@@ -673,6 +685,7 @@ int main(int argc, char **argv)
         playerBarsStripPanel.setVisible(editMode);
         playerMantlesStripPanel.setVisible(editMode);
         playerWirebugStripPanel.setVisible(editMode);
+        playerWeaponStripPanel.setVisible(editMode);
     }
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
@@ -802,6 +815,7 @@ int main(int argc, char **argv)
         playerBarsStripPanel.retranslateUi();
         playerMantlesStripPanel.retranslateUi();
         playerWirebugStripPanel.retranslateUi();
+        playerWeaponStripPanel.retranslateUi();
     };
 
     QObject::connect(&timer, &QTimer::timeout, [&] {
@@ -920,6 +934,20 @@ int main(int argc, char **argv)
             playerWirebugStripPanel.setVisible(
                 playerWirebugStripPanel.panelEnabled()
                 && playerWirebugStripPanel.hasVisibleContent());
+
+            // Same three-line shape as the four above. One difference
+            // worth stating: this window has no per-game demo to retarget
+            // (there is no setGameForDemo() call for it anywhere), and
+            // that is a fact about its content rather than a gap in the
+            // wiring — a weapon icon and a player name read the same in
+            // World and in Rise, which is the one block in the panel that
+            // is entirely game-agnostic.
+            const bool keepWeaponDemo = skipUpdate(playerWeaponStripPanel);
+            if (!keepWeaponDemo)
+                playerWeaponStripPanel.update(snap);
+            playerWeaponStripPanel.setVisible(
+                playerWeaponStripPanel.panelEnabled()
+                && playerWeaponStripPanel.hasVisibleContent());
         }
 
         monsterPanel.setMultiplayer(snap.isMultiplayer);
@@ -1105,6 +1133,7 @@ int main(int argc, char **argv)
             playerBarsStripPanel.saveConfig();
             playerMantlesStripPanel.saveConfig();
             playerWirebugStripPanel.saveConfig();
+            playerWeaponStripPanel.saveConfig();
         }
     }
 

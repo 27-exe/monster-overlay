@@ -111,7 +111,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 73
+      "symbols": 78
     },
     "src/main_control.cpp": {
       "class": "ZERO",
@@ -345,7 +345,7 @@
         "monster-control-p0-test",
         "snapshot-regression-tests"
       ],
-      "symbols": 51
+      "symbols": 54
     },
     "src/ui/panel_damage.cpp": {
       "class": "INDIRECT",
@@ -401,7 +401,7 @@
         "player-status-strip-tests",
         "snapshot-regression-tests"
       ],
-      "symbols": 31
+      "symbols": 33
     },
     "src/ui/panel_player_split_bars.cpp": {
       "class": "INDIRECT",
@@ -411,6 +411,12 @@
       ],
       "symbols": 25
     },
+    "src/ui/panel_player_split_info.cpp": {
+      "class": "UNBUILT",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 0
+    },
     "src/ui/panel_player_split_mantles.cpp": {
       "class": "INDIRECT",
       "compiled_by": [],
@@ -418,6 +424,14 @@
         "player-split-strips-tests"
       ],
       "symbols": 29
+    },
+    "src/ui/panel_player_split_weapon.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "player-weapon-strip-tests"
+      ],
+      "symbols": 25
     },
     "src/ui/panel_player_split_wirebug.cpp": {
       "class": "INDIRECT",

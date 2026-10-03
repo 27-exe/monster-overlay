@@ -248,6 +248,8 @@ add_library(mhw-ui STATIC
     src/ui/panel_player_split_bars.h
     src/ui/panel_player_split_mantles.cpp
     src/ui/panel_player_split_mantles.h
+    src/ui/panel_player_split_weapon.cpp
+    src/ui/panel_player_split_weapon.h
     src/ui/panel_player_split_wirebug.cpp
     src/ui/panel_player_split_wirebug.h
     # The grid arithmetic every split window above shares: one definition of
@@ -1097,6 +1099,18 @@ add_executable(world-severable-scan-tests
     target_include_directories(player-split-strips-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(player-split-strips-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME player-split-strips-tests COMMAND player-split-strips-tests)
+
+    # v0.12: the weapon identity window's content model — the
+    # GameSnapshot -> {wslot, name, master rank} transformation, which is
+    # what PlayerPanel used to draw inside a 49px band it could not
+    # actually fit a name into.
+    add_executable(player-weapon-strip-tests
+        tests/player_weapon_strip_tests.cpp
+    )
+    target_link_libraries(player-weapon-strip-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(player-weapon-strip-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(player-weapon-strip-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME player-weapon-strip-tests COMMAND player-weapon-strip-tests)
 
     # v0.12: the startup mask priority chain (explicit --mask-* CLI value >
     # the console's conf row > everything visible). Both headers are

@@ -37,15 +37,30 @@ namespace PlayerSection {
 enum : uint32_t {
     Conn    = 1u << 0,   // 已连接 · PID · BASE 行
     Quest   = 1u << 1,   // 区域·任务 / 剩余 / 猫车 三行
-    Weapon  = 1u << 2,   // 武器槽 + 名字 + MR + 锋利度条
+    // v0.12: the weapon IDENTITY TRIO only — slot + name + MR. The bar
+    // used to ride on this bit (the original comment read "武器槽 + 名字 +
+    // MR + 锋利度条"), which is why it had to be split off: the trio left
+    // for its own window while the bar stayed in PlayerPanel, so one bit
+    // for both would have made "turn the weapon row off" also hide "am I
+    // about to bounce". See Sharpness below.
+    Weapon  = 1u << 2,
     Bars    = 1u << 3,   // HP + ST 两条
     Mantles = 1u << 4,   // 衣装两格 (World only — Rise hides this)
     Debuff  = 1u << 5,   // 异常状态胶囊
     Buff    = 1u << 6,   // 正面状态胶囊 (笛/道具/技能)
     Wirebug = 1u << 7,   // v0.7.1: 翔虫胶囊 (Rise only — World hides this)
+    // v0.12: the sharpness gauge's OWN bit. Weapon used to mean "weapon
+    // slot + name + MR + sharpness bar", which is four things behind one
+    // toggle; with the identity trio carved into its own window the bar
+    // had to be told apart from the trio, or turning the weapon row off
+    // in the console would also hide "am I about to bounce". Read by
+    // panel_player.cpp's prow block and NOT claimed by any split window
+    // (it stays in PlayerPanel by design — see kPlayerSplitTargets).
+    Sharpness = 1u << 8, // 锋利度条 (独立于 Weapon 位)
 };
 constexpr uint32_t kAll =
-    Conn | Quest | Weapon | Bars | Mantles | Debuff | Buff | Wirebug;
+    Conn | Quest | Weapon | Bars | Mantles | Debuff | Buff | Wirebug
+    | Sharpness;
 
 inline const QStringList &names()
 {
@@ -58,11 +73,12 @@ inline const QStringList &names()
         QStringLiteral("debuff"),
         QStringLiteral("buff"),
         QStringLiteral("wirebug"),
+        QStringLiteral("sharpness"),
     };
     return n;
 }
 
-constexpr int kCount = 8;
+constexpr int kCount = 9;
 
 inline QString displayName(int index)
 {
@@ -76,6 +92,7 @@ inline QString displayName(int index)
         "console.section.player.debuff",
         "console.section.player.buff",
         "console.section.player.wirebug",
+        "console.section.player.sharpness",
     };
     if (index < 0 || index >= kCount)
         return {};
@@ -154,9 +171,16 @@ enum : int {
     Mantles = 1,  // 衣装两格 (World only)   -> PlayerMantlesStripPanel
     Wirebug = 2,  // 翔虫胶囊 (Rise only)    -> PlayerWirebugStripPanel
     Bars = 3,     // HP + ST 两条            -> PlayerBarsStripPanel
+    // The weapon identity trio (icon + player name + MR). Pointer to
+    // its own row in kPlayerSplitTargets below, which is what makes the
+    // slot index and the table row the same number: playerSubWindowMask()
+    // subscripts the table with this value, so a slot that skipped an
+    // index would silently answer 0 ("draw nothing") at runtime with no
+    // compile-time complaint beyond the shared row-count assert.
+    Weapon = 4,   // 武器身份三件套            -> PlayerWeaponStripPanel
 };
 // The row count of kPlayerSplitTargets, cross-checked by static_assert.
-constexpr int kCount = 4;
+constexpr int kCount = 5;
 } // namespace PlayerSplitSlot
 
 // One split window's claim on PlayerSection bits: "these blocks leave
@@ -206,15 +230,35 @@ constexpr PlayerSplitTarget kPlayerSplitTargets[] = {
     // of bars whose numbers, not labels, are what actually matter to a
     // player glancing at them mid-hunt.
     {mhw::PlayerSection::Bars},
+
+    // 武器身份三件套: 图标 + 玩家名 + MR. PARTIAL extraction by design —
+    // the row in the source panel is 352px (wslot + name + MR + the
+    // sharpness gauge), and the gauge alone is 174px of hard cost that
+    // buys nothing in its own window, so the bar stays behind. The
+    // claim is therefore `Weapon` WITHOUT `Sharpness`: the two bits used
+    // to be one ("weapon slot + name + MR + sharpness bar", the original
+    // enum comment above), and pulling the trio out while the bar stayed
+    // is exactly why Sharpness became its own bit. See design
+    // 02-interaction-design.md §3.4.
+    //
+    // The measured width, 170px (probe weapon_row_probe.cpp: wslot 26 +
+    // 8 + name + 8 + MR, the widest pair off the shipped demo names), is
+    // what the panel's 378 could never give the name — the gauge's
+    // centred block left the name column a 49px band and elided every
+    // non-empty player name in single mode.
+    {mhw::PlayerSection::Weapon},
 };
 
 // NOT in this table, and why — the audit's remaining candidates are
 // named here so the omission is a recorded decision rather than an
 // oversight:
-//   Weapon — the audit measured no usable width return: the weapon row
-//            is already the panel's own natural column, and a window
-//            around a sharpness bar plus two names would be the widest
-//            split target with the least to gain.
+//   Sharpness — the sharpness bar. Left in PlayerPanel on purpose: as
+//            its own window it is 174px of gauge + badge with no width
+//            return (design 02-interaction-design.md §3.4), and it is
+//            the one block whose right-edge avoidance arithmetic is
+//            welded to the name column that just left. Its own bit
+//            exists so the console's weapon toggle and the bar's
+//            visibility are two questions again.
 //   Conn    — the most-coupled block in the panel: it is the one the
 //            console's live-preview path and every "not connected"
 //            placeholder reads, so extracting it would move a lifecycle

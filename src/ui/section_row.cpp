@@ -187,6 +187,21 @@ void SectionRow::drawIcon(QPainter &p, const QRectF &box) const
         p.drawEllipse(QPointF(x + w - 3,        c.y()), 1.7, 1.7);
         break;
     }
+    case IconSharpness: { // 锋利度: a segmented gauge (斩味七段)
+        // Three segments of increasing width with a tick between them —
+        // the reading of a sharpness bar without reproducing its seven
+        // colours. Drawn in the row's own fill, so it follows the accent
+        // and the checkbox state like every other glyph here.
+        const qreal segW = (w - 2) / 3.0;
+        for (int i = 0; i < 3; ++i) {
+            const qreal sx = x + 1 + i * segW;
+            const qreal inset = (i == 1) ? 2.0 : 0.0;
+            p.drawRoundedRect(QRectF(sx, y + h / 2 - 1.5 + inset / 2,
+                                     segW - 1.5, 3 - inset),
+                              inset > 0 ? 0.8 : 1.2, 1.2);
+        }
+        break;
+    }
     case IconInfo: {   // hexagon (六角肖像)
         QPainterPath hp; const qreal cx = c.x(), cy = c.y(), r = w/2 - 1;
         for (int i = 0; i < 6; ++i) {

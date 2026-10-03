@@ -31,6 +31,12 @@ public:
         // Player panel
         IconConn, IconQuest, IconWeapon, IconBars, IconMantles, IconDebuff,
         IconBuff, IconWirebug,
+        // v0.12: the sharpness gauge's own row. Added after IconWirebug,
+        // NOT inserted before it, so every existing enumerator keeps its
+        // value — kPlayerIcons in control_panel.cpp is subscripted by the
+        // section bit index and the switch below by this enum, and a
+        // reorder would silently repaint eight rows with the wrong glyph.
+        IconSharpness,
         // Monster panel
         IconInfo, IconHp, IconEnrage, IconAil, IconParts,
         // Damage panel

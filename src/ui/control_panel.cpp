@@ -142,10 +142,17 @@ void prepareDamagePreview(DamagePanel *damage,
 // The mapping follows panel_sections.h exactly.
 int iconKind(int panel, int section)
 {
+    // Ordered by PlayerSection bit index, one entry per row
+    // buildInspector() creates — so `section` subscripts this table. The
+    // bound below is the TABLE's size, not a literal: an earlier
+    // hand-written `section < 8` silently demoted the sharpness row
+    // (bit 8, added with the weapon split) to IconNone, which draws the
+    // legacy plain dot.
     static const int kPlayerIcons[] = {
         SectionRow::IconConn, SectionRow::IconQuest, SectionRow::IconWeapon,
         SectionRow::IconBars, SectionRow::IconMantles, SectionRow::IconDebuff,
         SectionRow::IconBuff, SectionRow::IconWirebug,
+        SectionRow::IconSharpness,
     };
     static const int kMonsterIcons[] = {
         SectionRow::IconInfo, SectionRow::IconHp, SectionRow::IconEnrage,
@@ -155,7 +162,9 @@ int iconKind(int panel, int section)
         SectionRow::IconRows, SectionRow::IconShare, SectionRow::IconChart,
         SectionRow::IconRows,
     };
-    if (panel == 0 && section < 8) return kPlayerIcons[section];
+    if (panel == 0 && section < static_cast<int>(
+                sizeof(kPlayerIcons) / sizeof(kPlayerIcons[0])))
+        return kPlayerIcons[section];
     if (panel == 1 && section < 5) return kMonsterIcons[section];
     if (panel == 2 && section < mhw::DamageSection::kCount) return kDamageIcons[section];
     if (panel == 3 && section < mhw::PetDamageSection::kCount)
