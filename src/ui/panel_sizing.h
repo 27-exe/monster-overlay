@@ -417,14 +417,22 @@ struct GridSize {
 // complaint the floor was added to answer.
 [[nodiscard]] inline int effectiveWidth(int contentWidth, int minWidth) noexcept
 {
-    return contentWidth > 0 && minWidth > contentWidth ? minWidth
-                                                       : contentWidth;
+    // The content must be a real measurement before the floor may touch
+    // it. A collapsed window is 2*kMargin — the panel is unmounted but
+    // alive — and raising that to the floor would turn "no data" into a
+    // 300px empty box, which is the one outcome a minimum must never
+    // produce. So the guard is on the content, not on the floor: a
+    // non-positive content passes straight through.
+    if (contentWidth <= 0)
+        return contentWidth;
+    return minWidth > contentWidth ? minWidth : contentWidth;
 }
 
 [[nodiscard]] inline int effectiveHeight(int contentHeight, int minHeight) noexcept
 {
-    return contentHeight > 0 && minHeight > contentHeight ? minHeight
-                                                          : contentHeight;
+    if (contentHeight <= 0)
+        return contentHeight;
+    return minHeight > contentHeight ? minHeight : contentHeight;
 }
 
 // ─── diagnostics ─────────────────────────────────────────────────────

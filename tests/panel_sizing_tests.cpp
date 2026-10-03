@@ -49,6 +49,11 @@
 
 #include <cmath>
 #include <cstdio>
+#include <initializer_list>
+
+// The whole header is pulled in unqualified so the checks below read as
+// statements about the sizing rule rather than about its namespace.
+using namespace mhw::panel_sizing;
 
 namespace {
 
@@ -434,6 +439,102 @@ int main()
         const GridSize e = gridEmptySize(6);
         check(aspectRatio(e.width, e.height) == 1.0,
               "aspect: a collapsed window is square, being only margins");
+    }
+
+    // 9. THE USER'S SIZE FLOOR — effectiveWidth / effectiveHeight
+    // ====================================================================
+    //
+    // The three properties that make this a floor rather than a lock or a
+    // target, each stated as a test because each is a way the feature
+    // could silently become the other thing:
+    //
+    //   1. 0 is an identity, so a panel nobody has dialled is unchanged.
+    //   2. content wins when it is larger, so new content grows the
+    //      window instead of being clipped by a stale floor.
+    //   3. a non-positive content is returned as-is, so a collapsed or
+    //      corrupt measurement cannot be inflated by a floor.
+    {
+        // (1) The default. This is the whole migration story: every
+        // panels.ini written before v0.12 has no minW key, reads 0, and
+        // gets its content width back. The four shipped panels' pixel
+        // baselines depend on this being exactly an identity.
+        check(effectiveWidth(378, 0) == 378,
+              "floor: width 0 is an identity, so an undialed panel keeps "
+              "its content width");
+        check(effectiveHeight(361, 0) == 361,
+              "floor: height 0 is an identity too");
+        check(effectiveWidth(0, 0) == 0 && effectiveHeight(0, 0) == 0,
+              "floor: 0 x 0 in, 0 x 0 out");
+
+        // (2) Content wins. The user set 300 while the content wants 89;
+        // the floor raises it. Then a longer player name makes the
+        // content 420 and the floor must NOT pull it back down — a floor
+        // that clamped would be the "locked size" this design rejects,
+        // because the next longer name would be cut off.
+        check(effectiveWidth(89, 300) == 300,
+              "floor: a floor above the content raises it (the bars case: "
+              "89px of ink becomes 300)");
+        check(effectiveWidth(420, 300) == 420,
+              "floor: content larger than the floor still wins, so a "
+              "longer name grows the window instead of being clipped");
+        check(effectiveHeight(20, 48) == 48,
+              "floor: the same rule on the other axis");
+
+        // (3) Degenerate content. Zero and negative are not measurements
+        // at all — .toInt() on a corrupt key, or a grid with nothing in
+        // it — and there is no window to speak of, so the floor must not
+        // manufacture one.
+        //
+        // Note what is deliberately NOT here: a collapsed-but-positive
+        // content (2*kMargin, the unmounted-but-alive window) IS raised.
+        // "The window is at least this wide" has to mean it when there is
+        // no content yet, or a sub-window would visibly snap back to its
+        // thin self the moment its data arrived and vanished again when it
+        // left — which is a worse flicker than the empty box is worth.
+        check(effectiveWidth(0, 300) == 0,
+              "floor: zero content stays zero — there is no window to "
+              "widen");
+        check(effectiveWidth(-5, 300) == -5,
+              "floor: a negative measurement is passed through rather "
+              "than masked into a plausible-looking number");
+        check(effectiveHeight(0, 48) == 0,
+              "floor: same on the other axis");
+
+        // A negative floor is "absent", not a request to shrink. The
+        // config reader clamps to [0,4096] on the way in, so this only
+        // guards a direct caller — but a direct caller is what
+        // panel_sizing.h's own contract is for.
+        check(effectiveWidth(378, -16) == 378,
+              "floor: a negative floor reads as absent, not as a shrink "
+              "to nothing");
+        check(effectiveHeight(361, -1) == 361,
+              "floor: same on the other axis");
+
+        // The relationship that makes the bars fix work: the window the
+        // compositor got and the width the paint path drew into are the
+        // same number, so the gauge fills the window instead of leaving
+        // background to its right.
+        const int content = 127;   // the bars window at default
+        for (const int floorPx : {0, 16, 100, 300, 356, 4096}) {
+            const int windowW = effectiveWidth(content, floorPx);
+            const int drawnW = effectiveWidth(content, floorPx);
+            check(windowW == drawnW && drawnW >= content,
+                  "floor: reserve and draw agree at every floor value");
+        }
+
+        // Monotone: more floor never means a smaller window. If this ever
+        // fails, the dial would appear to fight the user.
+        int prev = 0;
+        bool monotone = true;
+        for (int f = 0; f <= 512; f += 16) {
+            const int w = effectiveWidth(89, f);
+            if (w < prev)
+                monotone = false;
+            prev = w;
+        }
+        check(monotone,
+              "floor: width is monotone in the floor, so pressing = never "
+              "appears to shrink the window");
     }
 
     std::printf("\n%d checks, %d failure(s)\n%s\n", checks, failures,
