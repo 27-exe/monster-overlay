@@ -75,14 +75,23 @@ private:
 };
 
 // Returns the localized mantle name from the overlay JSON.
-// Falls back to "Mantle #<id>" if the key is missing.
+//
+// Unknown ids fall back to the localized `data.mantle.id.default` ("衣装" /
+// "Mantle") rather than a hardcoded English "Mantle #<id>": the ids that
+// reach here come from game memory and are unbounded, so the fallback is a
+// live path, not a theoretical one — and a zh-CN session showing English
+// text is exactly the i18n leak the domain files exist to prevent.
 inline QString mantleName(int id)
 {
     const QString key = QStringLiteral("data.mantle.id.%1").arg(id);
     const QString val = StringTable::instance().tr(key);
     if (val != key)
         return val;
-    return QStringLiteral("Mantle #%1").arg(id);
+    const QString fallback = StringTable::instance().tr(
+        QStringLiteral("data.mantle.id.default"));
+    return (fallback != QStringLiteral("data.mantle.id.default"))
+        ? fallback
+        : QStringLiteral("Mantle #%1").arg(id);
 }
 
 } // namespace mhw

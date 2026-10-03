@@ -148,6 +148,20 @@ HudCanvas::HudCanvas(QWidget *parent) : QWidget(parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setFocusPolicy(Qt::ClickFocus);   // receive arrow keys after click
+
+    // v0.11.4: monitor hot-plug invalidates the preview screen cache
+    // without the user touching anything. Hyprland keeps the user's
+    // side plugged into a dock/external display, so "plugin a new
+    // monitor" is a real, routine case — the old process-wide static
+    // tables would have shown the pre-plug topology forever.
+    // screenAdded/screenRemoved fire on both adding and re-adding, so
+    // this covers the unplug-then-replug case too.
+    connect(static_cast<QGuiApplication *>(QCoreApplication::instance()),
+            &QGuiApplication::screenAdded,
+            this, [this] { rebuildScreenCache(); updateGeometry(); update(); });
+    connect(static_cast<QGuiApplication *>(QCoreApplication::instance()),
+            &QGuiApplication::screenRemoved,
+            this, [this] { rebuildScreenCache(); updateGeometry(); update(); });
 }
 
 // ─── public API ─────────────────────────────────────────────────────────
@@ -270,43 +284,81 @@ QString HudCanvas::screenLabel() const
 //      where the preview always showed the primary output)
 //
 // We do NOT call screen_query::detect() per-paint: that path can shell
-// out to kscreen-doctor / wlr-randr with an 800 ms budget, and it would
+// out to kscreen-doctor / wlr-randr with a 2 s budget, and it would
 // stutter the canvas every time the user drags a panel. QScreen's own
-// geometry + devicePixelRatio is good enough for preview purposes.
+// geometry + devicePixelRatio is good enough for preview purposes;
+// the per-output table below is a plain in-process QScreen walk.
+//
+// v0.11.4: the two tables that used to be function-level statics here
+// were built exactly once per PROCESS. Hot-plugging a monitor (unplug +
+// replug, or docking a new one) therefore never reached the preview:
+// the name table still held the removed output, a fresh one was absent
+// from it, and both lookups fell through to an equally stale fallback.
+// "The next SCREEN click will repaint" — the original comment's
+// acceptable-worst-case claim — was never true: nothing rebuilt those
+// statics. They are now per-widget mutable members invalidated by
+// rebuildScreenCache(); see hud_canvas.h.
 const screen_query::Result &HudCanvas::previewScreenInfo() const
 {
-    // v0.8: cached screen list, keyed by QScreen::name(). Built lazily
-    // (first call) and never invalidated — outputs don't come and go
-    // mid-session often enough to bother hooking QScreen::destroyed;
-    // if the user docks a new monitor the next setPreviewScreen() call
-    // will trigger a re-paint and the worst case is "preview shows the
-    // old size until you click SCREEN again", which is acceptable.
-    static const screen_query::Result *kFallback = []() -> const screen_query::Result * {
-        static const screen_query::Result r = screen_query::detect();
-        return &r;
-    }();
+    // Both paths read CURRENT data: any cache miss triggers a rebuild,
+    // so a newly plugged output is found and a removed one is gone.
+    if (!screenCacheValid_)
+        rebuildScreenCache();
+
+    // Unchanged semantics: empty previewOutputName_ (the default)
+    // follows the primary screen.
     if (previewOutputName_.isEmpty())
-        return *kFallback;
-    static const QHash<QString, const screen_query::Result *> kByName = []() {
-        QHash<QString, const screen_query::Result *> m;
-        static QHash<QString, screen_query::Result> owned;
-        owned.clear();
-        for (QScreen *s : QGuiApplication::screens()) {
-            if (!s) continue;
-            screen_query::Result r;
-            r.physical = s->geometry().size() * s->devicePixelRatio();
-            r.logical  = s->geometry().size();
-            r.dpr      = s->devicePixelRatio();
-            r.source   = screen_query::Source::QScreen;
-            owned.insert(s->name(), r);
-            m.insert(s->name(), &owned[s->name()]);
-        }
-        return m;
-    }();
-    const auto it = kByName.constFind(previewOutputName_);
-    if (it != kByName.cend())
-        return *it.value();
-    return *kFallback;
+        return primaryScreenInfo();
+
+    const auto it = screenCacheByName_.constFind(previewOutputName_);
+    if (it != screenCacheByName_.cend())
+        return *it;
+    // previewOutputName_ no longer resolves to a live output — the
+    // monitor was unplugged, or Qt has not announced a hot-plugged one
+    // yet. Rebuild once in case the screen list moved since the last
+    // build, then re-check, so a just-plugged-in output is picked up on
+    // this very call instead of on the next one.
+    rebuildScreenCache();
+    const auto retry = screenCacheByName_.constFind(previewOutputName_);
+    if (retry != screenCacheByName_.cend())
+        return *retry;
+    // Still nothing: the output is genuinely gone. Same destination as
+    // the empty-name case, but the fallback was invalidated along with
+    // the topology, so primaryScreenInfo() re-resolves it rather than
+    // reusing a stale answer.
+    return primaryScreenInfo();
+}
+
+// Resolve (at most once per topology change) the detect()-based answer
+// for the primary screen. Kept separate from rebuildScreenCache() so a
+// SCREEN dropdown click never pays for the compositor subprocess
+// detect() may run — only the paths that actually follow primary do.
+const screen_query::Result &HudCanvas::primaryScreenInfo() const
+{
+    if (!screenFallbackValid_) {
+        screenCacheFallback_ = screen_query::detect();
+        screenFallbackValid_ = true;
+    }
+    return screenCacheFallback_;
+}
+
+void HudCanvas::rebuildScreenCache() const
+{
+    screenCacheByName_.clear();
+    for (QScreen *s : QGuiApplication::screens()) {
+        if (!s) continue;
+        screen_query::Result r;
+        r.physical = s->geometry().size() * s->devicePixelRatio();
+        r.logical  = s->geometry().size();
+        r.dpr      = s->devicePixelRatio();
+        r.source   = screen_query::Source::QScreen;
+        screenCacheByName_.insert(s->name(), r);
+    }
+    screenCacheValid_ = true;
+    // The name table above now describes the NEW topology, so any
+    // fallback resolved against the old one is stale: force it to
+    // re-resolve the next time the primary path is asked for.
+    screenFallbackValid_ = false;
 }
 
 void HudCanvas::setPreviewScreen(QString outputName)
@@ -314,6 +366,10 @@ void HudCanvas::setPreviewScreen(QString outputName)
     if (outputName == previewOutputName_)
         return;
     previewOutputName_ = std::move(outputName);
+    // The user just re-pointed the preview — walk today's
+    // QGuiApplication::screens() so it lands on real geometry. Cheap:
+    // this is the plain in-process QScreen walk, not detect().
+    rebuildScreenCache();
     updateGeometry();
     update();
 }

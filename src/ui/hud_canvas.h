@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QMargins>
 #include <QPixmap>
 #include <QPoint>
@@ -11,10 +12,7 @@
 #include <array>
 
 #include "panel_source.h"
-
-namespace screen_query {
-struct Result;
-}
+#include "screen_query.h"
 
 // Paint the four overlay panels at the position they will actually occupy
 // on the user's screen. The control console calls HudCanvas::bindPanel()
@@ -102,6 +100,27 @@ private:
     // paintEvent / drag / sizeHint.
     const screen_query::Result &previewScreenInfo() const;
 
+    // v0.11.4: the detect()-based answer for the primary screen,
+    // resolved at most once per topology change. Separate from
+    // rebuildScreenCache() so a SCREEN click never pays for the
+    // compositor subprocess detect() may run.
+    const screen_query::Result &primaryScreenInfo() const;
+
+    // v0.11.4: rebuild the per-output preview cache from the CURRENT
+    // QGuiApplication::screens() list. Declared const because the
+    // cache is per-widget state, not observable state: calling it is
+    // always safe from the const query paths above (paintEvent /
+    // drag / sizeHint) and the result depends only on the live screen
+    // list, never on widget identity.
+    //
+    // Must be called whenever the screen topology can have changed:
+    // setPreviewScreen() (the SCREEN dropdown is our screen picker),
+    // the miss path in previewScreenInfo(), and the constructor's
+    // screenAdded / screenRemoved hooks. Cheap by design — a plain
+    // in-process QScreen walk, no I/O, no subprocess; screen_query::
+    // detect() is NOT called here, see primaryScreenInfo().
+    void rebuildScreenCache() const;
+
     std::array<Slot, mhw::kPanelCount> slots_{};
     int selected_{0};
     bool showSafeArea_{true};
@@ -111,6 +130,32 @@ private:
     // "screen frame" rectangle and the per-panel drag clamps match
     // the output the panels are bound to. Empty = primary.
     QString previewOutputName_;
+
+    // v0.11.4: per-instance screen cache. Was two function-level statics
+    // inside previewScreenInfo() — built once per PROCESS, so a monitor
+    // plugged in (or unplugged and re-plugged) later in the session was
+    // invisible to the preview forever, and a removed output's stale
+    // entry sent the lookup to an equally stale fallback.
+    //
+    // Now they are per-widget mutable members, invalidated via
+    // screenCacheValid_ == false ("rebuild on next use") and repopulated
+    // by rebuildScreenCache(). The Result VALUES live inside
+    // screenCacheByName_ itself (no separate pointer table), so no
+    // pointer ever points into a table that is about to be rebuilt.
+    //
+    // They are `mutable` because previewScreenInfo() is const — it is
+    // called from paintEvent / drag / sizeHint — but has to be able to
+    // repopulate the cache.
+    //
+    // screenFallbackValid_ is a SEPARATE clock on purpose: the name
+    // table is a cheap in-process QScreen walk, but the fallback needs
+    // screen_query::detect() (a subprocess on Wayland), so it must not
+    // be re-resolved on every SCREEN click — only when a topology
+    // change actually invalidates the primary-screen answer.
+    mutable bool screenCacheValid_{false};
+    mutable bool screenFallbackValid_{false};
+    mutable QHash<QString, screen_query::Result> screenCacheByName_;
+    mutable screen_query::Result screenCacheFallback_;
 
     // Drag state
     bool dragging_{false};

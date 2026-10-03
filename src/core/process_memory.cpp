@@ -3,9 +3,9 @@
 
 // The bodies below were moved verbatim from mhw_reader.cpp, which used to
 // define them as MhwReader static members. Every function is stateless with
-// respect to MhwReader: the state is either its parameters or a
-// function-local static (the PID cache), so only the qualifying prefix was
-// rewritten. No condition, order, boundary or comment changed.
+// respect to MhwReader: the state is either its parameters or per-instance
+// member state (the PID lookup cache lives on the ProcessMemory that owns
+// the attach it describes — see ProcessMemory::lookupPid).
 #include "core/process_memory.h"
 
 #include "core/string_table.h"
@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <fcntl.h>
 #include <limits>
@@ -42,6 +43,69 @@ QString errnoMessage(const QString &operation, int errorCode)
         .arg(errorCode);
 }
 
+// ---- PID lookup mechanics (shared by the member and the free lookup) -----
+// These are plain functions in the anonymous namespace rather than members
+// so both ProcessMemory::lookupPid() and the free findGamePid() can call
+// them, and so the state is plainly data (a PidLookupState table) instead
+// of hidden in function-local statics that a second caller could clobber.
+
+bool processStillAlive(qint64 pid)
+{
+    if (pid <= 0)
+        return false;
+    // kill(pid, 0) is the cheap liveness test: it only asks whether a
+    // signal could be delivered, it never delivers one.
+    //   ESRCH  -> the process is gone.
+    //   EPERM  -> it exists but belongs to another user. For a reader that
+    //             is the *good* case (the game is running; we simply cannot
+    //             signal it), so it must not be reported as "not running".
+    //   EINVAL -> unexpected for a plain 0 signal; treat as alive so a
+    //             liveness probe never invents a "game gone".
+    errno = 0;
+    return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM || errno == EINVAL;
+}
+
+bool processMapsMention(qint64 pid, const QByteArray &exeNameBytes)
+{
+    QFile maps(QStringLiteral("/proc/%1/maps").arg(pid));
+    // No QIODevice::Text: the maps line for a Wine PE image can carry bytes
+    // that QTextStream's decoder mangles, which is how the old imageBase()
+    // parsing missed a name containing a literal space. Read raw and compare
+    // lowercased.
+    if (!maps.open(QIODevice::ReadOnly))
+        return false;
+    return maps.readAll().toLower().contains(exeNameBytes);
+}
+
+// The single /proc walk: first PID whose maps mention exeNameBytes.
+std::optional<qint64> scanForPidInProcfs(const QByteArray &exeNameBytes)
+{
+    QDir proc(QStringLiteral("/proc"));
+    const QFileInfoList entries = proc.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo &entry : entries) {
+        bool numeric = false;
+        const qint64 pid = entry.fileName().toLongLong(&numeric);
+        if (!numeric || pid <= 0)
+            continue;
+
+        // The actual Wine PE process has the game .exe in its map set,
+        // but the comm name is set to wine-preloader / wineserver so we cannot
+        // rely on /proc/<pid>/comm. Match on /proc/<pid>/maps (any case).
+        if (processMapsMention(pid, exeNameBytes))
+            return pid;
+    }
+    return std::nullopt;
+}
+
+// The 5 s throttle that keeps a 60 Hz poll loop off a full /proc walk on
+// every tick. Returns true when this entry is inside its window and the
+// cached answer is still valid.
+bool insideScanWindow(const PidLookupState &state)
+{
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    return state.lastScanMs != 0 && (nowMs - state.lastScanMs) < 5000;
+}
+
 } // namespace
 
 ProcessMemory::~ProcessMemory()
@@ -51,7 +115,21 @@ ProcessMemory::~ProcessMemory()
 
 bool ProcessMemory::attach(qint64 pid, QString *error)
 {
-    Q_UNUSED(error);
+    // Attaching to a process that is already gone must fail here, not
+    // several hundred bytes later. Otherwise ensureAttached() would
+    // "successfully" attach a dead PID, report imageBase == 0 and leave the
+    // reader attached to nothing — and (the old symptom) detach() from the
+    // next poll of a *different* reader.
+    if (pid <= 0) {
+        if (error)
+            *error = errnoMessage(QStringLiteral("attach to PID"), EINVAL);
+        return false;
+    }
+    if (!processStillAlive(pid)) {
+        if (error)
+            *error = QStringLiteral("attach: PID %1 is not a running process").arg(pid);
+        return false;
+    }
     detach();
     pid_ = pid;
     // Yama ptrace_scope=1 forbids opening another session's /proc/<pid>/mem,
@@ -67,6 +145,13 @@ void ProcessMemory::detach()
         ::close(memFd_);
     memFd_ = -1;
     pid_ = -1;
+    // The PID lookup cache describes which process this instance wants to
+    // talk to. When the attach goes away, so does its answer — and it must
+    // go with it, because that is the one moment the reader is certain the
+    // target changed. Any other moment, leaving the entry alone lets the
+    // next poll reuse a PID that is still alive instead of forcing a
+    // rescan (or worse, a "not running" verdict inside the throttle).
+    pidLookup_.clear();
 }
 
 bool ProcessMemory::attached() const
@@ -127,9 +212,20 @@ std::uintptr_t ProcessMemory::imageBase(QString *error, const QString &exeName) 
 
 bool ProcessMemory::readBytes(std::uintptr_t address, void *destination, std::size_t size, QString *error) const
 {
-    if (!attached() || !isSanePointer(address) || destination == nullptr || size == 0) {
+    // The two precondition failures are separated so a caller can tell
+    // "you are not attached" from "the read request itself was bad". They
+    // used to share one reader.invalid_read_request string, which made
+    // them indistinguishable at the call site: an unattached reader and a
+    // zero-length read produced the same text.
+    if (!attached()) {
         if (error)
-            *error = trMessage("reader.invalid_read_request")
+            *error = QStringLiteral("readBytes: not attached");
+        return false;
+    }
+    if (!isSanePointer(address) || destination == nullptr || size == 0) {
+        if (error)
+            *error = QStringLiteral("readBytes: invalid request — "
+                                    "address 0x%1, %2 bytes")
                          .arg(static_cast<qulonglong>(address), 0, 16)
                          .arg(size);
         return false;
@@ -268,70 +364,89 @@ bool AddressMap::hasOffsets(const QString &key) const
     return offsets_.contains(key.toStdString());
 }
 
+std::optional<qint64> ProcessMemory::lookupPid(const QString &exeName) const
+{
+    const QByteArray exeNameBytes = exeName.toLower().toUtf8();
+
+    // A PID this instance is already attached to survives every throttle
+    // window, provided the process is still alive and still the executable
+    // that was asked for. This is the invariant that used to break: with one
+    // process-wide entry, a lookup for a different executable evicted this
+    // reader's PID and left it inside the 5 s window, which then answered
+    // "no game running" for a process that was alive and healthy — the
+    // caller detaches on that answer. On the instance nobody else can write
+    // this entry.
+    //
+    // The maps check is what keeps this from answering for the wrong game:
+    // a reader attached to one game must not report that PID when asked
+    // about a different executable name, which is also how the old C2
+    // (v0.7.5) guard stayed attached to a cache hit.
+    if (pid_ > 0 && processStillAlive(pid_) && processMapsMention(pid_, exeNameBytes))
+        return pid_;
+
+    PidLookupState &state = pidLookup_[exeName.toLower()]; // default-constructs
+    if (state.pid > 0 && processStillAlive(state.pid)
+        && processMapsMention(state.pid, exeNameBytes))
+        return state.pid;
+    if (state.pid > 0)
+        state.pid = -1; // dead, or a PID the kernel reused for something else
+
+    // The 5 s negative cache is what keeps a poll loop at 60 Hz from
+    // walking /proc on every tick. It is only reached for a target this
+    // instance has never attached to and that is not live, so a running
+    // game can never be throttled into "not running".
+    if (insideScanWindow(state))
+        return std::nullopt;
+
+    // The C2 (v0.7.5) revalidation the old cache did on every hit is
+    // preserved: scanForPidInProcfs only returns a PID whose
+    // /proc/<pid>/maps currently names the executable, so a recycled PID
+    // inside the window cannot answer for an unrelated process.
+    state.lastScanMs = QDateTime::currentMSecsSinceEpoch();
+    state.pid = scanForPidInProcfs(exeNameBytes).value_or(-1);
+    if (state.pid <= 0)
+        return std::nullopt;
+    return state.pid;
+}
 
 std::optional<qint64> findGamePid(const QString &exeName)
 {
-    static qint64 cachedPid = -1;
-    static qint64 lastScanMs = 0;
-    static QString cachedExeName;
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    // Free entry point for call sites that hold no ProcessMemory yet (the
+    // readers' poll loops, the probe/doctor tools). Its cache is a table
+    // keyed by executable name, NOT the single entry it used to be:
+    //
+    //   The old shape was three statics — cachedPid, lastScanMs and
+    //   cachedExeName — so a lookup for one executable *overwrote* the
+    //   entry for the other. Two readers (one per game) therefore evicted
+    //   each other's PID on every lookup, and the loser saw "not running"
+    //   for an attached, live process.
+    //
+    // Keying by executable name keeps the throttle a lookup needs (a 60 Hz
+    // poll loop must not walk /proc on every tick) without giving any
+    // lookup the power to invalidate another one. Callers that DO hold the
+    // ProcessMemory they are about to attach to should prefer
+    // ProcessMemory::lookupPid(), which additionally cannot report their
+    // own attached process as missing.
+    static QHash<QString, PidLookupState> table;
 
-    // The cache is keyed by exeName: switching between World and Rise must
-    // invalidate a previously cached PID for the other game.
-    if (cachedExeName != exeName) {
-        cachedPid = -1;
-        lastScanMs = 0;
-        cachedExeName = exeName;
-    }
+    const QString key = exeName.toLower();
+    const QByteArray exeNameBytes = key.toUtf8();
+    PidLookupState &state = table[key];
 
-    const QByteArray exeNameBytes = exeName.toLower().toUtf8();
+    if (state.pid > 0 && processStillAlive(state.pid))
+        return state.pid;
+    if (state.pid > 0)
+        state.pid = -1; // target died: forget it before scanning
 
-    // Cache hit (found): skip rescan for 5 s.
-    // C2 (v0.7.5 audit): the old check only verified that
-    // /proc/<pid>/maps EXISTS. If the game exited and the kernel reused
-    // the PID within the 5 s cache window, we would keep reading an
-    // unrelated process with the stale imageBase_ — silently wrong
-    // values instead of a clean "not attached". Re-verify that the
-    // cached PID's maps still contain the game exe; a single maps read
-    // is cheap compared to the full /proc scan we're skipping.
-    if (cachedPid > 0 && (nowMs - lastScanMs) < 5000) {
-        QFile maps(QStringLiteral("/proc/%1/maps").arg(cachedPid));
-        if (maps.open(QIODevice::ReadOnly | QIODevice::Text)
-            && maps.readAll().toLower().contains(exeNameBytes))
-            return cachedPid;
-        cachedPid = -1;  // stale PID: fall through to a full rescan
-    }
-    // Cache hit (not found): skip rescan for 5 s as well.
-    // Without this, a poll loop in edit mode fires 60 times/sec
-    // and every call walks /proc → 100 % CPU.
-    if (cachedPid <= 0 && (nowMs - lastScanMs) < 5000)
+    if (insideScanWindow(state))
         return std::nullopt;
 
-    lastScanMs = nowMs;
-
-    QDir proc(QStringLiteral("/proc"));
-    const QFileInfoList entries = proc.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-    for (const QFileInfo &entry : entries) {
-        bool numeric = false;
-        const qint64 pid = entry.fileName().toLongLong(&numeric);
-        if (!numeric || pid <= 0)
-            continue;
-
-        // The actual Wine PE process has the game .exe in its map set,
-        // but the comm name is set to wine-preloader / wineserver so we cannot
-        // rely on /proc/<pid>/comm. Match on /proc/<pid>/maps (any case) and
-        // also on cmdline as a fallback.
-        QFile maps(entry.filePath() + QStringLiteral("/maps"));
-        if (maps.open(QIODevice::ReadOnly | QIODevice::Text)
-            && maps.readAll().toLower().contains(exeNameBytes)) {
-            cachedPid = pid;
-            return cachedPid;
-        }
-    }
-    cachedPid = -1;
-    return std::nullopt;
+    state.lastScanMs = QDateTime::currentMSecsSinceEpoch();
+    state.pid = scanForPidInProcfs(exeNameBytes).value_or(-1);
+    if (state.pid <= 0)
+        return std::nullopt;
+    return state.pid;
 }
-
 
 std::uintptr_t followPointerChain(const ProcessMemory &memory,
                                   std::uintptr_t address,
@@ -339,6 +454,19 @@ std::uintptr_t followPointerChain(const ProcessMemory &memory,
                                   QString *error)
 {
     for (const std::uintptr_t offset : offsets) {
+        // The overflow/out-of-range guard the sibling chain helper already
+        // had. Offset values come from a .map table that the user can edit
+        // by hand, and the dereference result comes from game memory: if
+        // either is garbage, `address + offset` wraps and the next read goes
+        // to a low pointer that is sane only because isSanePointer's floor
+        // (0x10000) accepts it. One add away from everything is better than
+        // a wrapped one.
+        if (offset > std::numeric_limits<std::uintptr_t>::max() - address) {
+            if (error)
+                *error = QStringLiteral("pointer chain offset overflow at 0x%1")
+                             .arg(static_cast<qulonglong>(address), 0, 16);
+            return 0;
+        }
         const auto next = memory.read<std::uintptr_t>(address, error);
         if (!next || !isSanePointer(*next))
             return 0;

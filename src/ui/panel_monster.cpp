@@ -63,6 +63,13 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 
 namespace {
 
+// Reader values reach these drawings twice sanitized: once here, once by
+// the bar/clamp they drive. A NaN or Inf that slips through produces a
+// percentage like "-2147483648%" instead of a bar, because the cast of a
+// non-finite float is platform-defined. Cheap enough to be free — it runs
+// only on values already being formatted for display.
+inline float sanitizeQ10(float v) { return std::isfinite(v) ? v : 0.0F; }
+
 // ---- Geometry — straight from the HTML v8 stylesheet ----------------------
 constexpr int kPanelWidth = 380;
 constexpr int kPanelPad   = 9;     // .op padding:9
@@ -767,11 +774,25 @@ void MonsterPanel::update(const mhw::MonsterSnapshot &m)
     // Clear it on the identity change. `address` is refreshed on every tick
     // (monster_reader.cpp:854 / mhr_reader.cpp:667) and is the same key the
     // panel already prints in its meta row, so this fires exactly once per
-    // target switch. Note this deliberately does NOT clear `ailTrack_`:
-    // ailment cards are gated on a live timer and HunterPie keeps the same
-    // per-cell ViewModel lifetime, so the ailment residue is invisible.
-    if (m.address != monster_.address)
+    // target switch.
+    //
+    // `ailTrack_` needs the same treatment, for the same reason but through
+    // a different key: it is indexed by AILMENT id (panel_monster.cpp:886),
+    // not by monster. Two monsters sharing an ailment id — an paralysis on
+    // the old target and a paralysis on the new one — collide, so the new
+    // monster's card is judged "fresh" (or "stale") by the old monster's
+    // stamp. The card then either hides for a frame it should have shown
+    // in, or shows one it should have held back.
+    //
+    // The old comment here justified the omission by pointing at HunterPie
+    // keeping a per-cell ViewModel lifetime. That reasoning does not apply:
+    // HunterPie's Widgets are per-monster *instances* (its ViewModelHooks
+    // own a DiseaseTrackerViewModel per mounted widget), so their residue
+    // dies with the widget. Ours is a fixed table shared by every target.
+    if (m.address != monster_.address) {
         m_partList.resetAutoHide();
+        ailTrack_ = {};
+    }
     monster_ = m;
     hasData_ = (m.id >= 0);
 
@@ -879,9 +900,14 @@ void MonsterPanel::paintPanel(QPainter &p)
         // the card — HunterPie's OnCounterUpdate is a plain SetValue
         // (MonsterAilmentContextHandler.cs:87), so a historical counter
         // alone can never pin a card.
+        // A non-finite reader float collapses every ailment signature to
+        // the same bit pattern, so one dirty read would stamp every card at
+        // once and then keep them all "recent" for a full 15 s. Quantizing
+        // through sanitizeQ10 keeps the signature meaningful per card.
         const quint64 ailSig =
-            (static_cast<quint64>(static_cast<quint32>(qRound(a.timer * 10.0F))) << 32)
-            | static_cast<quint32>(qRound(a.buildup * 10.0F));
+            (static_cast<quint64>(
+                 static_cast<quint32>(qRound(sanitizeQ10(a.timer) * 10.0F))) << 32)
+            | static_cast<quint32>(qRound(sanitizeQ10(a.buildup) * 10.0F));
         bool recent = true;   // edit-mode demo: never auto-hide
         if (!editMode() && a.id >= 0 && a.id < static_cast<int>(ailTrack_.size())) {
             AilTrack &track = ailTrack_[a.id];
@@ -918,10 +944,12 @@ void MonsterPanel::paintPanel(QPainter &p)
             // HunterPie exposes the remaining seconds directly; round UP
             // so a 0.4s tail still shows "1s" instead of a sticky "0s"
             // (the card disappears the moment timer hits 0 anyway).
-            e.pct = std::clamp(a.timer / a.maxTimer, 0.0F, 1.0F);
-            e.tm  = QStringLiteral("%1s").arg(static_cast<int>(std::ceil(a.timer)));
+            e.pct = std::clamp(sanitizeQ10(a.timer) / sanitizeQ10(a.maxTimer),
+                               0.0F, 1.0F);
+            e.tm  = QStringLiteral("%1s").arg(static_cast<int>(std::ceil(sanitizeQ10(a.timer))));
         } else if (buildupKnown) {
-            e.pct = std::clamp(a.buildup / a.maxBuildup, 0.0F, 1.0F);
+            e.pct = std::clamp(sanitizeQ10(a.buildup) / sanitizeQ10(a.maxBuildup),
+                               0.0F, 1.0F);
             e.tm  = QStringLiteral("%1%").arg(static_cast<int>(e.pct * 100));
         } else {
             e.pct = 0.0F;
@@ -1271,7 +1299,8 @@ void MonsterPanel::paintPanel(QPainter &p)
     if (rageDrawn) {
         y += kRowGap;   // gap before enrage (was HP's trailing gap)
         const float ragePct = (monster_.enrageMaxBuildup > 0.0F)
-            ? std::clamp(monster_.enrageBuildup / monster_.enrageMaxBuildup,
+            ? std::clamp(sanitizeQ10(monster_.enrageBuildup)
+                             / sanitizeQ10(monster_.enrageMaxBuildup),
                          0.0F, 1.0F)
             : (monster_.enraged ? 1.0F : 0.0F);
         // Pulse: scale the red/orange fill brightness between 0.78 and 1.0.

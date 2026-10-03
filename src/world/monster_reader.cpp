@@ -287,20 +287,21 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
     }
     // Cache the 128-slot Component* array: if it hasn't changed, reuse.
     const std::uintptr_t arrayBase = *headPtr + 0x38ULL;
+    // ONE read, validated once, shared by both branches. The `else` branch
+    // used to be the only one checking `size() != 128` — so a read that
+    // failed on a warm cache (123 bytes short, or readArray bailing early)
+    // fell straight through: `components` came back empty, the despawn sweep
+    // below erased every entry in monsterCache_, and the panel showed zero
+    // monsters for a frame. Bailing out early (without clobbering
+    // cachedArray_) is what makes that impossible: the next tick reuses a
+    // still-valid cache instead of a cleared one.
     std::vector<std::uintptr_t> components;
-    if (cachedArray_.size() == 128 && cachedArrayBase_ == arrayBase) {
-        // Still cheap to re-read 1024 bytes once per tick to detect spawns,
-        // but if identical to cache, skip per-component work below.
-        const std::vector<std::uintptr_t> fresh = memory_.readArray<std::uintptr_t>(arrayBase, 128, error);
-        components = fresh;
-        cachedArray_ = fresh;
-    } else {
-        const std::vector<std::uintptr_t> fresh = memory_.readArray<std::uintptr_t>(arrayBase, 128, error);
-        if (fresh.size() != 128) return result;
-        components = fresh;
-        cachedArray_ = fresh;
-        cachedArrayBase_ = arrayBase;
-    }
+    const std::vector<std::uintptr_t> fresh =
+        memory_.readArray<std::uintptr_t>(arrayBase, 128, error);
+    if (fresh.size() != 128) return result;
+    components = fresh;
+    cachedArray_ = fresh;
+    cachedArrayBase_ = arrayBase;
 
     // Cache monster struct addresses across ticks; only re-read HP if it
     // changes. The MonsterList array is static after the quest starts, so
@@ -421,6 +422,12 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                 chp  = std::isfinite(chp)  ? chp  : 0.0F;
                 emhp = std::isfinite(emhp) ? emhp : 0.0F;
                 ehp  = std::isfinite(ehp)  ? ehp  : 0.0F;
+                // The sign matters for chp: it is a *remaining* count, and a
+                // broken part reads back as a small negative value rather
+                // than zero. Passing that downstream produced the literal
+                // "-1/1" the user saw on flinch parts, and propagated into
+                // every clamp/division above it.
+                chp  = chp < 0.0F ? 0.0F : chp;
                 return mhp > 0.0F
                     ? WorldPartReadStatus::Valid
                     : WorldPartReadStatus::Empty;
@@ -554,15 +561,23 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
                             // (`MaxSever == Sever`) reduces to
                             // `maxHealth == health` (within float epsilon).
                             // World also exposes Counter (+0x18), so the
-                            // `Breaks > 0` clause stays meaningful (unlike
-                            // Rise where MHRPartStructure has no Counter).
-                            // UpdateSeverableData leaves Flinch untouched, so
-                            // the second clause collapses to the same epsilon
-                            // test on whatever residual flinch survives.
-                            const bool sevFl = std::fabs(p.flinch - p.maxFlinch) > 1e-4F;
+                            // `Breaks > 0` clause is the meaningful one here.
+                            //
+                            // The original comment added that UpdateSeverableData
+                            // "leaves Flinch untouched, so the second clause
+                            // collapses to the same epsilon test on whatever
+                            // residual flinch survives." It does not: this
+                            // branch never assigns p.flinch / p.maxFlinch at
+                            // all, so both stayed at their value-initialised 0
+                            // and `sevFl` was a constant false — the clause
+                            // was dead code reading uninitialised-looking
+                            // state. Parsing the comment as evidence instead
+                            // of reading the assignments would have "fixed"
+                            // the wrong thing. Now there is exactly one
+                            // condition, and it is the one that can answer.
                             p.isPartSevered = (p.maxHealth > 0.0F
                                             && std::fabs(p.health - p.maxHealth) <= 1e-4F
-                                            && (counter > 0 || sevFl));
+                                            && counter > 0);
                             // Raw Counter is the observed small-flinch count;
                             // major-break count is not yet decoded, so keep the
                             // localized base name free of a false "N/M破" suffix.
@@ -698,10 +713,17 @@ QVector<MonsterSnapshot> MhwReader::readMonsters(QString *error)
         MonsterSnapshot m;
         m.address = monster;
         m.internalName = displayName;
-
-        // HunterPie reads the schema Id at +0x12280; 0x1228C is the slot index (0..N-1) in MonsterList, not the schema Id.
-        if (const auto id = memory_.read<std::int32_t>(monster + 0x12280ULL))
-            m.id = hunterId;
+        // The schema id was read once at :367 (into `hunterId`). This used
+        // to re-read the SAME address here and use the fresh optional as a
+        // latch while still assigning the earlier value — so a read that
+        // succeeded here but failed there assigned -1, and the reverse left
+        // `m.id` at whatever the default-initialised snapshot held. Two
+        // reads of one address cannot disagree about the value, only about
+        // whether they got it, so keep exactly one read and let -1 mean
+        // "the read failed" in every path. The schema lookup below is
+        // guarded the same way, and applyTenderizesToParts() already
+        // early-returns on an empty schema (monster_reader.cpp:166-167).
+        m.id = hunterId;
 
         // HP: Monster + 0x7670 -> HealthPtr; HealthPtr + 0x60 -> [maxHP, curHP]
         m.maxHealth = maxHP;

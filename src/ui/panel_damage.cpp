@@ -236,9 +236,16 @@ void DamagePanel::paintPanel(QPainter &p)
     p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
                mh::tr("ui.damage_header"));
     // Right-aligned quest timer (HTML spec: <i>任务计时 06:41</i>)
-    if (vm.lastElapsedSeconds() > 0.0F) {
-        const int mm = static_cast<int>(vm.lastElapsedSeconds() / 60);
-        const int ss = static_cast<int>(vm.lastElapsedSeconds()) % 60;
+    // The elapsed value crosses a reader boundary, so a non-finite float
+    // is possible: `Inf > 0` passes the gate and then casts to int as
+    // platform-defined garbage (typically INT_MIN). One truncation feeds
+    // both digits — the previous code truncated twice (once inside /60,
+    // once before % 60) and could disagree with itself on negatives.
+    const float elapsedSeconds = vm.lastElapsedSeconds();
+    if (std::isfinite(elapsedSeconds) && elapsedSeconds > 0.0F) {
+        const int totalSeconds = static_cast<int>(elapsedSeconds);
+        const int mm = totalSeconds / 60;
+        const int ss = totalSeconds % 60;
         p.setFont(QFont(QStringLiteral("Chakra Petch"), 8));
         p.setPen(QColor(150, 150, 150));
         p.drawText(titleRect, Qt::AlignRight | Qt::AlignVCenter,
@@ -261,14 +268,26 @@ void DamagePanel::paintPanel(QPainter &p)
     if (partyDamage == 0)
         partyDamage = 1;
 
-    for (int i = 0; i < n; ++i) {
-        if (!onRows) break;   // skip row drawing; y not advanced
-        const int dmg = vm.history().isEmpty() ? 0 : vm.history().last().damage.value(i, 0);
+    // The whole row loop only runs when Rows is on. When it is off the
+    // layout must still advance past the reserved strip (which the
+    // height model zeroes, see the rowsAreaH computation above), so the
+    // share bar and the chart land exactly where they would have sat
+    // with rows present. Previously a bare `break` left y sitting right
+    // under the title, and with Rows and Share both off the chart
+    // overwrote the title row's right-hand side.
+    if (onRows) {
+        for (int i = 0; i < n; ++i) {
+            const int dmg = vm.history().isEmpty() ? 0 : vm.history().last().damage.value(i, 0);
         // The demo early-path sets kDemoDps[] below to match the user's
         // realistic MHW DPS range (~300 down to ~100). Real updates use
         // computeDps() from history_.
+        //
+        // The gate is editMode(), NOT the history length: a real hunt
+        // also has 8 or fewer samples during its first two seconds
+        // (0.25 s per poll), which used to show 311/240/177/101 on the
+        // live rows of every fresh quest.
         int dps = vm.computeDps(i);
-        if (vm.history().size() <= 8 && i < 4) {
+        if (editMode() && vm.history().size() <= 8 && i < 4) {
             static const int kDemoDps[4] = {311, 240, 177, 101};
             dps = kDemoDps[i];
         }
@@ -392,6 +411,7 @@ void DamagePanel::paintPanel(QPainter &p)
             drawSelfFrame(p, row, dc);
 
         y += kRowH + kRowGap;
+        }
     }
     // Trim the trailing inter-row gap after the last row so the running
     // y matches the height reservation above (rowsAreaH counts n-1 gaps,

@@ -31,6 +31,16 @@ class Panel;
 // This is intentionally a small interface — only what HudCanvas needs.
 // If more state has to surface later, prefer adding accessors here
 // rather than widening the bind surface.
+//
+// OWNERSHIP CONTRACT (v0.11.4 — previously undocumented, which is how
+// the console leaked four of these): HudCanvas::bindPanel() stores this
+// pointer WITHOUT taking ownership, and never deletes it. The BINDING
+// side owns the adapter and must keep it alive for as long as the canvas
+// can paint. The console does that with a member array of unique_ptrs
+// (ControlPanel::boundSources_) exactly so the adapter — and the raw
+// Panel* it caches — cannot outlive either. Do not pass a temporary or a
+// stack object, and do not `new` one without storing it somewhere that
+// has a deterministic destructor.
 class PanelSource {
 public:
     virtual ~PanelSource() = default;
@@ -43,7 +53,10 @@ public:
 };
 
 // Default adapter for a live mhw::Panel instance. Constructed with a
-// raw pointer to the Panel; the adapter does not own the Panel.
+// raw pointer to the Panel; the adapter does not own the Panel, and
+// (see the contract above) is not owned by the canvas it is bound to.
+// It must be held by the binding side and destroyed only after the
+// canvas can no longer read it.
 class PanelSourceAdapter final : public PanelSource {
 public:
     explicit PanelSourceAdapter(const Panel *p);

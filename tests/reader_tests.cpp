@@ -1036,6 +1036,118 @@ Address OTHER 0xCAFE # inline comment
     check(mhw::partGaugeFill(true) == mhw::partGaugeFill(true),
           "Breakable and Severable share the broken gauge fill");
 
+    // ---- v0.11.4: PID lookup state is per instance ----------------------
+    // The lookup cache used to be three function-local statics inside
+    // findGamePid() — ONE entry for the whole process, overwritten whenever a
+    // different executable name was asked for. With two readers alive (one
+    // per game) each lookup evicted the other's PID, and the loser landed
+    // inside the 5 s throttle window while holding no PID: it saw
+    // "no game running" for a process it had already attached to, and its
+    // poll loop called memory_.detach(). A healthy reader disconnected
+    // because a different reader asked about a different game.
+    //
+    // The invariant being pinned: a PID this instance already resolved, for a
+    // process that is still alive, must keep resolving on THAT instance no
+    // matter how many other instances look things up in between, and must
+    // never be served for a different executable name. Interleaving the two
+    // readers' lookups must not change answer #2.
+    //
+    // The executable name is this test binary's own, so the attached-PID
+    // shortcut is exercised through a real /proc/<pid>/maps match rather
+    // than through a name that happens to be absent.
+    const qint64 selfPid = QCoreApplication::applicationPid();
+    const QString selfExe = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
+    mhw::ProcessMemory readerOne;
+    mhw::ProcessMemory readerTwo;
+    check(readerOne.attach(selfPid, &error), "first reader attaches to the test process");
+    check(readerTwo.attach(selfPid, &error), "second reader attaches to the same process");
+    check(!selfExe.isEmpty(), "the test binary has a file name to probe for");
+    const auto onePid = readerOne.lookupPid(selfExe);
+    const auto twoPid = readerTwo.lookupPid(selfExe);
+    check(onePid.has_value() && *onePid == selfPid,
+          "first instance's own PID survives its lookup");
+    check(twoPid.has_value() && *twoPid == selfPid,
+          "second instance's own PID survives its lookup");
+    // A different executable name must NOT be answered with this instance's
+    // attached PID: that would let a reader report its own game while the
+    // caller asked about somebody else's.
+    check(!readerOne.lookupPid(QStringLiteral("some_other_game.exe")).has_value(),
+          "an attached PID is not reported for a different executable");
+
+    // The interleaving itself: each reader looks up an absent executable and
+    // then its own, alternating, and both own-process answers must stay put.
+    // With the old shared cache the first cross-lookup flushed the entry and
+    // the second own-lookup fell into the throttle's nullopt.
+    bool interleavedDown = false;
+    for (int iteration = 0; iteration < 6; ++iteration) {
+        const auto probeOne = readerOne.lookupPid(
+            QStringLiteral("absent_probe_%1.exe").arg(iteration));
+        const auto probeTwo = readerTwo.lookupPid(
+            QStringLiteral("another_absent_probe_%1.exe").arg(iteration));
+        if (probeOne.has_value() || probeTwo.has_value())
+            interleavedDown = true;
+        const auto againOne = readerOne.lookupPid(selfExe);
+        const auto againTwo = readerTwo.lookupPid(selfExe);
+        if (!againOne.has_value() || *againOne != selfPid
+            || !againTwo.has_value() || *againTwo != selfPid)
+            interleavedDown = true;
+    }
+    check(!interleavedDown,
+          "alternating lookups never detach or misidentify either reader");
+    check(readerOne.attached() && readerOne.pid() == selfPid,
+          "first reader stays attached across the interleave");
+    check(readerTwo.attached() && readerTwo.pid() == selfPid,
+          "second reader stays attached across the interleave");
+
+    // attach() to a process that does not exist must fail rather than
+    // pretend, so a reader cannot sit "attached" to a dead PID with
+    // imageBase == 0 forever.
+    QString deadError;
+    mhw::ProcessMemory deadReader;
+    check(!deadReader.attach(selfPid + 400000, &deadError),
+          "attach to an exited PID fails rather than pretending");
+    check(!deadReader.attached(), "attach to an exited PID does not attach");
+    check(!deadError.isEmpty(), "a failed attach reports why");
+    check(!deadReader.attach(0, &deadError), "attach to PID 0 fails");
+    check(!deadReader.attach(-7, &deadError), "attach to a negative PID fails");
+    check(!deadReader.attached(), "a bad PID leaves the instance unattached");
+
+    // The read-error split: "not attached" and "bad request" must be
+    // distinguishable strings, not one shared message.
+    std::uint64_t writableMarker = 0x1122334455667788ULL;
+    mhw::ProcessMemory unattachedReader;
+    QString unattachedError = QStringLiteral("unset");
+    check(!unattachedReader.readBytes(reinterpret_cast<std::uintptr_t>(&writableMarker),
+                                      &writableMarker, sizeof(writableMarker), &unattachedError),
+          "reading with no attach fails");
+    check(unattachedError.contains(QLatin1String("readBytes: not attached")),
+          "unattached read reports the unattached reason");
+
+    QString zeroError = QStringLiteral("unset");
+    check(!ownMemory.readBytes(markerAddress, &writableMarker, 0, &zeroError),
+          "a zero-length read fails");
+    check(zeroError.contains(QLatin1String("invalid request")),
+          "a zero-length read reports the invalid-request reason");
+    QString badDestError = QStringLiteral("unset");
+    check(!ownMemory.readBytes(markerAddress, nullptr, sizeof(writableMarker), &badDestError),
+          "a null destination fails");
+    check(badDestError.contains(QLatin1String("invalid request")),
+          "a null destination reports the invalid-request reason");
+    check(unattachedError != zeroError,
+          "unattached and invalid-request messages are different strings");
+
+    // followPointerChain must reject an offset whose addition wraps.
+    std::uintptr_t readAsPointer = 0;
+    const std::uintptr_t readAsPointerAddress =
+        reinterpret_cast<std::uintptr_t>(&readAsPointer);
+    QString chainError;
+    check(mhw::followPointerChain(ownMemory, readAsPointerAddress,
+                                  {std::numeric_limits<std::uintptr_t>::max()},
+                                  &chainError) == 0,
+          "pointer chain rejects an offset that overflows the address");
+    check(!chainError.isEmpty() && chainError.contains(QLatin1String("overflow")),
+          "pointer chain overflow reports an overflow reason");
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

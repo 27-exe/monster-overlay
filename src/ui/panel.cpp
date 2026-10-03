@@ -49,11 +49,26 @@ QMargins defaultMarginsFor(Corner corner)
     return QMargins(20, 20, 0, 0);
 }
 
-// Clamp a margin component to a sane non-negative range so a panel
-// can never be dragged off-screen.
-int clampMargin(int v)
+// Absolute ceiling for a margin component whose anchored edge is not
+// the binding constraint — i.e. the two components a corner anchor
+// never reads (see Panel::clampMarginsToScreen). Kept at the historical
+// 8000 so nothing that used to round-trip through QSettings changes
+// meaning; the screen-relative bound is always tighter where it applies.
+constexpr int kMaxMargin = 8000;
+
+// Clamp a margin component into [0, limit].
+//
+// `limit` is caller-supplied because the meaningful upper bound is
+// screen-relative, not absolute. The old body was
+// `std::clamp(v, 0, 8000)`, and that flat ceiling is exactly what let a
+// panel positioned on a 4K output survive the unplug as a 3000px margin
+// against a 1080p screen: every layer-shell anchor then resolves the
+// panel entirely off the remaining screen, and nothing ever re-derived a
+// smaller bound, so it stayed lost. Panel::marginLimits() supplies the
+// real ceiling; this function only enforces the range.
+int clampMargin(int v, int limit)
 {
-    return std::clamp(v, 0, 8000);
+    return std::clamp(v, 0, std::max(limit, 0));
 }
 
 } // namespace
@@ -86,9 +101,28 @@ Panel::Panel(const QString &settingsKey, Corner corner, QWidget *parent)
 
     // Load persisted config, then set up the layer-shell surface
     // (anchors + margins) BEFORE the window is shown. Showing first
-    // and configuring layer-shell after triggers "already has a shell
-    // integration" warnings.
+    // and configuring layer-shell after triggers "already has
+    // shell integration" warnings.
     loadConfig();
+
+    // Hot-plug watch (v0.11.4). The margin bound is screen-relative
+    // (see marginLimits), so the value that is correct depends on which
+    // outputs happen to be attached — and that set changes without the
+    // overlay being restarted. Re-push on every add/remove/primary change
+    // rather than only at construction: this is what makes a panel that
+    // was parked off-screen on a 2-monitor layout come back when the user
+    // unplugs the secondary, and lets hypr-output-failsafe's periodic
+    // surface rebuild land inside the output it now resolves on.
+    // Qt emits screenAdded/screenRemoved on the QGuiApplication, which
+    // exists for the whole process lifetime, so no guard is needed on
+    // the receiver side.
+    connect(qApp, &QGuiApplication::screenAdded,
+            this, &Panel::onOutputsChanged);
+    connect(qApp, &QGuiApplication::screenRemoved,
+            this, &Panel::onOutputsChanged);
+    connect(qApp, &QGuiApplication::primaryScreenChanged,
+            this, &Panel::onOutputsChanged);
+
     applyGeometry();
 
 }
@@ -172,7 +206,14 @@ void Panel::applyGeometry()
         break;
     }
     layer->setAnchors(anchors);
-    layer->setMargins(margins_);
+    // Every path that writes a layer-shell surface goes through
+    // pushMargins() (not a raw setMargins), so the value the compositor
+    // sees is always the stored intent clamped to the output the surface
+    // just resolved on. That is what makes surface recreation self-heal:
+    // when hypr-output-failsafe rebuilds this panel weeks after the
+    // position was recorded, the margin is re-derived against the output
+    // we can see now instead of being replayed blindly.
+    pushMargins();
 
     // Tell the compositor the desired surface size (the free,
     // non-anchored dimensions for a corner anchor).
@@ -183,10 +224,18 @@ void Panel::loadConfig()
 {
     const QMargins def = defaultMarginsFor(corner_);
     settings().beginGroup(key_);
-    margins_.setLeft(clampMargin(settings().value(QStringLiteral("ml"), def.left()).toInt()));
-    margins_.setTop(clampMargin(settings().value(QStringLiteral("mt"), def.top()).toInt()));
-    margins_.setRight(clampMargin(settings().value(QStringLiteral("mr"), def.right()).toInt()));
-    margins_.setBottom(clampMargin(settings().value(QStringLiteral("mb"), def.bottom()).toInt()));
+    // Read the stored value verbatim — NO clampMargin here. Clamping at
+    // read time is what made a 4K position unrecoverable: the console
+    // opens with fewer screens attached and the mere act of reading
+    // destroyed the position the user chose on the output they weren't
+    // carrying. The screen-relative clamp is applied at push time
+    // (pushMargins) instead, so the stored intent survives a monitor
+    // unplug and is re-applied the moment that output returns.
+    // .toInt() on a corrupt value yields 0, which is a safe default.
+    margins_.setLeft(settings().value(QStringLiteral("ml"), def.left()).toInt());
+    margins_.setTop(settings().value(QStringLiteral("mt"), def.top()).toInt());
+    margins_.setRight(settings().value(QStringLiteral("mr"), def.right()).toInt());
+    margins_.setBottom(settings().value(QStringLiteral("mb"), def.bottom()).toInt());
     scale_ = settings().value(QStringLiteral("scale"), 2.0).toDouble();   // v0.3: 2x scale to make icons undeniably visible
     opacity_ = settings().value(QStringLiteral("opacity"), 1.0).toDouble();
     bgAlpha_ = std::clamp(settings().value(QStringLiteral("bgAlpha"), 170).toInt(), 0, 255);
@@ -222,7 +271,24 @@ void Panel::saveConfig()
     settings().setValue(QStringLiteral("scale"), scale_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
     settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
-    settings().setValue(QStringLiteral("visible"), isVisible());
+    // A `visible` key used to be written here. It was removed because
+    // nothing ever read it back, and the value it wrote was actively
+    // misleading: it stored isVisible(), which is the *runtime* answer
+    // (a panel the master switch disabled reports false, and so does a
+    // panel with no data yet), not the user's intent. Meanwhile the real
+    // master gate — panelEnabled_, driven by --no-player/monster/damage/
+    // pets from the console — was never persisted at all. So the key
+    // claimed the opposite of what the console's master toggle showed.
+    //
+    // Persisting a master switch would be a behaviour change, not a bug
+    // fix: the panel is mounted/unmounted by argv right now, so a stored
+    // value has no reader to honour it and adding one means deciding
+    // what wins when argv and the ini disagree. The console's own
+    // master toggle survives through saveMaskToDisk() (0 = all off),
+    // which is already the durable record of that decision. Dropping the
+    // key keeps panels.ini to values that have exactly one meaning, one
+    // writer and one reader. Stale `visible=false` lines in existing
+    // configs are now simply ignored, which is the harmless outcome.
     settings().endGroup();
     settings().sync();
 }
@@ -234,7 +300,12 @@ void Panel::saveAppearance()
     settings().setValue(QStringLiteral("opacity"), opacity_);
     settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
     // v0.5: also persist margins so the overlay's loadConfig()
-    // picks up the position the user set in the console.
+    // picks up the position the user set in the console. Same
+    // read-verbatim rule as loadConfig(): the console's preview panels are
+    // shown on the screens the user has attached NOW, so writing the raw
+    // (unclamped) margins_ here preserves a position chosen on an output
+    // that happens to be unplugged at the moment the console is open.
+    // The screen-relative clamp is applied at push time, not at rest.
     settings().setValue(QStringLiteral("ml"), margins_.left());
     settings().setValue(QStringLiteral("mt"), margins_.top());
     settings().setValue(QStringLiteral("mr"), margins_.right());
@@ -322,6 +393,14 @@ void Panel::setContentSize(int w, int h)
         return;
 
     setFixedSize(aw, ah);
+
+    // Re-derive the margins against the REAL panel extent. The old extent
+    // (the 320x120 ctor placeholder, or a previous scale's size) produced
+    // a looser bound than the surface actually needs — a left margin of
+    // W-320 is legal for a 320px panel but lets a 378px panel hang 58px
+    // off the right edge. Only runs when the size really changed, so the
+    // every-repaint setContentSize() calls stay free.
+    pushMargins();
 
     // Keep the layer-shell desired size in sync so the compositor
     // allocates the right surface dimensions.
@@ -467,36 +546,174 @@ void Panel::keyPressEvent(QKeyEvent *e)
         nudgeMargins(dx, dy);
 }
 
+// ─── margin bounds ─────────────────────────────────────────────────────
+//
+// Why the bound is derived here rather than in loadConfig(): the two
+// questions have different answers.
+//
+//   * "What did the user choose?" — a storage question. answered by
+//     QSettings, verbatim, with no clamping.
+//   * "Where can that choice land on the screen we can see right now?"
+//     — a geometry question. answered by marginLimits().
+//
+// Conflating them is what made a 4K position unrecoverable: the console
+// reads panels.ini on whatever screens are attached at that moment, and
+// if the read clamped the stored value, merely opening the console on a
+// laptop panel destroyed the position the user had set up on the 4K
+// output. So QSettings keeps the user's value and every *applied*
+// geometry is clamped instead.
+
+QMargins Panel::marginLimits() const
+{
+    // Same resolution order as applyGeometry(): the panel's own output
+    // when it names a screen we can actually see, else the primary.
+    const QScreen *screen = nullptr;
+    if (!outputName_.isEmpty()) {
+        const auto screens = QGuiApplication::screens();
+        for (QScreen *s : screens) {
+            if (s && s->name() == outputName_) { screen = s; break; }
+        }
+    }
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+
+    // The panel points at an output that is not attached right now (the
+    // 4K monitor is unplugged), or we genuinely have no screen
+    // (offscreen platform). Both mean "we cannot measure the target", so
+    // we must NOT invent a bound: clamping here would rewrite a position
+    // that is perfectly right for the output we just cannot see. Fall
+    // back to the historical flat ceiling and let the value round-trip.
+    if (!screen)
+        return QMargins(kMaxMargin, kMaxMargin, kMaxMargin, kMaxMargin);
+
+    // QScreen::geometry() is in logical pixels (DIPs), which is the same
+    // coordinate space layer-shell margins are interpreted in, so the
+    // two are directly comparable — no devicePixelRatio conversion.
+    const QRect g = screen->geometry();
+    const QSize extent = size();
+    if (extent.isEmpty())
+        return QMargins(kMaxMargin, kMaxMargin, kMaxMargin, kMaxMargin);
+
+    // A corner anchor resolves the panel from the two anchored edges
+    // only. Split the screen's axes by which edge is binding, and give
+    // each binding component the room from its own edge to the far edge
+    // of the screen minus the panel's own extent. The two inert
+    // components (never read by the compositor) keep the flat ceiling —
+    // bounding them would silently rewrite the user's margin on those
+    // sides for no geometric reason.
+    QMargins limits(kMaxMargin, kMaxMargin, kMaxMargin, kMaxMargin);
+    const int slackX = std::max(0, g.width()  - extent.width());
+    const int slackY = std::max(0, g.height() - extent.height());
+    switch (corner_) {
+    case Corner::TopLeft:     limits.setLeft(slackX);  limits.setTop(slackY);    break;
+    case Corner::TopRight:    limits.setRight(slackX); limits.setTop(slackY);    break;
+    case Corner::BottomLeft:  limits.setLeft(slackX);  limits.setBottom(slackY); break;
+    case Corner::BottomRight: limits.setRight(slackX); limits.setBottom(slackY); break;
+    }
+    return limits;
+}
+
+QMargins Panel::clampMarginsToScreen(const QMargins &m) const
+{
+    const QMargins limits = marginLimits();
+    QMargins out = m;
+    out.setLeft(clampMargin(out.left(), limits.left()));
+    out.setTop(clampMargin(out.top(), limits.top()));
+    out.setRight(clampMargin(out.right(), limits.right()));
+    out.setBottom(clampMargin(out.bottom(), limits.bottom()));
+    return out;
+}
+
+QMargins Panel::pushedMargins() const
+{
+    return clampMarginsToScreen(margins_);
+}
+
+void Panel::onOutputsChanged()
+{
+    // Re-resolve the surface's target screen. A panel bound to an output
+    // that just went away falls back to the primary here (same order as
+    // applyGeometry), and a panel bound to an output that just came back
+    // snaps back onto it. Without this the surface keeps the output it
+    // was created with and a panel that reads its stored 4K margin
+    // against a 1080p primary stays lost.
+    if (QWindow *native = windowHandle()) {
+        QScreen *targetScreen = nullptr;
+        if (!outputName_.isEmpty()) {
+            const auto screens = QGuiApplication::screens();
+            for (QScreen *s : screens) {
+                if (s && s->name() == outputName_) { targetScreen = s; break; }
+            }
+        }
+        if (!targetScreen)
+            targetScreen = QGuiApplication::primaryScreen();
+        if (targetScreen && native->screen() != targetScreen)
+            native->setScreen(targetScreen);
+        if (LayerShellQt::Window *layer = LayerShellQt::Window::get(native)) {
+            if (targetScreen && layer->screen() != targetScreen)
+                layer->setScreen(targetScreen);
+            // The whole point of the slot: re-derive the margin against
+            // the screen we can measure NOW.
+            layer->setMargins(pushedMargins());
+        }
+    }
+    update();
+}
+
+void Panel::pushMargins() const
+{
+    // No window yet (ctor ordering: loadConfig() → applyGeometry() runs
+    // before anything is mapped). applyGeometry() re-invokes this once a
+    // native window exists, so an empty early call is not a lost update.
+    QWindow *native = windowHandle();
+    if (!native)
+        return;
+    LayerShellQt::Window *layer = LayerShellQt::Window::get(native);
+    if (!layer)
+        return;
+    layer->setMargins(pushedMargins());
+}
+
+bool Panel::commitMargins(const QMargins &m)
+{
+    const QMargins clamped = clampMarginsToScreen(m);
+    if (clamped == margins_)
+        return false;
+    margins_ = clamped;
+    pushMargins();
+    return true;
+}
+
 void Panel::nudgeMargins(int dx, int dy)
 {
     QMargins m = margins_;
     switch (corner_) {
     case Corner::TopLeft:
-        m.setLeft(clampMargin(m.left() + dx));
-        m.setTop(clampMargin(m.top() + dy));
+        m.setLeft(m.left() + dx);
+        m.setTop(m.top() + dy);
         break;
     case Corner::TopRight:
-        m.setRight(clampMargin(m.right() - dx));
-        m.setTop(clampMargin(m.top() + dy));
+        m.setRight(m.right() - dx);
+        m.setTop(m.top() + dy);
         break;
     case Corner::BottomLeft:
-        m.setLeft(clampMargin(m.left() + dx));
-        m.setBottom(clampMargin(m.bottom() - dy));
+        m.setLeft(m.left() + dx);
+        m.setBottom(m.bottom() - dy);
         break;
     case Corner::BottomRight:
-        m.setRight(clampMargin(m.right() - dx));
-        m.setBottom(clampMargin(m.bottom() - dy));
+        m.setRight(m.right() - dx);
+        m.setBottom(m.bottom() - dy);
         break;
     }
-    margins_ = m;
-
-    QWindow *native = windowHandle();
-    if (native) {
-        LayerShellQt::Window *layer = LayerShellQt::Window::get(native);
-        if (layer)
-            layer->setMargins(margins_);
-    }
+    // Route through the shared clamp so a drag that wanders off a
+    // screen's edge stops dead instead of storing an unreachable value.
+    // saveConfig() below persists the CLAMPED vector, which is the point:
+    // the last thing the overlay did is a position it could actually
+    // reach, and that is what comes back next launch.
+    if (!commitMargins(m))
+        return;                     // clamped to the same value: no-op
     update();
+
     // Persist immediately so a SIGTERM / crash doesn't lose position.
     // Saves only happen in edit mode (this method isn't called
     // otherwise), so live mode never pays this cost.
@@ -505,20 +722,9 @@ void Panel::nudgeMargins(int dx, int dy)
 
 void Panel::setMargins(QMargins m, bool persist)
 {
-    m.setLeft(clampMargin(m.left()));
-    m.setTop(clampMargin(m.top()));
-    m.setRight(clampMargin(m.right()));
-    m.setBottom(clampMargin(m.bottom()));
-    if (m == margins_)
+    // Screen-relative clamp, not the absolute 8000 — see marginLimits().
+    if (!commitMargins(m))
         return;
-    margins_ = m;
-
-    QWindow *native = windowHandle();
-    if (native) {
-        LayerShellQt::Window *layer = LayerShellQt::Window::get(native);
-        if (layer)
-            layer->setMargins(margins_);
-    }
     update();
     if (persist)
         saveConfig();

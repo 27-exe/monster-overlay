@@ -11,6 +11,7 @@
 #include <QVector>
 #include <array>
 #include <functional>
+#include <memory>
 #include <QtGlobal>
 
 class QSplitter;
@@ -209,11 +210,32 @@ private:
     void updateZoomLabel();
 
 
+    // Source of the four pre-paint masks and the master toggles.
     PlayerPanel *player_ = nullptr;
     MonsterPanel *monster_ = nullptr;
     DamagePanel *damage_ = nullptr;
     PetDamagePanel *pets_ = nullptr;
     std::array<PanelCtl, mhw::kPanelCount> ctl_{};
+    // v0.11.4: ownership for the HudCanvas's geometry sources.
+    //
+    // The ctor binds one of these per slot: canvas_->bindPanel(i, new
+    // PanelSourceAdapter(panelAt(i))). The canvas keeps a non-owning
+    // const PanelSource* (that is its documented contract — see
+    // ui/hud_canvas.h bindPanel), so it never deletes them and nothing
+    // else did either. The four adapters therefore leaked for the whole
+    // process, and because each held a raw Panel*, the only thing that
+    // kept them from dangling was an unstated ~ControlPanel ordering
+    // guarantee: delete the four preview panels first and the adapters
+    // never touched again afterwards.
+    //
+    // Holding them here in unique_ptrs makes the ownership explicit and
+    // deterministic — the adapters die with the console, and the
+    // member-declaration order below (declared after ctl_, so destroyed
+    // BEFORE ctl_/player_/... in reverse order) still puts them after
+    // the panel hand-off in ~ControlPanel as before. They stay
+    // heap-allocated because the canvas holds a raw pointer to them and
+    // must never see a stack object that outlives the binding.
+    std::array<std::unique_ptr<PanelSourceAdapter>, mhw::kPanelCount> boundSources_{};
 
     // L3: handles for the EDIT MODE block launcher buttons (one START,
     // one ENTER EDIT). Stored as plain members — not in ctl_ — because

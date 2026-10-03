@@ -127,7 +127,10 @@ int main(int argc, char **argv)
     check(mhw::localeSyncPoll(st, conf2, QStringLiteral("zh-CN"))
               == QStringLiteral("en-US"),
           "poll reports the new locale en-US");
-    check(mhw::localeSyncPoll(st, conf2, QStringLiteral("zh-CN")).isEmpty(),
+    // The flip is settled the way the overlay does it: the poll only
+    // proposes, the caller applies and then retires the request.
+    mhw::localeSyncAccept(st, QStringLiteral("en-US"));
+    check(mhw::localeSyncPoll(st, conf2, QStringLiteral("en-US")).isEmpty(),
           "same change not reported twice");
 
     QThread::msleep(kMtimeTickMs);
@@ -136,6 +139,9 @@ int main(int argc, char **argv)
     check(mhw::localeSyncPoll(st, conf2, QStringLiteral("en-US"))
               == QStringLiteral("zh-CN"),
           "poll reports zh-CN after an EN session");
+    mhw::localeSyncAccept(st, QStringLiteral("zh-CN"));
+    check(mhw::localeSyncPoll(st, conf2, QStringLiteral("zh-CN")).isEmpty(),
+          "settled zh-CN flip is not re-offered");
 
     QFile::remove(conf2);
     check(mhw::localeSyncPoll(st, conf2, QStringLiteral("zh-CN")).isEmpty(),
@@ -149,6 +155,148 @@ int main(int argc, char **argv)
     mhw::LocaleSyncState st2 = mhw::localeSyncInit(conf2);   // primed, sees zh-CN
     check(mhw::localeSyncPoll(st2, conf2, QStringLiteral("en-US")).isEmpty(),
           "pre-existing conf value does not override --locale startup");
+
+    // ------------------------------------------------- refused flips (v0.11.4)
+    //
+    // The regression this file exists to guard: proposing a locale and
+    // applying it are two phases. localeSyncPoll() only reports what the
+    // conf asks for; the caller applies it and only then retires the
+    // request with localeSyncAccept(). A load that FAILS (missing /
+    // unreadable locale dir) must therefore leave the request
+    // outstanding, so the very next poll re-offers the same flip from the
+    // very same conf file. Before v0.11.4 the poll itself recorded the
+    // locale as seen before the caller had loaded anything, and the conf
+    // mtime never changed afterwards — the candidate was swallowed by
+    // the mtime short-circuit on every later poll and the UI was stuck on
+    // the old language until a restart.
+    //
+    // applyLikeOverlay() mirrors src/main.cpp's applyLocale(): try to
+    // load, and retire the request only when the load succeeded.
+    const QString conf3 = tmp.filePath("stuck.conf");
+    mhw::LocaleSyncState st3 = mhw::localeSyncInit(conf3);    // sees ""
+    QString uiLocale = QStringLiteral("zh-CN");
+    bool resourcesMissing = true;   // the load will be refused
+    auto applyLikeOverlay = [&](const QString& next) -> bool {
+        if (resourcesMissing)
+            return false;           // StringTable::load() would fail
+        uiLocale = next;            // StringTable::currentLocale() now
+        mhw::localeSyncAccept(st3, uiLocale);
+        return true;
+    };
+    auto tick = [&](const QString& proposed) {
+        return applyLikeOverlay(proposed);
+    };
+
+    QThread::msleep(kMtimeTickMs);
+    check(writeAll(conf3, QStringLiteral("locale=en-US\n")),
+          "console asks for en-US");
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale) == QStringLiteral("en-US"),
+          "poll proposes en-US");
+    check(!tick(QStringLiteral("en-US")),
+          "refused load returns false (resources missing)");
+    check(uiLocale == QStringLiteral("zh-CN"),
+          "refused load leaves the UI on the previous locale");
+
+    // THE BUG: identical conf file, nothing rewritten on disk. The
+    // proposal must survive the mtime short-circuit and be re-offered.
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale) == QStringLiteral("en-US"),
+          "refused flip is re-offered from the SAME conf file");
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale) == QStringLiteral("en-US"),
+          "refused flip keeps being offered until it lands");
+    check(!tick(QStringLiteral("en-US")),
+          "still refused -> still not accepted");
+
+    // The resource files show up; the untouched conf now gets honoured.
+    resourcesMissing = false;
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale) == QStringLiteral("en-US"),
+          "same conf still proposes en-US after the resources return");
+    check(tick(QStringLiteral("en-US")),
+          "applying the flip now succeeds");
+    check(uiLocale == QStringLiteral("en-US"),
+          "UI actually switched");
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale).isEmpty(),
+          "accepted flip stops being offered (steady state)");
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale).isEmpty(),
+          "still quiet after acceptance");
+
+    // A pending proposal must not survive the user abandoning the
+    // requested language: the conf goes back to what the UI shows.
+    resourcesMissing = true;
+    QThread::msleep(kMtimeTickMs);
+    check(writeAll(conf3, QStringLiteral("locale=zh-CN\n")),
+          "console asks for zh-CN while the resources are gone");
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale) == QStringLiteral("zh-CN"),
+          "zh-CN proposed");
+    check(!tick(QStringLiteral("zh-CN")), "that request is refused too");
+
+    QThread::msleep(kMtimeTickMs);
+    check(writeAll(conf3, QStringLiteral("locale=en-US\n")),
+          "user flips back to the locale already on screen");
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale).isEmpty(),
+          "conf agreeing with the live locale retires the proposal");
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale).isEmpty(),
+          "nothing left outstanding");
+    // An unshipped request canonicalizes to en-US, i.e. to whatever the
+    // UI already shows — it must not be turned into a flip.
+    QThread::msleep(kMtimeTickMs);
+    check(writeAll(conf3, QStringLiteral("locale=ja-JP\n")),
+          "console writes an unshipped locale id");
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale).isEmpty(),
+          "unshipped request canonicalizes to the live locale, no flip");
+
+    // A superseding request replaces an outstanding one rather than
+    // being buried by it.
+    resourcesMissing = false;
+    QThread::msleep(kMtimeTickMs);
+    check(writeAll(conf3, QStringLiteral("player=1\nlocale=zh-CN\n")),
+          "console asks for zh-CN (masks rewritten too)");
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale) == QStringLiteral("zh-CN"),
+          "newer request is proposed");
+    check(tick(QStringLiteral("zh-CN")), "newer request applied");
+    QThread::msleep(kMtimeTickMs);
+    check(writeAll(conf3, QStringLiteral("player=2\nlocale=zh-CN\n")),
+          "masks rewritten again, same locale row");
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale).isEmpty(),
+          "settled request is not disturbed by an unrelated rewrite");
+    check(tick(QString()), "nothing left to apply");
+
+    // localeSyncAccept() only retires the request it is actually
+    // delivering: a late / stray accept for something else must not bury
+    // the request that is still outstanding. The overlay calls it exactly
+    // once per successful load, but the guard keeps the detector honest
+    // even if a caller does not.
+    QThread::msleep(kMtimeTickMs);
+    check(writeAll(conf3, QStringLiteral("locale=en-US\n")), "console asks for en-US");
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale) == QStringLiteral("en-US"),
+          "en-US proposed again");
+    mhw::localeSyncAccept(st3, QStringLiteral("zh-CN"));   // stray accept
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale) == QStringLiteral("en-US"),
+          "stray accept does not bury the live proposal");
+    mhw::localeSyncAccept(st3, QStringLiteral("en-US"));
+    check(mhw::localeSyncPoll(st3, conf3, uiLocale).isEmpty(),
+          "accepting the right request settles it");
+    uiLocale = QStringLiteral("en-US");
+
+    // The real loader is the other half of the contract. Accepting only
+    // after a successful load is safe precisely because a load that FAILS
+    // leaves currentLocale() (and therefore the UI) untouched — if it did
+    // not, retiring the request after `load()` would strand the state on a
+    // language nobody ever showed.
+    check(mhw::StringTable::instance().load(QStringLiteral("zh-CN")),
+          "real loader: zh-CN loads");
+    check(!mhw::StringTable::instance().load(QStringLiteral("no-such-locale")),
+          "real loader: unshipped locale fails");
+    check(mhw::StringTable::instance().currentLocale() == QStringLiteral("zh-CN"),
+          "real loader: failed load keeps the active locale");
+
+    // Why the "resources missing" path above is mocked rather than driven
+    // through StringTable::load(): readLocaleFromConf() canonicalizes any
+    // unshipped id (ja-JP, de-DE, ...) down to en-US, so the conf can never
+    // name a locale whose directory is absent — the poll's `repeat` branch
+    // correctly suppresses it (see the ja-JP case above). A missing
+    // resource dir is a packaging fault the conf row cannot express, so the
+    // mock is the only way to reach it; everything else in this block runs
+    // against the real loader.
 
     // --------------------------------------- locale detection (v0.9.2 policy)
     // --locale > conf row > detected system locale. Detection answers zh-CN

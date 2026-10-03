@@ -49,6 +49,16 @@ private:
     std::unordered_map<std::string, std::vector<std::uintptr_t>> offsets_;
 };
 
+// One PID-lookup cache entry. The pid field doubles as the "state of the
+// answer" (pid > 0 = last lookup resolved; pid == -1 = last lookup found
+// nothing), so an uninitialised entry reads as "never scanned" rather than
+// "scanned and found nothing", which is what lets lastScanMs != 0 be the
+// real never-scanned sentinel.
+struct PidLookupState {
+    qint64 pid = -1;       // PID, or -1 when the last scan found nothing
+    qint64 lastScanMs = 0; // epoch ms of the last actual /proc scan
+};
+
 class ProcessMemory {
 public:
     ProcessMemory() = default;
@@ -107,23 +117,52 @@ public:
 private:
     qint64 pid_{-1};
     int memFd_{-1};
+
+    // Per-instance PID lookup state, keyed by executable name (lowercased).
+    // Why per instance and not the function-local statics this used to be:
+    //
+    //   The cache was three statics inside findGamePid() — cachedPid,
+    //   lastScanMs, cachedExeName — i.e. ONE entry for the whole process,
+    //   overwritten whenever a different executable name was asked for,
+    //   while the ProcessMemory it feeds is per-instance state. A lookup
+    //   by one reader therefore evicted another reader's PID and left it
+    //   inside the 5 s throttle window, which then answered "no game
+    //   running" for a process that was alive and healthy. The caller
+    //   reads that nullopt as "game gone" and detaches a working reader.
+    //
+    // On the instance the cache cannot be written by anybody but its owner,
+    // and it lives exactly as long as the attach whose target it describes
+    // (cleared in detach()). That is what makes "one instance owns one PID
+    // lookup state" hold instead of being a comment.
+    mutable QHash<QString, PidLookupState> pidLookup_;
+
+public:
+    // Per-instance findGamePid(): same scan, same 5 s throttle, cache keyed
+    // by executable name and owned by this instance, so two readers cannot
+    // evict each other's entry. Additionally, a PID this instance is already
+    // attached to and that is still live is returned without any throttle
+    // check — the quoted window can never make a live, attached target
+    // look like "not running".
+    [[nodiscard]] std::optional<qint64> lookupPid(const QString &exeName) const;
 };
 
 struct HpCluster { std::uintptr_t hpAddr = 0; float maxHealth = 0.0F; };
 
 // The four process-memory helpers. They are deliberately NOT members of
-// MhwReader: each is a static function whose state lives only in its
-// parameters (plus function-local statics for the PID cache), so both games'
-// readers share them without either library depending on the other. They
-// used to be MhwReader static members, which made monster-core's
-// mhr_reader.cpp depend on symbols defined in mhw-reader — a library
-// dependency turned upside down.
+// MhwReader: each is stateless with respect to any reader either (PID
+// lookup state lives on the ProcessMemory instance — see lookupPid), so
+// both games' readers share them without either library depending on the
+// other.
 //
-// exeName is required for the same reason ProcessMemory::imageBase's is: a
-// World default here would let a new reader look for the wrong game and report
-// a misleading "not running". Every call site names the game it means —
-// world_reader.cpp passes its own exeName_, mhr_reader.cpp passes
-// "monsterhunterrise.exe", and the probe tests say which game they probe.
+// Process-wide (free) PID lookup. Kept for call sites that hold no
+// ProcessMemory yet (tools, probes, and the readers' poll loops), but note
+// the residual trap: this still shares one cache table across the process,
+// so ProcessMemory::lookupPid() is what a reader should use once it knows
+// which object it is going to attach to.
+//
+// exeName is required, not defaulted: a default would be a game literal
+// inside monster-core and would let a caller silently look for the wrong
+// game. Every call site names the game it means.
 std::optional<qint64> findGamePid(const QString &exeName);
 // Return the first candidate whose AddressMap parses. If none parses,
 // retain the first path so the caller can report an actionable error.

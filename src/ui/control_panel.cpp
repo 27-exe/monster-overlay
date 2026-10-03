@@ -637,8 +637,15 @@ ControlPanel::ControlPanel(QWidget *parent)
         canvas_->setZoom(layout.zoom());
         updateZoomLabel();
     }
-    for (int i = 0; i < mhw::kPanelCount; ++i)
-        canvas_->bindPanel(i, new PanelSourceAdapter(panelAt(i)));
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
+        // v0.11.4: the adapter is owned by boundSources_ (a member), not
+        // orphaned on the heap. The canvas keeps a non-owning
+        // const PanelSource*, so ownership has to live on our side and
+        // die with the console — see the member's comment.
+        auto adapter = std::make_unique<PanelSourceAdapter>(panelAt(i));
+        canvas_->bindPanel(i, adapter.get());
+        boundSources_[i] = std::move(adapter);
+    }
     // v0.5.6: top row (rail + inspector) sits in a container that owns
     // the QHBoxLayout; the stage is the second pane of the splitter.
     // Wrap the topRow in a QWidget so QSplitter can manage its size
@@ -907,6 +914,21 @@ ControlPanel::~ControlPanel()
     if (monster_) { monster_->setVisible(false); delete monster_; monster_ = nullptr; }
     if (damage_)  { damage_->setVisible(false);  delete damage_;  damage_  = nullptr; }
     if (pets_)    { pets_->setVisible(false);    delete pets_;    pets_    = nullptr; }
+
+    // The adapters were owned by boundSources_, which is destroyed by
+    // the member destructors AFTER this body runs (members are declared
+    // after ctl_/player_/…, so reverse order puts them first). That is
+    // exactly the ordering the raw Panel* they cache needs: the panels
+    // are gone by the time the adapters stop being reachable, and no
+    // store-then-read race is possible because nothing can reach them
+    // from the canvas after here.
+    //
+    // v0.11.4: canvas_ itself is parented to this window (built in the
+    // ctor), so it dies with us; ~HudCanvas runs during QObject teardown
+    // but never dereferences its slots_ sources (they are only read from
+    // paint/mouse code that is already finished by then), so a leaked
+    // pointer is not a risk there. We do not need explicit unbindPanel
+    // calls, and none are left dangling above.
 }
 
 // ---- v0.9 i18n: registration + replay -----------------------------------
@@ -2285,7 +2307,13 @@ void ControlPanel::updatePosLabel(int idx)
     if (!ctl_[idx].posLabel) return;
     Panel *p = panelAt(idx);
     if (!p) return;
-    const QMargins m = p->margins();
+    // v0.11.4: report the margins the OVERLAY will actually apply
+    // (clampMarginsToScreen), not the raw stored vector. Before this the
+    // label could show a position that was mathematically right for the
+    // margins but unreachable on the attached screens, which is exactly
+    // the "面板飞到屏幕外" complaint in disguise: the readout looked
+    // authoritative while the panel was not where it said.
+    const QMargins m = p->clampMarginsToScreen(p->margins());
     // Display the panel's *current screen quadrant*, not its immutable
     // layer-shell anchor. Anchor stays fixed (so drag remains stable),
     // while this label follows the actual position when margins cross a

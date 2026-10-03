@@ -445,6 +445,17 @@ int main(int argc, char **argv)
     // reload the StringTable, re-set the window titles, let every panel
     // re-query its cached strings (Panel::retranslateUi), then repaint.
     // No process restart, no IPC.
+    //
+    // Proposing and applying are two phases (v0.11.4). localeSyncPoll()
+    // only reports what the conf asks for; the request is retired by
+    // localeSyncAccept() below, which runs AFTER a successful
+    // StringTable::load(). A load that fails (missing / unreadable locale
+    // directory) therefore leaves the request outstanding and the next
+    // poll re-offers it, instead of being swallowed forever by the poll's
+    // mtime short-circuit — the flip lands the moment its resource files
+    // are back. The price is one qWarning per poll while the requested
+    // locale stays unloadable, which is deliberate: a UI stuck on the
+    // wrong language with no explanation was the bug being fixed.
     QElapsedTimer localePollClock;
     localePollClock.start();
     auto applyLocale = [&](const QString &next) {
@@ -454,6 +465,11 @@ int main(int argc, char **argv)
                      qPrintable(mhw::StringTable::instance().currentLocale()));
             return;
         }
+        // The switch is live — retire the poll's proposal. Reading the
+        // locale back from the table (instead of `next`) keeps the
+        // detector in sync with what the UI actually shows.
+        mhw::localeSyncAccept(localeSync,
+                              mhw::StringTable::instance().currentLocale());
         qInfo("UI locale -> %s", qPrintable(next));
         auto &table = mhw::StringTable::instance();
         playerPanel.setWindowTitle(table.tr(QStringLiteral("ui.player_title")));

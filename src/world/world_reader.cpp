@@ -128,12 +128,11 @@ GameSnapshot MhwReader::poll()
     ++pollTick_;
     const WorldZone worldZone = readZone(nullptr);
     snapshot.zone = ZoneRef{GameId::World, static_cast<int>(worldZone)};
-    static WorldZone lastZone = WorldZone::Unknown;
-    if (worldZone != lastZone) {
+    if (worldZone != lastZone_) {
         cachedArray_.clear();
         monsterCache_.clear();
         cachedArrayBase_ = 0;
-        lastZone = worldZone;
+        lastZone_ = worldZone;
     }
     QString error;
     if (isHuntingZone(worldZone)) {

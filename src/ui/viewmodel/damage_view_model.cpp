@@ -728,8 +728,17 @@ void DamageViewModel::updateWorld(const GameSnapshot &snap)
             // rows (so the first sample of the new hunt still maps by slot).
             history_.clear();
             tick_ = 0;
-            firstHitTick_.fill(0, names_.size());
-            baselineDamage_.fill(0, names_.size());
+            // Zero per-row state with each vector's OWN size, not the row
+            // count of the identity table. QList::fill(n, len) pads when
+            // len > size() and truncates when len < size() — so sizing the
+            // fill off `names_` silently resizes (or silently under-clears)
+            // whichever of the two rows below disagreed with it. Every
+            // per-row vector here is currently the same length by
+            // construction, which is exactly why a future one that wasn't
+            // would stay invisible: it would be quietly repadded instead of
+            // tripping a mismatch assertion.
+            std::fill(firstHitTick_.begin(), firstHitTick_.end(), 0);
+            std::fill(baselineDamage_.begin(), baselineDamage_.end(), 0);
             lastElapsedSeconds_ = snap.quest.elapsedSeconds;
         }
     }

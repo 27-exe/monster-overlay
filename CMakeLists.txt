@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(monster_overlay VERSION 0.11.3 LANGUAGES CXX)
+project(monster_overlay VERSION 0.11.4 LANGUAGES CXX)
 
 # Strip the build machine's absolute paths out of every compiled TU. Without
 # this the binaries embed CMAKE_SOURCE_DIR via __FILE__ and the wiring test's
@@ -1339,6 +1339,15 @@ set(MHW_DIAGNOSTIC_TARGETS
     rise-probe
 )
 
+# ---------------------------------------------------------------------------
+# Locate bash *before* the two gates below that need it. find_program writes
+# to the cache, so calling it on first use would evaluate false on a fresh
+# configure — the gate would register nothing and the build would carry on
+# silently green. Declaring it above the first use keeps the gate present
+# from the very first configure of a clean build tree.
+# ---------------------------------------------------------------------------
+find_program(BASH_EXECUTABLE bash)
+
 if(BASH_EXECUTABLE)
     add_test(NAME diagnostic-targets-build
         COMMAND ${BASH_EXECUTABLE}
@@ -1414,7 +1423,6 @@ add_test(NAME zero-reference-gate
 #
 # Runs against build/, so a fresh checkout without a build reports "skipped"
 # rather than failing — the same tradeoff zero-reference-gate makes.
-find_program(BASH_EXECUTABLE bash)
 if(BASH_EXECUTABLE)
     add_test(NAME lib-purity-gate
         COMMAND ${BASH_EXECUTABLE}

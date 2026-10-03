@@ -27,6 +27,164 @@ party 空不空。复现率低是因为它需要「quest 已清而 party 指针�
 
 ---
 
+## [0.11.4] — 审计收尾：显示正确性 + 生命周期正确性
+
+一轮只读审计（6 个并行子代理，覆盖 UI / reader / core / 构建门禁）产出 5 份报告，
+逐条复核后修掉 21 项。分四类：**每局必见的显示错误**、**会静默断连的进程级状态**、
+**配置往返丢失**、**构建门禁形同虚设**。全部修复以
+「干净树全量构建 0 warning + 53/53 测试通过」验收。
+
+其中 15 项由子代理并行修复（文件归属互不重叠，权威构建与 ctest 由父会话串行
+执行），6 项由父会话在通读与复核审计结论时直接定位。审计本身推翻了子代理的
+两处初判（详见第四节与 `audit/01-player-panel-bugs.md`）。
+
+### 一、每局必见的显示错误
+
+**DPS 面板在真实狩猎的前两秒显示假数据。** `panel_damage.cpp` 的 demo 数值
+（311/240/177/101）判据是 `history().size() <= 8`，而真实开局的头 8 个
+poll tick 恰好也只有 8 个采样——于是每局开头所有人的 DPS 都是那四个硬编码值，
+两秒后才跳回真实数字。判据改为 `editMode()`：demo 数据只在编辑模式出现。
+
+**任务计时器在非有限值下显示垃圾数字。** `lastElapsedSeconds` 跨 reader 边界，
+`Inf > 0` 能过门禁，随后 cast 成 int 是平台定义值（实测通常是 `INT_MIN`）。
+且原代码 `/60` 与 `% 60` 两次独立截断，在负值上会自相矛盾。现在一次截断喂给
+两个数字，并加 `isfinite` 门禁。
+
+**Rows 段关闭时标题行被覆盖。** `panel_damage.cpp` 的行循环是
+`for (...) { if (!onRows) break; }`——裸 `break` 不推进 `y`，于是 Share 也关掉
+时折线图会画到标题行那一行上。改为 `if (onRows) { for (...) { … } }`。
+
+**新一局重置用了另一个容器的长度。** `damage_view_model.cpp` 的
+`firstHitTick_.fill(0, names_.size())` 用身份表的长度去零化两个 per-row 向量。
+`QList::fill(n, len)` 在 `len > size()` 时**扩容**、在 `len < size()` 时**截断**，
+所以长度一旦分叉就会被悄悄改形状而不是报错。改用 `std::fill(begin, end, 0)`，
+各按自己的长度。
+
+**异常状态卡在切怪后首帧错判。** `ailTrack_` 按 **ailment id** 索引，不是按怪
+id——两只怪共享同一个异常 id（旧的被麻痹、新的也被麻痹）就会撞上，新怪的卡
+被旧怪的时间戳判成「还新鲜」或「已过期」。原注释以「HunterPie 有同生命周期」
+为由豁免清理，但那个论证不成立：HunterPie 的 Widget 是**每怪一个实例**，
+残留随 widget 一起死；我们是一张所有目标共享的定长表。切怪时一并清零。
+（已核实 `!editMode()` 守卫，编辑模式 demo 预览不受影响。）
+
+**切怪时怒气条与部位卡可能画出 `-2147483648%`。** 脏读的 NaN/Inf 进了
+`qRound` / 除法。新增共享 `sanitizeQ10`，套用在异常签名、部位卡百分比与
+计时文本、怒气条三处。
+
+**部位卡显示 `--/180`。** `readPartStruct` 的守卫只挡 `isfinite`，不挡负号；
+`chp` 是**剩余**计数，损坏部位读回的是一个小负数。`Valid` 判据只看
+`mhp > 0`，于是负值原样下发。加符号卫兵。
+
+**同一地址读两次却用第一次的值。** `monster_reader.cpp` 读 schema id 时，
+`if (read(+0x12280)) m.id = hunterId;` 用第二次读的成功与否去 assign 第一次
+读的值：此处成功而 :367 失败会赋值 -1。同一地址两次读不可能对值有分歧，
+只可能对取没取到有分歧。改为单次读。
+
+**缓存热路径上读失败会清空整个怪物列表。** 只有 `else` 分支查
+`fresh.size() != 128`。缓存命中时若读失败，`components` 为空，落到下面的
+despawn sweep 把 `monsterCache_` 整表清空，面板空一帧。现在两分支共用一次
+读 + 一次校验，且**失败时不污染已有效的缓存**，下一 tick 仍能复用。
+
+**断尾判定里的一个子句是死代码。** 注释称「`UpdateSeverableData` 不动
+Flinch，所以第二句塌缩成同一 epsilon 测试」——实际该分支从未给 `p.flinch` /
+`p.maxFlinch` 赋值，两者恒为初值 0，`sevFl` 恒 false。（本项目注释密度很高，
+多处「因为 X 所以 Y」里的 X 已不成立；修 bug 必须回到赋值点。）
+
+**衣装名在中文界面漏英文。** `mantleName()` 的 fallback 硬编码
+`"Mantle #%1"`，而 id 来自游戏内存、无上界，是热路径。改走已存在的
+`data.mantle.id.default`（"衣装" / "Mantle"）。
+
+**`displayName()` 三处死存储。** `panel_sections.h` 的 Monster / Damage /
+PetDamage 三个 `displayName()` 都写了 `const QString val = tr(key)` 赋值后弃用，
+return 又调一次 `tr()`，且数组闭合括号与后面的 `if` 挤在同一行。
+
+### 二、会静默断连的进程级状态
+
+**一个 reader 会因为另一个 reader 查了游戏而被断开。** `process_memory.cpp`
+的 PID 缓存在 `findGamePid()` 里是三个**函数级 static**——整个进程共用一条，
+而它服务的 `ProcessMemory` 是 per-instance。exe 名一变就互相清缓存；5 秒节流
+窗口内第二个 reader 看不到缓存又不能重扫，于是拿到 `nullopt`，调用方据此
+`detach()`——**健康的 reader 被误判成「游戏已退出」**。缓存改为实例成员、
+按 exe 名建表，且已 attach 且进程仍存活的目标直接复用，不受节流窗口影响。
+
+（为那些还没有 `ProcessMemory` 实例的调用点保留了进程级入口，并在注释里
+写明那个残留陷阱。）
+
+**切区域会互相清对方的怪物缓存。** `world_reader.cpp` 的 `static WorldZone
+lastZone` 同理：它是 `poll()` 里的函数级 static，守护的 `monsterCache_` /
+`cachedArray_` / `cachedArrayBase_` 却都是成员。改为成员 `lastZone_`。
+这一条与 ARCHITECTURE §6.4 记载的 PID 缓存是**两个不同的 static**。
+
+### 三、配置往返丢失
+
+**改语言失败后永远切不过去。** `localeSyncPoll()` 在把候选返回给调用方**之前**
+就把 `lastSeenLocale` 提交了；调用方随后才 `StringTable::load()`。load 失败时
+conf 的 mtime 没变，下一轮在 mtime 比较处直接早退，这个候选再也不会被提出——
+用户改一次 conf 切语言，若那个语言的资源缺失/损坏，界面就卡在旧语言直到重启。
+现在「探测」与「提交」拆成两个动作，只在 load 成功后才提交。新增回归测试
+（`tests/locale_sync_tests.cpp`，150 行）钉住「失败后同一份 conf 仍能再次被提出」。
+
+**插上新显示器后控制台预览永远看不到它。** `hud_canvas.cpp` 的
+`previewScreenInfo()` 里两张表都用函数级 static lambda 初始化，整个进程只跑
+一次。拔屏后 `kByName` 还留着已不存在的 output name，查不到就静默回落到**同样
+陈旧**的 fallback。原注释把这判为「acceptable」，那个判断不成立。改为可变成员，
+`setPreviewScreen()` 时重建。
+
+**面板在 4K 屏存的位置，拔掉屏后永久飞出屏幕且不自愈。** `clampMargin` 上限
+8000 且不含屏幕尺寸，任何路径都不会把它拉回来。现在**存**的时候按原值落盘
+（不 clamp），**推**的时候按当前屏幕几何 clamp，并接上 `screenAdded` /
+`screenRemoved` / `primaryScreenChanged`——拔屏时 surface 落回 primary 并按
+primary 重新推 margin，插回时若指向它就重新解析。这比「存时 clamp」更对：
+存时 clamp 会让用户在拔掉 4K 的那个 session 里**丢失**自己在 4K 上的设置。
+
+**控制台每次打开都泄漏 4 个 adapter。** `bindPanel(i, new PanelSourceAdapter(...))`
+从无释放，adapter 还存裸 `Panel*`，安全只靠一个没写下来的析构顺序保证。改为
+`unique_ptr` 成员数组，并在 `panel_source.h` 把「canvas 不拥有、绑定方拥有」
+这条契约写成明示注释——它之前是隐形的，正是泄漏的原因。
+
+### 四、构建门禁形同虚设
+
+**`diagnostic-targets-build` 门禁在干净树上从不注册。** `CMakeLists.txt` 里
+`find_program(BASH_EXECUTABLE bash)` 写在它的使用者 `if(BASH_EXECUTABLE)`
+**之后** 270 行。`find_program` 结果进 cache，**首次** configure 时变量还没被
+写入，判假，门禁不注册。后果：默认的 `cmake --build build && ctest --test-dir build`
+一路绿灯（52 个测试），却从未验过「5 个 `EXCLUDE_FROM_ALL` target 能不能编译」
+——而这是唯一能发现 `rise-probe` 编译断裂的门禁。把 `find_program` 上移后，
+干净树首配即 53 个测试。
+
+**「sectionMask_ 从不持久化」是误报，但真缺陷在隔壁。** mask 确实有持久化，
+走 `monster-overlay.conf` 的 `player=/monster=/damage=/pets=` 四行（用户契约，
+用户手改，`locale_sync.h` 还会轮询同一个文件），编解码在
+`viewmodel/panel_mask_codec.h`。真缺陷是**反方向不往返**：live overlay 的
+`parseMask` 只从 `--mask-*` CLI 读，未设置时返回全开——mask 只在控制台按
+START 启动子进程时（走 argv）才传得过去。用户手动跑 `monster-overlay`
+（README 与 USAGE 里的常规启动方式）时，保存的开关状态全部不生效。
+**此项未修**：它要动 `src/main.cpp`，与本轮 locale 改动同一文件，留给 v0.12
+一并处理，避免同一版本里两次改同一个 poll 循环。
+
+### 五、验收
+
+- 干净树全量构建：**347/347 edge，`BUILD_EXIT=0`，`grep -c warning: = 0`，
+  `grep -c error: = 0`**
+- `ctest`：**53/53 通过**，0 失败（7 个 `monster-probe*` 按设计 SKIP——它们
+  需要一个真实运行的游戏进程）
+- 门禁 **6/6 PASS**：`lib-purity-gate` / `zero-reference-gate` /
+  `diagnostic-targets-build` / `i18n-gate-check` / `-parity` / `-unused`
+- 变更规模：25 个文件，+1449 / −232（含本文件与两处 README 的版本号同步）
+
+### 已知未修（留给 v0.12）
+
+- **mask 不往返 live overlay**（见上文第四节）
+- **玩家面板标题行不受 section mask 管辖**：`panel_player.cpp:736` 注释
+  `// title always drawn`，8 个 section 全关后面板收缩成一条 378×50 的标题带
+  而不是消失。这是拆分子窗的第一道障碍——拆出的胶囊条不该带 378px 宽的
+  标题与 chrome，需在拆分契约里决定
+- `ARCHITECTURE.md` 5 处计数口径与实测不符（`mhw::` 符号数 53→58、
+  §6.1 正文 27 实测 26、`zoneLabel()`「零测试」整节已过期等）
+- 3 个 target 未列 qrc，违反 ARCHITECTURE §2.5
+
+---
+
 ## [0.11.3] — 多人伤害面板掉线错位修复
 
 **World 多人局有人中途掉线时，其余玩家的行会错位。** 四人局、第三位掉线时：

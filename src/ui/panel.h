@@ -101,9 +101,17 @@ public:
     void setBgAlpha(int a, bool persist = true);
 
     // v0.5 position editing: set margins directly (clamped to [0,8000]
-    // per side, matching clampMargin in panel.cpp). persist=true writes
-    // to QSettings immediately (used by the live overlay's edit mode);
-    // the console passes persist=false and writes on exit instead.
+    // per side, or tighter where a screen-relative bound applies —
+    // see marginLimits() for how the ceiling is derived).
+    // persist=true writes to QSettings immediately (used by the live
+    // overlay's edit mode); the console passes persist=false and writes
+    // on exit instead.
+    //
+    // Note on what is NOT persisted: the screen-relative clamp is a
+    // runtime view, not a stored value. A margin captured on a 4K output
+    // is left in QSettings as the user set it, so re-plugging that output
+    // restores the position instead of silently rewriting it to one that
+    // only fits the screen that happened to be attached last.
     void setMargins(QMargins m, bool persist = true);
 
     // v0.8: per-panel screen selection. Pass an empty string to revert
@@ -112,6 +120,18 @@ public:
     // wlr-output name (eDP-1 / DP-1 / HDMI-A-1 / …).
     void setOutputName(QString name, bool persist = true);
     [[nodiscard]] QString outputName() const { return outputName_; }
+
+    // ─── margins, bounds, and what the compositor actually sees ────────
+    //
+    // Public read-only geometry accessors the control console needs to
+    // describe a panel the same way the overlay sees it. margins() alone
+    // is the user's stored intent; these answer "where does that land on
+    // the screen that is attached right now", which is what the console
+    // must show the user (see Panel::marginLimits in panel.cpp for why
+    // the two differ, and why neither is clamped at rest).
+    [[nodiscard]] QMargins marginLimits() const;
+    [[nodiscard]] QMargins clampMarginsToScreen(const QMargins &m) const;
+    [[nodiscard]] QMargins pushedMargins() const;
 
     // Reset mask, scale, opacity, and margins to factory values
     // and re-sync the layer-shell surface. Always persists.
@@ -167,6 +187,30 @@ private:
     void setLayerKeyboardInteractivity(bool interactive);
     void nudgeMargins(int dx, int dy);
     void paintMinimized(QPainter &p);
+
+    // Push pushedMargins() (declared public) at the layer-shell surface.
+    // Called from applyGeometry() so a surface (re)created because an
+    // output came back — or because hypr-output-failsafe rebuilt it —
+    // lands inside the screen it now resolves on instead of staying
+    // off-screen, and from onOutputsChanged() so a hot-plug event
+    // re-derives the margin against the output we can see now.
+    void pushMargins() const;
+
+    // Store `m` (clamped) and push it. Returns true when the stored value
+    // actually changed, so callers can skip redundant QSettings writes.
+    // This is the mutator path: a user-driven move SHOULD be clamped
+    // before it reaches disk, because the user chose it while looking at
+    // a real screen.
+    [[nodiscard]] bool commitMargins(const QMargins &m);
+
+    // Hot-plug re-push. Re-resolves to the screen we now point at and
+    // re-pushes the screen-relative margins so a position stored on a
+    // bigger output does not stay off-screen on the smaller one that
+    // replaced it. Never touches margins_, so the user's stored intent is
+    // preserved for when the original output comes back. Connected to
+    // QGuiApplication's screenAdded / screenRemoved /
+    // primaryScreenChanged in the ctor.
+    void onOutputsChanged();
 
     bool demoPrimed_{false};
 

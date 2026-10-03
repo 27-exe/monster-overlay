@@ -129,10 +129,10 @@ inline QString displayName(int index)
         "console.section.monster.ail",
         "console.section.monster.parts",
         "console.section.monster.tenderize",
-    };    if (index < 0 || index >= kCount)
+    };
+    if (index < 0 || index >= kCount)
         return {};
     const QString key = QString::fromLatin1(kKeys[index]);
-    const QString val = StringTable::instance().tr(key);
     return StringTable::instance().tr(key);
 }
 
@@ -176,10 +176,10 @@ inline QString displayName(int index)
         "console.section.damage.share",
         "console.section.damage.chart",
         "console.section.damage.other_members",
-    };    if (index < 0 || index >= kCount)
+    };
+    if (index < 0 || index >= kCount)
         return {};
     const QString key = QString::fromLatin1(kKeys[index]);
-    const QString val = StringTable::instance().tr(key);
     return StringTable::instance().tr(key);
 }
 
@@ -217,10 +217,10 @@ inline QString displayName(int index)
     static const char *const kKeys[kCount] = {
         "console.section.pets.local_pets",
         "console.section.pets.other_pets",
-    };    if (index < 0 || index >= kCount)
+    };
+    if (index < 0 || index >= kCount)
         return {};
     const QString key = QString::fromLatin1(kKeys[index]);
-    const QString val = StringTable::instance().tr(key);
     return StringTable::instance().tr(key);
 }
 

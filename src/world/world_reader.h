@@ -100,6 +100,12 @@ private:
     std::unordered_map<std::uintptr_t, CachedMonster> monsterCache_;
     std::vector<std::uintptr_t> cachedArray_;
     std::uintptr_t cachedArrayBase_ = 0;
+    // Last zone this instance polled. Must be a MEMBER, not a function-local
+    // static: poll() cleared monsterCache_/cachedArray_ on a change, and a
+    // process-wide static meant two instances each wiped the other's cache
+    // on every zone mismatch (and one failing readZone to Unknown re-armed
+    // the swap for the other). Same lifetime as the caches it guards.
+    WorldZone lastZone_ = WorldZone::Unknown;
     // Last manual target the player pinned on the map (zero if none / map
     // closed). Read once per poll from MHWMapMonsterSelectionStructure.
     std::uintptr_t manualTargetAddress_ = 0;
