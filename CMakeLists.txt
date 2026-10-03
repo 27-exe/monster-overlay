@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(monster_overlay VERSION 0.11.4 LANGUAGES CXX)
+project(monster_overlay VERSION 0.12.0 LANGUAGES CXX)
 
 # Strip the build machine's absolute paths out of every compiled TU. Without
 # this the binaries embed CMAKE_SOURCE_DIR via __FILE__ and the wiring test's
@@ -232,6 +232,11 @@ add_library(mhw-ui STATIC
     src/ui/panel_pet_damage.h
     src/ui/panel_player.cpp
     src/ui/panel_player.h
+    # v0.12 split: the player panel's status-pill strip as its own
+    # layer-shell window. Purely additive — PlayerPanel is untouched, so
+    # the single-panel mode stays byte-identical until the console opts in.
+    src/ui/panel_player_split.cpp
+    src/ui/panel_player_split.h
     src/ui/panel_player_sharpness.cpp
     src/ui/panel_player_sharpness.h
     src/ui/viewmodel/player_view_model.cpp
@@ -1039,6 +1044,39 @@ add_executable(world-severable-scan-tests
     target_include_directories(panel-mask-codec-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(panel-mask-codec-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME panel-mask-codec-tests COMMAND panel-mask-codec-tests)
+
+    # v0.12: the startup mask priority chain (explicit --mask-* CLI value >
+    # the console's conf row > everything visible). Both headers are
+    # header-only and QtCore-only, so there is still no second source file
+    # to compile and no reason to link mhw-ui.
+    add_executable(mask-fallback-tests
+        tests/mask_fallback_tests.cpp
+        src/ui/viewmodel/panel_mask_fallback.h
+        src/ui/viewmodel/panel_mask_codec.h
+    )
+    target_link_libraries(mask-fallback-tests PRIVATE Qt6::Core)
+    target_include_directories(mask-fallback-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(mask-fallback-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME mask-fallback-tests COMMAND mask-fallback-tests)
+
+    # v0.12: the split strip's pure model — mhw::buildStatusStripModel
+    # (GameSnapshot -> debuff / buff pill blocks) and mhw::statusStripRows.
+    #
+    # This target links mhw-ui rather than compiling panel_player_split.cpp
+    # itself, for two reasons. Compiling it here would mean a second copy of
+    # every symbol it defines (the class has Q_OBJECT, so AUTOMOC would run
+    # twice on the same header); and the pet-damage precedent's
+    # MHW_*_DATA_TEST guard exists because that file's pure model is tangled
+    # with its paint path. buildStatusStripModel is already cleanly
+    # separable — the header's inline half plus this target covers the seam,
+    # and linking keeps one owner per symbol.
+    add_executable(player-status-strip-tests
+        tests/player_status_strip_tests.cpp
+    )
+    target_link_libraries(player-status-strip-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(player-status-strip-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(player-status-strip-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME player-status-strip-tests COMMAND player-status-strip-tests)
 
     # PlayerPanel's identity resolution
     # (mhw::PlayerViewModel::resolveIdentity): the three blocks that used to

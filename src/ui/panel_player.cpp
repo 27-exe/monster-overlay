@@ -648,6 +648,28 @@ void PlayerPanel::paintPanel(QPainter &p)
     // era row that has no data backing it. World still uses Mantles.
     const bool onMantles     = (smask & mhw::PlayerSection::Mantles)
                                && (game_ != mhw::GameId::Rise);
+    // v0.12: THE TWO LINES THAT MOVE THE CAPSULES INTO THEIR OWN WINDOW.
+    //
+    // `smask & PlayerSection::Debuff` / `::Buff` is the ONLY gate on those
+    // two blocks, and it is read once here — every consumer downstream
+    // (the height reservations below, the World pill rows, the Rise 状态
+    // grid) reads this bool, not the mask. That is what makes the split a
+    // one-line change in the ASSEMBLER rather than a change in this file:
+    // main.cpp hands this panel `maskPlayer & ~(Debuff|Buff)` when
+    // --split-player-strip is on, both bools answer false, and the two
+    // blocks vanish from the height, the layout and the paint at once.
+    // There is nowhere left for the rows to come back from.
+    //
+    // The same bits arrive UNCHANGED at PlayerStatusStripPanel, which calls
+    // its own read of the same enum (panel_player_split.cpp:419 / :426), so
+    // exactly one of the two windows ever draws a given row. See the split
+    // block in main.cpp for the full argument.
+    //
+    // NO NEW STATE HERE: this file does not know the split exists, and must
+    // not start knowing. A second, split-aware gate beside these two would be
+    // a second thing to keep in sync, and the one thing v0.12 promised is
+    // that single-panel mode is untouched — which a panel that has never
+    // heard of the split satisfies by construction.
     const bool onDebuff      = smask & mhw::PlayerSection::Debuff;
     const bool onBuff        = smask & mhw::PlayerSection::Buff;
     // v0.7.1: wirebug capsules are Rise-only. World hides them.

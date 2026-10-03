@@ -5,6 +5,9 @@
 #include "core/locale_conf.h"
 #include "core/locale_sync.h"
 #include "core/map_paths.h"
+// v0.12: read the conf mask rows once at startup instead of deriving four
+// masks from four separate file reads.
+#include "ui/viewmodel/panel_mask_fallback.h"
 #include "core/steam_game_locator.h"
 #include "core/string_table.h"
 #include "monster/monster_types.h"
@@ -17,7 +20,17 @@
 #include "ui/panel_monster.h"
 #include "ui/panel_pet_damage.h"
 #include "ui/panel_player.h"
+#include "ui/panel_player_split.h"
 #include "ui/panel_sections.h"
+// The four conf mask rows are parsed with the console's own codec, so
+// both sides of the console <-> overlay handshake share one format
+// contract. Both this codec and ui/viewmodel/panel_mask_fallback.h live
+// under ui/ rather than src/core/, which is what keeps the include
+// direction one-way: core knows nothing about panels, and a panel concern
+// that happens to be widget-free still belongs to the UI layer. The
+// fallback header takes plain bool + uint32_t and never includes ui/ from
+// the other side.
+#include "ui/viewmodel/panel_mask_codec.h"
 #include "monster/target_selector.h"
 #include "reader_factory.h"
 
@@ -193,6 +206,31 @@ int main(int argc, char **argv)
     QCommandLineOption noPetsOption(
         QStringLiteral("no-pets"),
         QStringLiteral("Disable the pet damage panel entirely"));
+    // v0.12: the "block → window" split switch. PlayerPanel's debuff and
+    // buff capsule rows (ui/panel_sections.h → PlayerSection::Debuff / ::Buff)
+    // move into their own layer-shell window, PlayerStatusStripPanel.
+    //
+    // DEFAULT OFF, and off means off: the overlay is constructed exactly as
+    // v0.11.4 constructed it — PlayerPanel keeps both rows, no fifth window
+    // exists, nothing is added to the live loop. That is the promise the
+    // whole v0.12 split is built on ("single-panel mode is pixel-identical"),
+    // and it is why this is an explicit opt-in flag rather than a
+    // config-row default that some later change could flip to true.
+    //
+    // Why a flag and not a new mask bit: the mask describes *which blocks a
+    // user chose to see*, and both bits already mean that for exactly one
+    // panel. Reusing them to also mean "which window draws them" would put
+    // two unrelated questions on one boolean, so "--mask-player 0" would
+    // answer the window question as well as the visibility one and the
+    // console's saved toggles would silently change the overlay's window
+    // topology. A separate flag answers exactly one question and cannot
+    // interact with the console's row (see also the "why not a conf row"
+    // note beside resolveStartupPanelMask: a persisted value that a later
+    // default could override is how a user's saved state gets discarded).
+    QCommandLineOption splitPlayerStripOption(
+        QStringLiteral("split-player-strip"),
+        QStringLiteral("Move the player panel's debuff/buff capsules into "
+                       "their own window (v0.12; default off)"));
     // Target game selector. auto = scan /proc for a running Monster Hunter
     // process (see core/game_detector.h), world/rise = force a specific
     // reader. Lets the control console relaunch the overlay against the
@@ -237,6 +275,7 @@ int main(int argc, char **argv)
     parser.addOption(noMonsterOption);
     parser.addOption(noDamageOption);
     parser.addOption(noPetsOption);
+    parser.addOption(splitPlayerStripOption);
     parser.addOption(gameOption);
     parser.addOption(outputPlayerOption);
     parser.addOption(outputMonsterOption);
@@ -263,21 +302,66 @@ int main(int argc, char **argv)
     const bool editMode = parser.isSet(editOption);
     const int pollMs = qBound(30, parser.value(pollOption).toInt(), 5000);
     // L1: parse hex section masks; unset = 0xFFFFFFFF (everything visible).
-    auto parseMask = [&](const QCommandLineOption &opt) -> uint32_t {
-        if (!parser.isSet(opt)) return 0xFFFFFFFFu;
+    //
+    // v0.12 bug fix: this used to be "no --mask-* flag -> 0xFFFFFFFF", so the
+    // conf the control console writes (the four mask rows, preserved
+    // verbatim alongside `locale=` by mhw::serializePanelMasks) reached a live
+    // overlay ONLY through the flags the console appends when it spawns the
+    // child. Running ./monster-overlay by hand — the workflow README.md and
+    // docs/USAGE.md both teach — silently discarded every saved toggle. The
+    // console-spawned path is untouched.
+    //
+    // The priority chain now mirrors resolveStartupLocale's shape
+    // (core/locale_conf.h): explicit CLI > conf row > everything visible.
+    // A conf row that is missing or malformed degrades to the default
+    // exactly as before, so a truncated conf can never make the overlay
+    // unstartable; an explicit CLI value that fails to parse still warns
+    // and keeps the default (unchanged behaviour).
+    //
+    // Per-slot CLI parse. This stays in main.cpp (out of the pure header)
+    // because it is where QCommandLineParser and the warning live; the
+    // header only ever sees the resulting value, which is what makes the
+    // decision testable without a parser.
+    const auto panelMaskCliRequest =
+        [&](const QCommandLineOption &opt) -> mhw::PanelMaskCliRequest {
+        if (!parser.isSet(opt))
+            return {};                            // absent -> not explicit
         bool ok = false;
         const uint32_t v = parser.value(opt).toUInt(&ok, 16);
         if (!ok) {
             qWarning("Ignoring invalid --mask-* hex value '%s'",
                      qPrintable(parser.value(opt)));
-            return 0xFFFFFFFFu;
+            return {true, false, 0xFFFFFFFFu};     // explicit but unusable
         }
-        return v;
+        return {true, true, v};
     };
-    const uint32_t maskPlayer  = parseMask(maskPlayerOption);
-    const uint32_t maskMonster = parseMask(maskMonsterOption);
-    const uint32_t maskDamage  = parseMask(maskDamageOption);
-    const uint32_t maskPets    = parseMask(maskPetsOption);
+    const mhw::PanelMaskCliRequest cliMaskPlayer  = panelMaskCliRequest(maskPlayerOption);
+    const mhw::PanelMaskCliRequest cliMaskMonster = panelMaskCliRequest(maskMonsterOption);
+    const mhw::PanelMaskCliRequest cliMaskDamage  = panelMaskCliRequest(maskDamageOption);
+    const mhw::PanelMaskCliRequest cliMaskPets    = panelMaskCliRequest(maskPetsOption);
+
+    // One conf read, one parse, four resolutions: opening and scanning the
+    // file once per mask would quadruple the I/O for no behavioural gain,
+    // and the four masks are only needed here.
+    const QString confMaskText = mhw::readPanelMaskConfText(confPath);
+    const mhw::PanelMaskSet confMasks = mhw::parsePanelMasks(confMaskText);
+    const mhw::PanelMaskConfRow confMaskPlayer  = {confMasks.playerValid,  confMasks.player};
+    const mhw::PanelMaskConfRow confMaskMonster = {confMasks.monsterValid, confMasks.monster};
+    const mhw::PanelMaskConfRow confMaskDamage  = {confMasks.damageValid,  confMasks.damage};
+    const mhw::PanelMaskConfRow confMaskPets    = {confMasks.petsValid,    confMasks.pets};
+
+    const uint32_t maskPlayer  = mhw::resolveStartupPanelMask(
+                                     cliMaskPlayer,  confMaskPlayer,
+                                     mhw::PanelMaskSlot::Player).value;
+    const uint32_t maskMonster = mhw::resolveStartupPanelMask(
+                                     cliMaskMonster, confMaskMonster,
+                                     mhw::PanelMaskSlot::Monster).value;
+    const uint32_t maskDamage  = mhw::resolveStartupPanelMask(
+                                     cliMaskDamage,  confMaskDamage,
+                                     mhw::PanelMaskSlot::Damage).value;
+    const uint32_t maskPets    = mhw::resolveStartupPanelMask(
+                                     cliMaskPets,    confMaskPets,
+                                     mhw::PanelMaskSlot::Pets).value;
 
     mhw::RiseDamageDisplayOptions riseDamageDisplayOptions;
     riseDamageDisplayOptions.showOtherMembers =
@@ -286,6 +370,49 @@ int main(int argc, char **argv)
         (maskPets & mhw::PetDamageSection::LocalPets) != 0u;
     riseDamageDisplayOptions.showOtherPets =
         (maskPets & mhw::PetDamageSection::OtherPets) != 0u;
+
+    // v0.12: the split. ONE boolean decides the whole feature; everything
+    // below it is derived from it, and both consumers are wired from the
+    // same derivation so the two halves cannot drift apart:
+    //
+    //     splitOn
+    //       -> maskPlayerWithoutStatus = maskPlayer & ~(Debuff|Buff)
+    //            -> PlayerPanel's mask        (the panel stops drawing)
+    //       -> maskPlayer                (unchanged)
+    //            -> the strip's mask       (the window starts drawing)
+    //
+    // The panel's mask is DERIVED (cleared), never re-derived independently:
+    // PlayerPanel has no way to be told "the strip owns these two bits now"
+    // other than not being handed the bits in the first place (it has no
+    // split-aware API, and adding one to panel_player.h is out of this
+    // step's remit). Clearing them in the mask means every existing gate in
+    // paintPanel() that asks `smask & PlayerSection::Debuff` /
+    // `::Buff` — and both height reservations at lines 714-726 / 743-744 and
+    // the Rise 状态 grid at 665-677 — answers "off" with no new code path
+    // whatsoever. One bit flip, one gate, no code gate to forget to update.
+    //
+    // Why derived-from-the-mask rather than a second runtime setter on
+    // PlayerPanel: mask is a STARTUP value (control_panel.cpp re-pushes it
+    // into the console's own previews; the live loop never re-pushes), so
+    // deriving it here is stable for the whole session, and a derived value
+    // cannot be half-applied — either the bits are cleared before
+    // playerPanel.setSectionMask() runs, or they are not.
+    //
+    // DEFAULT FALSE: with switchPlayerStrip off, maskPlayerWithoutStatus
+    // IS maskPlayer (the two mask assignments below are then plain
+    // assignments of the same value), the strip is never constructed, and
+    // PlayerPanel paints byte-for-byte what v0.11.4 painted. That is the
+    // pixel-identical guarantee, and its gate is this one expression.
+    const bool splitPlayerStrip = parser.isSet(splitPlayerStripOption);
+    const uint32_t maskPlayerWithoutStatus =
+        splitPlayerStrip
+        ? (maskPlayer & ~(mhw::PlayerSection::Debuff | mhw::PlayerSection::Buff))
+        : maskPlayer;
+    if (splitPlayerStrip) {
+        qInfo("v0.12 split: player debuff/buff capsules moved to their own "
+              "window (player-status); player mask %08x -> %08x",
+              maskPlayer, maskPlayerWithoutStatus);
+    }
 
     // Resolve the target game. auto scans for a running process; an
     // explicit world/rise forces the matching reader. Default to World
@@ -323,18 +450,48 @@ int main(int argc, char **argv)
     MonsterPanel monsterPanel;
     DamagePanel damagePanel;
     PetDamagePanel petDamagePanel;
+    // v0.12: the split's strip. Stack-allocated like the four base panels
+    // (Panel's ctor is heavy — layer-shell surface + config — so ownership
+    // follows the same lifetime, and there is nothing to delete). Constructed
+    // UNCONDITIONALLY but never shown unless the switch is on: Panel::setVisible
+    // has a hard master gate below, and the live loop's setVisible() call is
+    // itself behind the switch, so with the default-off path the object exists
+    // and draws nothing — it never reaches show() and never mounts a surface.
+    //
+    // Why not construct it inside `if (splitPlayerStrip)`: it would need a
+    // different lifetime (unique_ptr / optional), and the split's next
+    // sub-windows (mantles, wirebug) would each need the same dance. One
+    // always-existing, never-shown object is the same trick the four base
+    // panels already rely on for the disabled state (setPanelEnabled(false)
+    // leaves the panel alive and unmounted).
+    PlayerStatusStripPanel playerStatusStripPanel;
 
     playerPanel.setEditMode(editMode);
     monsterPanel.setEditMode(editMode);
     damagePanel.setEditMode(editMode);
     petDamagePanel.setEditMode(editMode);
+    playerStatusStripPanel.setEditMode(editMode);
 
     // L1: apply section masks BEFORE show() so the first paint reflects
     // them — no one-frame flash of "all visible" if a mask is restrictive.
-    playerPanel.setSectionMask(maskPlayer);
+    //
+    // v0.12: the player mask is the DERIVED one (maskPlayerWithoutStatus).
+    // See the split block above: with the switch off it is identical to
+    // maskPlayer, so this line is a no-op for the default path — the panel
+    // receives exactly the value v0.11.4 handed it.
+    //
+    // The strip gets maskPlayer VERBATIM, uncleared. Its two gates
+    // (PlayerStatusStripPanel::debuffRows() / ::buffRows(),
+    // panel_player_split.cpp:419 and :426) read PlayerSection::Debuff / ::
+    // Buff, so the user's existing toggles keep working: someone who already
+    // turned the buff row off in the console gets no buff window instead of
+    // an empty one. The panel's bits were cleared only because the WINDOW
+    // topology changed, never because of anything the user toggled.
+    playerPanel.setSectionMask(maskPlayerWithoutStatus);
     monsterPanel.setSectionMask(maskMonster);
     damagePanel.setSectionMask(maskDamage);
     petDamagePanel.setSectionMask(maskPets);
+    playerStatusStripPanel.setSectionMask(maskPlayer);
     damagePanel.setRiseDisplayOptions(riseDamageDisplayOptions);
     petDamagePanel.setDisplayOptions(riseDamageDisplayOptions);
     // Master gate: maps to the control console's "面板启用"
@@ -349,6 +506,22 @@ int main(int argc, char **argv)
     // regardless of --mask-pets / --no-pets; the console hides the matching
     // controls in World mode for the same reason.
     petDamagePanel.setPanelEnabled(isRise && !parser.isSet(noPetsOption));
+
+    // v0.12: THE MASTER GATE for the whole split — one line, and it is the
+    // single place the default path is decided. With the switch off (the
+    // default) the strip's panelEnabled_ is false, so Panel::setVisible()
+    // returns early at panel.cpp:355 ("!panelEnabled_ && visible -> return")
+    // for EVERY caller forever, including the live loop's setVisible()
+    // below. The strip therefore never mounts a layer-shell surface, never
+    // paints, and is indistinguishable from not existing at all — while
+    // still not needing a conditional lifetime.
+    //
+    // It compounds with the two gates under it, all three of which must be
+    // crossed before a single capsule pixel appears:
+    //   1. this line           (the switch)
+    //   2. setSectionMask      (the user's own debuff/buff toggles)
+    //   3. hasVisibleContent() (HunterPie's "no data, no window")
+    playerStatusStripPanel.setPanelEnabled(splitPlayerStrip);
 
 
     // v0.8: CLI --output-* overrides whatever the persisted panels.ini
@@ -365,12 +538,38 @@ int main(int argc, char **argv)
     if (parser.isSet(outputPetsOption))
         petDamagePanel.setOutputName(parser.value(outputPetsOption), false);
 
+    // v0.12: retarget the strip's edit-mode demo preview at the game this run
+    // resolved. There is no equivalent call for playerPanel here today — the
+    // console's own ControlPanel::switchGame is what calls setGameForDemo()
+    // on ITS preview panels (control_panel.cpp:1806) — and deliberately none
+    // is added: telling PlayerPanel it is Rise when it has always been told
+    // nothing would swap the World mantles demo for the Rise wirebugs demo in
+    // every `--edit --game rise` launch, which is a default-path change.
+    //
+    // Gated on splitPlayerStrip, so on the default path nothing here runs at
+    // all. And inert in live mode the same way PlayerPanel's call is: the
+    // first update(snap) overwrites game_ from the snapshot anyway, so only
+    // the edit preview cares.
+    if (splitPlayerStrip)
+        playerStatusStripPanel.setGameForDemo(gameId);
+
     playerPanel.show();
     monsterPanel.show();
     damagePanel.show();
     // Never flash an empty fourth frame at startup. In edit mode Rise can
     // show its demo immediately; live mode waits for a visible pet row.
     petDamagePanel.setVisible(isRise && editMode);
+    // v0.12: the strip's first-show. Two things make this safe on the
+    // default path, where the answer is simply "nothing happens":
+    //   * setPanelEnabled(false) was applied above, so Panel::setVisible()
+    //     bails at panel.cpp:355 and no surface is mounted; and
+    //   * hasVisibleContent() is false before the first poll (nothing
+    //     seeded, or in edit mode the demo is only seeded on the first
+    //     paint — and this call precedes it).
+    // In edit mode with the split on, the demo is seeded by the first
+    // paint, so the strip appears immediately like the other four panels do.
+    if (splitPlayerStrip)
+        playerStatusStripPanel.setVisible(editMode);
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
     // loop below stays game-agnostic.
@@ -476,10 +675,18 @@ int main(int argc, char **argv)
         monsterPanel.setWindowTitle(table.tr(QStringLiteral("ui.monster_title")));
         damagePanel.setWindowTitle(table.tr(QStringLiteral("ui.damage_title")));
         petDamagePanel.setWindowTitle(table.tr(QStringLiteral("ui.pet_damage_title")));
+        // v0.12: the strip has its own window title key (ui.player_strip_title)
+        // and its own cached strings. Unconditional because the object always
+        // exists and retranslateUi() on a never-shown panel only touches the
+        // title string and a repaint request — it is the same shape as the
+        // other four calls and costs one tr() on the default path.
+        playerStatusStripPanel.setWindowTitle(
+            table.tr(QStringLiteral("ui.player_strip_title")));
         playerPanel.retranslateUi();
         monsterPanel.retranslateUi();
         damagePanel.retranslateUi();
         petDamagePanel.retranslateUi();
+        playerStatusStripPanel.retranslateUi();
     };
 
     QObject::connect(&timer, &QTimer::timeout, [&] {
@@ -536,6 +743,36 @@ int main(int argc, char **argv)
             // "not connected" placeholder.
             playerPanel.update(snap);
             playerPanel.setVisible(true);
+        }
+
+        // v0.12: the split's strip. Three independent conditions in one
+        // expression, in the order that makes each one cheap to reason about:
+        //
+        //   splitPlayerStrip   — the switch. With it off (default) the whole
+        //                        block is skipped: no update(), no visibility
+        //                        change, no mask read. PlayerPanel, which kept
+        //                        both capsule rows this whole time, is the
+        //                        only thing that ever draws them.
+        //   hasVisibleContent() — HunterPie's "no data, no window" rule: an
+        //                        idle hunter (both rows empty, or both bits
+        //                        off) collapses the window rather than
+        //                        leaving a grabbable empty frame.
+        //   skipUpdate()       — the SAME edit-mode demo guard the four base
+        //                        panels use. Without it, reader.poll() would
+        //                        clobber the strip's demo rows with an empty
+        //                        snapshot and the preview would vanish.
+        //
+        // Note the ordering asymmetry with the base panels: the strip never
+        // gets a "keep it visible with a placeholder" branch. A capsule strip
+        // with nothing to say has nothing to say — it hides, which is the
+        // whole point of extracting it into its own window.
+        if (splitPlayerStrip) {
+            const bool keepStripDemo = skipUpdate(playerStatusStripPanel);
+            if (!keepStripDemo)
+                playerStatusStripPanel.update(snap);
+            playerStatusStripPanel.setVisible(
+                playerStatusStripPanel.panelEnabled()
+                && playerStatusStripPanel.hasVisibleContent());
         }
 
         monsterPanel.setMultiplayer(snap.isMultiplayer);
@@ -701,6 +938,16 @@ int main(int argc, char **argv)
         monsterPanel.saveConfig();
         damagePanel.saveConfig();
         petDamagePanel.saveConfig();
+        // v0.12: persist the strip's own position / scale / opacity. It has
+        // its own settingsKey ("player-status"), so this writes a section
+        // that did not exist before — it cannot touch the four existing
+        // sections, and calling it on the default path is harmless (it
+        // writes the panel's un-moved defaults to a new group nobody reads).
+        // Guarded on the switch anyway to keep the default path free of new
+        // writes to panels.ini, which is the same reason --output-* uses
+        // persist=false.
+        if (splitPlayerStrip)
+            playerStatusStripPanel.saveConfig();
     }
 
     return code;

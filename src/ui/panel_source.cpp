@@ -11,3 +11,9 @@ double PanelSourceAdapter::scale() const      { return p_->scale(); }
 double PanelSourceAdapter::opacity() const    { return p_->opacity(); }
 
 int PanelSourceAdapter::bgAlpha() const { return p_->bgAlpha(); }
+
+// v0.12: asks the window, not a slot number. A base panel answers
+// false; only a window that called setSubWindow(true) from its own
+// constructor answers true. No 4-vs-many knowledge lives here, which
+// is what keeps this file free of any registry/index concern.
+bool PanelSourceAdapter::isSubWindow() const { return p_->isSubWindow(); }

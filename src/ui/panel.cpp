@@ -412,6 +412,33 @@ void Panel::setContentSize(int w, int h)
     }
 }
 
+void Panel::setChromeVisible(bool on)
+{
+    if (chromeVisible_ == on)
+        return;
+    chromeVisible_ = on;
+    update();
+}
+
+void Panel::paintPanelChrome(QPainter &p, Accent accent) const
+{
+    // The whole decision is one boolean read. When chrome is off this
+    // function returns without touching the painter at all — it does
+    // NOT emit a transparent fill, a zero-alpha rect or a cleared pen:
+    // any of those would still land a pixel, and "chromeless" has to
+    // mean "the sub-window's own capsule pixels are the only pixels".
+    //
+    // PIXEL-PARITY NOTE: with chromeVisible_ == true (the default, and
+    // the value all four shipped panels run with) this call is exactly
+    // drawV03Chrome(p, accent) — same painter, same arguments, same
+    // order in paintEvent. Nothing between here and the backing store
+    // can distinguish the two paths, which is why switching a subclass
+    // from drawV03Chrome() to paintPanelChrome() is behaviour-neutral
+    // today and becomes the opt-out tomorrow.
+    if (chromeVisible_)
+        drawV03Chrome(p, accent);
+}
+
 void Panel::paintEvent(QPaintEvent *)
 {
     QPainter p(this);

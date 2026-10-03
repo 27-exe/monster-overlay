@@ -27,6 +27,130 @@ party 空不空。复现率低是因为它需要「quest 已清而 party 指针�
 
 ---
 
+## [0.12.0] — 玩家面板拆分：第一步子窗
+
+### 做了什么
+
+把玩家面板里的**异常状态 / 强化状态胶囊条**拆成独立的 layer-shell 悬浮窗，
+由新开关 `--split-player-strip` 启用，**默认关闭**。开关关闭时行为与 0.11.4
+逐像素相同——这不是「大部分相同」，是有测量背书的：
+
+```
+world default  panel=378x255  stripShown=no   doubleDraw=no
+world split    panel=378x201  stripShown=yes  doubleDraw=no
+rise default   panel=378x242  stripShown=no   doubleDraw=no
+rise split     panel=378x201  stripShown=yes  doubleDraw=no
+```
+
+（`experiment/monster-overlay-v012/probes/split_verify.cpp`，真实渲染后数墨迹
+像素。默认路径 `snapshot-regression-tests` 的 10 张像素基线也逐字节未变。）
+
+### 拆分的地基
+
+**`Panel` 现在可以画一个「没有 chrome 的窗」。** 新增 `setChromeVisible(bool)`
+（默认 true）与 protected `paintPanelChrome()`。关键实现细节：关闭时
+`paintPanelChrome()` **完全不触碰 painter**——不发透明 fill、不清 pen
+（清 pen 也会落像素）。四个既有面板继续调原来的 `drawV03Chrome()`，
+逐字未改，所以它们的输出不可能变。
+
+**`virtual bool isSubWindow() const`**（默认 false）让 HudCanvas 与槽位注册表
+不必 `dynamic_cast`。
+
+**宽度本来就是 per-panel。** `drawV03Chrome()` 的 rect 读 `logicalSize_`，
+而 `logicalSize_` 由各面板自己的 `setContentSize()` 写入（玩家 378、怪物 380、
+伤害 380、宠物 300）。子窗因此可以是 91px / 125px 而不是被标题带撑到 378px。
+
+这直接解决了审计量到的第一道障碍：`panel_player.cpp` 的 `// title always drawn`
+让 `mask=0` 时的玩家面板收缩成一条 **378×50 的标题带**（墨迹横跨 [0..366]）
+而不是消失。子窗不带标题，所以不存在这个问题。
+
+### `kPanelCount` 怎么解耦
+
+`kPanelCount` 现在是 `kBasePanelCount`（=4）的别名，`control_panel.h` 的
+`std::array<PanelCtl, mhw::kPanelCount>` 照常编译——名字与值都没动。扩展走
+新的索引区间：`kPanelSubWindowBase=4` / `kMaxPanelSubWindows=32` /
+`kPanelSlotMax=36`，配 `isSubWindowIndex()` / `isAnyPanelIndex()`。
+
+**为什么子窗槽位不可能与 base 槽位冲突**：所有子窗 slot 来自 `[4, 36)`，
+必然不满足 `isPanelIndex()`（只认 0..3），所以 `std::array<PanelCtl, 4>` 与
+HudCanvas 的 `slots_` 不可能被这些下标索引。
+
+### 开关为什么是 CLI flag 而不是复用 mask 位
+
+`PlayerSection::Debuff/Buff` 已经表示「用户想不想看这两段」。再让它同时表示
+「哪个窗口画这两段」就把两个不相关的问题压到一个 boolean 上——`--mask-player 0`
+会顺带回答窗口拓扑问题，控制台存档的一个 toggle 会无声改变 overlay 的窗口结构。
+而且 mask 有 conf 回落链，持久化位被后续默认值翻掉正是 0.11.4 刚修的那类 bug。
+
+### debuff/buff 只出现在一个窗里
+
+```
+maskPlayer                 = M
+strip 收到的 mask          = M                    （未清位）
+PlayerPanel 收到的 mask    = M & ~(Debuff|Buff)   （清位）
+
+PlayerPanel:      onDebuff = (M & ~D) & D = 0   -> 不画
+StatusStrip:      读 (M & D)                    -> 画
+```
+
+两个窗读的是同一个 `M`，strip 读未清的、panel 读清过的，二者相与恒为 0。
+用户怎么 toggle，`D` 位上恰好一个窗为 1。这不需要两处代码「记得同步」——
+派生发生在同一个表达式、同一个作用域、传递给两个消费者的同一帧。
+
+顺带的好处：`onDebuff`/`onBuff` 是那两段**唯一**的 gate，下游三个消费方
+（高度预留、World pill 行、Rise 状态网格）都读这个 bool 而非 mask，所以
+高度、布局、绘制同时消失，没有第二条代码路径。
+
+### 控制台侧的地基
+
+新增 header-only `mhw::SubWindowRegistry`（在 `panel_source.h`，约 180 行）：
+登记子窗槽位 + `Panel*` + adapter + 标题 + section 标签。**没有复用 `PanelCtl`**
+——它是 10 个 widget 指针，为每个子窗造一整套 inspector 代价不成比例，而且
+rail 只放得下四块；子窗本来就是内容型窗口（`setChromeVisible(false)`），
+没有可拨的 mask 位。
+
+**刻意没有在 `registerSubWindow()` 里调 `HudCanvas::bindPanel()`**：canvas 的
+`slots_` 是 `std::array<Slot, 4>`，`bindPanel` 的守卫是
+`if (!mhw::isPanelIndex(index)) return;`——子窗 slot ≥ 4 会被**按设计**拒绝。
+放宽守卫会改变四个已有面板的预览，这正是本任务承诺不做的。几何源存在
+`subWindows_` 里经 `entry()->adapter` 可达，等 HudCanvas 学会子窗槽位后才显示。
+代码注释已写明这一点，避免下一个人误以为是漏接线。
+
+### 顺带修掉 0.11.4 留下的那个缺陷
+
+**「控制台保存的 mask 开关，手动跑 overlay 时不生效」。** `parseMask` 只从
+`--mask-*` CLI 读，未设置时直接返回全开，而 README 与 USAGE 教的都是手动跑
+`./monster-overlay`。现在优先级链是
+`显式且可解析的 CLI > conf 行 > 0xFFFFFFFF`，形状同 `resolveStartupLocale`。
+
+把决策抽成了 header-only `mhw::ui/viewmodel/panel_mask_fallback.h`
+（`resolveStartupPanelMask(cli, conf, slot)`）。放 `viewmodel/` 而不是
+`core/`：core 不得 include `ui/`，而它与其消费的 `panel_mask_codec.h` 同域；
+「没有 widget 依赖」不等于「属于内核」。
+
+### 验收
+
+- 干净树全量构建：**0 warning、0 error**
+- `ctest`：**55/55 通过**（比 0.11.4 多 2 个新测试 target）
+- 门禁 7/7 PASS，含 `snapshot-regression-tests` 的 10 张像素基线逐字节未变
+- 拆分契约实测：4 组（world/rise × default/split）**0 violation**
+  （`probes/split_verify.cpp`）
+- 新测试：`mask-fallback-tests`（优先级矩阵 + 双向突变测试）、
+  `player-status-strip-tests`（剥离模型的纯函数变换）
+
+### 已知未做
+
+- **子窗还不能在控制台里定位**：`HudCanvas` 只认 4 个 base 槽位（见上文），
+  所以拆出的 strip 现在只能用 panels.ini 手工编辑位置，或先在编辑模式里
+  用方向键调。
+- **控制台启动子进程时不带 `--split-player-strip`**：手动启动的用户会看到
+  控制台显示旧拓扑而 overlay 已是拆分态。
+- 只拆了第一个窗。武器/锋利度、HP/ST、衣装/翔虫、任务信息仍在单面板里。
+  拆第二个窗时 `SubWindowRegistry` 已经就位，但「块 → 窗」的抽取经验
+  （复用 `PlayerSection` 位、清位而非加 gate、chrome 关掉）只走通了一遍。
+
+---
+
 ## [0.11.4] — 审计收尾：显示正确性 + 生命周期正确性
 
 一轮只读审计（6 个并行子代理，覆盖 UI / reader / core / 构建门禁）产出 5 份报告，

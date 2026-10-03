@@ -16,15 +16,17 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
-        "monster-control-rise-rf-smoke"
+        "monster-control-rise-rf-smoke",
+        "monster-doctor"
       ],
-      "symbols": 6
+      "symbols": 13
     },
     "src/core/game_profile.cpp": {
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
-        "game-profile-tests"
+        "game-profile-tests",
+        "monster-doctor"
       ],
       "symbols": 4
     },
@@ -69,7 +71,7 @@
         "monster-scan",
         "reader-factory-tests"
       ],
-      "symbols": 25
+      "symbols": 47
     },
     "src/core/steam_game_locator.cpp": {
       "class": "INDIRECT",
@@ -109,7 +111,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 63
+      "symbols": 65
     },
     "src/main_control.cpp": {
       "class": "ZERO",
@@ -302,7 +304,7 @@
         "monster-control-l2-smoke",
         "monster-control-rise-rf-smoke"
       ],
-      "symbols": 105
+      "symbols": 109
     },
     "src/ui/control_panel_styles.cpp": {
       "class": "ZERO",
@@ -327,13 +329,13 @@
         "monster-control-p0-test",
         "monster-control-rise-rf-smoke"
       ],
-      "symbols": 43
+      "symbols": 37
     },
     "src/ui/icon.cpp": {
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 19
+      "symbols": 20
     },
     "src/ui/panel.cpp": {
       "class": "INDIRECT",
@@ -342,7 +344,7 @@
         "monster-control-p0-test",
         "snapshot-regression-tests"
       ],
-      "symbols": 42
+      "symbols": 51
     },
     "src/ui/panel_damage.cpp": {
       "class": "INDIRECT",
@@ -379,7 +381,7 @@
         "monster-control-p0-test",
         "snapshot-regression-tests"
       ],
-      "symbols": 37
+      "symbols": 39
     },
     "src/ui/panel_player_sharpness.cpp": {
       "class": "INDIRECT",
@@ -391,13 +393,21 @@
       ],
       "symbols": 5
     },
+    "src/ui/panel_player_split.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "player-status-strip-tests"
+      ],
+      "symbols": 29
+    },
     "src/ui/panel_source.cpp": {
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
         "monster-control-p0-test"
       ],
-      "symbols": 16
+      "symbols": 18
     },
     "src/ui/rise_reframework_bridge.cpp": {
       "class": "INDIRECT",
@@ -475,7 +485,7 @@
       "refs": [
         "damage-view-model-tests"
       ],
-      "symbols": 50
+      "symbols": 58
     },
     "src/ui/viewmodel/monster_view_model.cpp": {
       "class": "INDIRECT",
@@ -551,13 +561,9 @@
       "compiled_by": [],
       "refs": [
         "game-world-direct-tests",
-        "mhr-reader-direct-tests",
-        "monster-doctor",
-        "monster-probe-ailments-watch",
-        "monster-reader-tests",
         "reader-factory-tests"
       ],
-      "symbols": 47
+      "symbols": 32
     },
     "src/world/world_types.cpp": {
       "class": "INDIRECT",

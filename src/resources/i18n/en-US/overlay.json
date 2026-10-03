@@ -18,6 +18,7 @@
     "player_carts": "Carts",
     "player_status_section": "Status",
     "player_buff_fallback": "Buff",
+    "player_strip_title": "Status Strip",
     "quest_state": {
       "idle": "Idle",
       "booked": "Posted",

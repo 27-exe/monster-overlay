@@ -193,6 +193,67 @@ Panel *ControlPanel::panelAt(int idx) const
     return mhw::isPanelIndex(idx) ? ctl_[idx].panel : nullptr;
 }
 
+// ─── v0.12: sub-window registration ───────────────────────────────────
+//
+// See the declaration's comment in control_panel.h. Two boundaries are
+// worth restating here, because both are reasons this function does
+// LESS than one might expect:
+//
+//   1. It does not call HudCanvas::bindPanel(). The canvas's slot array
+//      is std::array<Slot, mhw::kPanelCount> and its guard is
+//      `if (!mhw::isPanelIndex(index)) return;` — a sub-window slot is
+//      >= kPanelSubWindowBase == 4 by construction, so it is rejected on
+//      both counts. That is CORRECT and must stay that way: widening the
+//      array or the guard would change the preview for the four shipped
+//      panels, which is exactly what this step promises not to do. The
+//      sub-window's geometry source therefore lives in
+//      subWindows_ and is reachable through entry()->adapter, and the
+//      canvas displays it once IT learns sub-window slots (a separate,
+//      hud_canvas-side change that is not in this file's remit).
+//
+//   2. It does not build a PanelCtl. See the "WHY AN ENTRY IS NOT A
+//      PanelCtl" note on SubWindowRegistry in ui/panel_source.h.
+//
+// A failed registration is a silent no-op returning -1 rather than a
+// dialog: the console is a design tool, and a caller that gets -1
+// should simply not assume the window exists. Nothing downstream is
+// indexed by the return value.
+int ControlPanel::registerSubWindow(Panel *panel, const QString &title,
+                                    const QStringList &sectionLabels)
+{
+    const int slot = subWindows_.add(panel, title, sectionLabels);
+    if (slot < 0)
+        return -1;
+
+    // Mirror the console convention for the base preview panels: render
+    // them off-screen so the panel's own paint path runs (demo data,
+    // setContentSize) without mapping a real layer-shell surface or
+    // stealing focus. WA_DontShowOnScreen + setEditMode(true) + show()
+    // is the same three-line combo the ctor applies to the four base
+    // panels (see the panels[] loop above) — shared deliberately, so a
+    // sub-window preview cannot drift from the panel preview.
+    //
+    // NOTE what is NOT done: no pixmap, no nav button, no inspector row.
+    // Those are the PanelCtl half this step is careful not to build.
+    if (panel) {
+        panel->setAttribute(Qt::WA_DontShowOnScreen);
+        panel->setEditMode(true);   // seeds setupDemoData() on first paint
+        panel->show();              // makes isVisible() true without mapping
+    }
+    return slot;
+}
+
+void ControlPanel::unregisterSubWindows()
+{
+    // Order matters and mirrors the destructor: forget the entries
+    // first, then release the adapters, so nothing is left holding a
+    // pointer into storage that is about to be freed. Also clears the
+    // canvas selection so a stale sub-window slot can never be read
+    // back as "the selected panel" after the window is gone.
+    selectedSubWindow_ = -1;
+    subWindows_.clear();
+}
+
 ControlPanel::ControlPanel(QWidget *parent)
     : QMainWindow(parent)
 {
@@ -901,6 +962,14 @@ ControlPanel::~ControlPanel()
     // Persist current mask state on every destruction path (close, app
     // exit, explicit delete). Safe to call even if load was never reached.
     saveMaskToDisk();
+
+    // v0.12: release the sub-window registry BEFORE the four panels, so
+    // no adapter outlives the window it points at (see the ownership
+    // note on the subWindows_ member). unregisterSubWindows() is
+    // idempotent and also safe when nothing was ever registered —
+    // which is the state a stock v0.12 console is in, so this line is
+    // not a new code path for the existing panels.
+    unregisterSubWindows();
 
     // The four preview panels were created as TOP-level QMainWindows
     // (no parent) so they get their own QWidgetWindow and don't pollute

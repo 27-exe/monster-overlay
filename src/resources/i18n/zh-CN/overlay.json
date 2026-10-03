@@ -18,6 +18,7 @@
     "player_carts": "猫车",
     "player_status_section": "状态",
     "player_buff_fallback": "增益",
+    "player_strip_title": "状态条",
     "quest_state": {
       "idle": "空闲",
       "booked": "接单",

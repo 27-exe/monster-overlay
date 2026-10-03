@@ -60,6 +60,56 @@ public:
     void setPanelEnabled(bool on);
     [[nodiscard]] bool panelEnabled() const { return panelEnabled_; }
 
+    // ─── chrome (background + accent stripe + border) ───────────────────
+    //
+    // v0.12: explicit switch for the panel chrome that drawV03Chrome()
+    // paints — the dark rounded background, the 4px left accent stripe
+    // and the 1px border. Default = true, so a stock Panel paints
+    // exactly the pixels v0.11.4 painted; nothing about the four
+    // existing panels changes unless someone flips this.
+    //
+    // WHY THIS EXISTS: a sub-window carved out of a panel (v0.12's
+    // capsule strips — debuff / buff / mantle / wirebug, per
+    // design/01-hunterpie-split.md §10.2) draws its own capsule
+    // geometry and must NOT carry panel chrome around it. It is also
+    // the lever for the measured "378x50 title band" defect: a
+    // mask=0 PlayerPanel does not vanish, it collapses to a title-only
+    // strip with ink spanning [0..366] (panel_player.cpp `totalH =
+    // kMargin + kTitleH` — "title always drawn"). A sub-window does
+    // not inherit that shape once chrome is off and it sizes itself to
+    // its own content.
+    //
+    // Per-instance, not static: the same binary hosts chromed windows
+    // and chromeless ones.
+    //
+    // NOT persisted in panels.ini: chrome is a fact about how the
+    // subclass paints (sub-windows set it in their own constructor),
+    // not one of the user's position/appearance tunables — same
+    // separation that led to dropping the `visible` key (see
+    // saveConfig() in panel.cpp).
+    void setChromeVisible(bool on);
+    [[nodiscard]] bool chromeVisible() const { return chromeVisible_; }
+
+    // ─── sub-window identity ────────────────────────────────────────
+    //
+    // v0.12: a window carved out of a panel by the split (debuff /
+    // buff / mantle / wirebug capsule strip). Self-declared, not
+    // inferred: the base answers false, and a sub-window subclass
+    // overrides it to return true —
+    //
+    //     bool DebuffStrip::isSubWindow() const override { return true; }
+    //
+    // An override rather than a protected setter on purpose: it needs no
+    // new state, no friend, no widening of Panel's API surface, and it
+    // reads as the compile-time fact it is (a class either is a
+    // sub-window or is not). The registry — whoever assigns slot
+    // kPanelSubWindowBase … kPanelSlotMax-1 — is the consumer.
+    //
+    // Default false. No base-panel code path reads it today, which is
+    // the point: the four shipped panels keep answering "no" and every
+    // existing PanelSourceAdapter keeps reporting isSubWindow()==false.
+    [[nodiscard]] virtual bool isSubWindow() const { return false; }
+
     // Edit-mode demo data is built once on first paint after entering
     // edit mode, then reused — keeps paint() O(display).
     virtual void setupDemoData() {}
@@ -172,6 +222,34 @@ protected:
 
     // v0.3 visual helpers — match monster-overlay-concept.html tokens.
     enum class Accent { Player, Monster, Damage };
+    //
+    // v0.12: `drawV03Chrome()` is kept UNMODIFIED and remains the
+    // background/stripe/border painter. The chrome switch lives in
+    // `paintPanelChrome()` below, which every subclass should call
+    // INSTEAD of drawV03Chrome():
+    //
+    //     void paintPanelChrome(QPainter &p, Accent a) const
+    //     {
+    //         if (chromeVisible_)
+    //             drawV03Chrome(p, a);
+    //     }
+    //
+    // That indirection is deliberate. drawV03Chrome() is called from
+    // four subclasses I am NOT allowed to edit in this change (they are
+    // being split concurrently), and the "default path must be
+    // pixel-identical" constraint only holds if every existing call
+    // site keeps resolving to the same drawing code. Subclasses that
+    // want to opt out call paintPanelChrome(); the four that exist
+    // today are untouched, so their pixels cannot move.
+    //
+    // v0.12: chrome switch entry point for subclasses. Honours
+    // chromeVisible_; when false it draws NOTHING (not even a
+    // background edge or a 1px border), so a chromeless sub-window
+    // leaves every pixel it does not explicitly paint untouched.
+    // Subclasses that keep calling drawV03Chrome() directly get the
+    // historical behaviour — the switch does not retroactively touch
+    // them.
+    void paintPanelChrome(QPainter &p, Accent accent) const;
     void drawV03Chrome(QPainter &p, Accent accent) const;
     QColor accentColor(Accent a) const;
     // Status-coloured bar (HTML: --c-hi gradient over --c).
@@ -218,6 +296,9 @@ private:
     // matching namespace in panel_sections.h (PlayerSection / ...).
     uint32_t sectionMask_{0xFFFFFFFFu};
     bool panelEnabled_{true};
+    // Chrome on/off — see setChromeVisible(). Default true is what makes
+    // this change a no-op for the four shipped panels.
+    bool chromeVisible_{true};
 
     QString key_;
     Corner corner_;
