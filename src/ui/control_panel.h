@@ -64,50 +64,16 @@ public:
     explicit ControlPanel(QWidget *parent = nullptr);
     ~ControlPanel() override;
 
-    // ─── v0.12 sub-windows ──────────────────────────────────────────
-    //
-    // The console's hook for windows carved out of the four base panels
-    // (ui/panel_player_split.h is the pilot). "基础设斲 only": this
-    // registers the window, binds it into the preview canvas and
-    // remembers how to draw it. The main.cpp wiring that decides WHEN a
-    // sub-window exists is a separate step and is not written here.
-    //
-    // Returns the assigned slot index (>= kPanelSubWindowBase, never a
-    // base slot) or -1 when it could not be registered — same refusal
-    // conditions as SubWindowRegistry::add, plus "canvas not built yet"
-    // since the canvas is what needs the binding. The slot index is the
-    // only handle: every accessor below takes it and answers false /
-    // nullptr for an index this console never handed out, so a stale
-    // slot can never be dressed up as a base panel.
-    //
-    // `sectionLabels` is ONE label per section bit the window shows, in
-    // bit order, already localized by the caller — the same contract
-    // PanelCtl::subs[i] follows for the base panels. It is stored, not
-    // displayed: nothing in this step draws it.
-    //
-    // OWNERSHIP: the console does NOT take over the panel. The caller
-    // keeps it alive for as long as it stays registered and calls
-    // unregisterSubWindows() before deleting it (the destructor does).
-    [[nodiscard]] int registerSubWindow(Panel *panel,
-                                        const QString &title,
-                                        const QStringList &sectionLabels);
-
-    // Drops every registration and unbinds every sub-window from the
-    // preview canvas. Safe to call twice, and safe to call before any
-    // sub-window was registered.
-    void unregisterSubWindows();
-
-    // Read-only views over what is currently registered.
-    [[nodiscard]] int subWindowCount() const { return subWindows_.count(); }
-    [[nodiscard]] bool isSubWindowSlot(int index) const
-    {
-        return subWindows_.contains(index);
-    }
-    [[nodiscard]] const mhw::SubWindowRegistry &subWindows() const
-    {
-        return subWindows_;
-    }
-    [[nodiscard]] int selectedSubWindow() const { return selectedSubWindow_; }
+    // v0.12 sub-windows: registerSubWindow / unregisterSubWindows /
+    // subWindowCount / isSubWindowSlot / subWindows() / selectedSubWindow
+    // were removed here (v0.12 stage 1 revert). They drove
+    // mhw::SubWindowRegistry, which had zero callers outside this
+    // console — the main.cpp wiring that would have decided WHEN a
+    // sub-window exists was never written, so the console kept a
+    // permanent, always-empty registry and a selection index that no
+    // code path ever set. ui/panel_player_split.h (the pilot window)
+    // is self-sufficient: it needs setChromeVisible(false) +
+    // Panel::isSubWindow(), not a console slot.
 
 public slots:
     // Parent-owned async worker/fetcher calls this on the GUI thread after
@@ -282,27 +248,15 @@ private:
     // must never see a stack object that outlives the binding.
     std::array<std::unique_ptr<PanelSourceAdapter>, mhw::kPanelCount> boundSources_{};
 
-    // v0.12: sub-windows carved out of the four base panels (the pilot
-    // is PlayerStatusStripPanel, "player-status"). WHY NOT PanelCtl:
-    // a PanelCtl is a master chip + one SectionRow per section bit + a
-    // preview tile + a nav button + a count label + a count bar + three
-    // sliders + a screen combo — ten widgets. Filling one in for every
-    // sub-window means manufacturing a whole inspector per window, and
-    // the console's rail has room for four. This registry therefore
-    // carries only what the sub-window story needs: slot, window,
-    // adapter, name, section labels, on/off. Deliberately NOT sized by
-    // kPanelCount — its capacity is mhw::kMaxPanelSubWindows and its
-    // indices all sit at or above kPanelSubWindowBase, so they can
-    // never alias a base slot (see the allocation note in
-    // ui/panel_source.h). It owns the adapters; the caller owns the
-    // panels and must call unregisterSubWindows() before deleting them.
-    mhw::SubWindowRegistry subWindows_;
-
-    // v0.12: slot of the sub-window the user last selected on the
-    // preview, or -1 when none is selected. The console re-binds the
-    // canvas inspector row to it without disturbing the four base
-    // slots (which use this for nothing and stay on 0..3).
-    int selectedSubWindow_{-1};
+    // v0.12 sub-windows: mhw::SubWindowRegistry subWindows_ and
+    // int selectedSubWindow_ were removed here together with the
+    // register/unregister API above — the registry was constructed,
+    // never filled and never read (zero external callers), so the
+    // console paid a QVector + adapters_ member for nothing. See the
+    // note at the top of the class for why the pilot window does not
+    // need a console slot. src/ui/panel_sections.h now carries the
+    // live slot concept (PlayerSection::PlayerSplitSlot /
+    // kPlayerSplitTargets) and does not go through this console.
 
     // L3: handles for the EDIT MODE block launcher buttons (one START,
     // one ENTER EDIT). Stored as plain members — not in ctl_ — because

@@ -206,31 +206,45 @@ int main(int argc, char **argv)
     QCommandLineOption noPetsOption(
         QStringLiteral("no-pets"),
         QStringLiteral("Disable the pet damage panel entirely"));
-    // v0.12: the "block → window" split switch. PlayerPanel's debuff and
-    // buff capsule rows (ui/panel_sections.h → PlayerSection::Debuff / ::Buff)
-    // move into their own layer-shell window, PlayerStatusStripPanel.
+    // v0.12: the window-topology switch, unified. ONE value answers
+    // "which windows exist" — one big panel, or several small windows —
+    // and the per-section mapping lives in a compile-time table
+    // (ui/panel_sections.h → PlayerSection::kPlayerSplitTargets).
     //
-    // DEFAULT OFF, and off means off: the overlay is constructed exactly as
-    // v0.11.4 constructed it — PlayerPanel keeps both rows, no fifth window
-    // exists, nothing is added to the live loop. That is the promise the
-    // whole v0.12 split is built on ("single-panel mode is pixel-identical"),
-    // and it is why this is an explicit opt-in flag rather than a
-    // config-row default that some later change could flip to true.
+    // What this replaces: one boolean flag per extracted section
+    // (`--split-player-strip`, then `--split-wirebug`, then
+    // `--split-mantles`, …), whose count grows linearly with every window
+    // and which say nothing about each other. Those semantics are now:
+    //   --layout single   the v0.11.4 topology, pixel for pixel (DEFAULT)
+    //   --layout split    the sections the table names move to their own
+    //                      windows
     //
-    // Why a flag and not a new mask bit: the mask describes *which blocks a
-    // user chose to see*, and both bits already mean that for exactly one
-    // panel. Reusing them to also mean "which window draws them" would put
-    // two unrelated questions on one boolean, so "--mask-player 0" would
-    // answer the window question as well as the visibility one and the
-    // console's saved toggles would silently change the overlay's window
-    // topology. A separate flag answers exactly one question and cannot
-    // interact with the console's row (see also the "why not a conf row"
-    // note beside resolveStartupPanelMask: a persisted value that a later
-    // default could override is how a user's saved state gets discarded).
+    // Why a flag and not a new mask bit: the mask describes *which blocks
+    // a user chose to see*, and both bits already mean that for exactly
+    // one panel. Reusing them to also mean "which window draws them"
+    // would put two unrelated questions on one boolean, so
+    // "--mask-player 0" would answer the window question as well as the
+    // visibility one and the console's saved toggles would silently change
+    // the overlay's window topology. A separate flag answers exactly one
+    // question and cannot interact with the console's row (see also the
+    // "why not a conf row" note beside resolveStartupPanelMask: a
+    // persisted value that a later default could override is how a user's
+    // saved state gets discarded).
+    //
+    // COMPATIBILITY: `--split-player-strip` is kept as a deprecated alias
+    // for `--layout split`. It is a store_true boolean, so it can only
+    // turn the split ON — never off again against an explicit
+    // `--layout single`, which is what keeps the pair unambiguous.
+    QCommandLineOption layoutOption(
+        QStringLiteral("layout"),
+        QStringLiteral("Player window topology: single (one panel, the "
+                       "default) or split (small windows per section "
+                       "group)"),
+        QStringLiteral("layout"));
     QCommandLineOption splitPlayerStripOption(
         QStringLiteral("split-player-strip"),
-        QStringLiteral("Move the player panel's debuff/buff capsules into "
-                       "their own window (v0.12; default off)"));
+        QStringLiteral("Deprecated alias for --layout split. The debuff/"
+                       "buff capsules move into their own window."));
     // Target game selector. auto = scan /proc for a running Monster Hunter
     // process (see core/game_detector.h), world/rise = force a specific
     // reader. Lets the control console relaunch the overlay against the
@@ -276,6 +290,7 @@ int main(int argc, char **argv)
     parser.addOption(noDamageOption);
     parser.addOption(noPetsOption);
     parser.addOption(splitPlayerStripOption);
+    parser.addOption(layoutOption);
     parser.addOption(gameOption);
     parser.addOption(outputPlayerOption);
     parser.addOption(outputMonsterOption);
@@ -371,25 +386,23 @@ int main(int argc, char **argv)
     riseDamageDisplayOptions.showOtherPets =
         (maskPets & mhw::PetDamageSection::OtherPets) != 0u;
 
-    // v0.12: the split. ONE boolean decides the whole feature; everything
-    // below it is derived from it, and both consumers are wired from the
-    // same derivation so the two halves cannot drift apart:
+    // v0.12: the window topology. ONE enum value decides which windows
+    // exist, and everything below it is derived from it plus the
+    // declarative table in ui/panel_sections.h
+    // (PlayerSection::kPlayerSplitTargets), so the two halves cannot
+    // drift apart:
     //
-    //     splitOn
-    //       -> maskPlayerWithoutStatus = maskPlayer & ~(Debuff|Buff)
+    //     PlayerLayoutMode mode
+    //       -> playerSplitLayoutMode          (resolved below)
+    //       -> maskPlayerForPanel = playerPanelMaskFor(mode, maskPlayer)
     //            -> PlayerPanel's mask        (the panel stops drawing)
-    //       -> maskPlayer                (unchanged)
-    //            -> the strip's mask       (the window starts drawing)
+    //       -> playerSubWindowMask(slot, maskPlayer)   (per window)
+    //            -> each split window         (it starts drawing)
     //
-    // The panel's mask is DERIVED (cleared), never re-derived independently:
-    // PlayerPanel has no way to be told "the strip owns these two bits now"
-    // other than not being handed the bits in the first place (it has no
-    // split-aware API, and adding one to panel_player.h is out of this
-    // step's remit). Clearing them in the mask means every existing gate in
-    // paintPanel() that asks `smask & PlayerSection::Debuff` /
-    // `::Buff` — and both height reservations at lines 714-726 / 743-744 and
-    // the Rise 状态 grid at 665-677 — answers "off" with no new code path
-    // whatsoever. One bit flip, one gate, no code gate to forget to update.
+    // There is NO BIT ARITHMETIC IN THIS FILE. `maskPlayer & ~(Debuff|Buff)`
+    // was hand-written here in v0.12; it now lives once, in the table, and
+    // is reached through playerPanelMaskFor(). Adding a third window
+    // changes neither this function nor the mask expressions below.
     //
     // Why derived-from-the-mask rather than a second runtime setter on
     // PlayerPanel: mask is a STARTUP value (control_panel.cpp re-pushes it
@@ -398,20 +411,31 @@ int main(int argc, char **argv)
     // cannot be half-applied — either the bits are cleared before
     // playerPanel.setSectionMask() runs, or they are not.
     //
-    // DEFAULT FALSE: with switchPlayerStrip off, maskPlayerWithoutStatus
-    // IS maskPlayer (the two mask assignments below are then plain
-    // assignments of the same value), the strip is never constructed, and
-    // PlayerPanel paints byte-for-byte what v0.11.4 painted. That is the
-    // pixel-identical guarantee, and its gate is this one expression.
-    const bool splitPlayerStrip = parser.isSet(splitPlayerStripOption);
-    const uint32_t maskPlayerWithoutStatus =
-        splitPlayerStrip
-        ? (maskPlayer & ~(mhw::PlayerSection::Debuff | mhw::PlayerSection::Buff))
-        : maskPlayer;
-    if (splitPlayerStrip) {
-        qInfo("v0.12 split: player debuff/buff capsules moved to their own "
-              "window (player-status); player mask %08x -> %08x",
-              maskPlayer, maskPlayerWithoutStatus);
+    // DEFAULT SINGLE: mode == Single resolves to maskPlayerForPanel ==
+    // maskPlayer (see the static_assert under the table), the strip is
+    // never constructed, and PlayerPanel paints byte-for-byte what
+    // v0.11.4 painted. That is the pixel-identical guarantee, and its
+    // gate is playerPanelMaskFor()'s Single arm.
+    const mhw::PlayerLayoutResolution playerSplitLayout =
+        mhw::resolveStartupLayoutMode(
+            mhw::PlayerLayoutCliRequest{
+                parser.isSet(layoutOption), parser.value(layoutOption),
+                mhw::splitPlayerStripFlagSense(parser.isSet(splitPlayerStripOption))},
+            mhw::PlayerLayoutConfRow{mhw::PlayerLayoutSource::Default});
+    // Single is the default and the pixel-identity guarantee: it resolves
+    // maskPlayerForPanel to exactly maskPlayer, so every pre-v0.12 user gets
+    // one big window and the baselines stay byte-identical.
+    const mhw::PlayerSection::PlayerLayoutMode playerSplitLayoutMode =
+        playerSplitLayout.mode;
+    const uint32_t maskPlayerForPanel = mhw::PlayerSection::playerPanelMaskFor(
+        playerSplitLayoutMode, maskPlayer);
+    if (playerSplitLayoutMode == mhw::PlayerSection::PlayerLayoutMode::Split) {
+        qInfo("v0.12 split: layout=split; %d player sub-window(s); player "
+              "mask %08x -> %08x",
+              mhw::PlayerSection::kPlayerSplitTargetCount, maskPlayer,
+              maskPlayerForPanel);
+    } else {
+        qInfo("v0.12 split: layout=single (default); player mask %08x", maskPlayer);
     }
 
     // Resolve the target game. auto scans for a running process; an
@@ -458,7 +482,7 @@ int main(int argc, char **argv)
     // itself behind the switch, so with the default-off path the object exists
     // and draws nothing — it never reaches show() and never mounts a surface.
     //
-    // Why not construct it inside `if (splitPlayerStrip)`: it would need a
+    // Why not construct it inside the Split-mode branch: it would need a
     // different lifetime (unique_ptr / optional), and the split's next
     // sub-windows (mantles, wirebug) would each need the same dance. One
     // always-existing, never-shown object is the same trick the four base
@@ -475,7 +499,7 @@ int main(int argc, char **argv)
     // L1: apply section masks BEFORE show() so the first paint reflects
     // them — no one-frame flash of "all visible" if a mask is restrictive.
     //
-    // v0.12: the player mask is the DERIVED one (maskPlayerWithoutStatus).
+    // v0.12: the player mask is the DERIVED one (maskPlayerForPanel).
     // See the split block above: with the switch off it is identical to
     // maskPlayer, so this line is a no-op for the default path — the panel
     // receives exactly the value v0.11.4 handed it.
@@ -487,7 +511,7 @@ int main(int argc, char **argv)
     // turned the buff row off in the console gets no buff window instead of
     // an empty one. The panel's bits were cleared only because the WINDOW
     // topology changed, never because of anything the user toggled.
-    playerPanel.setSectionMask(maskPlayerWithoutStatus);
+    playerPanel.setSectionMask(maskPlayerForPanel);
     monsterPanel.setSectionMask(maskMonster);
     damagePanel.setSectionMask(maskDamage);
     petDamagePanel.setSectionMask(maskPets);
@@ -521,7 +545,8 @@ int main(int argc, char **argv)
     //   1. this line           (the switch)
     //   2. setSectionMask      (the user's own debuff/buff toggles)
     //   3. hasVisibleContent() (HunterPie's "no data, no window")
-    playerStatusStripPanel.setPanelEnabled(splitPlayerStrip);
+    playerStatusStripPanel.setPanelEnabled(
+        playerSplitLayoutMode == mhw::PlayerSection::PlayerLayoutMode::Split);
 
 
     // v0.8: CLI --output-* overrides whatever the persisted panels.ini
@@ -546,11 +571,12 @@ int main(int argc, char **argv)
     // nothing would swap the World mantles demo for the Rise wirebugs demo in
     // every `--edit --game rise` launch, which is a default-path change.
     //
-    // Gated on splitPlayerStrip, so on the default path nothing here runs at
+    // Gated on the layout mode, so on the default path nothing here runs at
     // all. And inert in live mode the same way PlayerPanel's call is: the
     // first update(snap) overwrites game_ from the snapshot anyway, so only
     // the edit preview cares.
-    if (splitPlayerStrip)
+    if (playerSplitLayoutMode
+        == mhw::PlayerSection::PlayerLayoutMode::Split)
         playerStatusStripPanel.setGameForDemo(gameId);
 
     playerPanel.show();
@@ -568,7 +594,8 @@ int main(int argc, char **argv)
     //     paint — and this call precedes it).
     // In edit mode with the split on, the demo is seeded by the first
     // paint, so the strip appears immediately like the other four panels do.
-    if (splitPlayerStrip)
+    if (playerSplitLayoutMode
+        == mhw::PlayerSection::PlayerLayoutMode::Split)
         playerStatusStripPanel.setVisible(editMode);
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
@@ -748,7 +775,7 @@ int main(int argc, char **argv)
         // v0.12: the split's strip. Three independent conditions in one
         // expression, in the order that makes each one cheap to reason about:
         //
-        //   splitPlayerStrip   — the switch. With it off (default) the whole
+        //   layout mode         — the switch. With it Single (default) the whole
         //                        block is skipped: no update(), no visibility
         //                        change, no mask read. PlayerPanel, which kept
         //                        both capsule rows this whole time, is the
@@ -766,7 +793,8 @@ int main(int argc, char **argv)
         // gets a "keep it visible with a placeholder" branch. A capsule strip
         // with nothing to say has nothing to say — it hides, which is the
         // whole point of extracting it into its own window.
-        if (splitPlayerStrip) {
+        if (playerSplitLayoutMode
+            == mhw::PlayerSection::PlayerLayoutMode::Split) {
             const bool keepStripDemo = skipUpdate(playerStatusStripPanel);
             if (!keepStripDemo)
                 playerStatusStripPanel.update(snap);
@@ -946,7 +974,8 @@ int main(int argc, char **argv)
         // Guarded on the switch anyway to keep the default path free of new
         // writes to panels.ini, which is the same reason --output-* uses
         // persist=false.
-        if (splitPlayerStrip)
+        if (playerSplitLayoutMode
+            == mhw::PlayerSection::PlayerLayoutMode::Split)
             playerStatusStripPanel.saveConfig();
     }
 

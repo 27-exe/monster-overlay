@@ -1059,6 +1059,31 @@ add_executable(world-severable-scan-tests
     target_compile_options(mask-fallback-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME mask-fallback-tests COMMAND mask-fallback-tests)
 
+    # v0.12: the dual-mode window topology — mhw::resolveStartupLayoutMode
+    # (the cli > compat flag > conf > default chain) and the mask algebra
+    # it feeds (playerPanelMaskFor / playerSubWindowMask / the
+    # kPlayerSplitTargets table), all in ui/panel_sections.h.
+    #
+    # Header-only and QtCore-only like panel-mask-codec-tests and
+    # mask-fallback-tests: every function under test is inline constexpr
+    # over uint32_t and QString, so there is no second source file to
+    # compile and no reason to link mhw-ui. That is the point — the
+    # pixel-identity promise behind Single mode, and the "no block is
+    # drawn by two windows" promise behind Split mode, are both pure
+    # assertions about a mask, and should be checkable without a
+    # compositor, a QPainter, or a running game.
+    #
+    # The exhaustive arm walks all 256 masks PlayerSection can express in
+    # both modes, which is the whole space of user toggle combinations.
+    add_executable(player-layout-tests
+        tests/player_layout_tests.cpp
+        src/ui/panel_sections.h
+    )
+    target_link_libraries(player-layout-tests PRIVATE Qt6::Core)
+    target_include_directories(player-layout-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(player-layout-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME player-layout-tests COMMAND player-layout-tests)
+
     # v0.12: the split strip's pure model — mhw::buildStatusStripModel
     # (GameSnapshot -> debuff / buff pill blocks) and mhw::statusStripRows.
     #

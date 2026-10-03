@@ -102,8 +102,16 @@ public:
     // An override rather than a protected setter on purpose: it needs no
     // new state, no friend, no widening of Panel's API surface, and it
     // reads as the compile-time fact it is (a class either is a
-    // sub-window or is not). The registry — whoever assigns slot
-    // kPanelSubWindowBase … kPanelSlotMax-1 — is the consumer.
+    // sub-window or is not).
+    //
+    // REMOVED (v0.12 cleanup): the line naming the registry that assigned
+    // kPanelSubWindowBase … kPanelSlotMax-1 as "the consumer". That
+    // registry never got a caller, and with it the whole slot-index
+    // vocabulary went; the slot identity a split window needs now lives
+    // in PlayerSection::PlayerSplitSlot, next to the bit-to-window table
+    // it is keyed by (ui/panel_sections.h). The hook itself stays: it is
+    // the compile-time answer to "am I a sub-window", and stripping it
+    // would mean editing the one panel that overrides it.
     //
     // Default false. No base-panel code path reads it today, which is
     // the point: the four shipped panels keep answering "no" and every

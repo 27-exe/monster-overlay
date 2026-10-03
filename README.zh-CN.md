@@ -47,6 +47,11 @@ sudo ./install-deps.sh      # 一次性:Qt 6 + layer-shell-qt
 
 三块面板会浮在游戏之上。面板与其子项的开关、位置、所在屏幕,都在控制台里设置。
 
+玩家窗口有两种形态，启动时二选一：`--layout single`（默认，一块面板）或
+`--layout split`（debuff/buff 胶囊独立成窗）。两种形态的完整说明，以及
+已废弃的 `--split-player-strip` 别名，见
+[docs/USAGE.zh-CN.md §6.1](docs/USAGE.zh-CN.md)。
+
 ### 快捷键(悬浮窗)
 
 控制台启动悬浮窗后会自动隐藏,面板成为焦点窗口。此时:

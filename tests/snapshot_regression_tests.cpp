@@ -27,6 +27,7 @@
 
 #include "ui/panel.h"
 #include "ui/panel_player.h"
+#include "ui/panel_player_split.h"
 #include "ui/panel_monster.h"
 #include "ui/panel_damage.h"
 #include "ui/panel_pet_damage.h"
@@ -218,6 +219,23 @@ mhw::SharpnessSnapshot makeSharpness(int level, int currentHits, int threshold,
 // A Rise abnormality row. The accent is resolved from the schema table by
 // id, exactly as the Rise reader does, so the pill colour cannot drift from
 // what a live session shows.
+// World's counterpart. PlayerAbnormality is a different, smaller type than
+// the Rise snapshot struct: no `id`, no `kind` (the two vectors it fills
+// already say which is which) and no isBuildup — so it gets its own helper
+// rather than sharing one that would have to invent the missing fields.
+mhw::PlayerAbnormality makeWorldAbnormality(
+    int offset, const QString &name, float timer, float maxTimer,
+    mhw::AbnormalityAccent accent)
+{
+    mhw::PlayerAbnormality a;
+    a.offset   = offset;
+    a.name     = name;
+    a.timer    = timer;
+    a.maxTimer = maxTimer;
+    a.accent   = accent;
+    return a;
+}
+
 mhw::PlayerAbnormalitySnapshot makeRiseAbnormality(
     const QString &id, const QString &name, float timer, float maxTimer,
     mhw::AbnormalityKind kind, bool infinite, bool buildup)
@@ -491,7 +509,81 @@ int main(int argc, char *argv[])
             failures += compareImage(baselinePath("all_pets"), r.img, writeBaseline);
     }
 
-    std::printf("%s (%d failing image(s))\n",
+    // v0.12: the split status strip. This window has NO baseline of its own
+    // until now, which means the one panel the v0.12 split introduced was
+    // the only one with no pixel guard on it. Both games are pinned because
+    // the strip's content model dispatches on GameId — World reads
+    // debuffs/buffs, Rise reads abnormalities and splits them by kind, so a
+    // seam regression would otherwise show up as a silently empty strip.
+    {
+        std::printf("player status strip (split):\n");
+
+        PlayerStatusStripPanel world;
+        world.setGameForDemo(mhw::GameId::World);
+        (void)renderPanel(world);   // prime setupDemoData() one shot
+        mhw::GameSnapshot snap;
+        snap.game      = mhw::GameId::World;
+        snap.attached  = true;
+        snap.pid       = 31337;
+        snap.status    = QStringLiteral("已连接 · 猎人状态");
+        snap.zone      = mhw::ZoneRef{mhw::GameId::World,
+                                      static_cast<int>(mhw::WorldZone::AncientForest)};
+        snap.player.valid = true;
+        snap.player.name  = QStringLiteral("LocalHunter");
+        snap.player.debuffs = {
+            makeWorldAbnormality(0, QStringLiteral("中毒"), 23.0F, 60.0F,
+                                 mhw::AbnormalityAccent::Paralysis),
+            makeWorldAbnormality(1, QStringLiteral("爆炸异常"), 41.0F, 60.0F,
+                                 mhw::AbnormalityAccent::Blast),
+            makeWorldAbnormality(2, QStringLiteral("水属性异常"), 17.0F, 60.0F,
+                                 mhw::AbnormalityAccent::None),
+            makeWorldAbnormality(3, QStringLiteral("防御力下降"), 55.0F, 60.0F,
+                                 mhw::AbnormalityAccent::Defense),
+        };
+        snap.player.buffs = {
+            makeWorldAbnormality(4, QStringLiteral("鬼人药"), 1.0F, 60.0F,
+                                 mhw::AbnormalityAccent::Attack),
+            makeWorldAbnormality(5, QStringLiteral("怪力种子"), 142.0F, 60.0F,
+                                 mhw::AbnormalityAccent::Attack),
+        };
+        mhw::PartyMemberSnapshot selfW;
+        selfW.name = QStringLiteral("LocalHunter");
+        snap.party = {selfW};
+        world.update(snap);
+        if (Render r = renderPanel(world); r.ok)
+            failures += compareImage(baselinePath("player_split_world"),
+                                     r.img, writeBaseline);
+
+        PlayerStatusStripPanel rise;
+        rise.setGameForDemo(mhw::GameId::Rise);
+        (void)renderPanel(rise);    // prime setupDemoData() one shot
+        snap.game = mhw::GameId::Rise;
+        snap.zone = mhw::ZoneRef{mhw::GameId::Rise,
+                                 static_cast<int>(mhw::RiseZone::RiseLoc3)};
+        // Same switching rule PlayerPanel applies: the World vectors are
+        // cleared so the Rise arm cannot see the other game's fill.
+        snap.player.debuffs.clear();
+        snap.player.buffs.clear();
+        snap.player.abnormalities = {
+            makeRiseAbnormality(QStringLiteral("ABN_POISON"), QStringLiteral("中毒"),
+                                23.0F, 0.0F, mhw::AbnormalityKind::Debuff, false, false),
+            makeRiseAbnormality(QStringLiteral("ABN_BLAST"), QStringLiteral("爆炸异常"),
+                                41.0F, 0.0F, mhw::AbnormalityKind::Debuff, false, false),
+            makeRiseAbnormality(QStringLiteral("ABN_FRENZY_BUILDUP"),
+                                QStringLiteral("狂龙症（增长中）"),
+                                43.0F, 120.0F, mhw::AbnormalityKind::Debuff, true, true),
+            makeRiseAbnormality(QStringLiteral("ABN_DEMONDRUG"), QStringLiteral("鬼人药"),
+                                1.0F, 0.0F, mhw::AbnormalityKind::Buff, true, false),
+            makeRiseAbnormality(QStringLiteral("ABN_MIGHT_SEED"), QStringLiteral("怪力种子"),
+                                142.0F, 0.0F, mhw::AbnormalityKind::Buff, false, false),
+        };
+        rise.update(snap);
+        if (Render r = renderPanel(rise); r.ok)
+            failures += compareImage(baselinePath("player_split_rise"),
+                                     r.img, writeBaseline);
+    }
+
+    std::printf("%s (%d failing image(s))\\n",
                 failures == 0 ? "PASS" : "FAILED", failures);
     return failures == 0 ? 0 : 1;
 }

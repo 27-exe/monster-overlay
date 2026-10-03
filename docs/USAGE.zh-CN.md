@@ -95,6 +95,7 @@ OnDemand，合成器才被要求激活该 surface）。在覆盖层里方向键�
 | `--poll <ms>` | 轮询间隔，默认 250 |
 | `--locale <code>` | 本次运行的界面语言（`zh-CN`、`en-US`） |
 | `--edit` | 编辑模式（见 §4） |
+| `--layout single\|split` | 窗口形态：玩家面板合成一块（`single`，默认）还是把玩家 debuff/buff 胶囊拆成独立窗口（`split`）—— 见下面 §6.1 |
 | `--mask-player\|monster\|damage\|pets <hex32>` | 各分区可见性；由控制台传入 |
 | `--no-player\|no-monster\|no-damage\|no-pets` | 隐藏整个面板 |
 | `--output-player\|monster\|damage\|pets <name>` | 把某个面板固定到指定 `QScreen`（留空 = 跟随系统主屏）；由控制台传入 |
@@ -103,6 +104,47 @@ OnDemand，合成器才被要求激活该 surface）。在覆盖层里方向键�
 `--game auto` 会扫描 `/proc` 查找运行中的 Monster Hunter 进程；`--game`
 为 `world` / `rise` 则强制使用指定 reader。`--no-pets` 只对 Rise 有意义：
 World 无论带不带该参数都不会挂载随从伤害面板。
+
+### 6.1 两种窗口形态：一块大面板，还是几块小窗口
+
+玩家窗口的形态是个二选一的开关，v0.12 才把两边正式命名：
+
+| 形态 | 得到什么 |
+|---|---|
+| `--layout single` | **一块大面板**，装下所有玩家分区。默认值，且与 v0.12 之前每一版逐像素一致 |
+| `--layout split` | 玩家的 **debuff / buff 胶囊移进自己的窗口**，可单独定位、缩放、隐藏 |
+
+```bash
+./monster-overlay --layout split     # 胶囊独立成窗
+./monster-overlay                    # 等价于 --layout single：一块面板
+```
+
+两种形态下，你开着的分区一个都不少。`split` 只是让胶囊离开玩家面板、
+变成第二个窗口 —— 每一块内容由两个窗口中的**恰好一个**绘制，既不会重复、
+也不会丢失。每个窗口在编辑模式（§4）里单独调整位置，并各自把位置、缩放、
+不透明度、所在屏幕和可见性写进 `panels.ini`，对应的 settingsKey 是
+`player-status`。
+
+跟着这个开关有两条要记住：
+
+- **`single` 下根本没有第二个窗口。** 拆分窗口不会被构造，`panels.ini`
+  也不会多出一节 —— 从没敲过 `--layout=` 的用户，文件布局和以前完全一样。
+- **`--split-player-strip` 是 `--layout=split` 的已废弃别名。** 它只是个
+  开/关布尔值，所以只能把拆分**打开**，没法在显式给出 `--layout single`
+  时把它关回去。两者同时出现时，显式值优先。试点期的老脚本原样继续可用。
+
+判断顺序如下（越靠前越有话语权）：
+
+1. `--layout=<single|split>` —— 显式值胜出。大小写和前后空白都可以
+   （`SPLIT`、` split `），但认不出来的值（例如 `splitt`）**不会**被当成
+   `single`：它会作为无效值被报出，然后回落到默认。
+2. `--split-player-strip` —— 已废弃别名；只在没有 `--layout=` 时才有话语权。
+3. 已保存的设置（控制台目前不写这一项）—— 手改乱的行也不允许替你挑一个
+   你没要过的窗口形态。
+4. 默认：一块大窗口。
+
+以上全部是启动期的决定。两种形态下控制台传入的 `--mask-player` 都一样，
+变化的只有窗口形态。
 
 ### `monster-control`
 
@@ -130,7 +172,7 @@ World 无论带不带该参数都不会挂载随从伤害面板。
 | 路径 | 写入方 | 内容 |
 |---|---|---|
 | `~/.config/monster-overlay/monster-overlay.conf` | 控制台 | `player=` / `monster=` / `damage=` / `pets=` 掩码（hex32），选定语言后写入 `locale=`；无关行会被保留 |
-| `~/.config/monster-overlay/panels.ini` | 覆盖层 | 各面板几何信息：每个面板一组（`player`、`monster`、`dps`、`pet-damage`），含 `ml`/`mt`/`mr`/`mb` 边距、`scale`、`opacity`、`bgAlpha`、`outputName`、`visible` |
+| `~/.config/monster-overlay/panels.ini` | 覆盖层 | 各面板几何信息：每个面板一组（`player`、`monster`、`dps`、`pet-damage`；`--layout split` 下另有玩家胶囊条 `player-status`），含 `ml`/`mt`/`mr`/`mb` 边距、`scale`、`opacity`、`bgAlpha`、`outputName`、`visible` |
 | `~/monster-doctor-<时间戳>.txt` | doctor | 诊断报告 |
 
 控制台还会把自己的窗口几何、窗口状态、分栏宽度和画布缩放保存在 Qt 默认

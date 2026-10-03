@@ -91,7 +91,336 @@ inline QStringList displayNames()
         n << displayName(i);
     return n;
 }
+
+// ----- Player panel window topology (v0.12 dual mode) -----------------
+//
+// What used to be one CLI flag per extracted section
+// (`--split-player-strip`, then `--split-wirebug`, then
+// `--split-mantles`, …) is now ONE decision — which window topology the
+// user picked — plus ONE table that says which PlayerSection bits each
+// split window owns. A third window means a row in the table, not a flag.
+//
+// The two questions this section answers, and why they are separate:
+//
+//   1. PlayerLayoutMode  — WHICH WINDOWS exist. The user's choice between
+//      one big panel and several small windows. One value for the whole
+//      session, resolved once at startup.
+//   2. PlayerSection bits — WHICH BLOCKS are on. The user's visibility
+//      toggles, per bit, owned by the console's masks.
+//
+// They must never be conflated. A mask bit answering "is this block on"
+// would also be answering "which window draws it", so `--mask-player 0`
+// would answer the window question as well and the console's saved
+// toggles would silently change the overlay's window topology.
+//
+// Widget-free on purpose: everything below is constexpr / inline over
+// uint32_t, so it is unit-testable from a plain main() and no translation
+// unit is added to any target (therefore no zero-reference-gate census
+// entry).
+//
+// Why here and not a new header: this file is already where every
+// PlayerSection bit is defined, and the table below is a mapping FROM
+// those bits. Splitting the table into its own file would let the enum
+// and the mapping of the enum drift apart, which is exactly the failure a
+// single declarative table exists to prevent.
+//
+// Layering: no Qt include beyond the QString already in this header, and
+// no include of any widget header. The conf rows are read by main.cpp
+// with the console's own codec (ui/viewmodel/panel_mask_fallback.h), so
+// the console <-> overlay format contract stays in one place.
+
+// Which window topology the user picked. NOT "is a section split out" —
+// that is the per-bit question the table further down answers.
+//
+// Naming: `LayoutMode` because it names the whole window arrangement
+// (one big panel / several small windows), and `Single` / `Split` are the
+// user-facing words. Rejected alternatives, one reason each:
+// `SplitMode` reads as "the mode of splitting" and implies more modes to
+// come; `WindowMode` collides with the window-manager sense of the
+// phrase; `Monolithic` is the opposite of the word the user uses.
+enum class PlayerLayoutMode {
+    Single,   // v0.11.4 behaviour, pixel for pixel. The default.
+    Split,    // the sections named by kPlayerSplitTargets move into their
+              // own layer-shell windows.
+};
+
+// Which split window a bit group belongs to. The index is the subscript
+// into kPlayerSplitTargets, so adding a window is adding a row to that
+// table plus one entry here — never a new CLI flag, never a new mask
+// expression.
+namespace PlayerSplitSlot {
+enum : int {
+    Status = 0,   // 异常 / 强化状态胶囊条 -> PlayerStatusStripPanel
+};
+// The row count of kPlayerSplitTargets, cross-checked by static_assert.
+constexpr int kCount = 1;
+} // namespace PlayerSplitSlot
+
+// One split window's claim on PlayerSection bits: "these blocks leave
+// PlayerPanel and are drawn by this window instead".
+struct PlayerSplitTarget {
+    uint32_t mask;
+};
+
+// THE TABLE — the audit's A-2 gap. Declarative, compile-time, and the
+// single source of truth for "which bits left PlayerPanel".
+//
+// main.cpp contains no bit arithmetic at all: it asks this table through
+// playerPanelMaskFor() / playerSubWindowMask(). To add a window you add
+// ONE row here (plus one panel instance in main.cpp and one
+// PlayerSplitSlot entry) and every mask, the log line and the
+// "nothing is painted twice" proof follow from the table.
+//
+// Held to, by static_assert below: every row is a non-empty subset of
+// PlayerSection::kAll, and no bit is claimed by two windows — two
+// windows drawing one block is the failure a user notices immediately
+// and a test may not.
+constexpr PlayerSplitTarget kPlayerSplitTargets[] = {
+    // 异常状态 / 正面状态胶囊. First out: it maps onto HunterPie's
+    // AbnormalityTray and carries the least state of the candidate
+    // blocks (audit/06 §0.2).
+    {mhw::PlayerSection::Debuff | mhw::PlayerSection::Buff},
+};
+
+// Row count of the table, as a constant the functions below index with.
+inline constexpr int kPlayerSplitTargetCount =
+    static_cast<int>(sizeof(kPlayerSplitTargets) / sizeof(kPlayerSplitTargets[0]));
+
+// OR of every window's claim: exactly the bits that leave PlayerPanel in
+// Split mode. Subtracted from the panel's mask panel_player.cpp needs no
+// new gate — its existing `smask & PlayerSection::Debuff` / `::Buff`
+// reads answer "off", which takes the height reservation, the layout and
+// the paint with them.
+[[nodiscard]] constexpr uint32_t playerSplitRemovedBits() noexcept
+{
+    uint32_t bits = 0;
+    for (const PlayerSplitTarget &t : kPlayerSplitTargets)
+        bits |= t.mask;
+    return bits;
+}
+
+// The mask PlayerPanel must receive. THE expression the "single-panel
+// mode is pixel-identical" promise rests on: in Single mode it returns
+// `mask` verbatim, bit for bit, so playerPanel.setSectionMask() is handed
+// exactly the value v0.11.4 handed it and no downstream code can detect
+// the difference.
+[[nodiscard]] constexpr uint32_t playerPanelMaskFor(
+    PlayerLayoutMode mode, uint32_t mask) noexcept
+{
+    return mode == PlayerLayoutMode::Split
+               ? static_cast<uint32_t>(mask & ~playerSplitRemovedBits())
+               : mask;
+}
+
+// The mask split window `slot` must receive: the USER's own toggles
+// intersected with what the table says that window owns. A window
+// therefore only ever draws blocks the user left on, and PlayerPanel
+// only ever loses blocks that moved out.
+//
+// An out-of-range slot answers 0 (draw nothing) rather than reading past
+// the table, so a registry row naming a window the table does not have is
+// inert instead of UB.
+[[nodiscard]] constexpr uint32_t playerSubWindowMask(
+    int slot, uint32_t mask) noexcept
+{
+    if (slot < 0 || slot >= kPlayerSplitTargetCount)
+        return 0;
+    return kPlayerSplitTargets[slot].mask & mask;
+}
+
+// Compile-time proof that the table says what it claims. Pairwise over
+// every row pair, so a future row re-claiming a live bit fails the build
+// instead of double-drawing a block on screen.
+[[nodiscard]] constexpr bool playerSplitTargetsAreValid() noexcept
+{
+    for (int i = 0; i < kPlayerSplitTargetCount; ++i) {
+        const uint32_t m = kPlayerSplitTargets[i].mask;
+        if (m == 0)                                   return false; // no claim
+        if ((m & ~mhw::PlayerSection::kAll) != 0)     return false; // not a bit
+        for (int j = i + 1; j < kPlayerSplitTargetCount; ++j)
+            if ((m & kPlayerSplitTargets[j].mask) != 0) return false; // twice
+    }
+    return true;
+}
+
+static_assert(playerSplitTargetsAreValid(),
+              "kPlayerSplitTargets rows must be non-empty, inside "
+              "PlayerSection::kAll and pairwise disjoint — two windows "
+              "claiming one PlayerSection bit would draw it twice");
+static_assert(PlayerSplitSlot::kCount == kPlayerSplitTargetCount,
+              "PlayerSplitSlot::kCount must match the kPlayerSplitTargets "
+              "row count");
+// The removed bits are exactly the current table's claims. A new window
+// changes this, and the assert is what makes that a deliberate edit
+// instead of a silent one.
+static_assert(playerSplitRemovedBits()
+                  == (mhw::PlayerSection::Debuff | mhw::PlayerSection::Buff),
+              "the removed bits are the table's rows OR-ed together; update "
+              "this assert when a second window is split out");
+// The whole pixel-identity argument, as two compile-time checks: in
+// Single mode the derived mask IS the input mask.
+static_assert(playerPanelMaskFor(PlayerLayoutMode::Single, 0xDEADBEEFu)
+                  == 0xDEADBEEFu,
+              "Single mode must return the mask unchanged (non-zero case)");
+static_assert(playerPanelMaskFor(PlayerLayoutMode::Single, 0u) == 0u,
+              "Single mode must return the mask unchanged (zero case)");
+// And the split's invariant: the removed bits and what the panel keeps
+// share no bit, so exactly one window draws a given block in either mode.
+static_assert((playerPanelMaskFor(PlayerLayoutMode::Split, 0xFFFFFFFFu)
+               & playerSplitRemovedBits())
+                  == 0,
+              "in Split mode PlayerPanel must hold none of the removed bits");
 } // namespace PlayerSection
+
+// ----- Startup resolution for the layout mode ---------------------------
+//
+// Same shape as mhw::resolveStartupPanelMask in
+// ui/viewmodel/panel_mask_fallback.h — `cli > conf > default`, resolving to a
+// value plus the source it came from, with the source as part of the
+// contract because it is what makes a wrong-but-right-valued fallback (the
+// conf silently overriding an explicit flag) visible to a test rather than
+// invisible in production.
+//
+// Lives at the already-open mhw:: namespace rather than opening a nested
+// one, because it answers a STARTUP question about the whole panel, not a
+// question about one bit. This file is inside `namespace mhw` from the
+// header comment onward, so re-opening it here would nest `mhw::mhw` and
+// make every name below ambiguous at the call site.
+
+// Why the mode is what it is. Mirrors PanelMaskSource: the source is not
+// debug garnish, it is the half of the answer a test asserts on. `Default`
+// is the no-information case, which is also what a malformed row resolves
+// to — the two are deliberately the same answer.
+enum class PlayerLayoutSource {
+    CliExplicit,
+    CliCompatFlag,
+    Conf,
+    Default,
+};
+
+struct PlayerLayoutResolution {
+    PlayerSection::PlayerLayoutMode mode{PlayerSection::PlayerLayoutMode::Single};
+    PlayerLayoutSource source{PlayerLayoutSource::Default};
+};
+
+// One parsed CLI request.
+//
+// `given` false is the only state in which the conf row is consulted.
+// `valid` false means the flag arrived but did not parse; it must NOT fall
+// through to the conf row, because rescuing a typo'd flag from a saved
+// conf would let a stale row override what the user explicitly asked for.
+//
+// `compatSplit` carries the v0.12 pilot flag, which is folded in HERE rather
+// than at the call site so that "two flags, one decision" stays one
+// expression with a stated precedence: an explicit --layout= always wins,
+// and the boolean alias only speaks when --layout= is absent. A boolean
+// cannot outrank a value the user typed on purpose.
+// Field order is (given, value, compatSplit) — `valid` is NOT a member.
+// It is derived inside the resolver, because "did this parse" is a
+// question about the value, not an independent fact the caller knows: a
+// caller that filled `value` by hand is the same as one that copied
+// parser.value(), and making them maintain a `valid` flag in step with the
+// string is exactly the kind of redundant state that desynchronises. The
+// one caller that does have an independent notion (it validated the value
+// itself) can pass an empty string, which parses to false and takes the
+// documented malformed path.
+struct PlayerLayoutCliRequest {
+    bool given{false};
+    QString value;                            // the raw --layout= text
+    PlayerSection::PlayerLayoutMode compatSplit{
+        PlayerSection::PlayerLayoutMode::Single};   // from --split-player-strip
+};
+
+// The conf row, reduced to the single fact the resolver needs: did
+// anything usable come out of it, and if so which mode.
+//
+// The console's conf file has no `layout=` row yet (see the v0.12 CHANGELOG
+// "not done yet"), so today this is always the Default. Keeping the
+// parameter as a bare PlayerLayoutSource rather than a two-field struct
+// means adding the row later is a one-line change here instead of a
+// signature change at every call site — and the day someone does add it,
+// the resolver's rule 2 already says what to do with a value.
+using PlayerLayoutConfRow = PlayerLayoutSource;
+
+// The user-facing spelling of a mode, so the startup log line and the
+// console can name the same thing the flag accepts.
+[[nodiscard]] inline QString playerLayoutModeToString(
+    PlayerSection::PlayerLayoutMode mode) noexcept
+{
+    return mode == PlayerSection::PlayerLayoutMode::Split
+               ? QStringLiteral("split")
+               : QStringLiteral("single");
+}
+
+// Parse one --layout= value. An unrecognised spelling is NOT Single: it
+// returns false so the caller can warn and fall back, which is the same
+// handling an invalid --mask-* hex value already gets in main.cpp.
+[[nodiscard]] inline bool parsePlayerLayoutMode(
+    const QString &text, PlayerSection::PlayerLayoutMode &out) noexcept
+{
+    const QString t = text.trimmed().toLower();
+    if (t == QLatin1String("single")) {
+        out = PlayerSection::PlayerLayoutMode::Single;
+        return true;
+    }
+    if (t == QLatin1String("split")) {
+        out = PlayerSection::PlayerLayoutMode::Split;
+        return true;
+    }
+    return false;
+}
+
+// Map the v0.12 pilot flag --split-player-strip onto the layout question
+// it was really asking. The flag is a BOOLEAN, so it can only ever say
+// Single or Split; that is exactly the whole enum, which is why it is kept
+// as a compatibility alias rather than a separate mode.
+[[nodiscard]] inline PlayerSection::PlayerLayoutMode splitPlayerStripFlagSense(
+    bool flagSet) noexcept
+{
+    return flagSet ? PlayerSection::PlayerLayoutMode::Split
+                   : PlayerSection::PlayerLayoutMode::Single;
+}
+
+// The decision. Pure: no filesystem, no QCommandLineParser, no widget, so
+// the whole chain is testable from a plain main().
+//
+// The chain is `cli > conf > default`, and the default is Single. That
+// default is the pixel-identity guarantee's first half: a user who has
+// never heard of --layout= gets one big window, which is what every
+// release before v0.12 painted.
+[[nodiscard]] inline PlayerLayoutResolution resolveStartupLayoutMode(
+    const PlayerLayoutCliRequest &cli, const PlayerLayoutConfRow &conf)
+{
+    // Rule 1 — an explicit --layout= wins over everything, malformed or not.
+    // A malformed value resolves to the DEFAULT rather than to the conf row.
+    if (cli.given) {
+        PlayerSection::PlayerLayoutMode parsed{};
+        if (parsePlayerLayoutMode(cli.value, parsed))
+            return {parsed, PlayerLayoutSource::CliExplicit};
+        return {PlayerSection::PlayerLayoutMode::Single, PlayerLayoutSource::Default};
+    }
+
+    // Rule 1b — the v0.12 boolean alias. It speaks only when --layout= is
+    // absent, and it cannot say more than Single or Split, which is the
+    // whole enum. Checked before the conf row so a user who has been using
+    // --split-player-strip since the pilot keeps getting what they asked
+    // for even if a conf row later disagrees.
+    if (cli.compatSplit == PlayerSection::PlayerLayoutMode::Split)
+        return {PlayerSection::PlayerLayoutMode::Split,
+                PlayerLayoutSource::CliCompatFlag};
+
+    // Rule 2 — the conf row. `Default` covers all three "nothing usable"
+    // cases at once: the row is absent, unread, or malformed. A future
+    // `layout=` row reports `Conf` when it parsed; anything else it manages
+    // to report is treated as no information, so a hand-mangled conf can
+    // never select a window topology the user did not ask for.
+    if (conf == PlayerLayoutSource::Conf)
+        return {PlayerSection::PlayerLayoutMode::Split,
+                PlayerLayoutSource::Conf};
+
+    // Rule 3 — nothing usable was said: one big window.
+    return {PlayerSection::PlayerLayoutMode::Single, PlayerLayoutSource::Default};
+}
 
 // ----- Monster panel sections ---------------------------------------------
 namespace MonsterSection {

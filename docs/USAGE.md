@@ -106,6 +106,7 @@ signal to look into that row, not as a picture that failed to appear.
 | `--game auto\|world\|rise` | which game to read (default `auto`) |
 | `--poll <ms>` | polling interval, default 250 |
 | `--locale <code>` | UI locale for this run (`zh-CN`, `en-US`) |
+| `--layout single\|split` | window topology: one big player panel (`single`, the default) or the player debuff/buff capsules in their own window (`split`) — see §6.1 below |
 | `--edit` | edit mode (§4) |
 | `--mask-player\|monster\|damage\|pets <hex32>` | per-section visibility; the console passes these |
 | `--no-player\|no-monster\|no-damage\|no-pets` | hide a whole panel |
@@ -115,6 +116,53 @@ signal to look into that row, not as a picture that failed to appear.
 `--game auto` scans `/proc` for a running Monster Hunter process; `--game`
 `world` / `rise` forces one reader instead. `--no-pets` only matters in Rise:
 World never mounts the pet-damage surface regardless of the flag.
+
+### 6.1 Two layouts: one panel or several small ones
+
+The player window topology is a two-way switch, and v0.12 is where the two
+sides got their own name:
+
+| Mode | What you get |
+|---|---|
+| `--layout single` | **one big panel** holding every player block. The default, and pixel-for-pixel what every version before v0.12 drew |
+| `--layout split` | the player **debuff / buff capsules move into their own window**, separately positionable, scalable and hideable |
+
+```bash
+./monster-overlay --layout split     # capsules get their own window
+./monster-overlay                    # same as --layout single: one panel
+```
+
+Both modes keep every block you toggled on. In `split` the capsules simply
+leave the player panel and appear as a second window — they are drawn by
+exactly one of the two windows, never both, so nothing duplicates and nothing
+is dropped. Each window is positioned on its own during edit mode (§4) and
+keeps its own position, scale, opacity, output and visibility in
+`panels.ini`, under the settings key `player-status`.
+
+Two things that follow from the switch:
+
+- **`single` has no second window at all.** The split window is never
+  constructed and `panels.ini` gains no new section, so a user who never
+  types `--layout=` keeps the exact file layout they had before.
+- **`--split-player-strip` is a deprecated alias for `--layout=split`.**
+  It is a plain on/off boolean, so it can only turn the split *on*, never
+  back off against an explicit `--layout single`. If both are given, the
+  explicit value wins. Existing pilot scripts keep working unchanged.
+
+The precedence, in the order it stops mattering:
+
+1. `--layout=<single|split>` — an explicit value wins over everything else.
+   Case and surrounding spaces are tolerated (`SPLIT`, ` split `), but an
+   unrecognised value such as `splitt` is **not** read as `single`: it is
+   reported as invalid and falls back to the plain default.
+2. `--split-player-strip` — the deprecated alias; it only speaks when
+   `--layout=` is absent.
+3. A saved setting (none is written by the console today) — a hand-mangled
+   row is never allowed to pick a window topology you did not ask for.
+4. The default: one big window.
+
+Everything above is a startup decision. The console still passes the same
+`--mask-player` value in both modes; only the window topology differs.
 
 ### `monster-control`
 
@@ -142,7 +190,7 @@ World never mounts the pet-damage surface regardless of the flag.
 | Path | Written by | Contents |
 |---|---|---|
 | `~/.config/monster-overlay/monster-overlay.conf` | console | `player=` / `monster=` / `damage=` / `pets=` masks (hex32), plus `locale=` once you pick a language; unrelated lines are preserved |
-| `~/.config/monster-overlay/panels.ini` | overlay | per-panel geometry: one group per panel (`player`, `monster`, `dps`, `pet-damage`), each with `ml`/`mt`/`mr`/`mb` margins, `scale`, `opacity`, `bgAlpha`, `outputName`, `visible` |
+| `~/.config/monster-overlay/panels.ini` | overlay | per-panel geometry: one group per panel (`player`, `monster`, `dps`, `pet-damage`, and in `--layout split` the player strip as `player-status`), each with `ml`/`mt`/`mr`/`mb` margins, `scale`, `opacity`, `bgAlpha`, `outputName`, `visible` |
 | `~/monster-doctor-<timestamp>.txt` | doctor | the diagnostic report |
 
 The console also keeps its own window geometry, window state, splitter sizes and

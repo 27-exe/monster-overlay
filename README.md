@@ -51,6 +51,11 @@ sudo ./install-deps.sh      # one-time: Qt 6 + layer-shell-qt
 The panels appear over the game. The console is where panels and their sections
 are switched on/off, positioned, and assigned to a display.
 
+The player window has two shapes, chosen at launch: `--layout single` (the
+default, one panel) or `--layout split` (the debuff/buff capsules in their own
+window). See [docs/USAGE.md §6.1](docs/USAGE.md) for both, and for the
+deprecated `--split-player-strip` alias.
+
 ### Keyboard shortcuts (overlay)
 
 When the console spawns the overlay, it hides itself and the panels become the

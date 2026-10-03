@@ -27,7 +27,73 @@ party 空不空。复现率低是因为它需要「quest 已清而 party 指针�
 
 ---
 
+## [0.12.0] — 玩家面板拆分：双模式架构
+
+v0.12 起玩家窗口有两种形态，启动时二选一：
+
+- **`--layout single`**（默认）—— v0.11.4 的拓扑，**逐像素一致**。
+  所有用户块仍在一块大面板里，子窗根本不会构造，`panels.ini` 也不会
+  多出任何一节。
+- **`--layout split`** —— 映射表点名的分区各自成窗。第一个子窗
+  `PlayerStatusStripPanel`（settingsKey `player-status`）把玩家的
+  debuff / buff 胶囊移出 PlayerPanel：可单独定位、缩放、隐藏，几何
+  独立持久化。
+
+实测尺寸（world）：`all` 361px → split 后 panel 201px、strip 91px；
+rise strip 125px。
+
+兼容决策：**`--split-player-strip` 降级为已废弃的兼容别名**，等价于
+`--layout split`。它是个 store_true 布尔值，只能把拆分**打开**、不能在
+显式 `--layout single` 时关回去——所以同时给出两者时语义仍然唯一。
+试点期的脚本原样继续可用，不需要改。
+
+### 模式枚举 + 声明式映射表 + 优先级链
+
+三块地，都在 `src/ui/panel_sections.h`：
+
+- **`PlayerSection::PlayerLayoutMode`**（默认 `Single`）接替了原来散落各处的
+  布尔 gate；`main.cpp` 里 `playerSplitLayoutMode` 取代全部旧布尔条件。
+- **声明式映射表**：`PlayerSplitSlot`（命名空间，`kCount` 个槽位）+
+  `kPlayerSplitTargets`（每行一个 `PlayerSplitTarget{mask}`，声明
+  「这个子窗拥有哪些 `PlayerSection` 位」）。`playerSplitRemovedBits()` /
+  `playerPanelMaskFor(mode, mask)` / `playerSubWindowMask(slot, mask)` 从
+  表里派生一切。**`main.cpp` 现在零位运算**：`maskPlayer & ~(Debuff|Buff)`
+  手写一次的表达式搬进了表，改表就改窗口拓扑。
+- **优先级链** `resolveStartupLayoutMode(cli, conf)`：
+  显式 `--layout=` > 兼容 flag `--split-player-strip` > conf > 默认 `Single`。
+  返回 `{mode, source}`，与 `resolveStartupLocale` / `resolveStartupPanelMask`
+  同形状——source 是契约的一部分，因为「conf 静默覆盖显式 flag」这种
+  值正好但来路错的结果只有靠它才看得见。
+
+**畸形 `--layout=` 不回落 conf**：`--layout=splitt` 解析失败时落到
+`Single / Default`，不会去翻 conf 行。把 typo 从陈旧存档里救出来，
+正是用户显式选择被悄悄丢弃的那类 bug。
+
+### 拆第三个窗只改表，不改 main.cpp
+
+`playerPanelMaskFor` / `playerSubWindowMask` 都从 `kPlayerSplitTargets`
+派生，所以新增一个子窗 = 表里加一行 + `PlayerSplitSlot` 加一个槽位。
+`main.cpp` 的 mask 表达式与窗口创建逻辑不用动。`static_assert`
+`playerSplitRemovedBits() == (Debuff|Buff)` 与
+"改这张表必须是一次显式编辑而不是静默变更"的断言会挡住意外增行。
+
+### 测试
+
+`player-layout-tests`（新建，header-only + QtCore-only，不链接 mhw-ui）
+钉住：优先级链五条契约 + 完整决策表、解析的大小写/空白容错与拒绝、
+`parse(toString(m)) == m` 往返、Single 模式掩码原样返回（含
+64 个伪随机 32 位值）、Split 模式 panel 与子窗掩码两两不相交、
+以及**穷举证明**：全部 256 种可能的用户掩码 × 两种模式，验证
+「panel 与所有子窗两两不相交且并集等于用户掩码」——也就是用户所有
+toggle 组合。带双向突变测试（破坏解析层确认 FAIL、还原确认 PASS），
+这些断言不是空壳。
+
+---
+
 ## [0.12.0] — 玩家面板拆分：第一步子窗
+
+> 本节记录第一步子窗（`--split-player-strip` pilot）的落地；双模式架构
+> （`--layout single|split` + 映射表 + 优先级链）见上一节。
 
 ### 做了什么
 
