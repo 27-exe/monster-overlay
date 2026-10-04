@@ -44,6 +44,39 @@
 #include <QString>
 #include <QVector>
 
+// The mantle row's layout tokens. The dial's inline accessors and the
+// wrapped painter both read them, so they live in the header rather
+// than the .cpp's anonymous namespace — a duplicated copy is a second
+// spelling of one box, which is exactly how a strip ends up reserving
+// one geometry and drawing another.
+// See the note on kWirebugMargin: file-scope constants shared by name
+// across two moc-bearing headers collide when AUTOMOC merges them
+// into one translation unit.
+inline constexpr int kMantlesMargin = 11;   // HTML: .op padding:11
+inline constexpr int kMbH        = 60;   // .mb svg ~26px + cn + tm
+                                         // (panel_player.cpp:729)
+inline constexpr int kMbGap      = 8;    // HTML gap:8 inside .mantlerow
+inline constexpr int kMantleRowGap = 8;  // vertical pitch when the two
+                                         // boxes are stacked (dial = 1).
+                                         // Same 8 as the horizontal gap:
+                                         // one token that already exists
+                                         // for "the space between two
+                                         // mantle boxes".
+
+// The default dial position and range. 2 = the historical two-box row;
+// 1 = the two boxes stacked vertically (the vertical layout the user
+// asked for). A mantles window holds at most two slots, so the ceiling
+// is 2 and the floor is 1 — there is no "zero columns" state, and
+// nothing above 2 to wrap into.
+inline constexpr int kMantlesColumns = 2;
+inline constexpr int kMantlesMaxColumns = 2;
+
+// The floor the draw side puts under one box's slot when a locked
+// budget is narrower than the box's natural width. Below this the
+// icon (32px) plus the strip (10px) plus padding no longer fit and the
+// box starts cropping its own furniture.
+inline constexpr int kMinMantleBoxW = 60;
+
 namespace mhw {
 
 // One mantle slot's resolved display state. `id` is the in-game item id
@@ -118,6 +151,16 @@ public:
     // the base panels occupy (Panel::isSubWindow).
     [[nodiscard]] bool isSubWindow() const override { return true; }
 
+    // The columns dial survives an exit. Not virtual and not an override
+    // for the reason PlayerStatusStripPanel's header gives for the same
+    // pair (panel_player_split.h): Panel's versions are plain
+    // non-virtual members reached through Panel*, so these hide rather
+    // than extend them and both bodies call the base explicitly.
+    //
+    // main.cpp is the caller, exactly as it is for the strip.
+    void loadConfig();
+    void saveConfig();
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
@@ -138,9 +181,36 @@ private:
     // kMbH is the same 60px the panel reserves (panel_player.cpp:729).
     [[nodiscard]] int  contentHeight() const;
 
+    // ─── the columns dial (v0.13) ─────────────────────────────────────
+    //
+    // Same promotion as the wirebug row: the `[` / `]` keys are handled
+    // once in Panel::keyPressEvent and routed through the base class's
+    // virtuals, so no subclass owns a key it then has to forward.
+    //
+    // The default is kMantlesColumns (=2): the historical two-box row.
+    // Pressing `[` gives 1, which stacks the two boxes vertically —
+    // "衣装两格竖排 = 上下堆叠", the other half of the direction the
+    // user asked for.
+    [[nodiscard]] int  columns() const override { return columns_; }
+    void nudgeColumns(int delta) override;
+    [[nodiscard]] bool supportsColumns() const override { return true; }
+
+    // The row-layout vocabulary, same contract as the wirebug row's.
+    [[nodiscard]] int  itemCount() const override { return rows_.boxes.size(); }
+    [[nodiscard]] int  naturalItemWidth() const override;
+    [[nodiscard]] int  itemGap() const override { return kMbGap; }
+    [[nodiscard]] int  rowPitch() const override { return kMbH + kMantleRowGap; }
+    [[nodiscard]] int  contentMargin() const override { return kMantlesMargin; }
+
+    // Columns per row from the width this window will ACTUALLY be, so a
+    // lock narrows the layout instead of being ignored.
+    [[nodiscard]] int  wrappedColumns() const;
+
     mhw::MantleModel rows_{};
     // True while what is on screen came from setupDemoData(); the first
     // authoritative snapshot clears it (and the rows with it) so a demo
     // preview can never survive into a live session.
     bool             demoData_{false};
+    // The dial position: 2 boxes side by side (default), or 1 = stacked.
+    int              columns_{kMantlesColumns};
 };

@@ -15,11 +15,13 @@
 #include "core/string_table.h"
 #include "ui/icon.h"
 #include "ui/panel_sections.h"
+#include "ui/panel_sizing.h"
 
 #include <QFontMetrics>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
+#include <QSettings>
 
 #include <algorithm>
 #include <cmath>
@@ -39,19 +41,16 @@ inline QString tr(const QString &key)
 
 namespace {
 
-// ---- Layout tokens (panel_player.cpp:37-63, the ones this block owns) ---
+// ---- Layout tokens. See the header ---------------
+// kMantlesMargin / kMbH / kMbGap / kMantleRowGap now live in
+// panel_player_split_mantles.h because the column dial's inline
+// accessors read the same numbers the painter does. The box's own
+// inner measurements stay here, next to the painter that uses them.
 constexpr int kPanelW   = 378;     // HTML: .op width:378px — the SOURCE
                                    // panel's width, carried only as the
                                    // reference the extracted numbers came
                                    // from. This window never sets a
                                    // content size of 378.
-constexpr int kMargin   = 11;      // HTML: .op padding:11
-constexpr int kMbW      = 66;      // HTML: .mb width:66px
-constexpr int kMbH      = 60;      // .mb svg ~26px + cn + tm (tightened
-                                   // 2026-07-27). The panel reserves this
-                                   // for the block (panel_player.cpp:729).
-constexpr int kMbGap    = 8;       // HTML gap:8 inside .mantlerow
-                                   // (panel_player.cpp:1104)
 constexpr int kGapSection = 9;     // HTML: .mantlerow margin-top:9
 constexpr int kMantleGap  = 2;     // panel_player.cpp:728
                                    // (kGapSection - kGapBar, so the
@@ -301,17 +300,118 @@ bool PlayerMantlesStripPanel::hasContent() const
     return !rows_.isEmpty();
 }
 
-int PlayerMantlesStripPanel::contentHeight() const
+int PlayerMantlesStripPanel::naturalItemWidth() const
 {
-    // One row of kMbH boxes. The panel reserves kMantleGap + kMbH (2 + 60,
-    // panel_player.cpp:728-729) and this window keeps the same 60 so a
-    // box drawn side by side with the panel is the same size.
-    return kMargin + kMantleGap + kMbH + kMargin;
+    // The width of ONE mantle box at the panel's own slot width for the
+    // current slot count, INCLUDING the name-overflow allowance this
+    // window adds.
+    //
+    // What the panel's box width is, and what the strip's reservation
+    // is, are two different numbers here and the difference is exactly
+    // this `extra` term:
+    //
+    //     slotW   = (356 - 8*(n-1)) / n        one box, panel's measure
+    //     extra   = max(0, widestName - column(slotW))
+    //
+    // and the HISTORICAL reservation spends that extra ONCE for the
+    // whole window, not once per box:
+    //
+    //     W = n*slotW + (n-1)*kMbGap + 2*kMantlesMargin + extra
+    //
+    // Computing it per box instead (n*(slotW+extra)) is what the first
+    // version of this function did, and it is wrong by (n-1)*extra — a
+    // window 82px too wide for a long mantle name, measured against the
+    // panel it was carved out of. So the overflow is folded into the
+    // item width here ONLY so the wrap has a natural item to budget
+    // against; contentWidth() below re-derives `extra` and adds it the
+    // same single time the original did.
+    const int n = itemCount();
+    if (n <= 0)
+        return 0;
+    const int panelInnerW = kPanelW - 2 * kMantlesMargin;      // 356
+    const int slotW = (panelInnerW - kMbGap * (n - 1)) / n;
+
+    const QFont nameFont(QStringLiteral("Chakra Petch"), 8);
+    const QFontMetrics nameMetrics(nameFont);
+    int nameNeeded = 0;
+    for (const mhw::MantleRow &row : rows_.boxes)
+        nameNeeded = std::max(nameNeeded,
+                              nameMetrics.horizontalAdvance(row.name));
+    // The name column the box can offer at `slotW`, which is the same
+    // arithmetic mantleNameColumnWidth() performs.
+    const int available = mantleNameColumnWidth(slotW);
+    return slotW + std::max(0, nameNeeded - available);
+}
+
+void PlayerMantlesStripPanel::nudgeColumns(int delta)
+{
+    // Clamp to [1, 2]. Two boxes: 2 is the historical row, 1 stacks
+    // them. There is nothing beyond 2 to lay out and nothing below 1.
+    const int next = std::clamp(columns_ + delta, 1, kMantlesMaxColumns);
+    if (next == columns_)
+        return;
+    columns_ = next;
+    triggerUpdate();
+}
+
+void PlayerMantlesStripPanel::saveConfig()
+{
+    // Same shape and same reasons as the wirebug row's and the status
+    // strip's: Panel::saveConfig() first so the base keys are already on
+    // disk, then this window's own `columns` under its own section. The
+    // QSettings instance is rebuilt because Panel::settings() is a
+    // TU-local free function in panel.cpp.
+    Panel::saveConfig();
+    QSettings s(QSettings::IniFormat, QSettings::UserScope,
+                QStringLiteral("monster-overlay"),
+                QStringLiteral("panels"));
+    s.setValue(QStringLiteral("columns"), columns_);
+    s.sync();
+}
+
+void PlayerMantlesStripPanel::loadConfig()
+{
+    // Absent key reads the constructor's default (kMantlesColumns = 2,
+    // the historical two-box row), NOT the dial's floor. A present but
+    // out-of-range value is clamped.
+    Panel::loadConfig();
+    QSettings s(QSettings::IniFormat, QSettings::UserScope,
+                QStringLiteral("monster-overlay"),
+                QStringLiteral("panels"));
+    const int stored = std::max(1, s.value(QStringLiteral("columns"),
+                                           kMantlesColumns).toInt());
+    columns_ = std::clamp(stored, 1, kMantlesMaxColumns);
+}
+
+int PlayerMantlesStripPanel::wrappedColumns() const
+{
+    // Columns per row, from the width this window will ACTUALLY be.
+    // `appliedWidth()` is the funnel (floor, then lock), so a
+    // Ctrl+- that narrows the window past one box's width lands here
+    // and produces the stacked layout instead of being ignored.
+    //
+    // At the natural width the answer is the dial's default (2), which
+    // reproduces the historical two-box reservation exactly:
+    //     gridContentWidth(2, 2, itemW, 8) + 2*kMantlesMargin
+    // == n * slotW + (n-1)*kMbGap + 2*kMantlesMargin + extra
+    // with slotW = max(178, ...). Same number, one spelling.
+    const int n = itemCount();
+    if (n <= 0)
+        return 0;
+    const int itemW = naturalItemWidth();
+    if (itemW <= 0)
+        return 0;
+    const int budget = appliedWidth(contentWidth()) - 2 * kMantlesMargin;
+    // The dial position is a CEILING: a budget that cannot hold two
+    // boxes wraps to 1 (stacked) rather than overflowing.
+    return std::min(std::max(1, columns_),
+                    mhw::panel_sizing::gridItemsPerRow(
+                        budget, itemW, kMbGap, n));
 }
 
 int PlayerMantlesStripPanel::contentWidth() const
 {
-    // Content width, not a chrome width: the two boxes laid out with the
+    // Content width, not a chrome width: the boxes laid out with the
     // panel's own 8px inter-box gap, sized so the widest localized name
     // fits in the widest box's name column without eliding more glyphs
     // than the panel's own layout would.
@@ -322,13 +422,26 @@ int PlayerMantlesStripPanel::contentWidth() const
     // the widest name we are about to draw. A shorter name keeps the
     // panel's box width (so the two windows line up); a longer one widens
     // the window rather than eliding a label the panel would show.
+    //
+    // THE NAME OVERFLOW IS ADDED ONCE, NOT PER BOX — the historical
+    // reservation spent `extra` on the whole window, and so does this
+    // one. The two orders agree exactly for any column count:
+    //
+    //     cols*(slotW) + (cols-1)*kMbGap + extra
+    //   == cols*(slotW + extra/cols) + (cols-1)*kMbGap + extra%cols
+    //
+    // so folding the whole `extra` into each item and adding a further
+    // `extra` at the end would double-count it; adding it inside the
+    // item width and NOT again at the end would round it away. This
+    // function therefore derives `extra` once, adds it once, and the
+    // default-dial answer is bit-for-bit the pre-change number.
     const int n = rows_.boxes.size();
     if (n <= 0)
-        return 2 * kMargin;
+        return 2 * kMantlesMargin;
     if (!mantlesEnabled())
-        return 2 * kMargin;
+        return 2 * kMantlesMargin;
 
-    const int panelInnerW = kPanelW - 2 * kMargin;      // 356
+    const int panelInnerW = kPanelW - 2 * kMantlesMargin;      // 356
     const int slotW = (panelInnerW - kMbGap * (n - 1)) / n;
 
     const QFont nameFont(QStringLiteral("Chakra Petch"), 8);
@@ -337,12 +450,44 @@ int PlayerMantlesStripPanel::contentWidth() const
     for (const mhw::MantleRow &row : rows_.boxes)
         nameNeeded = std::max(nameNeeded,
                               nameMetrics.horizontalAdvance(row.name));
-    const int colAvailable = mantleNameColumnWidth(slotW);
-    const int extra = std::max(0, nameNeeded - colAvailable);
+    const int extra = std::max(0, nameNeeded - mantleNameColumnWidth(slotW));
 
-    // Two boxes (or one), each at least the panel's width, plus the gap
-    // between them and the margin on both sides.
-    return n * slotW + kMbGap * (n - 1) + 2 * kMargin + extra;
+    // THE DIAL POSITION, NOT THE WRAPPED ONE. This is the same choice
+    // the wirebug row makes and it is the one that keeps this function
+    // acyclic: contentWidth() must be derived from the DIAL (a user
+    // value), never from wrappedColumns() (which is derived FROM
+    // contentWidth() via appliedWidth). A reservation computed from the
+    // wrap would be a fixed-point iteration whose answer depends on its
+    // own previous value.
+    //
+    // So: reserve at the dial's position, and let the height (which
+    // DOES read the wrap, one step further along) reflect the stacking.
+    const int columns = std::max(1, columns_);
+    const int colsCapped = columns > n ? n : columns;
+    // std::max with 0 rather than panel_sizing::nonNegative(): the
+    // terms above are non-negative by construction, but a corrupt
+    // measurement reaching here must not push a negative into
+    // setFixedSize().
+    const int gridW = std::max(0, colsCapped * slotW
+                                  + (colsCapped - 1) * kMbGap);
+    return gridW + 2 * kMantlesMargin + extra;
+}
+
+int PlayerMantlesStripPanel::contentHeight() const
+{
+    // One row of kMbH boxes at the default dial; one row per wrapped row
+    // otherwise. The panel reserves kMantleGap + kMbH (2 + 60,
+    // panel_player.cpp:728-729) and this window keeps the same 60 so a
+    // box drawn side by side with the panel is the same size.
+    const int n = rows_.boxes.size();
+    if (n <= 0)
+        return kMantlesMargin + kMantleGap + kMbH + kMantlesMargin;
+    const int columns = wrappedColumns() > 0 ? wrappedColumns()
+                                             : std::max(1, columns_);
+    const int rows = mhw::panel_sizing::gridRowsFor(n, columns);
+    const int gridH = mhw::panel_sizing::gridContentHeight(
+        rows, kMbH, kMantleRowGap);
+    return kMantlesMargin + kMantleGap + gridH + kMantlesMargin;
 }
 
 void PlayerMantlesStripPanel::setupDemoData()
@@ -380,7 +525,7 @@ void PlayerMantlesStripPanel::paintPanel(QPainter &p)
     // here — the main loop asks hasVisibleContent() first. This is the
     // edit-preview / defensive branch.
     if (!mantlesEnabled() || rows_.isEmpty()) {
-        setContentSize(2 * kMargin, h);
+        setContentSize(2 * kMantlesMargin, h);
         return;
     }
 
@@ -394,15 +539,39 @@ void PlayerMantlesStripPanel::paintPanel(QPainter &p)
     // drawV03Chrome() nor paintPanelChrome(), exactly like the pilot
     // status strip.
 
+    // ---- the wrapped grid: reserve at columns, draw at the same ------
+    //
+    // Same shape as the wirebug row and for the same reason: the slot
+    // each box is drawn at is derived from the width the window will
+    // ACTUALLY be (`w`, after the base class's floor/lock), not from
+    // the width the content asked for. A dial position of 1 (or a
+    // narrow lock) stacks the two boxes vertically, and the row's
+    // height reservation (contentHeight above) counts two rows.
     const int n = rows_.boxes.size();
-    const int innerW = w - 2 * kMargin;
-    const int slotW = (innerW - kMbGap * (n - 1)) / n;
+    const int perRow = wrappedColumns() > 0 ? wrappedColumns()
+                                            : std::max(1, columns_);
+    // THE ACTUAL WIDTH, NOT THE REQUESTED ONE — same rule as the
+    // wirebug row: `w` is this window's reservation, appliedWidth() is
+    // what the base class's floor/lock funnel will actually make it,
+    // and the slots are drawn inside the second number.
+    const int innerW = appliedWidth(w) - 2 * kMantlesMargin;
 
-    int y = kMargin + kMantleGap;
     for (int i = 0; i < n; ++i) {
+        // Row-major, same as drawPillGrid(). The trailing row (with one
+        // box instead of two) divides by the items IT has, so a lone
+        // equipped slot gets the whole window rather than a half-width
+        // strip on the right.
+        const int rowIdx = i / perRow;
+        const int colIdx = i % perRow;
+        const int itemsInRow = std::min(perRow, n - rowIdx * perRow);
+        const int slotW = std::max(
+            mhw::panel_sizing::gridSlotWidth(innerW, itemsInRow, kMbGap),
+            kMinMantleBoxW);
         const mhw::MantleRow &row = rows_.boxes[i];
-        const int cx = kMargin + i * (slotW + kMbGap);
-        const QRectF box(cx, y, slotW, kMbH);
+        const int cx = kMantlesMargin + colIdx * (slotW + kMbGap);
+        const int cy = kMantlesMargin + kMantleGap
+                       + rowIdx * (kMbH + kMantleRowGap);
+        const QRectF box(cx, cy, slotW, kMbH);
         // Icon path first: a missing resource yields a null pixmap, which
         // drawMantleBox() already handles by drawing the box without one.
         const QPixmap icon = mhw::Icon::render(

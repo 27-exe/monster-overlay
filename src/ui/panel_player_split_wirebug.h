@@ -52,6 +52,42 @@
 #include <QString>
 #include <QVector>
 
+// The wirebug row's layout tokens. These are the four numbers the
+// generic column dial needs (item width, gap, row pitch, margin) and
+// they are the SAME values panel_player.cpp:752-753 reserved, so a
+// capsule drawn here is the same size as the panel's. They live in the
+// header rather than the .cpp's anonymous namespace because the dial's
+// inline accessors read them, and duplicating them as header constants
+// would let the two spellings drift.
+inline constexpr int kPillH      = 18;   // HTML: .pill height (panel_player.cpp:753)
+inline constexpr int kPillRowGap = 4;    // vertical pitch between wrapped rows
+inline constexpr int kPillGap    = 5;    // horizontal gap between capsules on a row
+// Named for this window rather than the shared `kMargin`: AUTOMOC
+// compiles every moc-bearing header into ONE translation unit, so a
+// file-scope name in two headers is a redefinition at build time even
+// though each header is only ever included alone elsewhere.
+inline constexpr int kWirebugMargin = 11;   // HTML: .op padding:11
+
+// The dial's default and range. The DEFAULT IS THE FULL ROW — every
+// capsule on one row — because that is the layout this window shipped
+// with and the one PlayerPanel shows: `gridContentWidth(n, n, itemW,
+// gap)` reproduces the historical reservation exactly, and any other
+// default would move the window on the first paint after upgrade.
+//
+// Pressing `[` steps down: 4 → 3 → 2 → 1, and 1 is the vertical list
+// the user asked for ("无法通过调整来调整成竖排排列"). The ceiling is the
+// Rise slot cap, because more columns than there are capsules is not a
+// layout — it is empty columns.
+inline constexpr int kWirebugColumns = 4;             // kRiseWirebugSlotCap
+inline constexpr int kWirebugMaxColumns = 4;   // kRiseWirebugSlotCap
+
+// The floor the draw side puts under one capsule's slot when a locked
+// budget is narrower than the capsule's natural width. A slot cut below
+// this has no room for the timer, so the pill would be clipped instead
+// of merely narrow — and "a pill cut in half beats no pill" is the same
+// trade drawPillGrid() already makes for the status strip.
+inline constexpr int kMinCapsuleW = 60;
+
 namespace mhw {
 
 // One wirebug capsule's resolved display state. `slot` is the source
@@ -130,6 +166,22 @@ public:
     // the base panels occupy (Panel::isSubWindow).
     [[nodiscard]] bool isSubWindow() const override { return true; }
 
+    // The columns dial survives an exit. Not virtual and not an override:
+    // Panel's versions are plain non-virtual members reached through
+    // Panel*, so these hide rather than extend them — every call site
+    // would have to know which of the two it is talking to. Both bodies
+    // therefore call the base explicitly, the same discipline
+    // PlayerStatusStripPanel::loadConfig/saveConfig documents for the
+    // same pair (panel_player_split.h).
+    //
+    // main.cpp is the caller: it calls saveConfig() on this panel the
+    // same way it calls it on every other sub-window when the user
+    // leaves edit mode, so this window reaches its own body the same way
+    // the strip reaches its own. The base keys are on disk before this
+    // one adds to them.
+    void loadConfig();
+    void saveConfig();
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
@@ -152,9 +204,51 @@ private:
     // panel's is the same size.
     [[nodiscard]] int  contentHeight() const;
 
+    // ─── the columns dial (v0.13) ─────────────────────────────────────
+    //
+    // The wirebug row is the second window to gain a column axis; the
+    // status strip was first and its dial was kept local to it. Both
+    // now answer the base class's virtuals instead of each carrying a
+    // private keyPressEvent handler, so the `[` `]` keys are handled
+    // once in Panel::keyPressEvent and no subclass has to forward a key
+    // it does not claim.
+    //
+    // The default is kWirebugColumns (= the slot cap), which is the
+    // full one-row layout this window shipped with. Clamped to
+    // [1, kWirebugMaxColumns]: 1 is the vertical list the user asked
+    // for, and above the slot cap there are no columns to draw.
+    [[nodiscard]] int  columns() const override { return columns_; }
+    void nudgeColumns(int delta) override;
+    [[nodiscard]] bool supportsColumns() const override { return true; }
+
+    // The row-layout vocabulary the generic wrap is derived from. These
+    // answer "what is one item", and the shared arithmetic in
+    // panel_sizing.h turns them plus a width budget into columns and
+    // rows — the same answers the status strip gives from its own
+    // tokens, so the two strips cannot drift about what a capsule is.
+    [[nodiscard]] int  itemCount() const override
+    {
+        return rows_.capsules.size();
+    }
+    [[nodiscard]] int  naturalItemWidth() const override;
+    [[nodiscard]] int  itemGap() const override { return kPillGap; }
+    [[nodiscard]] int  rowPitch() const override { return kPillH + kPillRowGap; }
+    [[nodiscard]] int  contentMargin() const override { return kWirebugMargin; }
+
+    // The width of the capsule grid, derived from the width this window
+    // will ACTUALLY be (appliedWidth, so a lock is honoured) and from
+    // the dial. Both the reservation and the draw go through here, which
+    // is what keeps the capsule slot inside the window's real extent
+    // instead of the one the content asked for.
+    [[nodiscard]] int  wrappedColumns() const;
+
     mhw::WirebugModel rows_{};
     // True while what is on screen came from setupDemoData(); the first
     // authoritative snapshot clears it (and the rows with it) so a demo
     // preview can never survive into a live session.
     bool              demoData_{false};
+    // The dial position. 1 = one capsule per row (a vertical list), 4 =
+    // every slot side by side. Clamped by nudgeColumns(); the default is
+    // the full row, not 1, so an untouched window is unchanged.
+    int               columns_{kWirebugColumns};
 };

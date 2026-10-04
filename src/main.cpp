@@ -38,6 +38,7 @@
 // block reads that bit on its own.
 #include "ui/panel_player_split_weapon.h"
 #include "ui/panel_player_split_info.h"
+#include "ui/panel_player_split_sharpness.h"
 #include "ui/panel_sections.h"
 // The four conf mask rows are parsed with the console's own codec, so
 // both sides of the console <-> overlay handshake share one format
@@ -519,6 +520,7 @@ int main(int argc, char **argv)
     PlayerWirebugStripPanel playerWirebugStripPanel;
     PlayerWeaponStripPanel playerWeaponStripPanel;
     PlayerInfoStripPanel playerInfoStripPanel;
+    PlayerSharpnessStripPanel playerSharpnessStripPanel;
 
     playerPanel.setEditMode(editMode);
     monsterPanel.setEditMode(editMode);
@@ -530,6 +532,7 @@ int main(int argc, char **argv)
     playerWirebugStripPanel.setEditMode(editMode);
     playerWeaponStripPanel.setEditMode(editMode);
     playerInfoStripPanel.setEditMode(editMode);
+    playerSharpnessStripPanel.setEditMode(editMode);
 
     // L1: apply section masks BEFORE show() so the first paint reflects
     // them — no one-frame flash of "all visible" if a mask is restrictive.
@@ -572,6 +575,7 @@ int main(int argc, char **argv)
     playerWirebugStripPanel.setSectionMask(maskPlayer);
     playerWeaponStripPanel.setSectionMask(maskPlayer);
     playerInfoStripPanel.setSectionMask(maskPlayer);
+    playerSharpnessStripPanel.setSectionMask(maskPlayer);
     damagePanel.setRiseDisplayOptions(riseDamageDisplayOptions);
     petDamagePanel.setDisplayOptions(riseDamageDisplayOptions);
     // Master gate: maps to the control console's "面板启用"
@@ -617,6 +621,7 @@ int main(int argc, char **argv)
     playerWirebugStripPanel.setPanelEnabled(playerSplitOn);
     playerWeaponStripPanel.setPanelEnabled(playerSplitOn);
     playerInfoStripPanel.setPanelEnabled(playerSplitOn);
+    playerSharpnessStripPanel.setPanelEnabled(playerSplitOn);
 
 
     // v0.8: CLI --output-* overrides whatever the persisted panels.ini
@@ -692,6 +697,7 @@ int main(int argc, char **argv)
         playerWirebugStripPanel.setVisible(editMode);
         playerWeaponStripPanel.setVisible(editMode);
         playerInfoStripPanel.setVisible(editMode);
+        playerSharpnessStripPanel.setVisible(editMode);
     }
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
@@ -823,6 +829,7 @@ int main(int argc, char **argv)
         playerWirebugStripPanel.retranslateUi();
         playerWeaponStripPanel.retranslateUi();
         playerInfoStripPanel.retranslateUi();
+        playerSharpnessStripPanel.retranslateUi();
     };
 
     QObject::connect(&timer, &QTimer::timeout, [&] {
@@ -867,8 +874,20 @@ int main(int argc, char **argv)
             return editMode && p.demoPrimed();
         };
 
+        // Does PlayerPanel still own anything in this layout? In Split the
+        // answer is currently no — every section is in a window of its own,
+        // including the sharpness bar — and a panel with a zero mask would
+        // otherwise mount as an empty shell, because PlayerPanel::
+        // hasContent() is unconditionally true (it is a whole panel, not a
+        // fragment) and nothing else in the loop consults the mask.
+        //
+        // Read from maskPlayerForPanel rather than recomputed: that IS the
+        // mask playerPanel was handed at line 568, so "does it own
+        // anything" and "what is it allowed to draw" cannot disagree.
+        const bool playerPanelHasBlocks = maskPlayerForPanel != 0;
+
         if (snap.player.valid || showAll) {
-            playerPanel.setVisible(true);
+            playerPanel.setVisible(playerPanelHasBlocks);
             if (skipUpdate(playerPanel)) {
                 playerPanel.triggerUpdate();
             } else {
@@ -878,7 +897,7 @@ int main(int argc, char **argv)
             // v0.1 behavior: keep player panel visible with a
             // "not connected" placeholder.
             playerPanel.update(snap);
-            playerPanel.setVisible(true);
+            playerPanel.setVisible(playerPanelHasBlocks);
         }
 
         // v0.12: the split's four windows. Three independent conditions in
@@ -961,6 +980,12 @@ int main(int argc, char **argv)
             playerInfoStripPanel.setVisible(
                 playerInfoStripPanel.panelEnabled()
                 && playerInfoStripPanel.hasVisibleContent());
+            const bool keepSharpnessDemo = skipUpdate(playerSharpnessStripPanel);
+            if (!keepSharpnessDemo)
+                playerSharpnessStripPanel.update(snap);
+            playerSharpnessStripPanel.setVisible(
+                playerSharpnessStripPanel.panelEnabled()
+                && playerSharpnessStripPanel.hasVisibleContent());
         }
 
         monsterPanel.setMultiplayer(snap.isMultiplayer);
@@ -1148,6 +1173,7 @@ int main(int argc, char **argv)
             playerWirebugStripPanel.saveConfig();
             playerWeaponStripPanel.saveConfig();
             playerInfoStripPanel.saveConfig();
+            playerSharpnessStripPanel.saveConfig();
         }
     }
 

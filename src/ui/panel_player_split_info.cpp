@@ -22,9 +22,11 @@
 
 #include <QFont>
 #include <QFontMetrics>
+#include <QFontMetricsF>
 #include <QPainter>
 
 #include <algorithm>
+#include <cmath>
 
 // i18n lookup, defined the same way panel_player.cpp:31-33 defines it.
 // The keys this file asks for are all existing ones — see the header for
@@ -40,22 +42,37 @@ namespace {
 
 // ---- Layout tokens ------------------------------------------------------
 //
-// The Quest half keeps the panel's own numbers verbatim (kQrowH 14 /
-// kGapQrow 3, panel_player.cpp:41/:58) because its four rows are a table
-// of values that must line up with each other. The Conn half gets its own
-// pitch (kMetaFontSize / kMetaRowH = 11) and its own gap above — which is
-// the entire content of 「重新设计排版」: in the panel both halves were
-// charged the same 14px line by the shared qrow stream whether they needed
-// it or not, and the 8px PID row was the one paying for rows it never
-// used.
+// THE PITCH RULE (measured, not estimated — see rowPitch below): a text
+// row must be as tall as ceil(QFontMetrics::height()) for the font it
+// draws in. The shipped constants got this wrong in BOTH streams and the
+// user saw both:
+//
+//   * the meta line was given kMetaRowH = 11 for an 11pt font whose
+//     height() is 19.48. Offscreen render: the 11px band shows 11 ink
+//     rows where a 25px band shows 17 — 6 rows of 「已连接」's glyphs are
+//     cut off top and bottom. That is the 「上下被挡住」 report.
+//   * the qrows were given kQrowH = 14 for a 10pt value whose
+//     tightBoundingRect is 15px (古代树森林), so the zone value was
+//     clipped by one row too — silently, because clipping into a QRectF
+//     is Qt's default and never warns.
+//
+// So every height below is either measured from metrics or a spacing
+// constant, and no font size is ever reused as a row height.
 constexpr int kMargin       = 11;   // HTML: .op padding:11 (panel:39)
-constexpr int kQrowH        = 14;   // HTML: .qrow line height (panel:41)
-constexpr int kGapQrow      = 3;    // vertical between .qrow lines (panel:58)
-constexpr int kMetaGap      = 3;    // the same 3px above the meta line
-constexpr int kMetaFontSize = 11;   // NOT 14 — see the header comment
-constexpr int kMetaRowH     = 11;   // the meta line's own pitch
-constexpr int kLabelGap     = 8;    // minimum label/value separation
+constexpr int kLabelGap     = 8;    // label/value separation inside one cell
+constexpr int kColGap       = 16;   // separation between the two cells on a line
+constexpr int kGapLine      = 3;    // vertical between the stream's lines
 constexpr int kDotInset     = 12;   // panel_player.cpp:830, text past the dot
+
+// The point sizes, named so the pitch derivation and the draw read the
+// same numbers. label/value/timer are the panel's own qrow fonts
+// (panel_player.cpp:810-814). kMetaFontSize was 11: the ONE number in
+// this file that is deliberately smaller than it was, because 11pt costs
+// 398px of inner width for one line (see the header comment).
+constexpr int kLabelPt      = 9;    // qFontL
+constexpr int kValuePt      = 10;   // qFontL10
+constexpr int kTimerPt      = 12;   // qFontL12
+constexpr int kMetaFontSize = 9;    // provenance line; panel's conn row is 8pt
 
 // ---- Colour palette (the four the Quest rows use) -----------------------
 constexpr int kLabelR  = 146; constexpr int kLabelG  = 148; constexpr int kLabelB  = 149;  // --t3
@@ -77,6 +94,36 @@ QFont makeFont(int px, QFont::Weight weight = QFont::Normal)
     QFont f(QStringLiteral("Chakra Petch"), px, weight);
     f.setStyleStrategy(QFont::PreferAntialias);
     return f;
+}
+
+// THE SAFE ROW HEIGHT. Not a constant, because "the font size in pixels"
+// is not a row height in Qt: makeFont(11) is an 11 POINT font, which at the
+// panel's 96 logical dpi resolves to a 19.48px line box, and a row of 11
+// cuts 6 rows of glyph ink off it. The formula is
+//
+//     rowPitch(f) == ceil(QFontMetrics(f).height())
+//
+// and the reason that exact choice among the three metrics on offer:
+//
+//   * ascent() + descent()  — measured EQUAL to height() for every size
+//     Chakra Petch ships (11pt: 14.88 + 4.61 = 19.48), because
+//     leading() is 0 for this family. So height() and ascent+descent
+//     agree HERE, and code written against either survives a font whose
+//     leading is non-zero only if it uses height() — that is the one
+//     metric that already includes leading.
+//   * tightBoundingRect() — is SMALLER and is the WRONG tool: it measures
+//     the ink of the string you pass it, so 「剩余」 reports 12px while
+//     「已连接」 reports 17px in the same 11pt font. A row height derived
+//     from it would clip on the next string, which is a value the layout
+//     cannot see. (It IS the right measure of how tall a specific string
+//     draws — used by the tests to prove the old row was too short.)
+//
+// ceil because the box is a qreal and the reserved band is an int: 19.48
+// reserved as 19 would still clip the 20th of a row that needs it.
+[[nodiscard]] int rowPitch(const QFont &f)
+{
+    const QFontMetricsF m(f);
+    return static_cast<int>(std::ceil(m.height()));
 }
 
 // panel_player.cpp:182-190
@@ -171,6 +218,56 @@ QString composeCartValue(const mhw::InfoRow &row)
     return QStringLiteral("%1 / %2").arg(row.deaths).arg(row.maxDeaths);
 }
 
+// ---- the redesign's two lines -------------------------------------------
+//
+// v0.12 shipped four stacked qrows + one meta row, which is five lines to
+// say what fits in three, and the window width was set by the LONGEST of
+// them (the meta line at 11pt = 398px inner), so the other four lines sat
+// in a 420px window carrying ~60-120px of content each. Measured dead
+// space per line: 301 / 279 / 349 / 338 of 398px.
+//
+// The two things a hunter reads (「zone + quest」 and 「remaining time」)
+// are now one line each, two columns per line, because both pairs fit
+// side by side: 「剩余 41:37」 + 16 + 「猫车 0 / 3」 is 146px wide, while
+// the meta line under them is 322px. Stacking them cost 2*21px of height
+// to make the window 156px wider than its content needed.
+//
+// So the height is now
+//     kMargin + questPitch + 3 + metaPitch + kMargin
+// with the quest stream being TWO lines (zone|quest, time|carts) instead
+// of four, and the meta stream still its own line at the foot — it is
+// provenance, and moving it to the head would put PID above the timer.
+
+// Which of the three lines a stream occupies, in stacking order.
+enum class InfoLine : int {
+    ZoneQuest = 0,   // 「区域」 left cell, 「任务」 right cell
+    TimeCarts = 1,   // 「剩余」 left cell, 「猫车」 right cell
+    Meta      = 2,   // dot + 已连接 · PID · BASE   party · #id
+};
+
+constexpr int kInfoLines = 3;
+
+// The pitch every line must reserve, measured at the fonts the paint
+// actually sets, via rowPitch() above:
+//   ZoneQuest  — max(9pt label, 10pt value)          -> ceil(16.89) = 17
+//   TimeCarts  — max(12pt timer, 10pt value)         -> ceil(20.78) = 21
+//   Meta       — max(9pt left,  9pt medium right)    -> ceil(15.58) = 16
+// A function of the fonts rather than three integer constants, so editing
+// a font size cannot desync the height the way kMetaRowH = 11 did.
+[[nodiscard]] int infoLinePitch(InfoLine line)
+{
+    switch (line) {
+    case InfoLine::ZoneQuest:
+        return std::max(rowPitch(makeFont(kLabelPt)), rowPitch(makeFont(kValuePt)));
+    case InfoLine::TimeCarts:
+        return std::max(rowPitch(makeFont(kTimerPt)), rowPitch(makeFont(kValuePt)));
+    case InfoLine::Meta:
+        return std::max(rowPitch(makeFont(kMetaFontSize)),
+                       rowPitch(makeFont(kMetaFontSize, QFont::Medium)));
+    }
+    return 0;   // unreachable: the switch above covers every enumerator
+}
+
 // The meta line's left half: the connection word plus the process
 // identity while attached, and the plain offline label when not. The
 // panel only ever reached its Conn row on the has-data path, so it always
@@ -201,15 +298,50 @@ QString composeMetaRight(const mhw::InfoRow &row)
     return right;
 }
 
-// The Quest stream's height in the panel's own pitch: four 14px rows with
-// the 3px inter-row gap and the last row's trailing gap trimmed —
-// panel_player.cpp:732-734 with n_qrow pinned to 4, because this window
-// owns all four rows and has no Conn row to interleave into the count.
-// This is the number the shared stream no longer produces, and the reason
-// the two halves can have different pitches at all.
-[[nodiscard]] constexpr int questStreamHeight()
+// A line is drawn when it belongs to an enabled stream. The Quest stream
+// owns the two table lines; the Conn stream owns the meta line. The
+// stacking order never changes — a stream going off collapses its own
+// lines out of the middle, it never reorders the ones that remain.
+[[nodiscard]] bool lineBelongsToStream(InfoLine line, bool quest, bool conn)
 {
-    return 4 * kQrowH + 3 * kGapQrow;   // 56 + 9 = 65
+    switch (line) {
+    case InfoLine::ZoneQuest:
+    case InfoLine::TimeCarts:
+        return quest;
+    case InfoLine::Meta:
+        return conn;
+    }
+    return false;
+}
+
+// The window's height: one pitch per drawn line, one kGapLine between
+// consecutive drawn lines, margin on both sides. Nothing else.
+//
+// This is the function the whole change is about. What it used to say —
+//
+//     h = 2*kMargin + 4*kQrowH + 3*kGapQrow + kMetaGap + kMetaRowH
+//       = 22 + 56 + 9 + 3 + 11 = 101
+//
+// — reserved 14px for the four qrows and 11px for the meta line, so the
+// 10pt zone value (15px of ink) and the 9pt meta text (17px of ink) were
+// both drawn shorter than the glyphs they carry, and the clip was silent
+// because drawText into a QRectF clips by default. The pitch now comes
+// from QFontMetrics.height(), so the reservation and the draw agree by
+// construction.
+[[nodiscard]] int streamHeight(bool quest, bool conn)
+{
+    int h = 2 * kMargin;
+    bool previous = false;
+    for (int i = 0; i < kInfoLines; ++i) {
+        const auto line = static_cast<InfoLine>(i);
+        if (!lineBelongsToStream(line, quest, conn))
+            continue;
+        if (previous)
+            h += kGapLine;
+        h += infoLinePitch(line);
+        previous = true;
+    }
+    return h;
 }
 
 } // namespace
@@ -376,20 +508,16 @@ bool PlayerInfoStripPanel::hasContent() const
 
 int PlayerInfoStripPanel::contentHeight() const
 {
-    // Two streams, measured independently — the point of the whole
-    // exercise. Not `n*14 + (n-1)*3` over five rows: the meta line pays
-    // its own 11px pitch and its own 3px gap, and it pays the gap only
-    // when something actually sits above it.
-    const bool quest = questEnabled();
-    const bool conn  = connEnabled();
-    int h = 2 * kMargin;
-    if (quest)
-        h += questStreamHeight();
-    if (quest && conn)
-        h += kMetaGap;
-    if (conn)
-        h += kMetaRowH;
-    return h;
+    // One pitch per drawn line, one gap between consecutive drawn lines,
+    // margin on both ends. The pitch comes from QFontMetrics.height(), so
+    // a row is never shorter than the glyphs it draws — the property
+    // kMetaRowH = 11 for an 11pt font did not have.
+    //
+    // Both streams on:  11 + 17 + 3 + 21 + 3 + 16 + 11 = 82
+    //                     (was 101 with the same streams on)
+    // Quest only:       11 + 17 + 3 + 21 + 11 = 63
+    // Conn only:        11 + 16 + 11 = 38
+    return streamHeight(questEnabled(), connEnabled());
 }
 
 int PlayerInfoStripPanel::contentWidth() const
@@ -397,42 +525,57 @@ int PlayerInfoStripPanel::contentWidth() const
     if (!infoEnabled())
         return 2 * kMargin;
 
-    // The five fonts the paint sets. Measuring with anything else is how a
-    // window ends up one elided glyph short on every row.
-    const QFont fLabel  = makeFont(9);
-    const QFont fValue  = makeFont(10, QFont::Medium);
-    const QFont fTimer  = makeFont(12, QFont::Bold);
+    // The fonts the paint sets, and ONLY those: the cell lambda below
+    // builds a QFontMetricsF from each one on demand, so a mismatch
+    // between what is measured and what is drawn has no place to hide.
+    // Measuring with anything else is how a window ends up one elided
+    // glyph short on every row.
+    const QFont fLabel  = makeFont(kLabelPt);
+    const QFont fValue  = makeFont(kValuePt, QFont::Medium);
+    const QFont fTimer  = makeFont(kTimerPt, QFont::Bold);
     const QFont fMeta   = makeFont(kMetaFontSize);
     const QFont fMetaR  = makeFont(kMetaFontSize, QFont::Medium);
-    const QFontMetrics mLabel(fLabel);
-    const QFontMetrics mValue(fValue);
-    const QFontMetrics mTimer(fTimer);
-    const QFontMetrics mMeta(fMeta);
-    const QFontMetrics mMetaR(fMetaR);
 
     int widest = 0;
-    auto need = [&widest](int labelW, int valueW) {
-        widest = std::max(widest, labelW + kLabelGap + valueW);
+    auto need = [&widest](int w) { widest = std::max(widest, w); };
+
+    // One cell's natural width, ceiled ONCE here and reused by the draw
+    // (paintPanel measures the same terms and must land on the same
+    // integer). Two roundings of one quantity is the reserve/draw drift
+    // this file already carries a header comment about.
+    auto cell = [](const QFont &lf, const QString &label,
+                   const QFont &vf, const QString &value) {
+        return static_cast<int>(std::ceil(
+            QFontMetricsF(lf).horizontalAdvance(label) + kLabelGap
+            + QFontMetricsF(vf).horizontalAdvance(value)));
     };
 
+    // Line 1: 「区域」 | 「任务」 — the two cells side by side, which is
+    // the whole point of the redesign: four stacked qrows into two lines.
     if (questEnabled()) {
-        const QString questValue = composeQuestValue(row_);
-        need(mLabel.horizontalAdvance(mh::tr("ui.player_zone")),
-             mValue.horizontalAdvance(row_.zoneLabel));
-        need(mLabel.horizontalAdvance(mh::tr("ui.player_quest")),
-             mValue.horizontalAdvance(questValue));
-        need(mLabel.horizontalAdvance(mh::tr("ui.player_time_left")),
-             mTimer.horizontalAdvance(row_.timeLeft));
-        need(mLabel.horizontalAdvance(mh::tr("ui.player_carts")),
-             mValue.horizontalAdvance(composeCartValue(row_)));
+        need(cell(fLabel, mh::tr("ui.player_zone"), fValue, row_.zoneLabel)
+             + kColGap
+             + cell(fLabel, mh::tr("ui.player_quest"), fValue,
+                    composeQuestValue(row_)));
+
+        // Line 2: 「剩余」 | 「猫车」. The timer stays 12pt/teal because
+        // that is the glance-at row; carts is 10pt.
+        need(cell(fLabel, mh::tr("ui.player_time_left"), fTimer, row_.timeLeft)
+             + kColGap
+             + cell(fLabel, mh::tr("ui.player_carts"), fValue,
+                    composeCartValue(row_)));
     }
 
     if (connEnabled()) {
-        // kDotInset is the dot-and-indent the panel puts in front of the
+        // kDotInset is the dot-plus-indent the panel puts in front of the
         // meta text (panel_player.cpp:827-831), so the measured line
-        // reserves it too.
-        need(kDotInset + mMeta.horizontalAdvance(composeMetaLeft(row_)),
-             mMetaR.horizontalAdvance(composeMetaRight(row_)));
+        // reserves it too — the same reservation the panel's own row made.
+        need(static_cast<int>(std::ceil(
+                 kDotInset + QFontMetricsF(fMeta).horizontalAdvance(
+                                 composeMetaLeft(row_))
+                 + kLabelGap
+                 + QFontMetricsF(fMetaR).horizontalAdvance(
+                       composeMetaRight(row_)))));
     }
 
     if (widest == 0)
@@ -506,85 +649,170 @@ void PlayerInfoStripPanel::paintPanel(QPainter &p)
     const int innerW    = drawnW - 2 * kMargin;
     int y = kMargin;
 
-    // ---- Quest stream: the panel's four qrows, in the panel's pitch ----
+    // One line of the window, advanced past when drawn. `pitch` is the
+    // reservation — infoLinePitch, i.e. ceil(QFontMetrics.height()) for
+    // the tallest font on that line — and it is the height the drawText
+    // rect gets too, so what is reserved is what is drawn into. That
+    // equality is the whole fix for 上下被挡住: the reserve and the draw
+    // can no longer disagree, because they read the same function.
+    auto advance = [&y](InfoLine line) {
+        y += infoLinePitch(line) + kGapLine;
+    };
+
+    // A two-cell line: label+value on the left cell, label+value on the
+    // right cell, kColGap between them. Each cell is LEFT-aligned inside
+    // a fixed-width slot so the two columns line up; the slots are sized
+    // by the cell's own measurement, so a value that grows pushes only
+    // its own column.
+    //
+    // Elision: the value is elided into its cell when the cell is narrower
+    // than the string. That is the escape valve that lets the width be
+    // driven by the NATURAL line while the user's minimum-width floor
+    // (minWidth) can still squeeze the content — the same rule
+    // panel_player.cpp:1076 applies to its own name column.
+    auto drawCell = [&p, &y, innerLeft](int slotLeft, int slotW,
+                                       const QString &label, const QFont &labelFont,
+                                       const QString &value, const QFont &valueFont,
+                                       const QColor &labelCol, const QColor &valueCol,
+                                       InfoLine line) {
+        const int pitch = infoLinePitch(line);
+        const QRectF rect(slotLeft, y, slotW, pitch);
+        const int labelW = QFontMetricsF(labelFont).horizontalAdvance(label);
+        p.setFont(labelFont);
+        p.setPen(labelCol);
+        p.drawText(rect, Qt::AlignLeft | Qt::AlignVCenter, label);
+        const QRectF valueRect(slotLeft + labelW + kLabelGap, y,
+                               slotW - labelW - kLabelGap, pitch);
+        p.setFont(valueFont);
+        p.setPen(valueCol);
+        // Elide only when the cell is genuinely narrower than the string,
+        // and decide that in the metric's own units. An unconditional
+        // elidedText() is wrong at the boundary: QRectF::width() is an
+        // int, so a value that needs exactly 37px inside 37px of slot
+        // elides — the timer read 「41:…」 in the demo render. The branch
+        // is what keeps "fits" and "must elide" from sharing a rounding
+        // rule, and the elision still fires the moment the user's
+        // minWidth floor squeezes the window below its natural width.
+        const int avail = slotW - labelW - kLabelGap;
+        const qreal need = QFontMetricsF(valueFont).horizontalAdvance(value);
+        if (need <= avail) {
+            p.drawText(valueRect, Qt::AlignLeft | Qt::AlignVCenter, value);
+        } else {
+            p.drawText(valueRect, Qt::AlignLeft | Qt::AlignVCenter,
+                       QFontMetricsF(valueFont).elidedText(value, Qt::ElideRight,
+                                                           avail));
+        }
+    };
+
+    // ---- Line 1: 区域 | 任务 -------------------------------------------
     if (quest) {
-        const QFont fLabel = makeFont(9);
-        const QFont fValue = makeFont(10, QFont::Medium);
-        const QFont fTimer = makeFont(12, QFont::Bold);
+        const QFont fLabel  = makeFont(kLabelPt);
+        const QFont fValue  = makeFont(kValuePt, QFont::Medium);
+        const QColor cLabel(kLabelR, kLabelG, kLabelB);
+        const QColor cZone(kZoneR, kZoneG, kZoneB);
+        const QColor cQuest(kQuestR, kQuestG, kQuestB);
 
-        auto drawQrow = [&p, &y, innerLeft, innerW](
-                            const QString &left, const QString &right,
-                            const QFont &leftFont, const QFont &rightFont,
-                            const QColor &leftCol, const QColor &rightCol) {
-            const QRectF rect(innerLeft, y, innerW, kQrowH);
-            p.setFont(leftFont);
-            p.setPen(leftCol);
-            p.drawText(rect, Qt::AlignLeft | Qt::AlignVCenter, left);
-            p.setFont(rightFont);
-            p.setPen(rightCol);
-            p.drawText(rect, Qt::AlignRight | Qt::AlignVCenter, right);
-            y += kQrowH + kGapQrow;
-        };
+        // ceil for the same reason the time cell's is: the advances are
+        // qreal, and the cell must not be a fraction narrower than the
+        // string it holds. contentWidth() applies the same ceil to the
+        // same two terms, so the window the compositor gives and the
+        // cell the draw sizes agree to the pixel.
+        const int zoneW = static_cast<int>(std::ceil(
+            QFontMetricsF(fLabel).horizontalAdvance(mh::tr("ui.player_zone"))
+            + kLabelGap
+            + QFontMetricsF(fValue).horizontalAdvance(row_.zoneLabel)));
+        const int questW = innerW - kColGap - zoneW;
 
-        // 区域  +  古代树森林  (panel_player.cpp:866-882)
-        drawQrow(mh::tr("ui.player_zone"), row_.zoneLabel,
-                 fLabel, fValue,
-                 QColor(kLabelR, kLabelG, kLabelB),
-                 QColor(kZoneR, kZoneG, kZoneB));
-
-        // 任务  +  MR ★6 · 进行中  (panel_player.cpp:884-912)
-        drawQrow(mh::tr("ui.player_quest"), composeQuestValue(row_),
-                 fLabel, fValue,
-                 QColor(kLabelR, kLabelG, kLabelB),
-                 QColor(kQuestR, kQuestG, kQuestB));
-
-        // 剩余  +  41:37  — the one row that was always the panel's
-        // header-sized value; here it is simply the first row, because
-        // the timer is what a hunter glances at and the process metadata
-        // is what a bug reporter reads.
-        // (panel_player.cpp:914-925)
-        drawQrow(mh::tr("ui.player_time_left"), row_.timeLeft,
-                 fLabel, fTimer,
-                 QColor(kLabelR, kLabelG, kLabelB),
-                 QColor(kTimerR, kTimerG, kTimerB));
-
-        // 猫车  +  0 / 3  (panel_player.cpp:927-939)
-        drawQrow(mh::tr("ui.player_carts"), composeCartValue(row_),
-                 fLabel, fValue,
-                 QColor(kLabelR, kLabelG, kLabelB),
-                 QColor(kCartR, kCartG, kCartB));
-
-        y -= kGapQrow;   // last qrow has no trailing inter-row gap
+        drawCell(innerLeft, zoneW, mh::tr("ui.player_zone"), fLabel,
+                 row_.zoneLabel, fValue, cLabel, cZone, InfoLine::ZoneQuest);
+        drawCell(innerLeft + zoneW + kColGap, questW,
+                 mh::tr("ui.player_quest"), fLabel,
+                 composeQuestValue(row_), fValue, cLabel, cQuest,
+                 InfoLine::ZoneQuest);
+        advance(InfoLine::ZoneQuest);
     }
 
-    // ---- Conn stream: the 11px meta line, at the foot ------------------
-    if (conn) {
-        if (quest)
-            y += kMetaGap;
+    // ---- Line 2: 剩余 | 猫车 -------------------------------------------
+    if (quest) {
+        const QFont fLabel  = makeFont(kLabelPt);
+        const QFont fValue  = makeFont(kValuePt, QFont::Medium);
+        const QFont fTimer  = makeFont(kTimerPt, QFont::Bold);
+        const QColor cLabel(kLabelR, kLabelG, kLabelB);
+        const QColor cTimer(kTimerR, kTimerG, kTimerB);
+        const QColor cCart(kCartR, kCartG, kCartB);
 
-        const QRectF rect(innerLeft, y, innerW, kMetaRowH);
+        // The timer cell gets what its own string needs; carts takes the
+        // rest. 「41:37」 at 12pt is 37px of advance, so ~69px is the
+        // natural line-2 left half and the remaining width is the carts
+        // column — which is dead space in every quest, and the point of
+        // pairing them.
+        //
+        // ceil on the FIRST measurement, not on the cell: the advances
+        // are qreal (12pt timer = 36.7px at this dpi), and a slot of 68
+        // for a string that measures 36.7 + 8 + label is exactly the
+        // case where the draw's own rect lands a fraction short and
+        // Qt elides a value that "should" fit. Sizing the cell in the
+        // metric's units keeps the fit decision on one side of the
+        // rounding line.
+        const int timeW = static_cast<int>(std::ceil(
+            QFontMetricsF(fLabel).horizontalAdvance(mh::tr("ui.player_time_left"))
+            + kLabelGap
+            + QFontMetricsF(fTimer).horizontalAdvance(row_.timeLeft)));
+        const int cartsW = innerW - kColGap - timeW;
+
+        drawCell(innerLeft, timeW, mh::tr("ui.player_time_left"), fLabel,
+                 row_.timeLeft, fTimer, cLabel, cTimer, InfoLine::TimeCarts);
+        drawCell(innerLeft + timeW + kColGap, cartsW,
+                 mh::tr("ui.player_carts"), fLabel,
+                 composeCartValue(row_), fValue, cLabel, cCart,
+                 InfoLine::TimeCarts);
+        advance(InfoLine::TimeCarts);
+    }
+
+    // ---- Line 3: the Conn stream's meta line, at the foot ---------------
+    if (conn) {
+        const int pitch = infoLinePitch(InfoLine::Meta);
+        const QRectF rect(innerLeft, y, innerW, pitch);
         const QColor metaCol(kMetaR, kMetaG, kMetaB);
 
         // The dot, in the panel's colour pair: green for a live attach,
         // red for a dead one. Drawn only when attached, because the
-        // offline label already carries its own 「○」.
+        // offline label already carries its own 「○」. Its centre is the
+        // pitch's centre, not a hard-coded 11/2.
         if (row_.connected) {
             p.setPen(Qt::NoPen);
             p.setBrush(QColor(kConnGreenR, kConnGreenG, kConnGreenB));
-            p.drawEllipse(QPointF(innerLeft + 5, y + kMetaRowH / 2.0),
-                          2.5, 2.5);
+            p.drawEllipse(QPointF(innerLeft + 5, y + pitch / 2.0), 2.5, 2.5);
             p.setBrush(Qt::NoBrush);
         }
 
+        // Left half, elided into the room the right half leaves it: the
+        // meta text is the one string in this window that can grow
+        // without bound (a 12-hex-digit base address), so it is the one
+        // that must yield when the user narrows the window. The boundary
+        // is decided in qreal units for the same reason drawCell's is.
+        const QString metaLeft = composeMetaLeft(row_);
+        const QString metaRight = composeMetaRight(row_);
+        const int rightW = QFontMetricsF(makeFont(kMetaFontSize, QFont::Medium))
+                               .horizontalAdvance(metaRight);
+        const int leftW = innerW - rightW - kLabelGap;
+        const int leftAvail = leftW - kDotInset;
+        const qreal leftNeed =
+            QFontMetricsF(makeFont(kMetaFontSize)).horizontalAdvance(metaLeft);
+
         p.setPen(metaCol);
         p.setFont(makeFont(kMetaFontSize));
-        p.drawText(rect.adjusted(kDotInset, 0, 0, 0),
-                   Qt::AlignLeft | Qt::AlignVCenter,
-                   composeMetaLeft(row_));
+        if (leftNeed <= leftAvail) {
+            p.drawText(QRectF(innerLeft + kDotInset, y, leftAvail, pitch),
+                       Qt::AlignLeft | Qt::AlignVCenter, metaLeft);
+        } else {
+            p.drawText(QRectF(innerLeft + kDotInset, y, leftAvail, pitch),
+                       Qt::AlignLeft | Qt::AlignVCenter,
+                       QFontMetricsF(makeFont(kMetaFontSize))
+                           .elidedText(metaLeft, Qt::ElideRight, leftAvail));
+        }
 
         p.setFont(makeFont(kMetaFontSize, QFont::Medium));
-        p.setPen(metaCol);
-        p.drawText(rect, Qt::AlignRight | Qt::AlignVCenter,
-                   composeMetaRight(row_));
+        p.drawText(rect, Qt::AlignRight | Qt::AlignVCenter, metaRight);
     }
 }

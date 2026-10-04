@@ -346,7 +346,7 @@
         "monster-control-p0-test",
         "snapshot-regression-tests"
       ],
-      "symbols": 54
+      "symbols": 63
     },
     "src/ui/panel_damage.cpp": {
       "class": "INDIRECT",
@@ -391,6 +391,7 @@
         "player-sharpness-tests"
       ],
       "refs": [
+        "player-sharpness-strip-tests",
         "player-sharpness-tests"
       ],
       "symbols": 5
@@ -402,7 +403,7 @@
         "player-status-strip-tests",
         "snapshot-regression-tests"
       ],
-      "symbols": 33
+      "symbols": 34
     },
     "src/ui/panel_player_split_bars.cpp": {
       "class": "INDIRECT",
@@ -426,7 +427,13 @@
       "refs": [
         "player-split-strips-tests"
       ],
-      "symbols": 29
+      "symbols": 35
+    },
+    "src/ui/panel_player_split_sharpness.cpp": {
+      "class": "ZERO",
+      "compiled_by": [],
+      "refs": [],
+      "symbols": 18
     },
     "src/ui/panel_player_split_weapon.cpp": {
       "class": "INDIRECT",
@@ -442,7 +449,7 @@
       "refs": [
         "player-split-strips-tests"
       ],
-      "symbols": 29
+      "symbols": 35
     },
     "src/ui/panel_source.cpp": {
       "class": "INDIRECT",

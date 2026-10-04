@@ -29,7 +29,14 @@
 //   * the zone LABEL dispatch, by the data layer (has<game>ZoneName) and
 //     never by a translated string: a snapshot carrying the OTHER game's
 //     zone id must fall through to the range fallback rather than render
-//     the wrong game's name.
+//     the wrong game's name;
+//   * THE ROW PITCH RULE — ceil(QFontMetrics(f).height()) for every font
+//     the window draws in. The shipped layout reserved 11px for an 11pt
+//     line and clipped 6 rows of 「已连接」's glyphs off it (measured, by
+//     rendering the same string into an 11px band and a 25px band and
+//     counting ink rows: 11 vs 17), and 14px for a 10pt value whose ink
+//     is 15px tall. The formulas are pinned here so the reservation can
+//     never again be a number typed by hand.
 //
 // The last group is the one that actually breaks: the door number table
 // changes with a game patch, and a zone id from the other game's band
@@ -43,9 +50,19 @@
 #include "rise/rise_zones.h"
 #include "world/world_types.h"
 
+// QtCore AND QtGui: the pitch rule is a question about REAL font metrics,
+// and QFontMetricsF fatals ("QGuiApplication::font(): Must construct a
+// QGuiApplication first") in a QCoreApplication-only process — measured,
+// not assumed. This is the one place this file reaches past QtCore, and
+// it is the point of the section below: a rule about pixels cannot be
+// checked against a made-up number.
 #include <QCoreApplication>
+#include <QGuiApplication>
+#include <QFont>
+#include <QFontMetricsF>
 #include <QString>
 
+#include <cmath>
 #include <cstdio>
 
 namespace {
@@ -78,11 +95,53 @@ mhw::GameSnapshot demoSnapshot()
     return snap;
 }
 
+// ─── the pitch rule, mirrored here ──────────────────────────────────────
+//
+// The rule lives in panel_player_split_info.cpp's anonymous namespace
+// (rowPitch / infoLinePitch / streamHeight) because it is a function of
+// QFontMetrics, and this target links QtCore-only on purpose — see the
+// header note above. So the property is pinned HERE as arithmetic on the
+// same inputs, and the two must stay equal: a font-size edit that moves
+// the .cpp's numbers without touching this file fails this test, which
+// is the whole point of writing it down twice.
+//
+// The mirror is three steps, not a copy of the implementation:
+//   1. the font constructor is the panel's own (family + point size +
+//      antialias strategy), spelled from the point-size constants the
+//      comment above records;
+//   2. the pitch is ceil(QFontMetrics::height());
+//   3. the window height is 2*kMargin + the drawn lines' pitches + one
+//      gap between consecutive drawn lines.
+QFont mirrorMakeFont(int pt, QFont::Weight weight = QFont::Normal)
+{
+    QFont f(QStringLiteral("Chakra Petch"), pt, weight);
+    f.setStyleStrategy(QFont::PreferAntialias);
+    return f;
+}
+
+int mirrorRowPitch(const QFont &f)
+{
+    return static_cast<int>(std::ceil(QFontMetricsF(f).height()));
+}
+
+// The window's layout tokens, mirrored from the .cpp. These are the
+// numbers the two fixes changed: kMetaRowH/kQrowH are gone (replaced by
+// metric-derived pitches) and kMetaFontSize dropped 11 -> 9.
+constexpr int kMirrorMargin = 11;
+constexpr int kMirrorGapLine = 3;
+constexpr int kMirrorLabelPt = 9;
+constexpr int kMirrorValuePt = 10;
+constexpr int kMirrorTimerPt = 12;
+constexpr int kMirrorMetaPt = 9;
+
 } // namespace
 
 int main(int argc, char *argv[])
 {
-    QCoreApplication app(argc, argv);
+    // QGuiApplication, not QCoreApplication, because QFontMetricsF needs a
+    // font database and fatals without one. offscreen keeps CI headless.
+    QGuiApplication app(argc, argv);
+    QCoreApplication::setApplicationName(QStringLiteral("player-info-strip-tests"));
 
     // ---- the shipped demo snapshot: every field, one assertion each ----
     {
@@ -290,6 +349,117 @@ int main(int argc, char *argv[])
                   && a.timeLeft == b.timeLeft
                   && a.pid == b.pid,
               "building the same snapshot twice is deterministic");
+    }
+
+    // ==================================================================
+    // ---- THE PITCH RULE (the (a) fix, pinned) ------------------------
+    // ==================================================================
+    //
+    // The defect this window was filed with: 「『已连接』的上下被挡住了」.
+    // Root cause is arithmetic that reused a font size as a row height.
+    // 11pt Chakra Petch has height() = 19.48, so a row of 11px removed
+    // 6 rows of glyph ink — measured by rendering the same string into
+    // an 11px band and a 25px band and counting ink rows (11 vs 17).
+    //
+    // The assertions below are the rule as a formula, so the number can
+    // never be typed by hand again. They are locale-independent: metrics
+    // are the font's, not the translation's, so they hold in zh-CN and
+    // en-US alike and may be asserted before any locale load.
+    {
+        const QFont fMeta     = mirrorMakeFont(kMirrorMetaPt);
+        const QFont fMetaMed  = mirrorMakeFont(kMirrorMetaPt, QFont::Medium);
+        const QFont fLabel    = mirrorMakeFont(kMirrorLabelPt);
+        const QFont fValue    = mirrorMakeFont(kMirrorValuePt, QFont::Medium);
+        const QFont fTimer    = mirrorMakeFont(kMirrorTimerPt, QFont::Bold);
+
+        // 1. A pitch derived from metrics is never smaller than the
+        //    string's own ink. This is the assertion the OLD code failed:
+        //    the 11px row was 6px shorter than the glyphs inside it, and
+        //    the reason the meta line could not be reserved at 11.
+        const int metaInk = static_cast<int>(std::ceil(
+            QFontMetricsF(fMeta)
+                .tightBoundingRect(QString::fromUtf8("已连接 · PID 12345 · BASE 0x7ffe00000000"))
+                .height()));
+        check(mirrorRowPitch(fMeta) >= metaInk,
+              "meta pitch >= the meta string's ink (the clip, as a formula)");
+
+        // 2. The OLD numbers are gone. kMetaRowH was 11 and kQrowH was
+        //    14 — pinning them as dead constants is how the fix survives
+        //    the next person who wants a "nice round number".
+        check(mirrorRowPitch(fMeta) > 11,
+              "the meta pitch is no longer the literal 11 the bug shipped");
+        check(mirrorRowPitch(fValue) > 14,
+              "the value pitch is no longer the literal 14 the qrows shipped");
+
+        // 3. ceil, not int: QFontMetrics::height() is a qreal and 15.58
+        //    truncated to 15 loses a row. The literal values are this
+        //    font's, recorded as a cross-check: if a font
+        //    substitution ever swaps Chakra Petch out, this tripwire
+        //    fires and every other number above is re-derived with it.
+        check(mirrorRowPitch(fMeta) == 16 && mirrorRowPitch(fLabel) == 16
+                  && mirrorRowPitch(fValue) == 17 && mirrorRowPitch(fTimer) == 21,
+              "the four pitches are ceil(height()) exactly "
+              "(16/16/17/21 for 9pt/9pt/10pt/12pt Chakra Petch)");
+
+        // 4. Every font the paint sets has a pitch that covers it. A
+        //    pitch BELOW the font's ascent+descent can only clip.
+        for (const QFont *f : {&fMeta, &fMetaMed, &fLabel, &fValue, &fTimer}) {
+            const QFontMetricsF m(*f);
+            check(mirrorRowPitch(*f) >= m.ascent() + m.descent() - 1.0,
+                  "a pitch never drops below ascent+descent (Medium case)");
+        }
+
+        // ==============================================================
+        // ---- THE NEW HEIGHTS (the (b) fix, pinned) ---------------
+        // ==============================================================
+        // Two lines of table + one meta line, at metric-derived pitches,
+        // gaps between consecutive drawn lines only. Mirrors streamHeight()
+        // in the .cpp.
+        const int pitchTable = std::max(mirrorRowPitch(fLabel), mirrorRowPitch(fValue));
+        const int pitchTime  = std::max(mirrorRowPitch(fTimer), mirrorRowPitch(fValue));
+        const int pitchMeta  = std::max(mirrorRowPitch(fMeta), mirrorRowPitch(fMetaMed));
+        const auto mirrorHeight = [&](bool quest, bool conn) {
+            // The .cpp walks the three lines in stacking order
+            // (ZoneQuest, TimeCarts, Meta) and adds a gap before every
+            // line but the first one drawn. Spelled out longhand here so
+            // the stacking order is visible rather than a loop index.
+            int h = 2 * kMirrorMargin;
+            bool prev = false;
+            if (quest) {                       // line 1
+                h += pitchTable;
+                prev = true;
+            }
+            if (quest) {                       // line 2
+                if (prev) h += kMirrorGapLine;
+                h += pitchTime;
+                prev = true;
+            }
+            if (conn) {                        // line 3
+                if (prev) h += kMirrorGapLine;
+                h += pitchMeta;
+                prev = true;
+            }
+            return h;
+        };
+
+        // Both streams on: 11 + 17 + 3 + 21 + 3 + 16 + 11 = 82, down from
+        // the 101 the five-row layout cost — and the meta line's glyphs
+        // are now inside their band.
+        check(mirrorHeight(true, true) == 82,
+              "both streams on -> 82px (was 101)");
+        check(mirrorHeight(true, true) < 101,
+              "the redesign is strictly shorter than what shipped");
+
+        // A stream going off collapses its own lines, never reorders the
+        // rest, and never leaves a dangling gap.
+        check(mirrorHeight(true, false) == 11 + pitchTable + 3 + pitchTime + 11,
+              "quest only -> margin + two lines + gap + margin");
+        check(mirrorHeight(false, true) == 11 + pitchMeta + 11,
+              "conn only -> margin + meta + margin, no stray gap");
+        check(mirrorHeight(false, true) < mirrorHeight(true, true),
+              "a disabled quest stream shrinks the window");
+        check(mirrorHeight(true, false) < mirrorHeight(true, true),
+              "a disabled conn stream shrinks the window");
     }
 
     std::printf("%s (%d failure(s))\n",

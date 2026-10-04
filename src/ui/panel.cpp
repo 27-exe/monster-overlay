@@ -27,6 +27,12 @@ constexpr double kMinScale = 0.5;
 constexpr double kMaxScale = 3.0;
 constexpr double kScaleStep = 0.1;
 constexpr int kBorderWidth = 2;
+// The panel body's corner radius, named because two functions now draw
+// it: drawV03Chrome() composes it with the stripe and the border, and
+// drawSubWindowBody() draws it on its own for a window whose frame has
+// been switched off. Two copies of one literal is exactly how the body
+// of a fragment drifts out of roundness with the panel it came from.
+constexpr double kChromeRadius = 2.0;
 
 QSettings &settings()
 {
@@ -262,6 +268,17 @@ void Panel::loadConfig()
                        0, kMaxMinSize);
     minH_ = std::clamp(settings().value(QStringLiteral("minH"), 0).toInt(),
                        0, kMaxMinSize);
+    // The SET size, same read-verbatim / clamp-to-sane-range rule. Its
+    // key names are the same ones with a `lock` prefix so an existing
+    // panels.ini keeps exactly the meaning it had: a section with no
+    // lockW/lockH keys reads 0/0, which is "no lock", and the section's
+    // geometry is decided by its content and its floor exactly as
+    // before. Not sharing the key with minW/minH is deliberate — two
+    // quantities, two keys, no reinterpretation on upgrade.
+    lockW_ = std::clamp(settings().value(QStringLiteral("lockW"), 0).toInt(),
+                        0, kMaxMinSize);
+    lockH_ = std::clamp(settings().value(QStringLiteral("lockH"), 0).toInt(),
+                        0, kMaxMinSize);
     opacity_ = settings().value(QStringLiteral("opacity"), 1.0).toDouble();
     bgAlpha_ = std::clamp(settings().value(QStringLiteral("bgAlpha"), 170).toInt(), 0, 255);
     // v0.8: per-panel screen selection. Empty = use whatever the OS calls
@@ -296,6 +313,15 @@ void Panel::saveConfig()
     settings().setValue(QStringLiteral("scale"), scale_);
     settings().setValue(QStringLiteral("minW"), minW_);
     settings().setValue(QStringLiteral("minH"), minH_);
+    // The SET size, written next to the floor it sits beside. Only
+    // written when non-zero: a key absent from the ini is exactly the
+    // state a pre-lock section is in, and emitting `lockW=0` for every
+    // panel would rewrite every user's file on first exit for no
+    // information.
+    if (lockW_ != 0)
+        settings().setValue(QStringLiteral("lockW"), lockW_);
+    if (lockH_ != 0)
+        settings().setValue(QStringLiteral("lockH"), lockH_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
     settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
     // A `visible` key used to be written here. It was removed because
@@ -326,10 +352,15 @@ void Panel::saveAppearance()
     settings().setValue(QStringLiteral("scale"), scale_);
     settings().setValue(QStringLiteral("minW"), minW_);
     settings().setValue(QStringLiteral("minH"), minH_);
+    // SET size, same non-zero-only rule as saveConfig().
+    if (lockW_ != 0)
+        settings().setValue(QStringLiteral("lockW"), lockW_);
+    if (lockH_ != 0)
+        settings().setValue(QStringLiteral("lockH"), lockH_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
     settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
-    // v0.5: also persist margins so the overlay's loadConfig()
-    // picks up the position the user set in the console. Same
+    // v0.5: also persist margins so the overlay's loadConfig() picks up
+    // the position the user set in the console. Same
     // read-verbatim rule as loadConfig(): the console's preview panels are
     // shown on the screens the user has attached NOW, so writing the raw
     // (unclamped) margins_ here preserves a position chosen on an output
@@ -460,8 +491,9 @@ void Panel::paintPanelChrome(QPainter &p, Accent accent) const
     // The whole decision is one boolean read. When chrome is off this
     // function returns without touching the painter at all — it does
     // NOT emit a transparent fill, a zero-alpha rect or a cleared pen:
-    // any of those would still land a pixel, and "chromeless" has to
-    // mean "the sub-window's own capsule pixels are the only pixels".
+    // any of those would still land a pixel, and a fragment's frame has
+    // to mean "the sub-window's own capsule pixels are the only frame
+    // pixels it has".
     //
     // PIXEL-PARITY NOTE: with chromeVisible_ == true (the default, and
     // the value all four shipped panels run with) this call is exactly
@@ -470,6 +502,11 @@ void Panel::paintPanelChrome(QPainter &p, Accent accent) const
     // can distinguish the two paths, which is why switching a subclass
     // from drawV03Chrome() to paintPanelChrome() is behaviour-neutral
     // today and becomes the opt-out tomorrow.
+    //
+    // What this DOES NOT cover any more: the translucent BODY. See
+    // drawSubWindowBody() — that is painted by paintEvent() for exactly
+    // the windows this function stops drawing for, so a fragment keeps
+    // its surface and loses only its frame.
     if (chromeVisible_)
         drawV03Chrome(p, accent);
 }
@@ -496,10 +533,45 @@ void Panel::paintEvent(QPaintEvent *)
     // Composite at the user's opacity. Probe-verified: QPainter::setOpacity
     // writes per-pixel alpha into the ARGB backing store (a=127 at 0.5,
     // a=76 at 0.3). With WA_TranslucentBackground the wayland surface has
-    // alphaBufferSize > 0 → QWaylandWindow::isOpaque() is false → KWin
+    // alphaBufferSize > 0 → QWaylandWindow::isOpaque() == false → KWin
     // enables blending. This is the only path that puts alpha into the
     // actual buffer the compositor sees.
     p.setOpacity(opacity_);
+
+    // The fragment's surface. A window that turned the frame off
+    // (chromeVisible_ == false — every v0.12 split sub-window) loses its
+    // stripe and its border, NOT its body: it is still a thing that sits
+    // on the game scene and still needs the same translucent #0c0e10 the
+    // panel sits on, or the six of them render as bare canvasses and the
+    // user's own words are 「只有那个 Player 玩家那个面板有半透明背景，
+    // 其余的背景全部丢失」.
+    //
+    // PIXEL-ORDER, and why each position is what it is:
+    //   * after setOpacity() — so the user's opacity slider governs the
+    //     body exactly as it governs every drawn pixel of a stock panel
+    //     (whose body lands after the same setOpacity, inside paintPanel).
+    //     Painting it before would make a fragment the one window in the
+    //     app whose surface ignores the slider.
+    //   * after the zoom — so it lands in logical coordinates like
+    //     everything drawV03Chrome() draws, and the background cannot
+    //     drift from the content at scale != 1 (the v0.7.5 reproducer).
+    //   * before paintPanel() — so a fragment's own pixels composite on
+    //     top of its surface rather than behind it.
+    //   * before the edit-mode demo border? No: that one is drawn in
+    //     DEVICE coordinates at the very top of this function, so it
+    //     stays as it was.
+    //
+    // PIXEL-PARITY for the shipping panels: none of them sets
+    // chromeVisible(false), so this branch is not taken by any of the ten
+    // single-mode baselines and their pixels do not move. The split
+    // windows each gain one rounded rect of translucent fill, which is
+    // precisely the defect being fixed.
+    //
+    // drawV03Chrome() is NOT called here and does not need to be: it
+    // starts with this same drawSubWindowBody() and then adds the stripe
+    // and the border, so a stock panel's body is still drawn exactly once.
+    if (!chromeVisible_)
+        drawSubWindowBody(p);
 
     // Minimized: small colored block with panel initial.
     if (minimized_) {
@@ -589,12 +661,13 @@ void Panel::keyPressEvent(QKeyEvent *e)
     if (!editMode_)
         return QMainWindow::keyPressEvent(e);
 
-    // `-` and `=` dial the minimum width; with Shift they dial the
-    // minimum height. They sit here, after the live-mode bail-out, so a
-    // stray press in-game cannot resize an overlay over the action, and
-    // BEFORE the arrow switch so a subclass overriding keyPressEvent still
-    // gets every key it did not claim — the same passthrough contract the
-    // strip's [ ] dial relies on.
+    // `-` and `=` dial the size; with Shift they dial the other axis
+    // and with Ctrl they dial the SET size instead of the floor. They
+    // sit here, after the live-mode bail-out, so a stray press in-game
+    // cannot resize an overlay over the action, and BEFORE the arrow
+    // switch so a subclass overriding keyPressEvent still gets every key
+    // it did not claim — the same passthrough contract the strip's
+    // [ ] dial relies on.
     //
     // Why this pair and not , and . or Shift+arrows: `-` and `=` are the
     // unshifted and shifted faces of ONE physical key on a US layout, so
@@ -602,20 +675,58 @@ void Panel::keyPressEvent(QKeyEvent *e)
     // / plus" the way the arrow keys read as "left / right". Shift means
     // the same thing it already means for the arrows — the other axis of
     // the same quantity — instead of a mode the user has to be inside.
+    //
+    // Ctrl is the SET-size modifier, and it is the same key for the same
+    // reason: it names a DIFFERENT quantity on the same two faces rather
+    // than introducing a third key the user has to find. The reported
+    // defect was that `=` alone did nothing on a window whose content
+    // already exceeded every floor; `=`+Ctrl is the press that has a
+    // guaranteed visible effect on every window, because a lock has no
+    // content-width precondition. The floor pair stays exactly where it
+    // was and keeps its meaning, so nothing a user already learned is
+    // re-interpreted.
     {
         const bool shift = (e->modifiers() & Qt::ShiftModifier) != 0;
+        const bool ctrl = (e->modifiers() & Qt::ControlModifier) != 0;
         int delta = 0;
         if (e->key() == Qt::Key_Minus || e->key() == Qt::Key_Underscore)
             delta = -kMinSizeStep;
         else if (e->key() == Qt::Key_Equal || e->key() == Qt::Key_Plus)
             delta = kMinSizeStep;
         if (delta != 0) {
-            if (shift)
-                nudgeMinHeight(delta);
+            if (ctrl)
+                shift ? nudgeLockHeight(delta) : nudgeLockWidth(delta);
             else
-                nudgeMinWidth(delta);
+                shift ? nudgeMinHeight(delta) : nudgeMinWidth(delta);
             return;
         }
+    }
+
+    // `[` and `]` are the COLUMNS dial: one item per row (a vertical
+    // column) versus many (a flat row). Same axis the status strip's
+    // pills dial has had since v0.12, now answered by every window that
+    // has a row to lay out.
+    //
+    // The dispatch is the whole point of putting these on the base class:
+    // supportsColumns() is false for the four base panels and for the
+    // strips that are not a row, so for them this is a plain
+    // unimplemented key that falls through to
+    // QMainWindow::keyPressEvent() exactly as it does today. No subclass
+    // has to forward a key it does not claim, because no subclass owns
+    // the key any more.
+    //
+    // The claim is CONDITIONAL and so is the early return: a window with
+    // no column axis must reach QMainWindow::keyPressEvent() here, which
+    // is the same place it reached before these keys existed on the base
+    // class at all.
+    if (supportsColumns()
+        && (e->key() == Qt::Key_BracketLeft
+            || e->key() == Qt::Key_BracketRight)) {
+        const int step = (e->key() == Qt::Key_BracketLeft)
+                             ? -kColumnsStep
+                             :  kColumnsStep;
+        nudgeColumns(step);
+        return;
     }
 
     // Arrow keys: nudge panel margins (edit mode only).
@@ -893,13 +1004,13 @@ void Panel::wheelEvent(QWheelEvent *e)
     saveConfig();
 }
 
-// -- v0.3 visual helpers (mirrors monster-overlay-concept.html tokens) --
+// -- v0.3 visual helpers (mirror monster-overlay-concept.html tokens) --
 
 QColor Panel::accentColor(Accent a) const
 {
     // Values come from the shared panel-accent table (panel_accent.h) so
-    // the preview and the live overlay cannot drift apart again. Keep the
-    // per-arm comments pointing at the HTML tokens they mirror.
+    // the preview and the live overlay cannot drift apart again. Keep
+    // the per-arm comments pointing at the HTML tokens they mirror.
     switch (a) {
     case Accent::Player:  return mhw::panel_accent::forSlot(0);  // --accent-purple
     case Accent::Monster: return mhw::panel_accent::forSlot(1);  // --enrage orange
@@ -926,38 +1037,45 @@ void Panel::drawV03Chrome(QPainter &p, Accent accent) const
     // the unscaled canvas size; combined with (0,0) origin it produces
     // a rect that the scaled painter maps back to the full device
     // surface exactly the way content rects do.
-    const QRectF r(0.0, 0.0,
-                   static_cast<qreal>(logicalSize_.width()),
-                   static_cast<qreal>(logicalSize_.height()));
-    constexpr double kRadius = 2.0;
-    const QColor accentCol = accentColor(accent);
-
-    // Panel body — #16181a base + a darker bottom edge for depth
-    p.setPen(Qt::NoPen);
-    // Deep semi-transparent background. No blur simulation: the panel is a
-    // stable dark tint over the game scene, while its data rows carry the
-    // coloured progress information.
-    p.setBrush(QColor(12, 14, 16, bgAlpha_));        // #0c0e10, user-adjustable
-    p.drawRoundedRect(r, kRadius, kRadius);
-
-    // Top gloss line — REMOVED 2026-07-27 (added subtle smudge on top edge
-    // that read as blur rather than crisp glass; the panel body's ~28%
-    // alpha now gives all the translucency we need.)
+    //
+    // v0.12.1: three layers, in the same order they always were — the
+    // body (now a call, see drawSubWindowBody), then the left accent
+    // stripe, then the 1px border. Nothing about the drawing moved; the
+    // body just became addressable on its own so a fragment window can
+    // get it without the other two.
+    drawSubWindowBody(p);
 
     // Left accent stripe (4px wide, vertically centered with margin).
     // 2026-07-27: bumped from 2px → 4px so it reads as a deliberate
     // accent on the now-glassy panel rather than disappearing.
+    const QRectF r(0.0, 0.0,
+                   static_cast<qreal>(logicalSize_.width()),
+                   static_cast<qreal>(logicalSize_.height()));
     const double stripeTop    = r.top() + 8;
     const double stripeBottom = r.bottom() - 8;
-    p.setBrush(accentCol);
     p.setPen(Qt::NoPen);
+    p.setBrush(accentColor(accent));
     p.drawRoundedRect(QRectF(r.left(), stripeTop, 4.0, stripeBottom - stripeTop),
                       1.0, 1.0);
 
     // 1px border (HTML: --border #2a2d2f)
     p.setBrush(Qt::NoBrush);
     p.setPen(QColor(42, 45, 47, 255));
-    p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), kRadius, kRadius);
+    p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), kChromeRadius, kChromeRadius);
+}
+
+void Panel::drawSubWindowBody(QPainter &p) const
+{
+    // Panel body — #16181a base + a darker bottom edge for depth
+    p.setPen(Qt::NoPen);
+    // Deep semi-transparent background. No blur simulation: the panel is a
+    // stable dark tint over the game scene, while its data rows carry the
+    // coloured progress information.
+    p.setBrush(QColor(12, 14, 16, bgAlpha_));        // #0c0e10, user-adjustable
+    p.drawRoundedRect(QRectF(0.0, 0.0,
+                             static_cast<qreal>(logicalSize_.width()),
+                             static_cast<qreal>(logicalSize_.height())),
+                      kChromeRadius, kChromeRadius);
 }
 
 void Panel::drawBarV03(QPainter &p, const QRectF &rect, float pct,
@@ -1042,8 +1160,12 @@ void Panel::resetToDefaults()
     // The size floors are user intent, so "reset" has to clear them: a
     // window left at minW=356 would otherwise survive a factory reset
     // and the user would have to rediscover the same sixteen presses.
+    // The SET size is cleared for the same reason, one sentence for the
+    // same defect: a locked window must not survive a reset either.
     minW_ = 0;
     minH_ = 0;
+    lockW_ = 0;
+    lockH_ = 0;
     if (logicalSize_.isValid())
         setContentSize(logicalSize_.width(), logicalSize_.height());
     update();   // paintEvent re-composites at the reset alpha (0.85)
@@ -1052,14 +1174,21 @@ void Panel::resetToDefaults()
 
 void Panel::applyMinSizeFloor(int &w, int &h) const
 {
-    // The shared helper, not a bare std::max here: a sub-window's paint
+    // The shared helpers, not a bare std::max here: a sub-window's paint
     // path has to reach the same answer (see effectiveWidth's note), and
     // two spellings of one rule is how the strip's reserve/draw pair
     // drifted apart in the first place. minW_/minH_ are already clamped
     // to [0, kMaxMinSize] on read, so the "negative floor means absent"
     // branch inside the helper is belt-and-braces for a direct caller.
+    //
+    // Floor first, lock second. Both are identities when their value is
+    // 0, which is what makes the pre-lock path bit-for-bit identical:
+    // a section with no lockW/lockH keys runs this exact code and
+    // max(w, 0) == w == lockedWidth(w, 0).
     w = mhw::panel_sizing::effectiveWidth(w, minW_);
     h = mhw::panel_sizing::effectiveHeight(h, minH_);
+    w = mhw::panel_sizing::lockedWidth(w, lockW_);
+    h = mhw::panel_sizing::lockedHeight(h, lockH_);
 }
 
 void Panel::nudgeMinWidth(int delta)
@@ -1081,4 +1210,77 @@ void Panel::nudgeMinHeight(int delta)
         return;
     minH_ = next;
     update();
+}
+
+void Panel::nudgeLockWidth(int delta)
+{
+    // THE FIRST PRESS STARTS FROM THE WINDOW AS IT IS NOW, not from 0.
+    //
+    // This is the difference between the lock dial being usable and being
+    // a trap. A naive `lockW_ + delta` starts at 0, so the first
+    // Ctrl+= on a 300px-wide wirebug strip sets the lock to 16 and the
+    // window collapses to 16 — the opposite of what any size dial should
+    // do on its first press. Reading the current width instead means the
+    // first press is one 16px step from where the user was looking,
+    // which is the same relative behaviour the margin arrows have.
+    //
+    // logicalSize_ rather than size(): size() is the device-pixel extent
+    // (w * scale_), and a lock is a logical measure the paint path
+    // compares against the content's own logical number. On a fresh
+    // panel logicalSize_ may be unset (-1), which the clamp handles as
+    // "start from nothing".
+    const int from = (lockW_ != 0) ? lockW_ : logicalSize_.width();
+    const int next = std::clamp(from + delta, 0, kMaxMinSize);
+    if (next == lockW_)
+        return;
+    lockW_ = next;
+    // 0 is "no lock", so dialling below the step clears it rather than
+    // parking a 0 that reads as a zero-width window.
+    update();
+}
+
+void Panel::nudgeLockHeight(int delta)
+{
+    const int from = (lockH_ != 0) ? lockH_ : logicalSize_.height();
+    const int next = std::clamp(from + delta, 0, kMaxMinSize);
+    if (next == lockH_)
+        return;
+    lockH_ = next;
+    update();
+}
+
+void Panel::setLockWidth(int w)
+{
+    const int next = std::clamp(w, 0, kMaxMinSize);
+    if (next == lockW_)
+        return;
+    lockW_ = next;
+    update();
+}
+
+void Panel::setLockHeight(int h)
+{
+    const int next = std::clamp(h, 0, kMaxMinSize);
+    if (next == lockH_)
+        return;
+    lockH_ = next;
+    update();
+}
+
+int Panel::appliedWidth(int contentWidth) const
+{
+    // The funnel, callable from a paint path. Order and guards mirror
+    // applyMinSizeFloor() exactly — this is not a second spelling of the
+    // rule, it is the SAME funnel reached from the other side, and the
+    // idempotency the header promises (appliedWidth(appliedWidth(c)) ==
+    // appliedWidth(c)) is what makes setContentSize(appliedWidth(c), ..)
+    // correct rather than a double application.
+    int w = mhw::panel_sizing::effectiveWidth(contentWidth, minW_);
+    return mhw::panel_sizing::lockedWidth(w, lockW_);
+}
+
+int Panel::appliedHeight(int contentHeight) const
+{
+    int h = mhw::panel_sizing::effectiveHeight(contentHeight, minH_);
+    return mhw::panel_sizing::lockedHeight(h, lockH_);
 }

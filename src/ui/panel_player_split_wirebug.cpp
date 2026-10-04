@@ -14,10 +14,12 @@
 #include "core/string_table.h"
 #include "ui/panel_player_metrics.h"
 #include "ui/panel_sections.h"
+#include "ui/panel_sizing.h"
 
 #include <QFontMetrics>
 #include <QPainter>
 #include <QPainterPath>
+#include <QSettings>
 
 #include <algorithm>
 #include <cmath>
@@ -37,23 +39,16 @@ inline QString tr(const QString &key)
 
 namespace {
 
-// ---- Layout tokens (panel_player.cpp:37-60, the ones this block owns) ---
+// ---- Layout tokens. See panel_player_split_wirebug.h ---------------
+// kWirebugMargin / kPillH / kPillRowGap / kPillGap now live in the header,
+// because the generic column dial's inline accessors read the same
+// numbers the painter does. Only the tokens that are NOT part of the
+// dial's vocabulary stay here.
 constexpr int kPanelW    = 378;     // HTML: .op width:378px — the SOURCE
                                     // panel's width, carried only as the
                                     // reference the extracted numbers came
                                     // from. This window never sets a
                                     // content size of 378.
-constexpr int kMargin    = 11;      // HTML: .op padding:11
-constexpr int kPillH     = 18;      // HTML: .pill height (b + span ~9px +
-                                    // padding). The panel reserves it for
-                                    // the whole row (panel_player.cpp:753).
-constexpr int kPillRowGap = 4;      // Vertical gap between the pill rows
-                                    // of a wrapping pill grid. Only one row
-                                    // is reachable for wirebugs (four
-                                    // source slots), so this token is the
-                                    // arithmetic the same one row uses.
-constexpr int kPillGap   = 5;       // Horizontal gap between capsules on
-                                    // the row (panel_player.cpp:1149).
 constexpr int kWirebugGap = 9;      // panel_player.cpp:752
                                     // (kGapSection, so the leading gap
                                     // inside this window is 9)
@@ -287,12 +282,126 @@ bool PlayerWirebugStripPanel::hasContent() const
     return !rows_.isEmpty();
 }
 
-int PlayerWirebugStripPanel::contentHeight() const
+int PlayerWirebugStripPanel::naturalItemWidth() const
 {
-    // One capsule row. The panel reserves kWirebugGap + kWirebugH (9 + 18,
-    // panel_player.cpp:752-753) and this window keeps the same 18 so a
-    // capsule drawn side by side with the panel's is the same size.
-    return kMargin + kWirebugGap + kPillH + kMargin;
+    // The width of ONE capsule: its label + timer column arithmetic,
+    // floored at the panel's own per-slot width for the current count so
+    // the window and the panel agree when they agree.
+    //
+    // NOT the window's width, and NOT gridSlotWidth() — a column count
+    // is budgeted against the natural item, and a slot is a budget
+    // divided by columns. Feeding a slot width in here would make the
+    // wrap depend on itself.
+    const int n = itemCount();
+    if (n <= 0)
+        return 0;
+
+    const int panelInnerW = kPanelW - 2 * kWirebugMargin;      // 356
+    const int slotW = (panelInnerW - kPillGap * (n - 1)) / n;
+
+    const QString plain = mh::tr("ui.wirebug_slot");
+    const QString numbered = mh::tr("ui.wirebug_slot_n");
+    int widest = 0;
+    for (const mhw::WirebugRow &row : rows_.capsules) {
+        const QString name = wirebugSlotLabel(row.slot, plain, numbered);
+        const QString timer = QStringLiteral("%1s").arg(
+            static_cast<int>(row.cooldown));
+        widest = std::max(widest, capsuleColumnsWidth(name, timer));
+    }
+    return std::max(slotW, widest);
+}
+
+void PlayerWirebugStripPanel::nudgeColumns(int delta)
+{
+    // Clamp to the dial's range. The base class routes `[` and `]`
+    // here only when supportsColumns() is true, so this body is also
+    // the whole reason the keys do anything on this window.
+    const int next = std::clamp(columns_ + delta, 1, kWirebugMaxColumns);
+    if (next == columns_)
+        return;
+    columns_ = next;
+    // Repaint re-derives the wrap and setContentSize()'s idempotent
+    // guard makes the redundant call free — the same path the strip's
+    // setPillsPerRow() takes.
+    triggerUpdate();
+}
+
+void PlayerWirebugStripPanel::saveConfig()
+{
+    // Written on the way out of edit mode only, same trigger as every
+    // other sub-window's.
+    //
+    // The QSettings instance is rebuilt rather than inherited, for the
+    // reason panel_player_split.cpp's saveConfig() documents:
+    // Panel::settings() is a TU-local free function in panel.cpp over a
+    // function-local static, so a subclass cannot reach it. Two
+    // QSettings on the same IniFormat/UserScope/org/app params address
+    // the same file and each flushes on destruction, so this writes the
+    // same bytes the base class would have — and Panel::saveConfig() is
+    // called FIRST so the base keys are already on disk before this one
+    // adds to them.
+    Panel::saveConfig();
+    QSettings s(QSettings::IniFormat, QSettings::UserScope,
+                QStringLiteral("monster-overlay"),
+                QStringLiteral("panels"));
+    s.setValue(QStringLiteral("columns"), columns_);
+    s.sync();
+}
+
+void PlayerWirebugStripPanel::loadConfig()
+{
+    // Same key name the status strip uses, under this window's own
+    // section ([player-wirebug], not [player-status]) — a section
+    // missing the key reads the same default the constructor installs,
+    // which is what makes the first read of an older panels.ini behave
+    // exactly as before: the dial is at its default, no lock, and the
+    // window is the one row it always was.
+    Panel::loadConfig();
+    QSettings s(QSettings::IniFormat, QSettings::UserScope,
+                QStringLiteral("monster-overlay"),
+                QStringLiteral("panels"));
+    // A section missing the key reads THE DEFAULT the constructor
+    // installs (kWirebugColumns, the full one-row layout), NOT 1 — the
+    // same spelling the status strip uses. Getting this wrong would
+    // hand every untouched panels.ini a stacked strip on its first
+    // load, which is a layout change no user asked for. A present but
+    // corrupt or out-of-range value is clamped, which is what the
+    // std::max(1, ...) below guards.
+    const int stored = std::max(1, s.value(QStringLiteral("columns"),
+                                           kWirebugColumns).toInt());
+    columns_ = std::clamp(stored, 1, kWirebugMaxColumns);
+}
+
+int PlayerWirebugStripPanel::wrappedColumns() const
+{
+    // Columns per row, from the width this window will ACTUALLY be.
+    //
+    // `appliedWidth()` is the funnel (floor, then lock), so a lock is
+    // already inside this number when the user has set one. That is
+    // what makes a Ctrl+- on a 300px wirebug window turn it into a
+    // one-column stack instead of doing nothing.
+    //
+    // At the natural width the answer is the dial's position, and the
+    // dial's default is the full row, so an untouched window reserves
+    // and draws exactly what it did before this change:
+    //     gridContentWidth(4, 4, itemW, 5) + 2*kWirebugMargin
+    // which is the historical `n * slotW + (n-1)*5 + 2*kWirebugMargin` with
+    // slotW = max(89, widest). Same number, two spellings — and the
+    // spelling that also answers for a narrower width.
+    const int n = itemCount();
+    if (n <= 0)
+        return 0;
+    const int itemW = naturalItemWidth();
+    if (itemW <= 0)
+        return 0;
+    const int budget = appliedWidth(contentWidth()) - 2 * kWirebugMargin;
+    // The dial's position is a CEILING on the wrap, not a target: a
+    // budget that cannot hold `columns` capsules per row wraps below it
+    // rather than overflowing. gridItemsPerRow's "at least one" floor
+    // means a budget narrower than one capsule still answers 1 column.
+    return std::min(std::max(1, columns_),
+                    mhw::panel_sizing::gridItemsPerRow(
+                        budget, itemW, kPillGap, n));
 }
 
 int PlayerWirebugStripPanel::contentWidth() const
@@ -305,26 +414,38 @@ int PlayerWirebugStripPanel::contentWidth() const
     // widest capsule actually needs, so the panel and this window agree
     // when they agree and this window never elides a label the panel
     // would have shown whole.
-    const int n = rows_.capsules.size();
-    if (n <= 0)
-        return 2 * kMargin;
+    if (itemCount() <= 0)
+        return 2 * kWirebugMargin;
     if (!wirebugEnabled())
-        return 2 * kMargin;
+        return 2 * kWirebugMargin;
 
-    const int panelInnerW = kPanelW - 2 * kMargin;      // 356
-    const int slotW = (panelInnerW - kPillGap * (n - 1)) / n;
+    const int columns = std::max(1, columns_);
+    const int gridW = mhw::panel_sizing::gridContentWidth(
+        itemCount(), columns, naturalItemWidth(), kPillGap);
+    return gridW + 2 * kWirebugMargin;
+}
 
-    const QString plain = mh::tr("ui.wirebug_slot");
-    const QString numbered = mh::tr("ui.wirebug_slot_n");
-    int widest = 0;
-    for (const mhw::WirebugRow &row : rows_.capsules) {
-        const QString name = wirebugSlotLabel(row.slot, plain, numbered);
-        const QString timer = QStringLiteral("%1s").arg(
-            static_cast<int>(row.cooldown));
-        widest = std::max(widest, capsuleColumnsWidth(name, timer));
-    }
-    const int usedSlotW = std::max(slotW, widest);
-    return n * usedSlotW + kPillGap * (n - 1) + 2 * kMargin;
+int PlayerWirebugStripPanel::contentHeight() const
+{
+    // One capsule row at the default dial; one row per wrapped row
+    // otherwise. The panel reserves kWirebugGap + kWirebugH (9 + 18,
+    // panel_player.cpp:752-753) and this window keeps the same 18 so a
+    // capsule drawn side by side with the panel's is the same size.
+    //
+    // This is the ONE place the wrap is read, and it is downstream of
+    // contentWidth() (via appliedWidth), so there is no cycle: the dial
+    // decides the width, the width plus the dial decide the wrap, the
+    // wrap decides the height. The draw side reads the same wrap.
+    const int n = itemCount();
+    if (n <= 0)
+        return kWirebugMargin + kWirebugGap + kPillH + kWirebugMargin;
+    const int perRow = wrappedColumns();
+    const int rows = (perRow > 0)
+        ? mhw::panel_sizing::gridRowsFor(n, perRow)
+        : mhw::panel_sizing::gridRowsFor(n, std::max(1, columns_));
+    const int gridH = mhw::panel_sizing::gridContentHeight(
+        rows, kPillH, kPillRowGap);
+    return kWirebugMargin + kWirebugGap + gridH + kWirebugMargin;
 }
 
 void PlayerWirebugStripPanel::setupDemoData()
@@ -375,7 +496,7 @@ void PlayerWirebugStripPanel::paintPanel(QPainter &p)
     // here — the main loop asks hasVisibleContent() first. This is the
     // edit-preview / defensive branch.
     if (!wirebugEnabled() || rows_.isEmpty()) {
-        setContentSize(2 * kMargin, h);
+        setContentSize(2 * kWirebugMargin, h);
         return;
     }
 
@@ -389,22 +510,54 @@ void PlayerWirebugStripPanel::paintPanel(QPainter &p)
     // drawV03Chrome() nor paintPanelChrome(), exactly like the pilot
     // status strip.
 
+    // ---- the wrapped grid: reserve at columns, draw at the same ------
+    //
+    // THE RESERVATION AND THE DRAW MUST SEE THE SAME WIDTH. The window
+    // width is `w` (the dial's own content width, plus any floor/lock
+    // the base class applies) and the capsule slots are derived from
+    // it — using `contentWidth()` directly here instead of the width
+    // the window actually ended up at is exactly how the status strip
+    // shipped a 91px window handing out 23px slots.
+    //
+    // THREE CONSUMERS, ONE NUMBER:
+    //   contentWidth()  -> the dial's reservation (this window's own)
+    //   appliedWidth()  -> what the base class will actually make it
+    //   the draw below  -> wrappedColumns() from the second one
     const int n = rows_.capsules.size();
-    const int innerW = w - 2 * kMargin;
-    const int slotW = (innerW - kPillGap * (n - 1)) / n;
+    const int perRow = wrappedColumns() > 0 ? wrappedColumns() : n;
+    // THE ACTUAL WIDTH, NOT THE REQUESTED ONE. `w` is what the window
+    // reserved BEFORE the base class's floor/lock funnel (setContentSize
+    // applies it inside), so a locked window is narrower than `w` and
+    // the draw must use the narrower number or every capsule overflows
+    // the surface. appliedWidth() is exactly that funnel exposed.
+    const int innerW = appliedWidth(w) - 2 * kWirebugMargin;
 
-    int y = kMargin + kWirebugGap;
+    const QString plain = mh::tr("ui.wirebug_slot");
+    const QString numbered = mh::tr("ui.wirebug_slot_n");
+
     for (int i = 0; i < n; ++i) {
+        // Wrap like drawPillGrid() does: row-major, with the last row
+        // filling what is left. A trailing row with fewer capsules than
+        // `perRow` is stretched by dividing by the items THAT row
+        // actually has — the same rule gridSlotWidth's inverse
+        // guarantees for full rows, applied by hand here because the
+        // last row is shorter.
+        const int rowIdx = i / perRow;
+        const int colIdx = i % perRow;
+        const int itemsInRow = std::min(perRow, n - rowIdx * perRow);
+        const int rowSlotW = std::max(
+            mhw::panel_sizing::gridSlotWidth(innerW, itemsInRow, kPillGap),
+            kMinCapsuleW);
         const mhw::WirebugRow &row = rows_.capsules[i];
-        const int cx = kMargin + i * (slotW + kPillGap);
-        const QRectF pillRect(cx, y, slotW, kPillH);
+        const int cx = kWirebugMargin + colIdx * (rowSlotW + kPillGap);
+        const int cy = kWirebugMargin + kWirebugGap
+                       + rowIdx * (kPillH + kPillRowGap);
+        const QRectF pillRect(cx, cy, rowSlotW, kPillH);
         // The label pair is re-resolved at the draw site, exactly as
         // panel_player.cpp:1161-1162 does, so a locale flip lands on the
         // next paint without the model being rebuilt. The slot number is
         // WirebugSnapshot::slot carried through the model, NOT the
         // capsule's index in this vector.
-        const QString plain = mh::tr("ui.wirebug_slot");
-        const QString numbered = mh::tr("ui.wirebug_slot_n");
         drawWirebug(p, pillRect,
                     wirebugSlotLabel(row.slot, plain, numbered),
                     row.cooldown, row.maxCooldown, row.temporary);

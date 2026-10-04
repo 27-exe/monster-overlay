@@ -28,6 +28,18 @@
 //      is lround(logical * scale) device pixels and the surface is a
 //      FLOOR for it. §6 sweeps 400 logical widths over the whole
 //      0.5..3.0 range asserting exactly that.
+//   6. THE FLOOR (§9). effectiveWidth() only ever raises the content's
+//      number, so a window's own content outranks it — correct for an
+//      asymmetry correction, and useless as a size dial, which is why
+//      §10 exists.
+//   7. THE LOCK (§10). lockedWidth() REPLACES the content's number.
+//      That is the one thing effectiveWidth() structurally cannot do and
+//      it is what the user's "=" dial was asking for. 0 is an identity in
+//      both functions, so a panel nobody has dialled is untouched.
+//   8. WHAT THE LOCK DOES TO CONTENT (§11). Nothing is cropped: the lock
+//      is a width budget and wrappedColumns()/wrappedRows() re-derive
+//      the wrap from it. A narrow lock stacks the capsules vertically,
+//      which is the other half of the direction the user asked for.
 //
 // Two deliberate omissions, so a reader does not go looking for them:
 //
@@ -113,6 +125,10 @@ int main()
     using mhw::panel_sizing::kScaleMin;
     using mhw::panel_sizing::kScaleStep;
     using mhw::panel_sizing::nonNegative;
+    using mhw::panel_sizing::lockedWidth;
+    using mhw::panel_sizing::lockedHeight;
+    using mhw::panel_sizing::wrappedColumns;
+    using mhw::panel_sizing::wrappedRows;
 
     // ====================================================================
     // 1. THE WRAP — how many items fit on a row
@@ -535,6 +551,252 @@ int main()
         check(monotone,
               "floor: width is monotone in the floor, so pressing = never "
               "appears to shrink the window");
+    }
+
+    // ====================================================================
+    // 10. THE USER'S SET SIZE — lockedWidth / lockedHeight
+    // ====================================================================
+    //
+    // Why this section exists next to §9 rather than inside it: a floor
+    // and a lock are different QUANTITIES and each has one property the
+    // other lacks. A floor can only raise the content's number, so it
+    // cannot make a window narrower than its content — which is exactly
+    // why the reported "=" dial did nothing on the 翔虫 strip, whose own
+    // content is already wider than any floor the dial can reach.
+    //
+    //   * §9 pins: 0 is an identity; content wins when larger.
+    //   * §10 pins: the LOCK wins when present; 0 is an identity again.
+    //
+    // The default is 0 in both cases, which is the whole migration
+    // story: a panels.ini with no lockW/lockH keys reads 0/0, and
+    //     lockedWidth(w, 0) == w
+    // for every content width w, so the ten committed pixel baselines
+    // are unchanged by this section existing.
+    {
+        // ---- 10.1 the identity, which is what keeps the baselines ----
+        check(lockedWidth(378, 0) == 378,
+              "lock: width lock 0 is an identity, so an undialed panel "
+              "keeps its content width");
+        check(lockedHeight(361, 0) == 361,
+              "lock: height lock 0 is an identity too");
+        check(lockedWidth(0, 0) == 0 && lockedHeight(0, 0) == 0,
+              "lock: 0 x 0 in, 0 x 0 out");
+
+        // THE DEFECT THIS FIXES. The wirebug strip's own content at the
+        // default four capsules is wider than the 300 the user would
+        // dial, so
+        //     effectiveWidth(content, 300) == content      // every press
+        // — a floor with no visible effect. The lock answers 300.
+        check(lockedWidth(420, 300) == 300,
+              "lock: a lock below the content width SHRINKS the window — "
+              "the press a floor cannot deliver");
+        check(lockedWidth(89, 300) == 300,
+              "lock: a lock above the content widens it, same answer the "
+              "floor gives, so the two agree where they overlap");
+        check(lockedWidth(300, 300) == 300,
+              "lock: a lock equal to the content is a no-op, both ways");
+
+        // A lock is honoured on BOTH axes, and one axis does not leak
+        // into the other: a width lock on a panel that never dialled
+        // its height must leave the height exactly as it was.
+        check(lockedWidth(200, 128) == 128 && lockedHeight(200, 0) == 200,
+              "lock: an axis with no lock is an identity on that axis "
+              "only");
+
+        // ---- 10.2 the degenerate content guard, mirroring §9 ---------
+        // A non-positive content is not a measurement (the collapsed
+        // 2*kMargin window, a corrupt .toInt()), and a lock must not
+        // manufacture a window to hold.
+        check(lockedWidth(0, 300) == 0,
+              "lock: zero content stays zero — there is no window to "
+              "widen or narrow");
+        check(lockedHeight(0, 48) == 0,
+              "lock: same on the other axis");
+        check(lockedWidth(-5, 300) == -5,
+              "lock: a negative measurement passes through rather than "
+              "being masked into a plausible-looking number");
+
+        // ---- 10.3 floor then lock, the order the funnel uses ---------
+        //
+        // Panel::applyMinSizeFloor applies effectiveWidth() FIRST and
+        // lockedWidth() SECOND. Both orders are tested because the
+        // wrong order is a silent defect: lock-then-floor lets a floor
+        // wider than the lock survive, and the user's "=" vanishes a
+        // second time — with no test failing and no log line to show it.
+        {
+            const int content = 89;      // the bars case
+            const int floorPx = 300;
+            const int lockPx = 200;
+            // floor raises 89 -> 300, lock then sets 200. The user's
+            // set size wins, which is the contract: a non-zero lock is
+            // an instruction, and an instruction is not outvoted by a
+            // default the same press also wrote.
+            const int applied = lockedWidth(effectiveWidth(content, floorPx),
+                                            lockPx);
+            check(applied == 200,
+                  "lock: applied after the floor, the lock wins — the "
+                  "order Panel::applyMinSizeFloor writes");
+            // And the idempotency that makes setContentSize(applied) safe:
+            // the funnel inside setContentSize runs again over this value
+            // and must answer the same number, or the compositor sees a
+            // size the paint path did not.
+            check(lockedWidth(effectiveWidth(applied, floorPx), lockPx)
+                  == applied,
+                  "lock: applying the funnel twice is a fixed point, so "
+                  "reserve-then-redraw cannot move the window");
+        }
+
+        // A lock of 0 with a floor set is the §9 answer exactly: the
+        // lock has no opinion and the floor stands.
+        check(lockedWidth(effectiveWidth(89, 300), 0) == 300,
+              "lock: no lock leaves the floor's answer untouched");
+
+        // ---- 10.4 monotone in the lock, but only where it is one ------
+        // Dialling the lock up must never appear to shrink the window.
+        //
+        // THE SWEEP STARTS AT 1, NOT 0, AND THAT IS THE POINT. There is
+        // exactly one non-monotone step in this function and it is
+        // lock 0 -> 1, where "no lock, the content decides" hands over
+        // to "the user decided". For a 420px window, lock 0 answers 420
+        // and lock 16 answers 16 — the step DOWN is real, by design, and
+        // asserting monotonicity across it would be asserting the lock
+        // cannot shrink anything, which is the floor's job and the very
+        // thing the lock was added to do.
+        //
+        // What the user must never see is a lock fight, so the property
+        // that IS asserted is the one the dial path depends on: for a
+        // lock already engaged, every further step moves the window in
+        // the direction pressed.
+        {
+            int prev = 1;
+            bool monotone = true;
+            for (int l = 1; l <= 512; l += 16) {
+                const int w = lockedWidth(89, l);
+                if (w < prev)
+                    monotone = false;
+                prev = w;
+            }
+            check(monotone,
+                  "lock: width is monotone in the lock for every "
+                  "ENGAGED value, so pressing Ctrl+= never appears to "
+                  "shrink the window");
+        }
+
+        // THE DISCONTINUITY, NAMED SO IT IS NOT REDISCOVERED AS A BUG.
+        // 0 is "absent", and absent -> present is the one step whose
+        // direction is not the button's. Panel::nudgeLockWidth hides it
+        // from the user by starting the first press from the window's
+        // current width rather than from 0, so the value the user dials
+        // out of an engaged lock is never this step.
+        check(lockedWidth(420, 0) > lockedWidth(420, 16),
+              "lock: the 0 -> engaged step narrows a window wider than "
+              "the new lock — the one non-monotone step, which is why "
+              "the dial seeds itself from the current width");
+    }
+
+    // ====================================================================
+    // 11. THE LOCK IS A WIDTH BUDGET, NOT A CROP — wrappedColumns/Rows
+    // ====================================================================
+    //
+    // The question the lock raises immediately is "what happens to the
+    // capsules". The answer this section pins: NOTHING IS CLIPPED. The
+    // lock is handed to the layout as a budget, and the wrap is derived
+    // from it — a narrow window stacks the capsules instead of cropping
+    // them. That is what makes a lock safe to hand a user, and it is the
+    // same direction the user asked for in "无法通过调整来调整成竖排排列".
+    //
+    //     lock 90,  4 capsules of 89 + 5 gap  -> 1 column, 4 rows
+    //     lock 300, same capsules             -> 3 columns, 2 rows
+    //     lock 0 (= content width)           -> 4 columns, 1 row
+    //
+    // and the last row is the one that must not move: at the natural
+    // width the wrap is exactly the item count, which is the layout
+    // every strip shipped with.
+    {
+        const int n = 4;
+        const int itemW = 89;              // the panel's own slot width
+        const int gap = 5;
+        // The natural reservation this budget is derived from.
+        const int naturalW = gridContentWidth(n, n, itemW, gap);
+
+        // ---- 11.1 THE DEFAULT PATH, WHICH IS THE BASELINE -----------
+        check(naturalW == n * itemW + (n - 1) * gap,
+              "wrap: the natural reservation is one full row (4*89 + "
+              "3*5 = 371), the layout every strip shipped with");
+        check(wrappedColumns(naturalW, itemW, gap, n) == n,
+              "wrap: at its natural width a window lays every item in "
+              "ONE row — the pixel-baseline property");
+        check(wrappedRows(naturalW, itemW, gap, n) == 1,
+              "wrap: one row at the natural width, so an untouched "
+              "window's height is unchanged");
+        // And the same for a row that is already narrower than one item
+        // per slot: 3 columns of 89 need 277, and 3 items fit in 277.
+        check(wrappedColumns(277, itemW, gap, 3) == 3,
+              "wrap: 3 x 89 + 2 x 5 = 277 fits exactly, 3-wide");
+
+        // ---- 11.2 the lock stacking them, which is the ask ----------
+        // A 90px budget holds ONE 89px capsule (89 <= 90, and 2*89+5 >
+        // 90), so the answer is 1 column and 4 rows: a vertical list.
+        check(wrappedColumns(90, itemW, gap, n) == 1,
+              "wrap: a 90px budget fits ONE capsule, so the wrap is one "
+              "column — the vertical list");
+        check(wrappedRows(90, itemW, gap, n) == n,
+              "wrap: one column of 4 capsules is 4 rows tall, so the "
+              "window grows down instead of clipping right");
+
+        // A 300px budget holds 3 (3*89 + 2*5 = 277 <= 300) but not 4
+        // (371 > 300): the middle case, where the wrap is neither the
+        // default nor the extreme.
+        check(wrappedColumns(300, itemW, gap, n) == 3,
+              "wrap: a 300px budget holds 3 of 4 capsules (277 <= 300, "
+              "371 > 300)");
+        check(wrappedRows(300, itemW, gap, n) == 2,
+              "wrap: 4 capsules at 3-wide is 2 rows");
+
+        // ---- 11.3 the "at least one" floor survives the wrap ---------
+        // A budget narrower than ONE item still answers 1 column, not 0:
+        // a grid with zero columns is not a layout, it is a
+        // divide-by-zero, and gridItemsPerRow's floor is what the
+        // composed wrappedColumns inherits.
+        check(wrappedColumns(20, itemW, gap, n) == 1,
+              "wrap: a 20px budget answers 1 column, not 0 — items "
+              "overflow rather than the layout disappearing");
+        check(wrappedRows(20, itemW, gap, n) == n,
+              "wrap: that one column is n rows, so nothing is lost");
+
+        // ---- 11.4 rows and columns are inverses ----------------------
+        // `rows * columns >= n` and `(rows-1) * columns < n` — the two
+        // properties that make a wrap a partition rather than a
+        // coincidence. Swept rather than spot-checked, because this is
+        // the identity the draw side trusts when it lays items out
+        // row-major.
+        {
+            bool partitionOk = true;
+            for (int budget = 0; budget <= 400; budget += 7) {
+                const int cols = wrappedColumns(budget, itemW, gap, n);
+                const int rows = wrappedRows(budget, itemW, gap, n);
+                if (cols < 1 || rows < 1) { partitionOk = false; break; }
+                if (rows * cols < n) { partitionOk = false; break; }
+                if ((rows - 1) * cols >= n) { partitionOk = false; break; }
+            }
+            check(partitionOk,
+                  "wrap: cols x rows is a partition of n over the whole "
+                  "budget sweep (57 values), not a coincidence at three "
+                  "hand-picked budgets");
+        }
+
+        // ---- 11.5 the dial position is a CEILING on the wrap ---------
+        // wrappedColumns() takes the dial as an upper bound: a window
+        // dialled to 2 columns in a budget that fits 1 answers 1, never
+        // 2. That is what stops the lock and the columns dial from
+        // fighting — see the report's rule, "width narrows the wrap
+        // from above, the dial narrows it from above, never below".
+        check(std::min(2, wrappedColumns(90, itemW, gap, n)) == 1,
+              "wrap: the dial (2) caps the wrap, so a narrow lock floors "
+              "it at 1 instead of overflowing");
+        check(std::min(4, wrappedColumns(300, itemW, gap, n)) == 3,
+              "wrap: the dial (4) does not widen a budget that already "
+              "holds fewer — the wrap is min(dial, fit)");
     }
 
     std::printf("\n%d checks, %d failure(s)\n%s\n", checks, failures,

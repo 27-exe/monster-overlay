@@ -435,6 +435,111 @@ struct GridSize {
     return minHeight > contentHeight ? minHeight : contentHeight;
 }
 
+// ─── the user's SET size, not only their floor ───────────────────────
+//
+// WHAT THIS ANSWERS THAT effectiveWidth() CANNOT
+// ----------------------------------------------
+// The floor answers "at least this wide". The user asked for "exactly
+// this wide", and those are not the same question. The reported defect
+// was a size dial that did nothing: a 翔虫 strip's own content is
+// already wider than any floor a dial session can reach, so
+// max(content, floor) == content for every press. A floor can only ever
+// RAISE a number the content measured — it has no way to move a window
+// that is already wider than the floor.
+//
+// So: a lock. A non-zero `lockW` REPLACES the content's answer. The
+// window is exactly that many logical pixels wide, whatever its
+// capsules measure.
+//
+// AND THEN WHAT HAPPENS TO THE CAPSULES?  That is the part that makes
+// this safe, and it is why a lock was chosen over a clip. The lock is
+// not handed to the draw side as a rectangle to crop — it is handed as
+// a WIDTH BUDGET, from which the wrap is derived (wrappedColumns, the
+// next block). A window narrower than the content re-flows the content
+// into more rows instead of cropping it:
+//
+//     9 capsules, lock 88  -> 1 column  -> 9 rows tall (a vertical list)
+//     9 capsules, lock 260 -> 3 columns -> 3 rows tall (the default look)
+//     9 capsules, lock 0   -> no lock   -> the content's own width
+//
+// So the answer to "what gets clipped when it does not fit" is
+// "nothing — it wraps". The one remaining crop is a budget too narrow
+// for the item's own minimum, which the caller floors at kMinPillW:
+// the same "a pill cut in half beats no pill" trade drawPillGrid
+// already makes, reachable only from a lock.
+//
+// WHY A SEPARATE FUNCTION AND NOT A MODE FLAG ON effectiveWidth()
+// --------------------------------------------------------------
+// Because both callers keep needing BOTH answers, in a fixed order:
+// apply the floor first (content wins over nothing), then the lock (the
+// user wins over the content). One function with a mode parameter would
+// let the two be swapped by accident, and the resulting defect — a
+// floor that silently demotes to a lock, or a lock that a content
+// width can outvote — is invisible until a user's layout moves. Two
+// named functions compose in one line and the order is right in the
+// code that reads it.
+//
+// 0 IS THE DEFAULT AND IS THE WHOLE MIGRATION STORY: lockW == 0 hands
+// the content's number straight back, so a section that has never been
+// dialled — which is every panels.ini written before this — is
+// bit-for-bit unchanged. The guard mirrors effectiveWidth's: a
+// non-positive content (the collapsed 2*kMargin window, or a corrupt
+// .toInt()) is not a measurement and passes through, because a lock
+// must not manufacture a window to hold.
+[[nodiscard]] inline int lockedWidth(int contentWidth, int lockWidth) noexcept
+{
+    if (contentWidth <= 0)
+        return contentWidth;
+    return lockWidth > 0 ? lockWidth : contentWidth;
+}
+
+[[nodiscard]] inline int lockedHeight(int contentHeight, int lockHeight) noexcept
+{
+    if (contentHeight <= 0)
+        return contentHeight;
+    return lockHeight > 0 ? lockHeight : contentHeight;
+}
+
+// ─── the locked budget's layout: how the items re-flow ───────────────
+//
+// NOT A NEW ARITHMETIC — this is gridItemsPerRow() composed with
+// gridRowsFor(), with gridItemsPerRow's "at least one" floor intact so
+// a budget narrower than one item still answers a one-column layout
+// rather than a zero-column one. It exists because that composition IS
+// the locked-width contract, and it deserves one name the tests can
+// pin instead of a pair of calls that must be remembered together:
+//
+//     wrappedColumns(naturalInnerW, itemMinW, gap, n) == n
+//
+// is the "default path unchanged" property — a window at its own
+// natural width must still lay every item in one row, or adopting this
+// would have re-stacked every strip on disk; and
+//
+//     wrappedRows(narrowInnerW, itemMinW, gap, n) > 1
+//
+// is the "the lock really did stack them" property — the whole point
+// of the user's request.
+//
+// `itemMinWidth` is the natural width of one drawn item (the widest
+// capsule's column arithmetic, the drawn mantle box), NOT a floor like
+// kMinPillW. Using the natural width is what makes the first property
+// hold: the natural reservation is
+//     n * itemMinWidth + (n-1) * gap
+// so at that budget every item fits and the answer is capped at
+// `count`, which is the layout that shipped.
+[[nodiscard]] constexpr int wrappedColumns(int available, int itemMinWidth,
+                                           int gap, int count) noexcept
+{
+    return gridItemsPerRow(available, itemMinWidth, gap, count);
+}
+
+[[nodiscard]] constexpr int wrappedRows(int available, int itemMinWidth,
+                                        int gap, int count) noexcept
+{
+    return gridRowsFor(count,
+                       wrappedColumns(available, itemMinWidth, gap, count));
+}
+
 // ─── diagnostics ─────────────────────────────────────────────────────
 
 // width / height as a ratio, 0 when either side is not a real size.

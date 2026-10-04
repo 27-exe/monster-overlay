@@ -638,7 +638,20 @@ void PlayerPanel::paintPanel(QPainter &p)
     }
 
     // ---- Section mask (ui/panel_sections.h) ----
-    const uint32_t smask     = sectionMask();
+    //
+    // v0.12.1: read through the schema migration. A mask persisted
+    // before abaa70e has bit 8 (Sharpness) as ZERO because the bit did
+    // not exist yet, and the old Weapon checkbox meant icon + name + MR
+    // + gauge together — so reading it verbatim answers "sharpness
+    // off" to a user who never had the option of saying anything, which
+    // is the reported 「斩味完全不见了」. migrateOldSharpnessBit()
+    // fills that one bit in from what the old schema meant. It is a
+    // pure transform of a value the caller already had (sectionMask()
+    // still returns what was set) and it leaves every bit that existed
+    // before v0.12 alone, so a hunter who had switched the weapon row
+    // off back then still gets no gauge.
+    const uint32_t smask     = mhw::PlayerSection::migrateOldSharpnessBit(
+                                   sectionMask());
     const bool onConn        = smask & mhw::PlayerSection::Conn;
     const bool onQuest       = smask & mhw::PlayerSection::Quest;
     const bool onWeapon      = smask & mhw::PlayerSection::Weapon;

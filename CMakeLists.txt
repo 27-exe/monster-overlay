@@ -252,6 +252,8 @@ add_library(mhw-ui STATIC
     src/ui/panel_player_split_weapon.h
     src/ui/panel_player_split_info.cpp
     src/ui/panel_player_split_info.h
+    src/ui/panel_player_split_sharpness.cpp
+    src/ui/panel_player_split_sharpness.h
     src/ui/panel_player_split_wirebug.cpp
     src/ui/panel_player_split_wirebug.h
     # The grid arithmetic every split window above shares: one definition of
@@ -1126,6 +1128,19 @@ add_executable(world-severable-scan-tests
     target_include_directories(player-info-strip-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(player-info-strip-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME player-info-strip-tests COMMAND player-info-strip-tests)
+
+    # v0.12: the sharpness sub-window. It has no model function of its own
+    # — it delegates to the same drawPlayerSharpnessBar() the panel used,
+    # which is why the migration was nearly free — so what is pinned here
+    # is the width contract and, more importantly, the migration that keeps
+    # the gauge visible for anyone whose persisted mask predates the bit.
+    add_executable(player-sharpness-strip-tests
+        tests/player_sharpness_strip_tests.cpp
+    )
+    target_link_libraries(player-sharpness-strip-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(player-sharpness-strip-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(player-sharpness-strip-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME player-sharpness-strip-tests COMMAND player-sharpness-strip-tests)
 
     # v0.12: the startup mask priority chain (explicit --mask-* CLI value >
     # the console's conf row > everything visible). Both headers are

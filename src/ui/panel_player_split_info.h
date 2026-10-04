@@ -25,21 +25,37 @@
 // 12px timer or an 8px PID. That is precisely what the user asked to
 // change, and the change is that the two blocks now own their own pitch:
 //
-//   * Quest keeps the panel's 14px / 3px qrow metrics — the four rows are
-//     a table of values and must line up with each other.
-//   * Conn becomes an 11px meta line with 5px breathing above it, in
-//     grey, at the BOTTOM. It is diagnostics (PID / BASE / party), not a
-//     value you read at a glance, and 3px of extra height per line was
-//     the price the shared stream charged it.
+//   * Quest keeps 9pt labels with 10pt values.
+//   * Conn becomes a 9pt meta line in grey, at the BOTTOM. It is
+//     diagnostics (PID / BASE / party), not a value you read at a
+//     glance.
 //
 // So this window's height is not `n*14 + (n-1)*3` over five rows. It is
-// the sum of two independently-measured streams, which is the whole
-// point: a block that wants a different line height can now have one.
-// The meta line is 11px for the same reason — see kMetaFontSize below.
+// the sum of three independently-measured LINES, each reserving
+// ceil(QFontMetrics::height()) for the tallest font that line draws —
+// which is the whole point: a block that wants a different line height
+// can now have one, and the reservation can never again be a font size
+// reused as a row height. See the .cpp's rowPitch() for why that one
+// formula and not the other two metrics on offer.
+//
+// THE LAYOUT (v0.12.1)
+// --------------------
+// Four stacked qrows became two lines of two columns each, because both
+// pairs fit side by side and the width was already being paid for:
+//
+//     line 1   区域 | 任务          (9pt labels, 10pt values)
+//     line 2   剩余 | 猫车          (12pt teal timer, 10pt carts)
+//     line 3   ● 已连接 · PID · BASE    4人 · #66801
+//
+// The old five-row layout cost 101px of height and had the widest line
+// (the meta text at 11pt) dictate a 420px window for rows carrying
+// 60–120px of content each. The window is now 345x82 — see the .cpp's
+// streamHeight() for the arithmetic, and the tests for the numbers as
+// assertions.
 //
 // The vertical order is inverted from the panel on purpose. The panel
 // leads with 已连接 · PID · BASE and follows with the four quest rows;
-// here the remaining time (the teal qFontL12 number, the one a hunter
+// here the remaining time (the teal 12pt number, the one a hunter
 // glances at) is the FIRST thing at the top, and the process metadata
 // drops to the foot of the window where it reads as provenance rather
 // than as content.
@@ -167,15 +183,15 @@ private:
     // layout and the paint at once.
     [[nodiscard]] bool infoEnabled() const;
 
-    // Height the window needs, in logical px — the two streams measured
-    // independently (see the header comment): Quest's 14px rows in the
-    // panel's own pitch, then the 11px meta line with its own breathing
-    // above it. A right margin closes the window on both sides.
+    // Height the window needs, in logical px — one metric-derived pitch
+    // per drawn line (ceil(QFontMetrics::height()) for that line's
+    // tallest font), one gap between consecutive drawn lines, margins on
+    // both sides. See the header comment and the .cpp's streamHeight().
     [[nodiscard]] int contentHeight() const;
 
     // Width the widest drawn line needs, measured in the same fonts the
-    // paint sets. Never 378 — that was PlayerPanel's width and belongs
-    // to it.
+    // paint sets and ceiled the same way. Never 378 — that was
+    // PlayerPanel's width and belongs to it.
     [[nodiscard]] int contentWidth() const;
 
     // Which streams this snapshot actually draws. Both gates are read

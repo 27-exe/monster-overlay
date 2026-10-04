@@ -68,16 +68,43 @@ public:
     // exactly the pixels v0.11.4 painted; nothing about the four
     // existing panels changes unless someone flips this.
     //
+    // v0.12.1: THE BODY IS NOT CHROME. Turning the switch off used to
+    // suppress all three drawV03Chrome() layers, and every sub-window the
+    // v0.12 split carved out of PlayerPanel sets it — so all six of them
+    // rendered with NO background at all. That is the user's report,
+    // verbatim: 「只有那个 Player 玩家那个面板有半透明背景，其余的背景
+    // 全部丢失」. Frame and surface answer two different questions —
+    // "is this a panel, or a fragment of one?" (stripe + hairline) and
+    // "what is the fragment drawn on top of?" (translucent body) — and
+    // one boolean was only ever right for the panel.
+    //
+    // So the switch now governs the FRAME alone. paintEvent() paints the
+    // rounded body for every window that turned the frame off, before
+    // paintPanel(), so a fragment keeps its fragment shape (no stripe,
+    // no border) while sitting on the same translucent #0c0e10 the panel
+    // sits on. That is the whole point of splitting a panel into
+    // windows rather than into bare canvases: each window is still a
+    // legible thing over the game, just not a duplicate of the panel it
+    // came from.
+    //
+    // WHY NOT A SECOND BOOL: the surface's own alpha is already
+    // per-window state (`bgAlpha`, persisted under each settings key, so
+    // the six of them already carry their own slider row), and "I am a
+    // fragment, not a panel" is already the single declaration the six
+    // subclasses make. `chromeVisible_ == false` IS that declaration —
+    // deriving the surface from it adds no state, and it cannot be set
+    // on a main panel without that panel also declaring itself a
+    // fragment.
+    //
     // WHY THIS EXISTS: a sub-window carved out of a panel (v0.12's
-    // capsule strips — debuff / buff / mantle / wirebug, per
-    // design/01-hunterpie-split.md §10.2) draws its own capsule
-    // geometry and must NOT carry panel chrome around it. It is also
-    // the lever for the measured "378x50 title band" defect: a
-    // mask=0 PlayerPanel does not vanish, it collapses to a title-only
-    // strip with ink spanning [0..366] (panel_player.cpp `totalH =
-    // kMargin + kTitleH` — "title always drawn"). A sub-window does
-    // not inherit that shape once chrome is off and it sizes itself to
-    // its own content.
+    // capsule strips — debuff / buff / mantle / wirebug / bars / weapon
+    // / info, per design/01-hunterpie-split.md §10.2) must not carry the
+    // panel's frame around it. It is also the lever for the measured
+    // "378x50 title band" defect: a mask=0 PlayerPanel does not vanish,
+    // it collapses to a title-only strip with ink spanning [0..366]
+    // (panel_player.cpp `totalH = kMargin + qrowStreamH + kMargin` —
+    // "title always drawn"). A sub-window does not inherit that shape
+    // once the frame is off and it sizes itself to its own content.
     //
     // Per-instance, not static: the same binary hosts chromed windows
     // and chromeless ones.
@@ -231,6 +258,8 @@ protected:
     // v0.3 visual helpers — match monster-overlay-concept.html tokens.
     enum class Accent { Player, Monster, Damage };
     //
+    // ─── the founding note of the indirection, kept verbatim ────────────
+    //
     // v0.12: `drawV03Chrome()` is kept UNMODIFIED and remains the
     // background/stripe/border painter. The chrome switch lives in
     // `paintPanelChrome()` below, which every subclass should call
@@ -250,15 +279,46 @@ protected:
     // want to opt out call paintPanelChrome(); the four that exist
     // today are untouched, so their pixels cannot move.
     //
-    // v0.12: chrome switch entry point for subclasses. Honours
+    // ─── v0.12.1 amendment, and what the switch really governs ──────────
+    //
+    // The founding note above still holds for the FRAME: the stripe and
+    // the border are the frame, and only paintPanelChrome() suppresses
+    // them. drawV03Chrome() itself is UNTOUCHED and still paints all
+    // three layers in one go; nothing inside it moved.
+    //
+    // What changed is where the BODY is drawn. `drawSubWindowBody()` is
+    // the body layer on its own (rounded rect, QColor(12,14,16,
+    // bgAlpha_), nothing else), paintEvent() calls it for every window
+    // whose frame is off, and it runs BEFORE paintPanel() so a
+    // fragment's own pixels composite on top of its surface rather than
+    // behind it. drawV03Chrome() keeps calling it as its own first step,
+    // so a stock Panel paints the body exactly once and exactly as
+    // before — no double-fill, no alpha-on-alpha.
+    //
+    //     paintEvent()   (virus, chrome off)          paintEvent()   (stock)
+    //     ├─ drawSubWindowBody()                    ├─ paintPanelChrome()  `── drawV03Chrome()
+    //     └─ paintPanel()                           │   └─ drawSubWindowBody()
+    //                                                └─ paintPanel()
+    //
+    // The two paths are therefore observationally identical for a stock
+    // panel, which is what keeps the ten single-mode baselines byte-for-
+    // byte: nothing in the chromeVisible_==true path executed or drew
+    // anything differently. Only the six chrome-off windows gain pixels.
+    //
+    // v0.12.1: chrome switch entry point for subclasses. Honours
     // chromeVisible_; when false it draws NOTHING (not even a
-    // background edge or a 1px border), so a chromeless sub-window
-    // leaves every pixel it does not explicitly paint untouched.
-    // Subclasses that keep calling drawV03Chrome() directly get the
-    // historical behaviour — the switch does not retroactively touch
+    // background edge or a 1px border) — see drawSubWindowBody() below
+    // for the surface, which is a separate question with a separate
+    // owner. Subclasses that keep calling drawV03Chrome() directly get
+    // the historical behaviour — the switch does not retroactively touch
     // them.
     void paintPanelChrome(QPainter &p, Accent accent) const;
     void drawV03Chrome(QPainter &p, Accent accent) const;
+    // v0.12.1: the translucent rounded body, on its own — the layer
+    // drawV03Chrome() paints first, factored out so paintEvent() can
+    // paint it for a window whose FRAME has been switched off. Exactly
+    // one body per window in either path; see the diagram above.
+    void drawSubWindowBody(QPainter &p) const;
     QColor accentColor(Accent a) const;
 
     // ─── the one default scale ───────────────────────────────────────
@@ -309,12 +369,24 @@ protected:
     // no resize semantic and the compositor does not arbitrate our
     // extent), so the adjustment has to be a value we own.
     //
-    // WHY A FLOOR AND NOT A LOCK: a lock freezes one instant's answer, so
-    // the next debuff — or a longer player name — either gets clipped or
-    // leaves a gap. A floor only ever raises the content's number, so
-    // content still wins whenever it is larger, and setting it back to 0
-    // restores the content-driven behaviour exactly. One int, three
-    // states, no mode to remember.
+    // WHY A FLOOR, AND WHY A LOCK SITS NEXT TO IT
+    // --------------------------------------------
+    // The floor is the historical rule: at least this wide. It answers
+    // "a gauge pair measured 89px of ink, a quarter of the 356px it had
+    // inside the panel, so raise it", which is an asymmetry correction
+    // and cannot clip anything because content still wins when larger.
+    //
+    // A floor alone cannot answer "make this exactly 300 wide", because
+    // for a window whose content is ALREADY wider than 300 the answer
+    // is content for every press — the dial the user reported dead. So
+    // lockW_ / lockH_ (above) are the second, orthogonal half: 0 = off
+    // and the floor applies; non-zero = the window IS that size.
+    //
+    // The lock is safe for content because it is handed to the draw side
+    // as a WIDTH BUDGET, from which the wrap is re-derived (see
+    // panel_sizing.h's wrappedColumns): a narrow lock stacks the
+    // capsules instead of cropping them, which is also the same
+    // direction the user asked for in "无法通过调整来调整成竖排排列".
     //
     // 0 is the default and is the whole migration story: a section that
     // has never been dialled has no key, reads 0, and max(w, 0) == w —
@@ -322,6 +394,12 @@ protected:
     // unaffected by any of this.
     int  minWidth() const { return minW_; }
     int  minHeight() const { return minH_; }
+    // The user's SET size, when there is one: a non-zero lockW_ makes
+    // the window exactly this wide, whatever the content measured. See
+    // panel_sizing.h's lockedWidth() and the block below for why a lock
+    // sits next to the floor instead of replacing it.
+    int  lockWidth() const { return lockW_; }
+    int  lockHeight() const { return lockH_; }
     // The dial's step. 16px because it is about a fifth of one capsule,
     // so six or seven presses take a strip from its content width to a
     // 300px window without the first press jumping past what the user
@@ -341,20 +419,155 @@ protected:
     // something the base class can do for it.
     virtual void nudgeMinWidth(int delta);
     virtual void nudgeMinHeight(int delta);
+    // Edit-mode keys `-` / `=` with Ctrl: the SET size rather than the
+    // floor. Same shape as the pair above for the same reason — a
+    // sub-window whose layout is derived from the window size (the
+    // strips wrap) gets its hook here, while one that is not
+    // (the base panels' fixed layouts) never overrides anything.
+    virtual void nudgeLockWidth(int delta);
+    virtual void nudgeLockHeight(int delta);
+
+    // Set the lock to an exact value (the generic columns dial writes a
+    // natural width, not a step). Not the same as nudgeLockWidth's
+    // "one step from here", so it is its own function rather than a
+    // delta of 0 — a 0 delta would read as "leave it alone" to anyone
+    // who knows the other two.
+    void setLockWidth(int w);
+    void setLockHeight(int h);
+
+    // ─── the width a panel will actually be, at its own content size ──
+    //
+    // The floor-then-lock funnel, exposed. A sub-window's paint path
+    // needs this because its WRAP is a function of the width it is
+    // actually going to get, not of the width its content asked for:
+    // a wirebug strip locked to 90px is a one-column stack, and the
+    // height that reserves for it is three rows, not one.
+    //
+    // Two guarantees the caller relies on:
+    //
+    //   1. appliedWidth(c) is an IDEMPOTENT endofunction, so
+    //      setContentSize(appliedWidth(c), ...) does not move the
+    //      window a second time — the funnel runs again inside
+    //      setContentSize() and answers the same number.
+    //   2. appliedWidth(c) == c when both the floor and the lock are 0,
+    //      which is every state a pre-lock panels.ini can be in.
+    [[nodiscard]] int appliedWidth(int contentWidth) const;
+    [[nodiscard]] int appliedHeight(int contentHeight) const;
+
+    // ─── the columns dial, promoted to the base class ─────────────────
+    //
+    // WHAT IT ANSWERS: how many items of this window's horizontal row go
+    // side by side. 1 is a vertical column; `count` is one flat row.
+    //
+    // WHY HERE AND NOT PER-SUBCLASS: it was first written on
+    // PlayerStatusStripPanel as setPillsPerRow() + its own [ ] handler,
+    // and that comment argued it should stay local while only one panel
+    // needed it. That stopped being true the moment the user asked why
+    // 翔虫 and 衣装 — also horizontal rows — could not be turned
+    // vertical: three windows now want the same key for the same
+    // behaviour, and per-class keyPressEvent handlers mean three copies
+    // of one passthrough contract that must each remember to forward
+    // every key it does not claim.
+    //
+    // WHY A VIRTUAL AND NOT AN ABSTRACT ONE: the default body is empty
+    // and that is load-bearing. The base panels (player / monster /
+    // damage / pets) and the strips that are not a row (bars, weapon,
+    // info) have no column axis to dial — a virtual with a no-op default
+    // lets them keep answering false from supportsColumns(), which is
+    // the one value that makes the `[` `]` keys reach
+    // QMainWindow::keyPressEvent() unclaimed, exactly as they do today.
+    // It also means `columns()` is a safe question to ask of ANY panel
+    // from the console or a test without a type test.
+    //
+    // THE CONTRACT:
+    //   * columns()        answers the DIAL position, or 0 when this
+    //     window has no column axis.
+    //   * nudgeColumns(delta) moves the dial by one step, clamped by the
+    //     subclass, and is a no-op when columns() is 0.
+    //   * supportsColumns() is the honest "would this dial do anything"
+    //     question, so a console can grey the keys instead of letting a
+    //     user press a dead key. It is default false and the two rows
+    //     that support it override it to true alongside the dial.
+    //   * itemCount() / naturalItemWidth() / itemGap() / rowPitch() /
+    //     contentMargin() are what a LAYOUT reads, as opposed to the
+    //     dial, so the wrap can be derived rather than re-measured per
+    //     window. They are not the dial and never were: a window's item
+    //     count is a property of its data, the dial is a property of the
+    //     user's choice.
+    virtual int columns() const { return 0; }
+    virtual void nudgeColumns(int delta) { (void)delta; }
+    virtual bool supportsColumns() const { return false; }
+
+    // One column per press. 1 was the step the status strip shipped its
+    // `[` / `]` handler with (panel_player_split.cpp:kColumnsStep), and it
+    // stays: a strip's column count is a small integer where any larger
+    // step would jump past the interesting range in one press — from the
+    // default 3 to a vertical list is two presses, not one.
+    static constexpr int kColumnsStep = 1;
+
+    // ─── the generic row-layout vocabulary a column dial is derived from
+    //
+    // These five answer, for a window whose content is a horizontal
+    // row of N items in a window `width` px wide: how many items there
+    // are, how wide and how tall one is, how much air sits between two
+    // of them, and how much padding the content inset has. They exist so
+    // the columns dial does not have to be re-derived per subclass: the
+    // wirebug strip, the mantles strip and the status strip all answer
+    // them, and the wrap arithmetic in panel_sizing.h is shared.
+    //
+    // DEFAULTS ARE THE "NOT A ROW" ANSWER, which is why an override is
+    // safe to add: a window that does not answer them gets 1 item per
+    // row of 0 px, which is the collapsed single-frame case, and every
+    // caller that reaches them is a window that DID override them.
+    virtual int itemCount() const { return 0; }
+    // Natural width of ONE item at full size, in logical px — the
+    // number a column's budget is measured against (the widest
+    // capsule's column arithmetic, the widest mantle box). NOT the
+    // window's content width.
+    virtual int naturalItemWidth() const { return 0; }
+    // Horizontal gap between two adjacent items in a row.
+    virtual int itemGap() const { return 0; }
+    // Vertical pitch of one wrapped row: item height + row gap.
+    virtual int rowPitch() const { return 0; }
+    // The margin this window's content starts at on each side. The base
+    // panels' margins are not this concept — they are chrome padding —
+    // which is why these default to 0 and only the content strips
+    // answer them.
+    virtual int contentMargin() const { return 0; }
 
 private:
     void applyGeometry();
     void setLayerKeyboardInteractivity(bool interactive);
     void nudgeMargins(int dx, int dy);
     void paintMinimized(QPainter &p);
-    // max() against the floors, applied inside setContentSize() — the
-    // one funnel both paintPanel() and a size nudge pass through, and
-    // the only place where the value Space captures into normalSize_ has
-    // already seen the floor. A panel that took the max itself would be
-    // correct today and wrong the first time a subclass forgot.
+    // max() against the floors, then lockedWidth/Height() against the
+    // user's SET size, applied inside setContentSize() — the one funnel
+    // both paintPanel() and a size nudge pass through, and the only
+    // place where the value Space captures into normalSize_ has already
+    // seen both. A panel that took the max itself would be correct today
+    // and wrong the first time a subclass forgot.
+    //
+    // ORDER IS LOAD-BEARING: floor first, lock second. The alternative
+    // order lets a floor wider than the lock survive the lock's
+    // assignment, which reads as "the = key did nothing" a second time.
+    //
+    // Both are applied only through the two named functions in
+    // panel_sizing.h, never inline: panel_player_split_bars.cpp,
+    // panel_player_split_weapon.cpp and panel_player_split_info.cpp each
+    // re-apply the floor to the width they draw into, and a third
+    // spelling of one rule is how the strip's reserve/draw pair drifted
+    // apart. Those call sites keep calling effectiveWidth(); the lock
+    // they need is added beside it, so no caller changes meaning.
     void applyMinSizeFloor(int &w, int &h) const;
     int  minW_{0};
     int  minH_{0};
+    // The SET size, 0 = off. Separate from minW_/minH_ rather than a
+    // mode flag on them, for the reason given in the public block:
+    // 0/0 is the pre-existing state every panels.ini on disk is in, and
+    // keeping it a distinct pair of members means "no lock" can never be
+    // mistaken for "a lock of zero width".
+    int  lockW_{0};
+    int  lockH_{0};
 
     // Push pushedMargins() (declared public) at the layer-shell surface.
     // Called from applyGeometry() so a surface (re)created because an

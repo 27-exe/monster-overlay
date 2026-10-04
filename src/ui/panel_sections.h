@@ -62,6 +62,106 @@ constexpr uint32_t kAll =
     Conn | Quest | Weapon | Bars | Mantles | Debuff | Buff | Wirebug
     | Sharpness;
 
+// =====================================================================
+// v0.12.1: THE BIT-THAT-DID-NOT-EXIST — back-compat for a persisted mask
+// written before Sharpness existed
+// =====================================================================
+//
+// THE DEFECT, in the user's own words: 「斩味完全不见了，只有一个单独的
+// 武器图标和MR等级」. Its shape is a plain read of the code: v0.12's
+// abaa70e added `Sharpness = 1u << 8` while the console's mask rows
+// (`player=<hex32>`) are a 32-bit field that had only ever needed bits
+// 0-7. Every mask persisted before that commit stores bit 8 as ZERO,
+// because there was no such thing to store. panel_player.cpp's prow
+// then reads `smask & Sharpness` — false — and skips the gauge, while
+// `Weapon` (bit 2, which in the old single bit meant icon + name + MR +
+// SHARPNESS TOGETHER) is still set and the identity trio draws.
+// Icon + MR with no gauge is exactly what was reported.
+//
+// WHY THIS IS A DIFFERENT THING FROM THE 4K MARGIN BUG. loadConfig()'s
+// iron rule is "never silently rewrite what the user stored", and it
+// is correct — a margin has one meaning, it was a real value the user
+// picked, and clamping it at read time destroyed it. This is the other
+// case, and the distinction is what decides the answer:
+//
+//   4K margin   : the USER chose that value, at a moment it was valid.
+//                 It is stored intent. Rewriting it is data loss.
+//
+//   missing bit : the user never chose anything. The bit did not exist
+//                 in their binary, so their config could not have said
+//                 "sharpness off" — the ONLY way to turn the gauge off
+//                 back then was the Weapon checkbox, which meant all
+//                 four things including the trio. There is no intent to
+//                 recover, and the stored ZERO is an artefact of the
+//                 bit width, not a decision.
+//
+// So this is not a read-time rewrite; it is a read-time INTERPRETATION.
+// `kAll` is the schema version of the mask field: "these are the
+// sections this build knows about". A value that is a subset of the old
+// 8-bit schema is an old-schema value, and reading it in the current
+// schema means filling the bits that did not exist with what they meant
+// before — which for Sharpness is "on, because it rode on Weapon".
+//
+// WHAT IS *NOT* REWRITTEN. Nothing here changes a stored bit the user
+// could actually have set:
+//
+//   * a bit that is 1 stays 1;
+//   * a bit that is 0 and EXISTED before v0.12 stays 0 — so a hunter
+//     who had turned Weapon off in a pre-v0.12 console still sees no
+//     weapon row and no gauge, exactly as before;
+//   * the stored text is untouched. This function is a pure uint32_t
+//     transform consumed at startup; serializePanelMasks() writes
+//     whatever the console's checkboxes now say, and the console's
+//     ninth row shows the migrated state so the user can switch it off
+//     for real. Reading a file never writes it.
+//
+// THE GUARD, and why it must be a guard rather than a blanket OR. A
+// blanket `| Sharpness` would also silently un-hide the gauge for a
+// user on v0.12 or later who deliberately turned it off, which IS data
+// loss of the ordinary kind. The migration therefore fires only when
+// the mask is a bit-8-less value — i.e. it has at least one bit set
+// inside the OLD schema and none outside it — and it is one-directional:
+// a user who turns Sharpness off on the new build writes bit 8 = 0 in a
+// mask that already uses a bit the old schema did not have, so
+// `migrateOldSharpnessBit` no longer applies and their choice sticks.
+//
+// This is the same shape as the codec's legacy three-row migration
+// (`damageMask |= OtherMembers` in ui/viewmodel/panel_mask_codec.h,
+// which fires only when no `pets=` row exists — "this conf predates the
+// Pets section"), just one layer lower: that one adds a BITS' worth of
+// section, this one decides which old value the new bit inherits. Both
+// answer "the user could not have said this, so their silence means what
+// it meant in their binary".
+[[nodiscard]] constexpr uint32_t migrateOldSharpnessBit(
+    uint32_t mask) noexcept
+{
+    // Everything a pre-v0.12 build could express: bits 0-7.
+    constexpr uint32_t kPreSplitMask = Conn | Quest | Weapon | Bars
+                                     | Mantles | Debuff | Buff | Wirebug;
+
+    // Not an old-schema value: some bit outside 0-7 is set, so this mask
+    // was written by a binary that already knew the new sections. Leave
+    // every bit of it alone — including a deliberate bit-8 zero.
+    if ((mask & ~kPreSplitMask) != 0u)
+        return mask;
+
+    // A fully-zero mask is ambiguous: it is both "old build, nothing
+    // hidden" and "user hid everything". The codec's damage migration
+    // makes the same choice (`damageMask > 0u`), for the same reason:
+    // hiding a whole panel is a real decision that must survive, while
+    // nothing being said about it is the default.
+    if (mask == 0u)
+        return mask;
+
+    // The bar rode on Weapon. If the weapon row was off there was no
+    // gauge to show, so honour that instead of resurrecting a block the
+    // user had switched off.
+    if ((mask & Weapon) == 0u)
+        return mask;
+
+    return mask | Sharpness;
+}
+
 inline const QStringList &names()
 {
     static const QStringList n = {
@@ -187,9 +287,23 @@ enum : int {
     // Same warning as Weapon above: the value MUST be the subscript of the
     // row appended to kPlayerSplitTargets below.
     Info = 5,     // 任务四行 + 进程信息        -> PlayerInfoStripPanel
+    // THE SEVENTH, and the one that makes the split TOTAL. The sharpness
+    // gauge was deliberately left behind by v0.12's weapon split because
+    // "174px of hard cost that buys nothing in its own window" — a
+    // statement about a panel that was keeping five other blocks in a
+    // 378px shell. Once the six rows below claimed every other
+    // PlayerSection bit, the leftover was a PlayerPanel holding ONE bar
+    // in a window that always draws a title row, and the user asked
+    // whether there was any point keeping it. There is not: the panel's
+    // derived mask is now 0x00000000 in Split mode and the gauge gets
+    // the window it was always too expensive to deserve.
+    //
+    // Same warning as Weapon above: the value MUST be the subscript of
+    // the row appended to kPlayerSplitTargets below.
+    Sharpness = 6, // 锋利度条 + 数字徽章        -> PlayerSharpnessStripPanel
 };
 // The row count of kPlayerSplitTargets, cross-checked by static_assert.
-constexpr int kCount = 6;
+constexpr int kCount = 7;
 } // namespace PlayerSplitSlot
 
 // One split window's claim on PlayerSection bits: "these blocks leave
@@ -277,18 +391,46 @@ constexpr PlayerSplitTarget kPlayerSplitTargets[] = {
     // Worth 82px of the single panel's 361 — 22.7%, the largest single
     // win left in it.
     {mhw::PlayerSection::Conn | mhw::PlayerSection::Quest},
+
+    // 锋利度条 + 数字徽章. THE LAST ONE OUT, and what makes the split
+    // total: with this row every PlayerSection bit is claimed, so
+    // PlayerPanel's derived mask in Split mode is 0x00000000.
+    //
+    // v0.12 left it behind with a recorded reason, and the reason was
+    // about the wrong thing. "174px of hard cost that buys nothing in
+    // its own window" (02-interaction-design.md §3.4, quoted above) is
+    // true of a 378px panel that still needs to hold five other blocks;
+    // it says nothing about a window that exists for exactly one block.
+    // Weighing the cost per block instead of per panel reverses the
+    // answer, and the evidence that the old answer was wrong is the
+    // arrangement it produced: a PlayerPanel whose only content was a
+    // gauge, beside a title row that `totalH = kMargin + kTitleH` always
+    // draws. The user's question about it — 「1所说的这个面板真有存在
+    // 必要么？」 — has one honest answer.
+    //
+    // The other two objections are smaller than they looked. "The
+    // right-edge avoidance arithmetic is welded to the name column that
+    // just left" no longer binds: the paintable is a free function that
+    // takes a right edge, and with no name in the window the edge IS
+    // the margin, so the arithmetic goes away rather than migrating.
+    // And the band is 174 + 22 = 196px of width, which as a fraction of
+    // a window that has nothing else in it is 100% — there is no
+    // "hard cost" left to compare against.
+    {mhw::PlayerSection::Sharpness},
 };
 
 // NOT in this table, and why — the audit's remaining candidates are
 // named here so the omission is a recorded decision rather than an
 // oversight:
-//   Sharpness — the sharpness bar. Left in PlayerPanel on purpose: as
-//            its own window it is 174px of gauge + badge with no width
-//            return (design 02-interaction-design.md §3.4), and it is
-//            the one block whose right-edge avoidance arithmetic is
-//            welded to the name column that just left. Its own bit
-//            exists so the console's weapon toggle and the bar's
-//            visibility are two questions again.
+//   (none — every PlayerSection bit is claimed. Sharpness used to be
+//   here: "left in PlayerPanel on purpose: 174px of gauge + badge with
+//   no width return, and the right-edge avoidance arithmetic is welded
+//   to the name column that just left". Both halves of that argument
+//   expired. The width argument is a per-panel ratio, and the panel it
+//   was defending ended up holding exactly one block — the thing worth
+//   protecting was already gone. The arithmetic argument expired with
+//   the name column: the paintable takes a right edge, and with nothing
+//   else in the window the edge is the margin. See the seventh row.)
 //
 // Conn and Quest are NOT listed here any more — they moved, together, in
 // the row above. The coupling argument that kept them behind was that

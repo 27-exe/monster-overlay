@@ -67,10 +67,6 @@ constexpr int kMinPillW    = 78;    // a one-glyph timer still readable
 constexpr int kMinColumns = mhw::kStatusStripMinColumns;
 constexpr int kMaxColumns = mhw::kStatusStripMaxColumns;
 
-// Keyboard step for the columns dial (see PlayerStatusStripPanel::
-// keyPressEvent): [ takes one column off the row, ] puts one back.
-constexpr int kColumnsStep = 1;
-
 // Absolute ceiling on the strip's window width, logical px.
 //
 // Retuned from the historical 420, which was sized for a ONE-CAPSULE
@@ -428,20 +424,27 @@ void PlayerStatusStripPanel::setPillsPerRow(int perRow)
 
 void PlayerStatusStripPanel::keyPressEvent(QKeyEvent *e)
 {
-    // [ / ] are the columns dial: fewer capsules per row = a narrower,
-    // taller strip; more = a wider, flatter one. They are the only two
-    // keys this panel claims, so every other key — Space (minimize),
-    // Esc (quit), the arrow-key margin nudge, the min-size dial added
-    // later — still goes through Panel::keyPressEvent unchanged.
-    if (editMode() && (e->key() == Qt::Key_BracketLeft
-                       || e->key() == Qt::Key_BracketRight)) {
-        const int step = (e->key() == Qt::Key_BracketLeft)
-                             ? -kColumnsStep
-                             :  kColumnsStep;
-        setPillsPerRow(columns_ + step);
-        return;
-    }
+    // The `[` `]` columns dial moved to the base class in v0.13
+    // (Panel::columns / nudgeColumns / kColumnsStep), so the branch
+    // that used to claim those two keys here is gone: Panel::
+    // keyPressEvent routes them through supportsColumns(), which this
+    // strip answers true for and every non-row panel answers false
+    // for.
+    //
+    // This override remains ONLY to keep the delegate explicit and
+    // documented. It claims nothing the base would not have claimed,
+    // so every key — Space (minimize), Esc (quit), the arrow margin
+    // nudge, the -/= size dials, and [ ] — behaves exactly as the
+    // v0.12 passthrough contract promised.
     Panel::keyPressEvent(e);
+}
+
+void PlayerStatusStripPanel::nudgeColumns(int delta)
+{
+    // One step in the dial's [1, 6] range. Same clamp setPillsPerRow()
+    // applies, reached from the base class's key dispatch rather than
+    // from a per-class key handler.
+    setPillsPerRow(columns_ + Panel::kColumnsStep * (delta > 0 ? 1 : -1));
 }
 
 void PlayerStatusStripPanel::saveConfig()

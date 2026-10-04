@@ -158,42 +158,45 @@ public:
     // locale-watch loop after StringTable::load() swapped the locale.
     void retranslateUi() override;
 
-    // COLUMNS DIAL (v0.12): capsules per wrapped row. Defaults to
-    // mhw::kStatusStripPillsPerRow (=3) so an untouched strip renders
-    // exactly as it did before the dial existed.
+    // v0.12 COLUMNS DIAL, now expressed as the base class's virtuals.
+    // Public setPillsPerRow() stays (console + tests use it, and
+    // panels.ini reads/writes the same key), so this is a thin
+    // translation layer rather than a rewrite.
     //
-    // Why a setter on THIS panel rather than a virtual on Panel: the
-    // dial is a layout question, and the width/height arithmetic that
-    // answers it lives in panel_sizing.h, which this panel (and only
-    // this panel, for now) feeds. Putting `nudgeColumns(int)` on the
-    // base class would make every panel declare an opinion about a
-    // token it does not use — the same "borrow nothing at the symbol
-    // level" rule the panel already follows for drawPill(). The base
-    // class also has no columns member and no columns key in panels.ini,
-    // so a virtual there would be a pure hook with no default body and
-    // no storage. When a second panel needs the dial the shared form
-    // can be promoted out of this panel with its invariants already
-    // pinned here; until then it stays local.
-    //
-    // Clamped into [kStatusStripMinColumns, kStatusStripMaxColumns] —
-    // 0 would make statusStripRows() divide by zero and contentWidth()
-    // would answer a 0-wide grid.
+    // WHY THE VIRTUALS EXIST AT ALL: `[` `]` are dispatched once, in
+    // Panel::keyPressEvent, through columns()/nudgeColumns()/
+    // supportsColumns(). Three windows answer them — this one, the
+    // wirebug row and the mantles row — so the key, the step and the
+    // edit-mode gate are one implementation instead of three copies of
+    // a passthrough contract. The base's default no-op is what keeps
+    // the four base panels and the non-row strips untouched by the key
+    // existing at all.
     void setPillsPerRow(int perRow);
     [[nodiscard]] int pillsPerRow() const noexcept { return columns_; }
 
-    // The columns dial survives an exit. Public because main.cpp calls
-    // saveConfig() on this panel the same way it calls it on every other
-    // sub-window when the user leaves edit mode — that call is the trigger
-    // for persisting, not an implementation detail.
-    //
     // Not `virtual` and not `override`: Panel's versions are plain
     // non-virtual members reached through Panel*, so these would hide
     // rather than extend them, and every call site would have to know
     // which of the two it is talking to. Both bodies therefore call the
     // base explicitly — the same discipline Panel::loadConfig() documents
     // for its own callers.
+    //
+    // Public, not protected: main.cpp calls saveConfig() on this panel
+    // when the user leaves edit mode, exactly as it does for every other
+    // sub-window. That call is the trigger for persisting, so hiding it
+    // from the only caller that makes it fire is a compile error with no
+    // way to express the intent.
     void loadConfig();
     void saveConfig();
+
+protected:
+    // Base-class dial, over this class's own columns_. The clamp is
+    // [kStatusStripMinColumns, kStatusStripMaxColumns] = [1, 6]: 0
+    // would make statusStripRows() divide by zero and contentWidth()
+    // would answer a 0-wide grid.
+    [[nodiscard]] int  columns() const override { return columns_; }
+    void nudgeColumns(int delta) override;
+    [[nodiscard]] bool supportsColumns() const override { return true; }
 
     // v0.12: this window was carved out of PlayerPanel, so it declares
     // itself a sub-window (Panel::isSubWindow, whose header comment names
@@ -203,19 +206,23 @@ public:
     // while the base panels' contract still says four.
     [[nodiscard]] bool isSubWindow() const override { return true; }
 
-protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
 
-    // THE COLUMNS DIAL'S KEY HANDLER. Panel::keyPressEvent is an
-    // override on QMainWindow (panel.h:226) with no virtual hook and no
-    // column plumbing of its own, and Panel::keyPressEvent's edit-mode
-    // arm unconditionally forwards unhandled keys to QMainWindow — so
-    // deriving an override here is both legal and the narrowest place
-    // to intercept: this class handles [ / ] and then defers to
-    // Panel::keyPressEvent(e) for EVERY other key, which keeps Space
-    // (minimize), Esc (quit) and the arrow-key margin nudge exactly as
-    // they were. No base-class edit, no second virtual to keep in sync.
+    // THE COLUMNS DIAL'S KEY HANDLER — now a DELEGATE, not an interceptor.
+    //
+    // v0.12 claimed [ ] here because PlayerPanel's keyPressEvent had no
+    // column plumbing. v0.13 moved the dial to the base class
+    // (Panel::columns / nudgeColumns / kColumnsStep), so the base's own
+    // keyPressEvent routes the keys; this override exists only because
+    // the base's implementation must stay reachable for the panels that
+    // do NOT support columns, and an override here documents the strip's
+    // claim explicitly. Its body is one line: claim nothing the base
+    // would have handled, forward everything.
+    //
+    // The passthrough contract is unchanged: Space (minimize), Esc
+    // (quit), the arrow-key margin nudge and the -/= size dials all
+    // still reach Panel::keyPressEvent from this class.
     //
     // Edit mode only, matching the other edit-mode affordances: a live
     // hunter's keystrokes belong to the game, not the overlay.
