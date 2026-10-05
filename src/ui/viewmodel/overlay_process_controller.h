@@ -61,6 +61,34 @@ public:
     // whatever it needs to save, then calls this.
     void restartWithCurrentGame();
 
+    // v0.13: arm the pending relaunch that handleExited() will fire once
+    // the poll observes the exit. Same mechanism setCurrentGame() uses
+    // for its hot-swap; exposed because the layout mode is the second
+    // value that cannot change under a running child, and its restart
+    // must not invent a second process-management path.
+    void setPendingRestart(bool on);
+
+    // v0.13: replace the argv/edit flag the relaunch will use.
+    //
+    // WHY THIS EXISTS. `--layout` is baked into the argv the controller
+    // stored at launch time, so a relaunch that just replayed lastArgv_
+    // would resurrect the PREVIOUS mode. The game hot-swap never hit
+    // this: --game is appended by launch() itself from currentGame_,
+    // which IS mutable, so replaying the stored argv was always correct
+    // for --game. --layout is baked into the caller's argv, so it needs
+    // the caller's own rebuild step.
+    //
+    // This is what keeps the restart on the EXISTING lifecycle: the View
+    // rebuilds its argv, calls this, then arms pendingRestart_ and
+    // stops the child. handleExited() then fires the very relaunch path
+    // setCurrentGame() uses — no second spawn path.
+    void setLastArgv(const QStringList &argv, bool editMode);
+
+    // v0.13: the edit flag of the most recent successful launch, so the
+    // View rebuilds its restart argv with the same editMode the child
+    // was started with rather than guessing.
+    [[nodiscard]] bool lastEditMode() const { return lastEditMode_; }
+
 signals:
     // The child's liveness flipped. The View re-styles the START/STOP
     // button, the status badge and the two launcher buttons here.

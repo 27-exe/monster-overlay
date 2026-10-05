@@ -140,6 +140,92 @@ QString cornerName(Corner c)
 
 } // namespace
 
+// ─── v0.13: the split's sub-window preview ─────────────────────────────
+
+namespace {
+
+// Preview chrome, in CANVAS pixels (not logical screen pixels): the gap
+// between a parent panel and its cluster of sub-windows, and between
+// successive boxes in that cluster. Both have to stay legible at the
+// default fit, where an entire 1920px screen is about 760px wide.
+constexpr qreal kSubClusterGap = 8.0;
+constexpr qreal kSubBoxGap = 5.0;
+// The title strip above each box, so the user can name the window.
+constexpr int kSubTitleH = 12;
+
+// Every sub-window box is drawn at this fraction of the size its content
+// reserves, for the same reason a parent's pixmap is drawn at the
+// window's own scale: a 380px damage bar drawn 1:1 beside the 378px
+// damage panel it came from would say nothing about why it became a
+// separate window.
+constexpr qreal kSubPreviewScale = 0.5;
+
+// The row's own section label, in the active locale, read from the
+// console's EXISTING section table (console.section.*) — so the split
+// preview names a window with the same word the inspector's switch row
+// uses, and adds no i18n key of its own.
+//
+// DERIVED FROM THE TABLE, NOT LISTED: the caller passes a table ROW and
+// this reads that row's mask out of the matching table. A row that
+// claims several sections (player row 0 owns Debuff|Buff, row 4 owns
+// Weapon|Sharpness, row 5 owns Conn|Quest) is labelled by its LOWEST
+// bit — one deterministic rule, chosen because the row is one window
+// that draws all of its bits together and therefore needs one name.
+// An out-of-range row answers an empty string rather than reading past
+// the table, exactly as xxxSubWindowMask() does.
+QString subWindowLabel(int parentSlot, int row)
+{
+    // Lowest set bit of `mask`, as a section-bit index, or -1 for none.
+    const auto lowestBit = [](uint32_t mask) -> int {
+        if (mask == 0)
+            return -1;
+        int n = 0;
+        while ((mask & 1u) == 0u) {
+            mask >>= 1;
+            ++n;
+        }
+        return n;
+    };
+
+    uint32_t mask = 0;
+    if (parentSlot == 0) {
+        if (row < 0 || row >= mhw::PlayerSection::kPlayerSplitTargetCount)
+            return {};
+        mask = mhw::PlayerSection::kPlayerSplitTargets[row].mask;
+    } else if (parentSlot == 1) {
+        if (row < 0 || row >= mhw::kMonsterSplitTargetCount)
+            return {};
+        mask = mhw::kMonsterSplitTargets[row].mask;
+    } else if (parentSlot == 2) {
+        if (row < 0 || row >= mhw::DamageSplitSlot::kCount)
+            return {};
+        mask = mhw::kDamageSplitTargets[row].mask;
+    } else {
+        return {};   // pets has no split table
+    }
+
+    const int bit = lowestBit(mask);
+    if (bit < 0)
+        return {};
+    // The per-panel tables' own displayName() answers the row's lowest
+    // bit in the active locale. Reading them here rather than through
+    // console_text_helpers::sectionLabel() keeps this file's include
+    // list at the tables it already needs (panel_sections.h) instead of
+    // adding a viewmodel header to the paint path for one string.
+    switch (parentSlot) {
+    case 0:
+        return mhw::PlayerSection::displayName(bit);
+    case 1:
+        return mhw::MonsterSection::displayName(bit);
+    case 2:
+        return mhw::DamageSection::displayName(bit);
+    default:
+        return {};
+    }
+}
+
+} // namespace
+
 // ─── construction ───────────────────────────────────────────────────────
 
 HudCanvas::HudCanvas(QWidget *parent) : QWidget(parent)
@@ -213,6 +299,60 @@ void HudCanvas::bindPanel(int index, const PanelSource *src)
     if (!mhw::isPanelIndex(index)) return;
     slots_[index].src = src;
     slots_[index].bound = (src != nullptr);
+    update();
+}
+
+// ─── v0.13 split-mode preview ──────────────────────────────────────────
+//
+// The mode is a WHOLE-CANVAS decision, not a per-panel one: every
+// sub-window of a split launch exists because the layout is split, and
+// switching to Single removes all of them at once. So the setter takes
+// no index and clears rather than toggling one entry.
+void HudCanvas::setLayoutMode(mhw::PlayerSection::PlayerLayoutMode mode)
+{
+    if (layoutMode_ == mode)
+        return;
+    layoutMode_ = mode;
+    // THE SINGLE-MODE GUARANTEE, in one line. Entering Single drops
+    // every sub-window, so the four-slot paint path below is the only
+    // thing that runs and its output is what it was before this feature
+    // existed. A caller that forgets this line would leave stale boxes
+    // on top of the single-panel preview — which is exactly what
+    // hud_canvas_split_tests.cpp pins by asserting the vector is empty
+    // after the switch (and the mutation test confirmed it FAILS when
+    // this line is removed).
+    if (mode == mhw::PlayerSection::PlayerLayoutMode::Single)
+        subSlots_.clear();
+    update();
+}
+
+void HudCanvas::setSubWindowBindings(QVector<SubWindowBinding> bindings)
+{
+    // Never accumulate: the caller owns the derivation and passes the
+    // full set each time, so a replace is the only correct write. Keeping
+    // old entries would draw windows whose parent window is gone.
+    subSlots_.clear();
+    subSlots_.reserve(bindings.size());
+    for (const SubWindowBinding &b : bindings) {
+        if (!b.src)
+            continue;   // a row whose window did not resolve: absent, not blank
+        SubSlot slot;
+        slot.src = b.src;
+        // Provenance travels with the binding so the paint side never has
+        // to guess which parent a box belongs to.
+        slot.parentSlot = b.parentSlot;
+        slot.tableRow = b.tableRow;
+        subSlots_.append(slot);
+    }
+    update();
+}
+
+void HudCanvas::setSubWindowPixmap(int index, const QPixmap &pixmap, bool enabled)
+{
+    if (index < 0 || index >= subSlots_.size())
+        return;   // not our window; ignore rather than grow the vector
+    subSlots_[index].pixmap = pixmap;
+    subSlots_[index].enabled = enabled;
     update();
 }
 
@@ -559,6 +699,31 @@ void HudCanvas::paintEvent(QPaintEvent *)
         slots_[i].lastTarget_ = target;
     }
 
+    // --- v0.13: the split's sub-windows ---
+    //
+    // ENTIRELY ABSENT IN SINGLE MODE. The gate is `subSlots_` being
+    // non-empty, which setLayoutMode(Single) and a never-populated
+    // canvas both guarantee. So the four-slot arm above is the last
+    // thing a single-mode preview paints, and its output is byte-for-byte
+    // what it was before any of this existed.
+    //
+    // Drawn cluster by cluster, grouped by the parent each sub-window
+    // came from, because that is what makes the derivation readable: the
+    // user sees the boxes that left the monster panel stacking beside the
+    // monster panel's own rectangle, in the monster panel's accent
+    // colour. A flat list of 14 boxes would say nothing about which
+    // window owns which block.
+    if (!subSlots_.isEmpty()) {
+        for (int parent = 0; parent < mhw::kPanelCount; ++parent) {
+            if (!slots_[parent].bound || !slots_[parent].present)
+                continue;   // the parent is not in this preview
+            if (slots_[parent].lastTarget_.isNull())
+                continue;   // it painted nothing, so nothing to stack beside
+            paintSubWindowCluster(slots_[parent].lastTarget_, parent,
+                                  slots_[parent].src->corner(), p);
+        }
+    }
+
     // --- footer ---
     p.setPen(QColor(60, 64, 66));
     p.drawLine(22, height() - 30, width() - 22, height() - 30);
@@ -582,6 +747,133 @@ void HudCanvas::paintEvent(QPaintEvent *)
                mh::tr(QStringLiteral("console.canvas.footer_right"))
                    .arg(screenLabel())
                    .arg(QString::number(zoom_, 'f', 1)));
+}
+
+// ─── v0.13: the split's sub-windows ────────────────────────────────────
+
+// Paint every sub-window that was carved out of one parent panel.
+//
+// GROUPED BY PARENT, in table-row order, because that is what makes the
+// derivation readable: the user sees the boxes that left the monster
+// panel stacked beside the monster panel's own rectangle, in the
+// monster panel's accent colour. A flat list of fourteen boxes would
+// say nothing about which window owns which block.
+//
+// THE PARENT STAYS WHERE IT IS. Its rectangle is the anchor the live
+// overlay will use, and the split does not move it — it only takes
+// blocks out of it. So the cluster is laid out BESIDE the parent on its
+// anchor side (right for a left anchor, left for a right anchor),
+// growing away from the screen edge the parent is pinned to.
+void HudCanvas::paintSubWindowCluster(const QRectF &parentTarget, int parentSlot,
+                                      const Corner parentCorner, QPainter &p) const
+{
+    QVector<SubWindowPaintInfo> boxes;
+    boxes.reserve(static_cast<int>(subSlots_.size()));
+
+    // Where the cluster starts, and which way it grows.
+    const bool growRight = (parentCorner == Corner::TopLeft
+                            || parentCorner == Corner::BottomLeft);
+    qreal edgeX = growRight ? parentTarget.right() + kSubClusterGap
+                            : parentTarget.left() - kSubClusterGap;
+    qreal cursorY = parentTarget.top();
+    // A right-anchored cluster extends leftwards from the same edge, so
+    // `leftX` tracks the next box's left edge as it goes. Both axes are
+    // plain qreals (not const) because the loop advances them per box.
+    qreal leftX = edgeX;
+
+    for (const SubSlot &sub : subSlots_) {
+        if (sub.parentSlot != parentSlot || !sub.src)
+            continue;
+        // THE CONTRACT, READ NOT GUESSED. The box's extent is the
+        // window's own contentWidth()/contentHeight() (Panel's v0.12
+        // layout vocabulary) — the number the live surface reserves the
+        // same way, plus the margin the window reports. Nothing here
+        // re-derives a width, so a window whose content grew
+        // automatically gets a box that grew with it, and the split
+        // preview cannot drift from the window it is previewing.
+        const QSize content = sub.src->contentSize();
+        const int cw = content.width();
+        const int ch = content.height();
+        if (cw <= 0 || ch <= 0)
+            continue;   // nothing reserved, so nothing to represent
+
+        SubWindowPaintInfo info;
+        info.parentSlot = parentSlot;
+        info.title = subWindowLabel(parentSlot, sub.tableRow);
+        const qreal w = qMax<qreal>(1.0, cw * kSubPreviewScale);
+        const qreal h = qMax<qreal>(1.0, ch * kSubPreviewScale);
+
+        if (growRight) {
+            info.rect = QRectF(QPointF(edgeX, cursorY), QSizeF(w, h));
+            edgeX += w + kSubBoxGap;
+        } else {
+            leftX -= w;
+            info.rect = QRectF(QPointF(leftX, cursorY), QSizeF(w, h));
+            leftX -= kSubBoxGap;
+        }
+        // The line starts on the parent's near edge, level with the box.
+        info.anchor = QPointF(growRight ? parentTarget.right()
+                                        : parentTarget.left(),
+                              info.rect.center().y());
+        boxes.append(info);
+
+        // Vertical stacking keeps the cluster clear of the screen's
+        // other corner, which would otherwise collide when two panels
+        // share the top edge.
+        cursorY += h + kSubBoxGap;
+    }
+
+    if (boxes.isEmpty())
+        return;
+
+    // Drawn nearest-the-parent LAST, so the cluster reads outward in
+    // both directions and the parent's own box is never occluded.
+    for (int i = boxes.size() - 1; i >= 0; --i)
+        paintSubWindowBox(boxes[i], parentTarget, parentCorner, p);
+}
+
+// One sub-window box: the connection line, the frame, the title.
+void HudCanvas::paintSubWindowBox(const SubWindowPaintInfo &info,
+                                 const QRectF &parentTarget,
+                                 const Corner parentCorner, QPainter &p) const
+{
+    Q_UNUSED(parentTarget)
+    Q_UNUSED(parentCorner)
+
+    // THE PARENT'S OWN COLOUR. The split's whole visual claim is "these
+    // boxes left that panel", and the parent's accent — the same table
+    // the parent's own frame and the live overlay read — is how the
+    // preview says it without a second legend. Dimmer than the parent's
+    // fill, so the main surface still reads as primary.
+    QColor accent = mhw::panel_accent::forSlot(info.parentSlot);
+
+    // Connection line first, so the frame's border lands on top of it.
+    accent.setAlpha(80);
+    p.save();
+    p.setPen(QPen(accent, 1, Qt::DashLine));
+    p.drawLine(info.anchor, QPointF(info.rect.center().x(),
+                                    info.rect.center().y()));
+    p.restore();
+
+    accent.setAlpha(150);
+    p.save();
+    p.setPen(QPen(accent, 1, Qt::DashLine));
+    p.setBrush(QColor(10, 12, 14, 200));
+    p.drawRect(info.rect);
+    p.restore();
+
+    // The title, above the box. Dashed border plus a label is the same
+    // "this is a preview, not the thing itself" vocabulary the disabled
+    // placeholder already uses.
+    if (!info.title.isEmpty()) {
+        p.save();
+        p.setFont(QFont(QStringLiteral("Chakra Petch"), 7, QFont::Medium));
+        p.setPen(QColor(178, 183, 186));
+        p.drawText(QRectF(info.rect.left(), info.rect.top() - kSubTitleH,
+                          info.rect.width(), kSubTitleH),
+                   Qt::AlignHCenter | Qt::AlignVCenter, info.title);
+        p.restore();
+    }
 }
 
 // ─── interaction ────────────────────────────────────────────────────────

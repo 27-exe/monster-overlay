@@ -1218,6 +1218,23 @@ add_executable(world-severable-scan-tests
     set_tests_properties(monster-parts-window-tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # v0.12 fourth wave: the console's split preview. What it pins is the
+    # guarantee that lets the preview exist at all — the four base slots
+    # are untouched in Single mode, so the canvas a user already knows is
+    # the canvas they keep. The mutation that matters is dropping the
+    # Single-mode clear: sub-windows surviving into Single is exactly the
+    # "which mode am I looking at" confusion the split was supposed to end.
+    add_executable(hud-canvas-split-tests
+        tests/hud_canvas_split_tests.cpp
+    )
+    target_link_libraries(hud-canvas-split-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets mhw-ui)
+    target_include_directories(hud-canvas-split-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(hud-canvas-split-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME hud-canvas-split-tests COMMAND hud-canvas-split-tests)
+    set_tests_properties(hud-canvas-split-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # v0.12 third wave: the DPS panel's Share / Chart windows. Three
     # targets, because the claim has three parts: what each window draws
     # (model), that the hoisted draw functions and the panel's own inline
@@ -1252,6 +1269,20 @@ add_executable(world-severable-scan-tests
     add_test(NAME damage-split-windows-tests COMMAND damage-split-windows-tests)
     set_tests_properties(damage-split-windows-tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # v0.12 fourth wave: the console's layout mode. What it pins is the
+    # priority chain, which must be the SAME one the overlay uses — a
+    # second chain here is a disagreement about who wins between the conf
+    # file and the user's own --layout=, which is the kind of bug that
+    # only shows up as "why did it not do what I typed".
+    add_executable(console-layout-mode-tests
+        tests/console_layout_mode_tests.cpp
+        src/ui/viewmodel/console_layout_mode_codec.h
+    )
+    target_link_libraries(console-layout-mode-tests PRIVATE Qt6::Core)
+    target_include_directories(console-layout-mode-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-layout-mode-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME console-layout-mode-tests COMMAND console-layout-mode-tests)
 
     # v0.12: the 「任务/进程」 window's content model — what the snapshot's
     # quest block and connection block resolve to, and which half of them

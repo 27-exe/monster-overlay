@@ -198,6 +198,15 @@
       }
     },
     "brand_sub": "控制台  ·  %1",
-    "window_title": "Monster Overlay Control"
+    "window_title": "Monster Overlay Control",
+    "layout": {
+      "single": "一整块",
+      "split": "分块",
+      "apply": "保存并应用",
+      "apply_tip": "记住该布局并在悬浮窗运行时重启它。切换无法在运行中生效，必须重启。",
+      "confirm_title": "确认重启悬浮窗",
+      "confirm_split": "切换为「分块」会重启正在运行的悬浮窗：HUD 会先消失一次，然后以分块窗口重新挂载。\n\n继续吗？",
+      "confirm_single": "切换为「一整块」会重启正在运行的悬浮窗：HUD 会先消失一次，然后以单一面板重新挂载。\n\n继续吗？"
+    }
   }
 }

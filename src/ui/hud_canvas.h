@@ -8,9 +8,11 @@
 #include <QRectF>
 #include <QSize>
 #include <QString>
+#include <QVector>
 #include <QWidget>
 #include <array>
 
+#include "panel_sections.h"
 #include "panel_source.h"
 #include "screen_query.h"
 
@@ -36,6 +38,81 @@ public:
     [[nodiscard]] bool panelPresent(int index) const;
     void setSelectedPanel(int index);
     void bindPanel(int index, const PanelSource *src);
+
+    // ─── v0.13 split-mode preview ───────────────────────────────────────
+    //
+    // SINGLE MODE IS UNTOUCHED BY ALL OF THIS. The four `slots_` above are
+    // exactly what a Single-mode launch renders, byte for byte, and nothing
+    // below may read or write them when the mode is Single:
+    //
+    //   * subSlots_ is EMPTY while layoutMode_ == Single, and setLayoutMode()
+    //     clears it on every switch into Single — never leaving a stale
+    //     window behind for the paint loop to draw.
+    //   * subSlots_ is only ever APPENDED to (setSubWindowSources replaces
+    //     the whole vector), so no code path can write through it into the
+    //     four slots' pixmaps, margins or selection state.
+    //   * The paint loop's four-slot arm runs first and is guarded by the
+    //     same `bound` check it always had; the sub-window arm that
+    //     follows is a strictly additive block that a Single-mode launch
+    //     never reaches, because it is gated on `!subSlots_.isEmpty()`.
+    //
+    // That is the whole pixel-identity argument: Single-mode preview
+    // output cannot move because no Single-mode code path differs from
+    // what is already committed, and a test pins the emptiness claim.
+
+    // Which window topology the PREDICTED overlay is running in — the same
+    // `--layout` value main.cpp resolves at startup. The console reads the
+    // mode in force (its conf row, or what the apply button committed) and
+    // pushes it here; the canvas then rebuilds its sub-window geometry.
+    //
+    // Single clears every sub-slot. Split keeps them until the next call.
+    // Calling this with the mode already in force is a no-op, so the
+    // console can call it on every mask change without churning geometry.
+    void setLayoutMode(mhw::PlayerSection::PlayerLayoutMode mode);
+    [[nodiscard]] mhw::PlayerSection::PlayerLayoutMode layoutMode() const
+    {
+        return layoutMode_;
+    }
+
+    // One split sub-window's binding: WHERE its geometry comes from, and
+    // WHICH panel it was carved out of.
+    //
+    // `parentSlot` / `tableRow` are provenance, not a second index into
+    // the canvas: they are what lets the preview draw the sub-window in
+    // its parent panel's accent colour and label it with the row it came
+    // from, which is how the user sees "this box is the HP strip that
+    // left the monster panel" rather than "this box exists". The console
+    // fills them from the derivation (see buildSubWindowSources in
+    // control_panel.cpp), so they cannot disagree with the tables.
+    //
+    // `src` follows bindPanel()'s ownership contract exactly: the canvas
+    // stores it without taking ownership and never deletes it.
+    struct SubWindowBinding {
+        const PanelSource *src{nullptr};
+        int parentSlot{-1};   // 0 player / 1 monster / 2 damage / 3 pets
+        int tableRow{-1};     // row index inside that parent's split table
+    };
+
+    // The geometry sources for the split's sub-windows, one per row that
+    // resolved a live window (7 player + 5 monster + 2 damage = 14 max).
+    //
+    // REPLACES, never appends: the caller re-derives the whole set from
+    // the three tables on every mask change, so a replace is the only
+    // write that cannot leave a window behind whose parent is gone. A
+    // row whose window did not resolve is simply ABSENT from the vector
+    // — the index space is "position in this vector", not "table row",
+    // which is why the caller may pass fewer than 14.
+    void setSubWindowBindings(QVector<SubWindowBinding> bindings);
+
+    // One sub-window's rendered pixmap, addressed by the same index the
+    // matching binding was passed at. Unknown indices are ignored rather
+    // than silently resizing the vector (a resize would make every later
+    // index refer to a different window).
+    void setSubWindowPixmap(int index, const QPixmap &pixmap, bool enabled);
+    [[nodiscard]] int subWindowCount() const
+    {
+        return static_cast<int>(subSlots_.size());
+    }
 
     // v0.8: name of the Wayland output whose geometry should drive
     // the preview's screen frame. Empty (the default) means "follow
@@ -88,6 +165,48 @@ private:
         QRectF lastTarget_;
     };
 
+    // v0.13: one split sub-window's place in the preview.
+    //
+    // Kept OUT of Slot on purpose. Slot is four elements addressed by a
+    // fixed panel index, sized mhw::kPanelCount, and the four-slot paint
+    // arm reads it as such; grafting a mode-dependent "sometimes there
+    // are sub-windows" flag into it would put a branch in the one loop
+    // the Single-mode pixel-identity guarantee is built on. SubSlot is a
+    // separate type in a separate vector, so the single mode's arm cannot
+    // see it and the split's arm cannot see the slots.
+    struct SubSlot {
+        const PanelSource *src{nullptr};
+        QPixmap pixmap;
+        bool enabled{true};
+        // Which of the four base panels this window was carved out of,
+        // so the preview can paint it in that panel's accent colour and
+        // prove the derivation (see buildSubWindowSources' doc comment).
+        int parentSlot{-1};
+        // The row index inside that parent's split table, kept for
+        // diagnostics and for the title the canvas draws above the box.
+        int tableRow{-1};
+    };
+
+    // Everything one sub-window box needs, gathered in one pass so the
+    // painter stays a pure function of its arguments (and therefore
+    // testable without a live paint).
+    struct SubWindowPaintInfo {
+        QRectF rect;          // the box, in canvas pixels
+        QPointF anchor;       // where the connection line starts
+        int parentSlot{-1};   // whose accent colour and corner it uses
+        QString title;        // the section label the row claims
+    };
+
+    // Paint the sub-window boxes for one parent's corner cluster. Called
+    // once per parent slot that has live sub-windows; a parent with none
+    // is skipped entirely so its main panel keeps the same layout.
+    void paintSubWindowCluster(const QRectF &parentTarget, int parentSlot,
+                               const Corner parentCorner, QPainter &p) const;
+    // One box plus its title and its connection line.
+    void paintSubWindowBox(const SubWindowPaintInfo &info,
+                           const QRectF &parentTarget,
+                           const Corner parentCorner, QPainter &p) const;
+
     // Compute the target QMargins for a drag/key delta (logical px).
     QMargins movedMargins(int index, int dxLogical, int dyLogical) const;
 
@@ -122,6 +241,18 @@ private:
     void rebuildScreenCache() const;
 
     std::array<Slot, mhw::kPanelCount> slots_{};
+    // v0.13: the split's sub-windows. EMPTY in Single mode — that
+    // emptiness is the whole pixel-identity guarantee (see the comment
+    // on the public API above). Sized and filled by setSubWindowSources(),
+    // cleared by setLayoutMode(Single).
+    QVector<SubSlot> subSlots_;
+    // Which window topology the preview is describing. NOT the same
+    // question as "does the preview have sub-windows": the mode is the
+    // user's choice, the vector is what happened to be derivable from
+    // the tables. A Split console whose windows all failed to resolve
+    // would still be in Split mode with an empty vector.
+    mhw::PlayerSection::PlayerLayoutMode layoutMode_{
+        mhw::PlayerSection::PlayerLayoutMode::Single};
     int selected_{0};
     bool showSafeArea_{true};
     bool showGrid_{true};

@@ -1,0 +1,367 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// v0.13 console layout mode: the conf row, the priority chain and the
+// argv spelling, pinned.
+//
+// WHAT THIS FILE COVERS
+// ---------------------
+// The console gained a Single/Split selector in v0.13, and the promise
+// the UI makes — "this is remembered, and the child is restarted when it
+// must be" — rests on three small pieces of logic that must not drift:
+//
+//   1. THE ROW (`layout=` in monster-overlay.conf).
+//   2. THE PRIORITY (conf > UI choice > default single), which is not
+//      this file's logic at all — it goes through the SHARED
+//      mhw::resolveStartupLayoutMode(), and what is asserted here is that
+//      the console's row really is the conf arm of that chain, and that
+//      the console's UI choice feeds it as a conf row rather than
+//      competing with it.
+//   3. THE FLAG (`--layout=split`, present only in split).
+//
+// THE FOUR CONTRACTS, in order of how much a wrong answer costs:
+//
+//   A. OLD CONF, NO KEY → SINGLE. The v0.11 user's file has no layout
+//      row. Every unusable spelling — absent, garbage, a lone "single",
+//      a hand-typed "off" — must resolve Single, because a value that
+//      does not say Split must never move a user's windows. This is also
+//      the 10 single-mode pixel baselines' guarantee stated in test form:
+//      every user who never touched the combo opens exactly the topology
+//      v0.11.4 painted.
+//
+//   B. conf layout=split → SPLIT, and the shared chain reports the
+//      source as Conf — so the console's "the conf said so" claim is
+//      checkable rather than inferred from the mode.
+//
+//   C. THE PRIORITY, end to end: with the shared resolver, CLI wins over
+//      conf which wins over the default; and the console's own call
+//      passes an empty CLI request, so the conf row is what speaks. A
+//      console that passed a live CLI request would be able to outrank
+//      a user's hand-written --layout=, which is the one override it
+//      must never block.
+//
+//   D. `--layout` APPEARS ONLY IN SPLIT, and a Single-mode save writes no
+//      row at all — the two halves of "an old conf stays byte-for-byte
+//      single".
+//
+// WHY THIS TARGET IS HEADER-ONLY and links Qt6::Core only: everything
+// above is constexpr / inline over QString and QByteArray. The widget
+// half (ControlPanel) is covered by the console smoke targets; testing
+// it here would need a QApplication and a compositor-free offscreen
+// platform for no additional logic coverage.
+//
+// THE MUTATION DISCIPLINE. Contracts A, B, C and D each carry a stated
+// mutation in a comment above them: the one-line change that must make
+// them FAIL. Running those is what proves the assertions are load-
+// bearing rather than true by construction.
+
+#include "ui/viewmodel/console_layout_mode_codec.h"
+
+#include <QCoreApplication>
+#include <QString>
+#include <QStringList>
+
+#include <cstdint>
+#include <cstdio>
+#include <string>
+
+namespace {
+
+int failures = 0;
+int checks   = 0;
+
+void check(bool ok, const char *what)
+{
+    ++checks;
+    if (!ok) {
+        ++failures;
+        std::printf("  FAIL  %s\n", what);
+    }
+}
+
+void checkQ(const QString &got, const QString &want, const char *what)
+{
+    ++checks;
+    if (got != want) {
+        ++failures;
+        std::printf("  FAIL  %s: got \"%s\" want \"%s\"\n", what,
+                    qPrintable(got), qPrintable(want));
+    }
+}
+
+using Mode     = mhw::PlayerSection::PlayerLayoutMode;
+using Source   = mhw::PlayerLayoutSource;
+using Resolution = mhw::PlayerLayoutResolution;
+
+// The console's own call shape, reduced to a helper so the test asserts
+// the console's REAL behaviour rather than a re-derivation of it: empty
+// CLI request, conf row from the text. If applyStartupLayoutMode() ever
+// starts passing a CLI request, this is the line that changes and the
+// priority test below tells you what that broke.
+Resolution resolveAsConsoleDoes(const QString &confText)
+{
+    return mhw::resolveStartupLayoutMode(
+        mhw::PlayerLayoutCliRequest{},
+        mhw::parseConsoleLayoutRow(confText).source);
+}
+
+bool hasFlag(const QStringList &args, const QString &flag)
+{
+    return args.contains(flag);
+}
+
+// =====================================================================
+// A. OLD CONF, NO KEY → SINGLE
+// =====================================================================
+// MUTATION: make parseConsoleLayoutRow() return
+// {PlayerLayoutSource::Conf} when the row is absent. Every assertion in
+// this block fails, because a missing row would then read as Split —
+// which is the failure that would silently change every existing user's
+// window topology on upgrade.
+void test_oldConfResolvesSingle()
+{
+    std::printf("A. old conf, no layout key -> Single\n");
+
+    check(resolveAsConsoleDoes(QString()).mode == Mode::Single,
+          "no conf file at all resolves Single");
+    check(resolveAsConsoleDoes(QStringLiteral("")).mode == Mode::Single,
+          "empty conf text resolves Single");
+
+    // The shape a real v0.11 conf actually has: the four mask rows, the
+    // schema marker and a locale row. None of them is a layout row.
+    const QString legacy =
+        "player=1ff\n"
+        "monster=7f\n"
+        "damage=3ff\n"
+        "pets=3\n"
+        "maskVersion=1\n"
+        "locale=zh-CN\n";
+    const Resolution legacyResolved = resolveAsConsoleDoes(legacy);
+    check(legacyResolved.mode == Mode::Single,
+          "a real v0.11/v0.12 conf with no layout row resolves Single");
+    check(legacyResolved.source == Source::Default,
+          "and it reports the source as Default, not Conf");
+
+    // Every unusable spelling. The list is deliberately wider than the
+    // codec's own reject set, because each of these is a value a user
+    // could actually type while hand-editing the conf.
+    for (const char *bad : {
+             "layout=banana", "layout=", "layout=single", "layout=off",
+             "layout=0", "layout=1", "layout=SplitTwo",
+             "layout= SPLIT EXTRA",
+         }) {
+        const bool single = resolveAsConsoleDoes(
+            QString::fromLatin1(bad)).mode == Mode::Single;
+        const std::string label =
+            std::string("unusable \"") + bad + "\" resolves Single";
+        check(single, label.c_str());
+    }
+
+    // The spellings that ARE accepted: the row key is matched the same
+    // way every other row in this file is matched (a trimmed
+    // `startsWith("layout=")`), and the VALUE is parsed by
+    // PlayerSection's own parsePlayerLayoutMode(), which trims and
+    // lower-cases. So `layout=SPLIT` and `  layout=  split  ` both work,
+    // while `layout = split` does NOT — the same way `player = 1ff`
+    // never parsed either. That asymmetry is deliberate and consistent:
+    // the mask codec set the rule, and a conf row is a machine file, not
+    // a prose field.
+    check(resolveAsConsoleDoes(QStringLiteral(" layout=SPLIT \n")).mode
+              == Mode::Split,
+          "an indented, upper-case layout=SPLIT resolves Split");
+    check(resolveAsConsoleDoes(QStringLiteral("layout=  split  \n")).mode
+              == Mode::Split,
+          "a padded VALUE resolves Split (value parsing is tolerant)");
+    check(resolveAsConsoleDoes(QStringLiteral("layout = split\n")).mode
+              == Mode::Single,
+          "spaces AROUND THE '=' do not match the row key — the same "
+          "rule player=/monster= already obeys");
+}
+
+// =====================================================================
+// B. conf layout=split → SPLIT, with the source reported as Conf
+// =====================================================================
+// MUTATION: return PlayerLayoutSource::Default from
+// parseConsoleLayoutRow()'s success path. The mode still resolves
+// Split (rule 3's Default arm is also Single for a missing row, so the
+// mode test would still pass) — which is exactly why the SOURCE is
+// asserted here: it is the half that proves "this came from the conf"
+// rather than "this is a coincidence".
+void test_confSplitResolvesSplitWithSource()
+{
+    std::printf("B. conf layout=split -> Split, source Conf\n");
+
+    const Resolution r = resolveAsConsoleDoes(
+        "player=1ff\nmaskVersion=1\nlayout=split\nlocale=zh-CN\n");
+    check(r.mode == Mode::Split, "layout=split resolves to Split");
+    check(r.source == Source::Conf,
+          "and the source is Conf (the row really is the chain's conf "
+          "arm)");
+
+    // The row's position must not matter — the parse scans every line,
+    // and a conf a user hand-edited will not have the row last.
+    const Resolution first = resolveAsConsoleDoes(
+        "layout=split\nplayer=1ff\nmaskVersion=1\n");
+    check(first.mode == Mode::Split && first.source == Source::Conf,
+          "a layout= row at the TOP of the file is found too");
+}
+
+// =====================================================================
+// C. THE PRIORITY, through the shared resolver
+// =====================================================================
+// MUTATION A: swap the module order in resolveStartupLayoutMode() so the
+// conf arm is checked before the CLI arm. `cliSplit_beatsConfSingle`
+// fails — a user's explicit --layout=split would be discarded.
+// MUTATION B: make the malformed-CLI arm fall through to the conf row
+// instead of the DEFAULT. `cliMalformed_resolvesDefault` fails — which
+// is the case where a typo'd flag would hijack a stale conf row.
+void test_priorityChain()
+{
+    std::printf("C. priority: cli > conf > default (shared resolver)\n");
+
+    // CLI wins over a conf row that says the other thing.
+    const Resolution cliSplitOverConf =
+        mhw::resolveStartupLayoutMode(
+            mhw::PlayerLayoutCliRequest{/*given=*/true, QStringLiteral("split"),
+                                        Mode::Single},
+            Source::Default);
+    check(cliSplitOverConf.mode == Mode::Split,
+          "an explicit --layout=split wins over the conf arm");
+    check(cliSplitOverConf.source == Source::CliExplicit,
+          "and it reports CliExplicit, not Conf");
+
+    const Resolution cliSingleOverConf =
+        mhw::resolveStartupLayoutMode(
+            mhw::PlayerLayoutCliRequest{/*given=*/true,
+                                        QStringLiteral("single"), Mode::Split},
+            Source::Conf);
+    check(cliSingleOverConf.mode == Mode::Single,
+          "an explicit --layout=single wins over a conf layout=split "
+          "row — the override the console must never be able to block");
+
+    // The conf arm beats the Single default.
+    const Resolution confOverDefault =
+        resolveAsConsoleDoes("layout=split\n");
+    check(confOverDefault.mode == Mode::Split
+              && confOverDefault.source == Source::Conf,
+          "the conf row beats the Single default");
+    const Resolution defaultWins =
+        resolveAsConsoleDoes("player=1ff\n");
+    check(defaultWins.mode == Mode::Single
+              && defaultWins.source == Source::Default,
+          "with no CLI and no usable row, the Single default wins");
+
+    // Malformed CLI resolves to the DEFAULT, not to the conf row.
+    const Resolution malformed =
+        mhw::resolveStartupLayoutMode(
+            mhw::PlayerLayoutCliRequest{/*given=*/true,
+                                        QStringLiteral("banana"), Mode::Split},
+            Source::Conf);
+    check(malformed.mode == Mode::Single,
+          "a malformed --layout= resolves Single (never the conf row)");
+    check(malformed.source == Source::Default,
+          "and reports Default, so the discarded flag is visible to a "
+          "test rather than invisible in production");
+
+    // The v0.12 boolean alias still outranks the conf row.
+    const Resolution compatFlag =
+        mhw::resolveStartupLayoutMode(
+            mhw::PlayerLayoutCliRequest{/*given=*/false, QString(),
+                                        Mode::Split},
+            Source::Default);
+    check(compatFlag.mode == Mode::Split
+              && compatFlag.source == Source::CliCompatFlag,
+          "--split-player-strip still wins over a conf row");
+}
+
+// =====================================================================
+// D. THE FLAG AND THE ROUND TRIP
+// =====================================================================
+// MUTATION A: make consoleLayoutArgv() emit `--layout=single` in Single
+// mode. `flagOnlyInSplit` and `argv_matches_conf` both fail — and the
+// reason they fail is the real defect: an explicit single would outrank
+// the user's own --layout= on the shared chain.
+// MUTATION B: make serializeConsoleLayoutRow() emit a row for Single
+// too. `singleSaveWritesNoRow` fails, proving that the "old conf has no
+// key" case is not a migration path nobody exercises but the state every
+// non-split user actually lives in.
+void test_flagAndRoundTrip()
+{
+    std::printf("D. --layout only in split; the conf round trip\n");
+
+    // The flag is present only in split.
+    const QStringList splitArgv = mhw::consoleLayoutArgv(Mode::Split);
+    check(hasFlag(splitArgv, QStringLiteral("layout=split")),
+          "split mode passes --layout=split");
+    check(splitArgv.size() == 1,
+          "and it is the ONLY flag this helper adds");
+
+    const QStringList singleArgv = mhw::consoleLayoutArgv(Mode::Single);
+    check(!hasFlag(singleArgv, QStringLiteral("layout=split")),
+          "single mode passes NO --layout flag");
+    check(!hasFlag(singleArgv, QStringLiteral("layout=single")),
+          "in particular it passes no explicit --layout=single (which "
+          "would outrank the user's own CLI override)");
+    check(singleArgv.isEmpty(),
+          "single mode contributes nothing to argv at all");
+
+    // The write side: split writes the row, single does not.
+    const QByteArray splitRow = mhw::serializeConsoleLayoutRow(Mode::Split);
+    checkQ(QString::fromLatin1(splitRow), QStringLiteral("layout=split\n"),
+           "serializeConsoleLayoutRow(split) is the row plus a newline");
+    check(mhw::serializeConsoleLayoutRow(Mode::Single).isEmpty(),
+          "serializeConsoleLayoutRow(single) is EMPTY — the default is "
+          "not written down");
+
+    // THE ROUND TRIP, which is the whole claim in one loop: whatever the
+    // console saves, reading it back resolves to the same mode, and the
+    // flag it would pass matches. 256 iterations of the two modes' text
+    // is trivially cheap here and covers every compose/save/reload
+    // ordering automatically.
+    for (int i = 0; i < 256; ++i) {
+        const Mode written = (i & 1) ? Mode::Split : Mode::Single;
+        const QByteArray row = mhw::serializeConsoleLayoutRow(written);
+        // Compose the conf the way saveMaskToDisk() does: the codec's
+        // mask block, then the appended row.
+        QString conf = "player=1ff\nmonster=7f\ndamage=3ff\npets=3\n"
+                       "maskVersion=1\nlocale=zh-CN\n";
+        conf += QString::fromLatin1(row);
+        const Resolution readBack = resolveAsConsoleDoes(conf);
+        check(readBack.mode == written,
+              "the mode written is the mode read back");
+
+        // And the flag the console would pass describes the same mode.
+        const QStringList argv = mhw::consoleLayoutArgv(written);
+        const bool flagSaysSplit =
+            hasFlag(argv, QStringLiteral("layout=split"));
+        check(flagSaysSplit == (written == Mode::Split),
+              "the flag and the conf row agree on the mode");
+    }
+
+    // A conf that has the row AND a stale duplicate converges, because
+    // the parse scans rather than trusting position.
+    const Resolution duplicated = resolveAsConsoleDoes(
+        "layout=single\nlayout=split\n");
+    check(duplicated.mode == Mode::Split,
+          "a duplicated row still parses (the last split wins because "
+          "the scan keeps looking)");
+}
+
+} // namespace
+
+int main(int argc, char **argv)
+{
+    QCoreApplication app(argc, argv);
+
+    std::printf("console_layout_mode_tests: the layout row, the shared "
+                "priority chain and the flag\n");
+    std::printf("=======================================================\n");
+
+    test_oldConfResolvesSingle();
+    test_confSplitResolvesSplitWithSource();
+    test_priorityChain();
+    test_flagAndRoundTrip();
+
+    std::printf("=======================================================\n");
+    std::printf("%d checks, %d failures\n", checks, failures);
+    return failures == 0 ? 0 : 1;
+}

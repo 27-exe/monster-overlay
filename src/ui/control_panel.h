@@ -2,6 +2,15 @@
 
 #include "core/game_snapshot.h"
 #include "ui/panel_source.h"
+// v0.13: the Single/Split enum, for the layout-mode members and the
+// three layout method signatures below. This is an INCLUDE and not a
+// forward declaration on purpose: the member's default initializer
+// needs PlayerLayoutMode::Single, and a `enum class X : int;` forward
+// declaration gives the type without its enumerators. panel_sections.h
+// is already a dependency of this console's .cpp (it drives the four
+// inspector row sets), so nothing new is being pulled into the
+// translation unit — only into the header, where it is used.
+#include "ui/panel_sections.h"
 
 #include <QMainWindow>
 #include <QPointer>
@@ -34,6 +43,13 @@ class SectionRow;
 class SectionCountBar;
 class HudCanvas;
 class RiseReframeworkCard;
+
+// v0.13: the split's sub-windows, held for the CONSOLE's preview.
+// The class lives in control_panel.cpp rather than here, because it
+// needs every split window's complete type (a unique_ptr<Panel> cannot
+// be destroyed through a forward declaration) and those headers belong
+// to the translation unit that already includes them.
+class SplitWindowPreviewHost;
 
 namespace mhw {
 class OverlayProcessController;
@@ -109,6 +125,62 @@ private:
     // previous session's state.
     void loadMaskFromDisk();
     void saveMaskToDisk() const;
+
+    // v0.13: shared-combo index constants. Spelled out once so the
+    // builder, the resolver replay and the test all name the same two
+    // numbers — a literal 0/1 at three call sites is how a reordered
+    // combo silently flips which entry writes `layout=split`.
+    static constexpr int kLayoutComboSingleIndex = 0;
+    static constexpr int kLayoutComboSplitIndex  = 1;
+
+    // ---- v0.13 console layout mode (Single / Split) --------------------
+    //
+    // WHAT STAYS PURE: the row parsing and the flag spelling live in
+    // ui/viewmodel/console_layout_mode_codec.h; the precedence chain is
+    // mhw::resolveStartupLayoutMode() in ui/panel_sections.h, shared
+    // with the overlay itself.
+    //
+    // WHAT THE VIEW OWNS: the widget state (layoutCombo_ /
+    // layoutApplyBtn_ / layoutModeInForce_) and the three operations
+    // below. None of them opens a QSettings handle, so the whole
+    // read/write path stays drivable from a plain test.
+    //
+    // Read: resolveStartupLayoutMode()'s OWN conf arm. The console does
+    // not implement "conf beats the UI" anywhere — it feeds its
+    // `layout=` row into the shared resolver and takes the answer.
+    int layoutComboIndexFor(mhw::PlayerSection::PlayerLayoutMode mode) const;
+    void applyStartupLayoutMode();
+    void applyLayoutChoice(mhw::PlayerSection::PlayerLayoutMode mode);
+    // The mode the last LAUNCH actually used (what the conf row said at
+    // startup, or what applyLayoutChoice() committed). Distinct from
+    // layoutCombo_'s current text, which is only a pending selection.
+    [[nodiscard]] mhw::PlayerSection::PlayerLayoutMode layoutModeInForce() const
+    { return layoutModeInForce_; }
+    // In-force mode as the combo spells it. Returns Single when the
+    // combo does not exist, so a caller with no UI still gets a sane
+    // answer.
+    [[nodiscard]] mhw::PlayerSection::PlayerLayoutMode layoutComboMode() const;
+    // Re-enable the apply button only when the selection differs from
+    // the mode in force, so the control never invites a pointless
+    // restart. Also disables it when nothing is selected.
+    void updateLayoutApplyEnabled();
+
+    // ---- v0.13: the split sub-window preview --------------------------
+    //
+    // Push the in-force mode into the canvas and (re)build the
+    // sub-window geometry when it changed. Called from
+    // applyStartupLayoutMode() and applyLayoutChoice() — the two places
+    // the mode in force can move — and from nowhere else, so the canvas
+    // is never rebuilt on a mask change it does not care about.
+    //
+    // In Single this is what keeps the canvas subSlots_-free: the mode
+    // is pushed, the host is dropped, and the canvas clears its vector
+    // itself (see HudCanvas::setLayoutMode).
+    void syncSplitPreviewToCanvas();
+    // Re-render the sub-windows after a mask change. Only does work in
+    // Split mode; the canvas's own subSlots_ is the authority on
+    // whether there is anything to draw.
+    void refreshSplitWindowPreviews();
 
     struct PanelCtl {
         Panel *panel = nullptr;
@@ -300,6 +372,35 @@ private:
     // alive. Flipped back to "READY" when the controller emits exited().
 
     QLabel *statusBadge_ = nullptr;
+
+    // v0.13: the Single/Split selector in the rail's WORKSPACE block.
+    // layoutCombo_ is the choice; layoutApplyBtn_ is the "commit and
+    // (re)start" button. Neither one alone is a complete control:
+    // pick-only would silently change nothing (the mode is frozen for
+    // the child's lifetime), and click-only would restart an overlay
+    // the user is watching with no prompt to review the choice. Widget
+    // pointers only — all persistence goes through applyLayoutChoice().
+    QComboBox *layoutCombo_   = nullptr;
+    QPushButton *layoutApplyBtn_ = nullptr;
+    // What the last LAUNCH used. The combo's current text is only a
+    // PENDING selection; this is what the child is actually running in,
+    // and what applyLayoutChoice() writes before it restarts anything.
+    //
+    // The enum's full definition comes from the ui/panel_sections.h
+    // include at the top of this header. An `enum class X : int;` forward
+    // declaration would NOT do: it names the type, but this member's
+    // default initializer needs PlayerLayoutMode::Single, and a scoped
+    // enum's enumerators only exist where the enum is defined.
+    mhw::PlayerSection::PlayerLayoutMode layoutModeInForce_ =
+        mhw::PlayerSection::PlayerLayoutMode::Single;
+
+    // v0.13: the split's sub-window preview. Held by unique_ptr because
+    // the class is defined in the .cpp (it needs every split window's
+    // complete type) and ControlPanel's destructor here cannot see its
+    // definition to destroy an inline member. Pushed into the canvas
+    // whenever the mode is in force AND the mode changes; never read in
+    // Single mode, where the canvas's subSlots_ is empty by contract.
+    std::unique_ptr<SplitWindowPreviewHost> splitPreview_;
 
     // v0.6 Phase 5: most recent successful /proc scan (persisted under the
     // "detectedGame" QSettings key). Refreshed every 5s by the live badge.

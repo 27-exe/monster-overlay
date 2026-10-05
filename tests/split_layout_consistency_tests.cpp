@@ -41,6 +41,7 @@
 #include "ui/panel_player_split_wirebug.h"
 #include "ui/panel_player_split_mantles.h"
 #include "ui/panel_player_split_info.h"
+#include "ui/panel_player_split_weapon.h"
 #include "ui/panel_player_split_layout.h"
 
 #include "panel.h"
@@ -181,13 +182,21 @@ int main(int argc, char **argv)
         check(info.contentMargin() == kSplitMargin,
               "info window: contentMargin() == kSplitMargin");
 
-        // Cross-window: the five above all answer the same number, so
+        PlayerWeaponStripPanel weapon;
+        // Added after the weapon window's own override went missing: the
+        // console drew it flush to its edge while every sibling sat 11px
+        // in. The list stopped at five windows and there were six, which
+        // is how a per-window property became an assumption.
+        check(weapon.contentMargin() == kSplitMargin,
+              "weapon window: contentMargin() == kSplitMargin");
+
+        // Cross-window: the six above all answer the same number, so
         // the set itself has one member. That is the property a layout
         // relies on, and it is the property the per-window checks
         // cannot express.
         const int margins[] = {status.contentMargin(), bars.contentMargin(),
                                wirebug.contentMargin(), mantles.contentMargin(),
-                               info.contentMargin()};
+                               info.contentMargin(), weapon.contentMargin()};
         const int first = margins[0];
         bool allEqual = true;
         for (int m : margins)

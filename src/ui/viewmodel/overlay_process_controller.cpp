@@ -106,6 +106,17 @@ void OverlayProcessController::restartWithCurrentGame()
     launch(lastArgv_, lastEditMode_);
 }
 
+void OverlayProcessController::setPendingRestart(bool on)
+{
+    pendingRestart_ = on;
+}
+
+void OverlayProcessController::setLastArgv(const QStringList &argv, bool editMode)
+{
+    lastArgv_ = argv;
+    lastEditMode_ = editMode;
+}
+
 // The private poll body. kill(pid, 0) is POSIX's "does this PID exist?" —
 // no signal sent. ESRCH (any nonzero errno) means the process is gone.
 void OverlayProcessController::startPollTimer()

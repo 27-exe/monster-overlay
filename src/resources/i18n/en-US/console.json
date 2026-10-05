@@ -198,6 +198,15 @@
       }
     },
     "brand_sub": "CONTROL CONSOLE  ·  %1",
-    "window_title": "Monster Overlay Control"
+    "window_title": "Monster Overlay Control",
+    "layout": {
+      "single": "One block",
+      "split": "Split windows",
+      "apply": "Save and apply",
+      "apply_tip": "Remember this layout and restart the overlay if it is running. The mode cannot change in place — it needs a restart.",
+      "confirm_title": "Restart overlay?",
+      "confirm_split": "Switching to split windows restarts the running overlay: the HUD will disappear once, then remount as split windows.\n\nContinue?",
+      "confirm_single": "Switching to one block restarts the running overlay: the HUD will disappear once, then remount as a single panel.\n\nContinue?"
+    }
   }
 }

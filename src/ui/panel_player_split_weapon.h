@@ -50,6 +50,10 @@
 #include "player/player_types.h"
 #include "ui/viewmodel/player_view_model.h"
 #include "ui/panel_player_sharpness.h"
+// v0.12 fourth wave: the shared split rhythm (kSplitMargin and the type
+// stack). It was already the source of the numbers this file's own layout
+// used; adding the override meant this header needed it by name.
+#include "ui/panel_player_split_layout.h"
 
 #include <QPainter>
 #include <QFont>
@@ -277,6 +281,20 @@ public:
     // the extent hooks so a layout question gets its real numbers.
     [[nodiscard]] int contentWidth() const override;
     [[nodiscard]] int contentHeight() const override;
+
+    // The outer inset — the same kSplitMargin every other split window
+    // answers. It was missing here, which meant the console's preview drew
+    // this window flush to its own edge while every sibling sat 11px in,
+    // and the layout consistency test did not catch it because its list of
+    // windows stopped at five.
+    //
+    // Reported rather than assumed, for the same reason the others are: a
+    // ring asks the window instead of trusting six private constants to
+    // agree by accident.
+    [[nodiscard]] int contentMargin() const override
+    {
+        return mhw::split_layout::kSplitMargin;
+    }
 
     explicit PlayerWeaponStripPanel(QWidget *parent = nullptr);
 

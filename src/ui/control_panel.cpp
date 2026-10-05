@@ -1,5 +1,7 @@
 #include "control_panel.h"
 
+#include <vector>
+
 #include "ui/panel.h"
 #include "ui/panel_accent.h"
 #include "ui/panel_player.h"
@@ -7,6 +9,23 @@
 #include "ui/panel_damage.h"
 #include "ui/panel_pet_damage.h"
 #include "ui/panel_sections.h"
+// v0.13: the split sub-window preview. Every one of these headers is a
+// complete type the loop below constructs; each is already in mhw-ui
+// (CMakeLists.txt), so including them here adds no translation unit and
+// no link line.
+#include "ui/panel_player_split.h"
+#include "ui/panel_player_split_bars.h"
+#include "ui/panel_player_split_mantles.h"
+#include "ui/panel_player_split_weapon.h"
+#include "ui/panel_player_split_wirebug.h"
+#include "ui/panel_player_split_info.h"
+#include "ui/panel_monster_split_hp.h"
+#include "ui/panel_monster_split_stamina.h"
+#include "ui/panel_monster_split_enrage.h"
+#include "ui/panel_monster_split_ail.h"
+#include "ui/panel_monster_split_parts.h"
+#include "ui/panel_damage_split_share.h"
+#include "ui/panel_damage_split_chart.h"
 #include "ui/toggle_chip.h"
 #include "ui/section_row.h"
 #include "ui/section_count_bar.h"
@@ -19,6 +38,7 @@
 #include "ui/viewmodel/console_text_helpers.h"
 #include "ui/viewmodel/overlay_process_controller.h"
 #include "ui/viewmodel/console_layout_store.h"
+#include "ui/viewmodel/console_layout_mode_codec.h"
 #include "ui/viewmodel/panel_mask_codec.h"
 #include "core/game_detector.h"
 #include "core/game_profile.h"
@@ -59,6 +79,7 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 #include <QEasingCurve>
 #include <QAbstractAnimation>
 #include <QGridLayout>
+#include <QMessageBox>
 #include <QPixmap>
 #include <QPainter>
 #include <QFrame>
@@ -72,6 +93,366 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 #include <QTime>
 #include <signal.h>
 #include <sys/types.h>
+
+// ─── v0.13: the split's sub-window preview ─────────────────────────────
+//
+// The console's own holder for the fourteen split windows. The live
+// overlay's copies are stack objects in main.cpp with a full wiring set
+// (setEditMode / setGameForDemo / setSectionMask / setPanelEnabled /
+// retranslateUi / show); the console needs a smaller subset, because
+// all it does is let each window paint itself once into a pixmap the
+// HudCanvas can place. Same windows, same paint path, one table.
+//
+// THE DERIVATION, AND WHY IT IS NOT A LIST.
+//
+// Every row below is a row of a table in ui/panel_sections.h:
+// kPlayerSplitTargets (6), kMonsterSplitTargets (5),
+// kDamageSplitTargets (2). The order of buildTable() matches the order
+// of the tables' rows, and each entry carries the (parentSlot, row)
+// pair the canvas needs to colour it and title it.
+//
+// The class-per-row mapping IS the one thing that cannot be derived
+// from the tables, because a table row is a bitmask and a class is a
+// type: nothing in `{PlayerSection::Debuff | PlayerSection::Buff}`
+// names PlayerStatusStripPanel. But the mapping lives in ONE place
+// here, it is checked against the tables by a static_assert pair, and
+// adding a row upstream fails that assert until someone adds a line
+// below. A hardcoded window-name list would have drifted in step with
+// the tables the first time either changed alone; this asserts
+// instead of drifting.
+namespace {
+
+// One row of one split table, as the preview needs it: the window to
+// build, and which (panel, row) it is.
+struct SplitWindowRow {
+    // Which base panel this row was carved out of: 0 player, 1 monster,
+    // 2 damage. Pets has no split table, so it never appears.
+    int parentSlot;
+    // The row's index inside that parent's table. Must equal the
+    // position of the corresponding literal below.
+    int tableRow;
+    // The settingsKey the window reads its own panel settings under.
+    const char *settingsKey;
+};
+
+// THE BUILD TABLE. One line per split table row, in table order. The
+// two counts below pin its length against the tables, so a new row
+// upstream cannot be added silently.
+//
+// Keep this in EXACTLY the same order as the tables in panel_sections.h
+// (kPlayerSplitTargets rows 0..5, then kMonsterSplitTargets 0..4, then
+// kDamageSplitTargets 0..1), because the test asks for a row and then
+// asks the table whether that row's mask is the one the class claims.
+const SplitWindowRow kSplitWindowRows[] = {
+    // ---- kPlayerSplitTargets, 6 rows ----
+    {0, 0, "player-status"},      // Debuff | Buff   -> PlayerStatusStripPanel
+    {0, 1, "player-mantles"},     // Mantles         -> PlayerMantlesStripPanel
+    {0, 2, "player-wirebug"},     // Wirebug         -> PlayerWirebugStripPanel
+    {0, 3, "player-bars"},        // Bars            -> PlayerBarsStripPanel
+    {0, 4, "player-weapon"},      // Weapon|Sharpness-> PlayerWeaponStripPanel
+    {0, 5, "player-info"},        // Conn | Quest    -> PlayerInfoStripPanel
+    // ---- kMonsterSplitTargets, 5 rows ----
+    {1, 0, "monster-hp"},         // Hp        -> MonsterHpStripPanel
+    {1, 1, "monster-stamina"},    // Stamina   -> MonsterStaminaStripPanel
+    {1, 2, "monster-enrage"},     // Enrage    -> MonsterEnrageStripPanel
+    {1, 3, "monster-ail"},        // Ail       -> MonsterAilStripPanel
+    {1, 4, "monster-parts"},      // Parts     -> MonsterPartsStripPanel
+    // ---- kDamageSplitTargets, 2 rows ----
+    {2, 0, "damage-share"},       // Share -> DamageShareStripPanel
+    {2, 1, "damage-chart"},       // Chart -> DamageChartStripPanel
+};
+
+constexpr int kSplitWindowRowCount =
+    static_cast<int>(sizeof(kSplitWindowRows) / sizeof(kSplitWindowRows[0]));
+
+// THE COUNT ASSERT. If a row is appended to any of the three tables,
+// this fails and points at the table that grew — which is exactly the
+// signal the author needs to add the matching line above and below.
+static_assert(mhw::PlayerSection::kPlayerSplitTargetCount == 6,
+              "kPlayerSplitTargets row count changed: add a line to "
+              "kSplitWindowRows AND a case in makeSplitWindow()");
+static_assert(mhw::kMonsterSplitTargetCount == 5,
+              "kMonsterSplitTargets row count changed: add a line to "
+              "kSplitWindowRows AND a case in makeSplitWindow()");
+static_assert(mhw::DamageSplitSlot::kCount == 2,
+              "kDamageSplitTargets row count changed: add a line to "
+              "kSplitWindowRows AND a case in makeSplitWindow()");
+static_assert(kSplitWindowRowCount
+                  == 6 + 5 + 2,
+              "the build table must have one line per split-table row");
+
+// Construct the window for one row. A switch, not a table of factory
+// lambdas, because each type is a distinct class with a distinct
+// constructor: a lambda table would still have to name both.
+//
+// Returns nullptr for a row this build does not know, which the caller
+// treats as "not in this game's preview" rather than as an error.
+std::unique_ptr<Panel> makeSplitWindow(const SplitWindowRow &row)
+{
+    // The four base panels answer TopLeft/TopRight/BottomLeft/Bottom;
+    // every split window is anchored exactly like the panel it came
+    // from, which is what makes the preview's cluster sit on the right
+    // side of the parent. The corner is therefore chosen per parent,
+    // not per window, and the individual windows' own constructors
+    // default to TopLeft/Right the same way.
+    const Corner corner =
+        (row.parentSlot == 1 || row.parentSlot == 2) ? Corner::TopRight
+                                                     : Corner::TopLeft;
+    const bool goRight = (corner == Corner::TopLeft);
+
+    switch (row.parentSlot * 100 + row.tableRow) {
+    case 0 * 100 + 0:
+        return std::make_unique<PlayerStatusStripPanel>();
+    case 0 * 100 + 1:
+        return std::make_unique<PlayerMantlesStripPanel>();
+    case 0 * 100 + 2:
+        return std::make_unique<PlayerWirebugStripPanel>();
+    case 0 * 100 + 3:
+        return std::make_unique<PlayerBarsStripPanel>();
+    case 0 * 100 + 4:
+        return std::make_unique<PlayerWeaponStripPanel>();
+    case 0 * 100 + 5:
+        return std::make_unique<PlayerInfoStripPanel>();
+    case 1 * 100 + 0:
+        return std::make_unique<MonsterHpStripPanel>();
+    case 1 * 100 + 1:
+        return std::make_unique<MonsterStaminaStripPanel>();
+    case 1 * 100 + 2:
+        return std::make_unique<MonsterEnrageStripPanel>();
+    case 1 * 100 + 3:
+        return std::make_unique<MonsterAilStripPanel>();
+    case 1 * 100 + 4:
+        return std::make_unique<MonsterPartsStripPanel>();
+    case 2 * 100 + 0:
+        return std::make_unique<DamageShareStripPanel>();
+    case 2 * 100 + 1:
+        return std::make_unique<DamageChartStripPanel>();
+    default:
+        break;
+    }
+    (void)goRight;   // the corner is the window ctor's own business
+    return nullptr;
+}
+
+// Render one window the way the console renders its four base panels:
+// repaint, then blit into an offscreen pixmap with the panel's own
+// opacity already composited in by paintEvent.
+QPixmap renderSplitWindow(Panel *p)
+{
+    p->repaint();
+    const QSize sz = p->size();
+    QPixmap pix(sz);
+    pix.fill(Qt::transparent);
+    QPainter painter(&pix);
+    p->render(&painter, QPoint(), QRect(QPoint(0, 0), sz));
+    painter.end();
+    return pix;
+}
+
+} // namespace
+
+// ─── the host ───────────────────────────────────────────────────────────
+
+class SplitWindowPreviewHostImpl {
+public:
+    SplitWindowPreviewHostImpl()
+    {
+        // Built once: a Panel ctor is heavyweight (layer-shell surface +
+        // QSettings) and the set never changes after construction, so
+        // there is nothing to add or remove later.
+        //
+        // std::vector and NOT QVector: the entries own unique_ptrs, and
+        // QVector's copy-on-write detach wants a copy constructor even for
+        // the paths that only move. The set is appended once and never
+        // detached again, so COW buys nothing here anyway.
+        for (const SplitWindowRow &row : kSplitWindowRows) {
+            auto window = makeSplitWindow(row);
+            if (!window)
+                continue;   // an unknown row: no window, not a crash
+
+            EntryImpl entry;
+            entry.window = std::move(window);
+            entry.window->setAttribute(Qt::WA_DontShowOnScreen);
+            entry.window->setEditMode(true);
+            entry.window->show();
+            entry.source = std::make_unique<PanelSourceAdapter>(
+                entry.window.get());
+            entry.parentSlot = row.parentSlot;
+            entry.tableRow = row.tableRow;
+            entries_.push_back(std::move(entry));
+        }
+    }
+
+    [[nodiscard]] int count() const { return static_cast<int>(entries_.size()); }
+
+    // The bindings for the canvas, in this host's order. The canvas
+    // indexes its own vector by position, so the entries' order is the
+    // contract — and it is the table order, which is what the test
+    // asserts.
+    [[nodiscard]] QVector<HudCanvas::SubWindowBinding> bindings() const
+    {
+        QVector<HudCanvas::SubWindowBinding> out;
+        out.reserve(entries_.size());
+        for (const EntryImpl &e : entries_) {
+            HudCanvas::SubWindowBinding b;
+            b.src = e.source.get();
+            b.parentSlot = e.parentSlot;
+            b.tableRow = e.tableRow;
+            out.append(b);
+        }
+        return out;
+    }
+
+    // The game and the three masks pushed into every window, so the
+    // same user toggles that gate the base panels gate the split
+    // windows. Each window's own content gates read their own bits out
+    // of the mask they are given, exactly as main.cpp gives them.
+    void syncAll(mhw::GameId game, uint32_t playerMask, uint32_t monsterMask,
+                 uint32_t damageMask)
+    {
+        for (EntryImpl &e : entries_) {
+            switch (e.parentSlot) {
+            case 0:
+                e.window->setSectionMask(playerMask);
+                break;
+            case 1:
+                e.window->setSectionMask(monsterMask);
+                break;
+            case 2:
+                e.window->setSectionMask(damageMask);
+                break;
+            default:
+                break;
+            }
+            // setGameForDemo exists on the windows whose demo seed is
+            // game-specific. The rest seed their own fixed flavour,
+            // which is the same fact main.cpp's wiring documents — see
+            // the "the other windows need NO call here" note there.
+            // A window without the call simply keeps its own seed.
+            syncGameForDemo(e.window.get(), game);
+        }
+    }
+
+    // Re-render every window and push the pixmaps into the canvas.
+    void renderAll(HudCanvas *canvas)
+    {
+        if (!canvas)
+            return;
+        for (size_t i = 0; i < entries_.size(); ++i) {
+            const QPixmap pix = renderSplitWindow(entries_[i].window.get());
+            canvas->setSubWindowPixmap(static_cast<int>(i), pix, true);
+        }
+    }
+
+    // How many entries a given parent slot contributed. Used by the
+    // console's log line and by the test to prove the derivation.
+    [[nodiscard]] int countForParent(int parentSlot) const
+    {
+        int n = 0;
+        for (const EntryImpl &e : entries_)
+            if (e.parentSlot == parentSlot)
+                ++n;
+        return n;
+    }
+
+private:
+    struct EntryImpl {
+        std::unique_ptr<Panel> window;
+        std::unique_ptr<PanelSourceAdapter> source;
+        int parentSlot{-1};
+        int tableRow{-1};
+    };
+
+    // The per-window demo retarget, spelled as an overload set so a
+    // window without setGameForDemo() compiles to a no-op rather than
+    // forcing the whole file to know which windows have it.
+    static void syncGameForDemo(Panel *, mhw::GameId) {}
+    static void syncGameForDemo(PlayerStatusStripPanel *w, mhw::GameId g)
+    {
+        w->setGameForDemo(g);
+    }
+    static void syncGameForDemo(PlayerBarsStripPanel *w, mhw::GameId g)
+    {
+        w->setGameForDemo(g);
+    }
+    static void syncGameForDemo(PlayerMantlesStripPanel *w, mhw::GameId g)
+    {
+        w->setGameForDemo(g);
+    }
+    static void syncGameForDemo(PlayerWeaponStripPanel *w, mhw::GameId g)
+    {
+        w->setGameForDemo(g);
+    }
+    static void syncGameForDemo(PlayerWirebugStripPanel *w, mhw::GameId g)
+    {
+        w->setGameForDemo(g);
+    }
+    static void syncGameForDemo(PlayerInfoStripPanel *w, mhw::GameId g)
+    {
+        w->setGameForDemo(g);
+    }
+    static void syncGameForDemo(MonsterHpStripPanel *w, mhw::GameId g)
+    {
+        w->setGameForDemo(g);
+    }
+    static void syncGameForDemo(MonsterStaminaStripPanel *w, mhw::GameId g)
+    {
+        w->setGameForDemo(g);
+    }
+    static void syncGameForDemo(MonsterEnrageStripPanel *w, mhw::GameId g)
+    {
+        w->setGameForDemo(g);
+    }
+    static void syncGameForDemo(MonsterAilStripPanel *w, mhw::GameId g)
+    {
+        w->setGameForDemo(g);
+    }
+    static void syncGameForDemo(MonsterPartsStripPanel *w, mhw::GameId g)
+    {
+        w->setGameForDemo(g);
+    }
+
+    // std::vector, not QVector: see the ctor's note on COW vs the
+    // unique_ptrs these entries own.
+    std::vector<EntryImpl> entries_;
+};
+
+// The single public face, delegating to the impl above. This indirection
+// exists so control_panel.h can hold a unique_ptr to a complete type:
+// the header declares the host forward and owns it through a pointer,
+// and this .cpp is the only place that ever needs the full definition.
+class SplitWindowPreviewHost {
+public:
+    SplitWindowPreviewHost() = default;
+    [[nodiscard]] int count() const { return impl_ ? impl_->count() : 0; }
+    [[nodiscard]] QVector<HudCanvas::SubWindowBinding> bindings() const
+    {
+        return impl_ ? impl_->bindings() : QVector<HudCanvas::SubWindowBinding>{};
+    }
+    void ensureBuilt()
+    {
+        if (!impl_)
+            impl_ = std::make_unique<SplitWindowPreviewHostImpl>();
+    }
+    void syncAll(mhw::GameId game, uint32_t playerMask, uint32_t monsterMask,
+                 uint32_t damageMask)
+    {
+        if (impl_)
+            impl_->syncAll(game, playerMask, monsterMask, damageMask);
+    }
+    void renderAll(HudCanvas *canvas)
+    {
+        if (impl_)
+            impl_->renderAll(canvas);
+    }
+    [[nodiscard]] int countForParent(int parentSlot) const
+    {
+        return impl_ ? impl_->countForParent(parentSlot) : 0;
+    }
+
+private:
+    std::unique_ptr<SplitWindowPreviewHostImpl> impl_;
+};
 
 // v0.11: the console stage-pane default height lives as the named
 // constant mhw::kConsoleStageHeightDefault (ConsoleLayoutStore) so tests
@@ -433,6 +814,68 @@ ControlPanel::ControlPanel(QWidget *parent)
     presets->setObjectName("railAction");
     presets->setEnabled(false); // visual placeholder; no preset API yet
     scrollLayout->addWidget(presets);
+
+    // ---- v0.13: the Single / Split selector ----------------------------
+    //
+    // WHY HERE. The rail is the console's command column: it already
+    // holds START, the game selector and the "workspace" group this
+    // sits in, and the user's mental model of "console chooser" is
+    // already trained on it. Putting the mode selector in the stage bar
+    // would sit it next to the preview toggles (safe area / grid /
+    // zoom), where every neighbour is a CANVAS control that takes
+    // effect instantly — exactly the wrong neighbourhood for a control
+    // whose effect arrives via a restart.
+    //
+    // TWO WIDGETS, NOT ONE. A combo alone would record a choice that
+    // changes nothing: `--layout` is read once at overlay startup and
+    // the window topology is derived from it, so picking an entry
+    // mid-hunt would silently do nothing (the "the console is broken"
+    // failure). A button alone would restart a live overlay with no way
+    // to say WHERE the user wants to go. Combo + apply is the smallest
+    // pair whose semantics are exactly the truth: pick, then commit,
+    // and committing relaunches when it must.
+    layoutCombo_ = new QComboBox();
+    layoutCombo_->setObjectName("layoutCombo");
+    layoutCombo_->setCursor(Qt::PointingHandCursor);
+    layoutCombo_->addItem(
+        mh::tr(QStringLiteral("console.layout.single")));
+    layoutCombo_->addItem(
+        mh::tr(QStringLiteral("console.layout.split")));
+    // i18n: the two entries are static copy, but they are ITEM text, and
+    // trSet() only handles a widget's Text property. A hook re-adds them
+    // on a language switch instead — see retranslateUi().
+    trHook([this]{
+        if (!layoutCombo_) return;
+        const int keep = layoutCombo_->currentIndex();
+        layoutCombo_->blockSignals(true);
+        layoutCombo_->setItemText(kLayoutComboSingleIndex,
+            mh::tr(QStringLiteral("console.layout.single")));
+        layoutCombo_->setItemText(kLayoutComboSplitIndex,
+            mh::tr(QStringLiteral("console.layout.split")));
+        layoutCombo_->setCurrentIndex(keep);
+        layoutCombo_->blockSignals(false);
+    });
+    scrollLayout->addWidget(layoutCombo_);
+
+    layoutApplyBtn_ = new QPushButton();
+    trSet(layoutApplyBtn_, QStringLiteral("console.layout.apply"));
+    layoutApplyBtn_->setObjectName("layoutApply");
+    layoutApplyBtn_->setCursor(Qt::PointingHandCursor);
+    layoutApplyBtn_->setEnabled(false);   // nothing to do until a change
+    // The tooltip is the semantic contract, stated where the user asks
+    // for it rather than in a manual: what this button does, and what
+    // it does NOT (it cannot flip a running overlay in place).
+    trTip(layoutApplyBtn_, QStringLiteral("console.layout.apply_tip"));
+    scrollLayout->addWidget(layoutApplyBtn_);
+    connect(layoutCombo_, &QComboBox::currentIndexChanged,
+            this, [this]{ updateLayoutApplyEnabled(); });
+    // The one place a user commits a mode. Everything the commit does
+    // (persist, and restart the child when it must) is inside
+    // applyLayoutChoice() — the lambda only forwards the choice, so the
+    // semantics live in one named, commentable function.
+    connect(layoutApplyBtn_, &QPushButton::clicked, this,
+            [this]{ applyLayoutChoice(layoutComboMode()); });
+
     scrollLayout->addStretch(1);
     railScroll->setWidget(scrollContent);
     railLayout->addWidget(railScroll, 1);
@@ -827,6 +1270,17 @@ ControlPanel::ControlPanel(QWidget *parent)
             [this]{ launchOverlayChild(/*editMode=*/true); });
 
     loadMaskFromDisk();
+    // v0.13: the layout mode. Read AFTER the widgets exist (the combo is
+    // populated above) and AFTER the mask load, because both read the
+    // same conf file and the mask load is the one that establishes
+    // whether the file is present at all.
+    applyStartupLayoutMode();
+    // v0.13: push the mode into the canvas so the preview describes the
+    // same topology the child will start in. Called after the mask load
+    // (the sub-window preview reads the same masks) and before the
+    // first rebuildAndRender() so the canvas holds bindings before it
+    // can be asked for pixmaps.
+    syncSplitPreviewToCanvas();
     for (int i = 0; i < mhw::kPanelCount; ++i)
         rebuildAndRender(i);
     selectPanel(0);
@@ -1805,6 +2259,18 @@ void ControlPanel::switchGame(mhw::GameId game)
     // v0.10.1: companion surfaces are Rise-only. Selecting World removes the
     // pets rail card, its inspector page and the stage preview tile
     // entirely — there is no World data source for them.
+    //
+    // v0.13: THIS ONE IS NOT THE argv ONE. buildOverlayArgv()'s
+    // `petsAvailable` was unbidden from the game because it was lying
+    // about the user's switch; this one answers a different question and
+    // stays: "should the console DRAW a pets surface at all under this
+    // game?" The overlay folds an empty window on its own, but the
+    // console has no way to preview a panel whose demo data is never
+    // seeded, so the honest UI is to not offer it.
+    //
+    // The two are not contradictory, and conflating them is what made
+    // v0.10.1 wrong: this one gates PRESENTATION, argv's gated INTENT,
+    // and only the latter claims to speak for the user.
     const bool petsAvailable = (game == mhw::GameId::Rise);
     if (ctl_[3].navButton)
         ctl_[3].navButton->setVisible(petsAvailable);
@@ -1830,6 +2296,16 @@ void ControlPanel::switchGame(mhw::GameId game)
     // wirebug row, no mantles) regardless of which game the rail
     // picked.
     if (player_) player_->setGameForDemo(game);
+    // v0.13: the split windows' demo seeds are game-specific (衣装 seeds
+    // a World player, 翔虫 a Rise one), so the same retarget the base
+    // panel gets. The windows that have no seed variance need nothing.
+    if (splitPreview_) {
+        splitPreview_->syncAll(game,
+                               ControlPanel::maskFor(ctl_[0]),
+                               ControlPanel::maskFor(ctl_[1]),
+                               ControlPanel::maskFor(ctl_[2]));
+        splitPreview_->renderAll(canvas_);
+    }
     // Toggle visibility of the World-only / Rise-only section rows in
     // place. The rows were created once at construction; show/hide them
     // as the rail selection flips. Rebuilt-then-deleteLater turned out
@@ -1928,15 +2404,47 @@ QStringList ControlPanel::buildOverlayArgv(bool editMode) const
     const uint32_t md = ControlPanel::maskFor(ctl_[2]);
     const uint32_t mt = ControlPanel::maskFor(ctl_[3]);
 
-    // v0.10.1: the companion (pets) surface is Rise-only — in World its mask
-    // is not passed and the panel is force-disabled below.
-    const bool petsAvailable = (currentGame() == mhw::GameId::Rise);
+    // v0.13: the companion (pets) mask is passed on the USER'S SWITCH,
+    // and nothing else.
+    //
+    // WHY THIS STOPPED READING THE GAME. v0.10.1 wrote
+    // `petsAvailable = (currentGame() == Rise)` here and then used it for
+    // two things: whether --mask-pets is passed, and whether --no-pets is
+    // forced. Both bundled two different questions into one bool, and
+    // only one of them was legitimate:
+    //
+    //   * "does the pet-damage surface have a data source under this
+    //      game?" — main.cpp's answer: YES under Rise (three readers),
+    //      NO under World. That is a RUNTIME fact, and it is already
+    //      enforced on the overlay side, where it belongs: the readers
+    //      populate riseDamageReaders only under Rise, so nothing ever
+    //      feeds the panel, and hasVisibleContent() answers false — so
+    //      the window folds itself away quietly.
+    //
+    //   * "did the user turn the pets panel off?" — the only question
+    //      this function should answer, and the answer is the master
+    //      toggle's state and nothing else.
+    //
+    // WHAT THE OLD CODE GOT WRONG, concretely: in World it forced
+    // --no-pets, which the overlay reads as
+    // `petDamagePanel.setPanelEnabled(false)`. The panel therefore
+    // reported itself as USER-DISABLED under World even when its master
+    // chip was on, which is what the console's own pets placeholder then
+    // echoed back as 「用户已关闭」 rather than the truth (「此游戏没有
+    // 宠物伤害数据」). The console and the overlay disagreed about WHY
+    // the panel was absent, and the disagreement was visible to the
+    // user.
+    //
+    // The mask is still passed exactly as before in World — the overlay
+    // simply has nothing to put in it, so the surface folds — and the
+    // console's World-mode pets placeholder (control_panel.cpp's
+    // riseOnlyUnavailable branch) still draws its 「仅在 RISE 模式下可用」
+    // caption, now for the right reason.
     QStringList args;
     args << QStringLiteral("--mask-player=%1").arg(mp, 0, 16)
          << QStringLiteral("--mask-monster=%1").arg(mm, 0, 16)
-         << QStringLiteral("--mask-damage=%1").arg(md, 0, 16);
-    if (petsAvailable)
-        args << QStringLiteral("--mask-pets=%1").arg(mt, 0, 16);
+         << QStringLiteral("--mask-damage=%1").arg(md, 0, 16)
+         << QStringLiteral("--mask-pets=%1").arg(mt, 0, 16);
     // Master toggle maps to a separate --no-* flag per panel. The
     // mask controls which sub-blocks render inside an enabled panel;
     // --no-* unmounts the layer-shell surface entirely so the user
@@ -1948,7 +2456,10 @@ QStringList ControlPanel::buildOverlayArgv(bool editMode) const
         args << QStringLiteral("--no-monster");
     if (!ctl_[2].master->isChecked())
         args << QStringLiteral("--no-damage");
-    if (!petsAvailable || !ctl_[3].master->isChecked())
+    // The master chip, and only the master chip. A pets panel that is
+    // absent under World is absent because there is no data — not
+    // because the user is recorded as having switched it off.
+    if (!ctl_[3].master->isChecked())
         args << QStringLiteral("--no-pets");
     if (editMode) args << QStringLiteral("--edit");
 
@@ -1980,6 +2491,22 @@ QStringList ControlPanel::buildOverlayArgv(bool editMode) const
     appendOutput(1, "--output-monster");
     appendOutput(2, "--output-damage");
     appendOutput(3, "--output-pets");
+
+    // v0.13: THE LAYOUT MODE, appended at the very end so this function's
+    // original body is untouched.
+    //
+    // Empty in Single mode — see consoleLayoutArgv()'s own comment for
+    // why an explicit `--layout=single` would be actively wrong: it
+    // outranks a conf row and discards the user's own CLI override,
+    // while omitting the flag resolves to the identical Single mode.
+    //
+    // This closes the console's side of the handshake: the console is
+    // the ONLY process that used to build argv with no --layout at all,
+    // so a console-launched overlay was pinned to Single no matter what
+    // the conf said. The conf row the console writes and the flag it
+    // now passes describe the same mode, checked by
+    // tests/console_layout_mode_tests.cpp.
+    args.append(mhw::consoleLayoutArgv(layoutModeInForce()));
 
     return args;
 }
@@ -2127,6 +2654,276 @@ void ControlPanel::loadMaskFromDisk()
     applyTo(masks.petsValid, masks.pets, ctl_[3]);
 }
 
+// ---- v0.13 layout mode (Single / Split) ---------------------------------
+//
+// THREE TEXTS, THREE FILES, ONE DECISION
+//
+// The console's `layout=` row lives in the SAME conf file the four mask
+// rows live in (monster-overlay.conf), and is written by the SAME
+// saveMaskToDisk() call — deliberately, because that file is the one the
+// overlay reads at startup. A second store (QSettings, the console's own
+// monster-control.conf) would be a file the overlay never looks at, and
+// the row would then have to be kept in step with the file that matters.
+//
+// The priority chain is NOT re-implemented here. applyStartupLayoutMode()
+// feeds the parsed `layout=` row into mhw::resolveStartupLayoutMode()
+// — the same function main.cpp calls — and takes its answer. The console
+// therefore cannot have a precedence bug the overlay does not also have,
+// and cannot silently drop a user's saved choice.
+//
+// consoleLayoutArgv() spells the flag, and it spells it ONLY in Split.
+// Single is the shared resolver's own default (PlayerLayoutSource::
+// Default), so omitting the flag yields the identical mode while leaving
+// the user's own --layout= override — which outranks everything — intact.
+// An explicit --layout=single from the console would beat that override
+// and discard it, which is the whole reason the chain has a "cli
+// explicit" tier at all.
+//
+// ABSENCE READS AS SINGLE. Every unusable spelling — no row, garbage, a
+// lone "single", a hand-typed "off" — resolves Single, because a value
+// that does not say Split must never move a user's windows. That is also
+// what keeps the 10 single-mode pixel baselines byte-identical: a fresh
+// install, and every user who never touches the combo, opens exactly the
+// topology v0.11.4 drew.
+void ControlPanel::applyStartupLayoutMode()
+{
+    const QString path = mhw::localeConfPath();
+    QString text;
+    QFile f(path);
+    if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream in(&f);
+        in.setEncoding(QStringConverter::Utf8);
+        text = in.readAll();
+    }
+    // No file, or a file without a usable `layout=` row, is Single.
+    //
+    // The alias (PlayerLayoutSource/PlayerLayoutConfRow) — that
+    // panel_sections.h describes as "adding the row later is a one-line
+    // change here instead of a signature change" — is exactly that
+    // one-line change, and this call is it. The struct wrapper the codec
+    // returns carries the same enum, so nothing about the shared
+    // resolver's shape moves.
+    const mhw::ConsoleLayoutConfRow confRow =
+        mhw::parseConsoleLayoutRow(text);
+
+    // The shared chain, called exactly as main.cpp calls it. The CLI
+    // half is empty from the console's side: the console is not a
+    // command line, so it never "passes a flag", it only states the
+    // conf row it just read. That is what makes the console and the
+    // overlay agree without the console having an opinion of its own
+    // about precedence.
+    const mhw::PlayerLayoutResolution resolved =
+        mhw::resolveStartupLayoutMode(mhw::PlayerLayoutCliRequest{},
+                                      confRow.source);
+
+    // The mode the running build actually uses from here on: what the
+    // resolver said, recorded so the apply button can tell "you picked
+    // something new" apart from "you picked what is already in force".
+    layoutModeInForce_ = resolved.mode;
+    qInfo("monster-control: layout=%s (source=%d)",
+          resolved.mode == mhw::PlayerSection::PlayerLayoutMode::Split
+              ? "split" : "single",
+          static_cast<int>(resolved.source));
+
+    if (layoutCombo_) {
+        // blockSignals: setting the index programmatically must NOT be
+        // read as a user selection, or every construction would look
+        // like a pending change and light up the apply button.
+        layoutCombo_->blockSignals(true);
+        layoutCombo_->setCurrentIndex(
+            layoutComboIndexFor(resolved.mode));
+        layoutCombo_->blockSignals(false);
+        updateLayoutApplyEnabled();
+    }
+
+    // v0.13: the canvas must describe the topology this mode names,
+    // which is also the only place the sub-windows get built at
+    // startup. Done AFTER the combo is set so the log line and the UI
+    // agree on what was resolved.
+    syncSplitPreviewToCanvas();
+}
+
+// The combo's one and only index converter. Kept as a named function
+// rather than a literal at each site so a reordered combo (or a third
+// mode, if one ever arrives) is one edit and not a hunt.
+int ControlPanel::layoutComboIndexFor(
+    mhw::PlayerSection::PlayerLayoutMode mode) const
+{
+    return mode == mhw::PlayerSection::PlayerLayoutMode::Split
+               ? kLayoutComboSplitIndex
+               : kLayoutComboSingleIndex;
+}
+
+// In-force mode as the combo spells it. Returns Single when the combo
+// does not exist, so a caller with no UI still gets a sane answer.
+mhw::PlayerSection::PlayerLayoutMode ControlPanel::layoutComboMode() const
+{
+    if (!layoutCombo_ || layoutCombo_->count() == 0)
+        return mhw::PlayerSection::PlayerLayoutMode::Single;
+    return layoutCombo_->currentIndex() == kLayoutComboSplitIndex
+               ? mhw::PlayerSection::PlayerLayoutMode::Split
+               : mhw::PlayerSection::PlayerLayoutMode::Single;
+}
+
+// Enable the apply button ONLY when the selection actually differs from
+// the mode in force. That is the whole point of the two-widget design:
+// the combo records an intention, the button is what makes it real, and
+// a button that is armed while it would do nothing is a button that
+// teaches the user to distrust it.
+void ControlPanel::updateLayoutApplyEnabled()
+{
+    if (!layoutApplyBtn_ || !layoutCombo_)
+        return;
+    layoutApplyBtn_->setEnabled(layoutComboMode() != layoutModeInForce());
+}
+
+// ---- v0.13: the split sub-window preview ------------------------------
+//
+// Push the in-force mode into the canvas, and build the sub-window
+// geometry the first time (and only time) the mode is Split.
+//
+// WHY THIS IS NOT CALLED FROM rebuildAndRender(). The four base
+// panels' previews refresh on every mask change because their PIXMAPS
+// change. The sub-windows' GEOMETRY does not — it comes from the
+// tables, which only move when a row is added. So the canvas's
+// bindings are set once per mode change, while their pixmaps are
+// refreshed by refreshSplitWindowPreviews(). Mixing the two would
+// rebuild the whole binding set on every checkbox click.
+void ControlPanel::syncSplitPreviewToCanvas()
+{
+    if (!canvas_)
+        return;
+    // The mode first, always: setLayoutMode(Single) is what empties the
+    // canvas's subSlots_, and it does so regardless of what follows.
+    canvas_->setLayoutMode(layoutModeInForce());
+
+    if (layoutModeInForce() != mhw::PlayerSection::PlayerLayoutMode::Split) {
+        // Single: the windows are no longer needed, and keeping them
+        // alive would hold fourteen layer-shell surfaces open for a
+        // preview nobody is looking at.
+        splitPreview_.reset();
+        return;
+    }
+
+    if (!splitPreview_) {
+        splitPreview_ = std::make_unique<SplitWindowPreviewHost>();
+        splitPreview_->ensureBuilt();
+        canvas_->setSubWindowBindings(splitPreview_->bindings());
+        // The first paint needs pixmaps; a later mask change goes
+        // through refreshSplitWindowPreviews() instead.
+        splitPreview_->syncAll(currentGame(),
+                               ControlPanel::maskFor(ctl_[0]),
+                               ControlPanel::maskFor(ctl_[1]),
+                               ControlPanel::maskFor(ctl_[2]));
+        splitPreview_->renderAll(canvas_);
+        qInfo("monster-control: split preview: %d sub-window(s) "
+              "(%d player, %d monster, %d damage)",
+              splitPreview_->count(),
+              splitPreview_->countForParent(0),
+              splitPreview_->countForParent(1),
+              splitPreview_->countForParent(2));
+    }
+}
+
+// Re-render the sub-windows' pixmaps after a mask change. A no-op in
+// Single mode, where the canvas has nothing to show and the host is
+// gone.
+void ControlPanel::refreshSplitWindowPreviews()
+{
+    if (!canvas_ || !splitPreview_)
+        return;
+    if (layoutModeInForce() != mhw::PlayerSection::PlayerLayoutMode::Split)
+        return;
+    // Only worth doing if the canvas still has the bindings: the two
+    // are set together in syncSplitPreviewToCanvas(), so a mismatch
+    // means the canvas was replaced under us.
+    if (canvas_->subWindowCount() <= 0)
+        return;
+    splitPreview_->syncAll(currentGame(),
+                           ControlPanel::maskFor(ctl_[0]),
+                           ControlPanel::maskFor(ctl_[1]),
+                           ControlPanel::maskFor(ctl_[2]));
+    splitPreview_->renderAll(canvas_);
+}
+
+// The commit half: persist, then make the running child agree.
+//
+// WHY A RESTART AND NOT A LIVE FLAG. `--layout` is read ONCE at overlay
+// startup (main.cpp's resolveStartupLayoutMode) and the window topology
+// is derived from it; there is no in-process setter for it. So the
+// action's honest description is "remember this and relaunch", and the
+// UI is allowed to promise exactly that — nothing more.
+//
+// WHY THE CONFIRM IS UNCONDITIONAL when a child is alive. Restarting
+// kills a live overlay mid-hunt: the layer-shell surfaces unmap, the
+// console comes back to the front, and the overlay remounts. A user who
+// pressed "apply" while looking at their HUD wants that; a user who
+// wandered into the control by accident does not. The dialog is cheap
+// and the operation is not reversible, so it is always asked.
+void ControlPanel::applyLayoutChoice(mhw::PlayerSection::PlayerLayoutMode mode)
+{
+    // Already in force: nothing to persist, nothing to restart.
+    if (layoutModeInForce() == mode) {
+        updateLayoutApplyEnabled();
+        return;
+    }
+
+    // No child: the choice is written to disk and picked up by the NEXT
+    // launch. No dialog — nothing was interrupted, nothing to confirm.
+    if (!overlay_->isRunning()) {
+        saveMaskToDisk();     // also rewrites the layout= row
+        layoutModeInForce_ = mode;
+        updateLayoutApplyEnabled();
+        qInfo("monster-control: layout=%s saved; the next launch uses it",
+              mode == mhw::PlayerSection::PlayerLayoutMode::Split ? "split"
+                                                                 : "single");
+        return;
+    }
+
+    const QString title = mh::tr(QStringLiteral("console.layout.confirm_title"));
+    const QString body =
+        (mode == mhw::PlayerSection::PlayerLayoutMode::Split
+             ? mh::tr(QStringLiteral("console.layout.confirm_split"))
+             : mh::tr(QStringLiteral("console.layout.confirm_single")));
+    if (QMessageBox::question(this, title, body,
+                              QMessageBox::Yes | QMessageBox::No,
+                              QMessageBox::No)
+        != QMessageBox::Yes) {
+        return;
+    }
+
+    saveMaskToDisk();         // the row the relaunched child will read
+    layoutModeInForce_ = mode;
+    updateLayoutApplyEnabled();
+    // v0.13: the canvas follows the mode immediately, so the user sees
+    // the preview change before the child has even been asked to exit.
+    // This is the ONLY other place the mode in force moves.
+    syncSplitPreviewToCanvas();
+
+    // THE RESTART MECHANISM, reusing what the game hot-swap invented:
+    // SIGTERM the child (overlay_->stop()), then let the controller's own
+    // 250 ms poll observe the exit. handleExited() fires the relaunch
+    // from the pendingRestart_ flag — the SAME mechanism
+    // OverlayProcessController::setCurrentGame() uses, so there is no
+    // second spawn path.
+    //
+    // Why not killAndRestart() in one call: stop() deliberately does NOT
+    // zero overlayPid_ (the overlay's own ESC handler runs saveConfig()
+    // and quits cleanly on SIGTERM), so the pid stays the poll's target
+    // until the exit is observed. The flag is armed BEFORE stop() so the
+    // relaunch cannot be lost if the exit is observed unusually fast.
+    //
+    // setLastArgv() first, because the controller's stored copy carries
+    // the OLD --layout: --game is appended by launch() from currentGame_
+    // (which IS mutable, so replaying is always correct there), but
+    // --layout is baked into the caller's argv and would otherwise
+    // resurrect the previous mode on the relaunch.
+    overlay_->setLastArgv(buildOverlayArgv(overlay_->lastEditMode()),
+                          overlay_->lastEditMode());
+    overlay_->setPendingRestart(true);
+    overlay_->stop();
+}
+
 void ControlPanel::saveMaskToDisk() const
 {
     const QString path = mhw::localeConfPath();
@@ -2140,6 +2937,10 @@ void ControlPanel::saveMaskToDisk() const
     // schema marker). Preserve locale, comments and unknown/future keys
     // in their original relative order, while removing every old copy of
     // a canonical mask row so duplicates converge.
+    //
+    // VIOLATION CHECK: `layout=` is NOT one of the five. It is not a
+    // mask and does not belong in the codec — see the note below on why
+    // it is written from here rather than through serializePanelMasks().
     //
     // The `maskVersion=1` row is emitted unconditionally by the codec:
     // this is the write half of the one-time schema migration. An
@@ -2163,6 +2964,37 @@ void ControlPanel::saveMaskToDisk() const
     const QByteArray data = mhw::serializePanelMasks(
         mp, mm, md, mt, preservedText);
 
+    // v0.13: append the `layout=` row (or nothing).
+    //
+    // WHY APPENDED OUTSIDE THE CODEC and not inside serializePanelMasks():
+    // that function is a tested contract ("these five rows, in this
+    // order, then the preserved block verbatim") shared with the overlay's
+    // own reader and covered by panel-mask-codec-tests. Widening its
+    // signature to take a layout value would put a v13 concern in a v12
+    // contract, and its test would then have to change for a reason that
+    // has nothing to do with masks.
+    //
+    // WHY IT LANDS AFTER the preserved block: the row's position is
+    // cosmetic (parseConsoleLayoutRow() scans every line), so it goes
+    // where appending is free — and it stays clear of the mask rows'
+    // documented fixed order, which a mask test might pin.
+    //
+    // WHY IT CAN BE ABSENT: serializeConsoleLayoutRow() returns EMPTY for
+    // Single. Single is the resolver's default, so writing a row that
+    // states the default would add a hand-editable "single" that looks
+    // like a deliberate choice, and would put the row in the file of
+    // every user who ever opened the combo. A file without the row and
+    // a file with `layout=single` resolve identically — which is the
+    // property that keeps an old conf byte-for-byte single.
+    //
+    // NO TRAILING-NEWLINE DOUBLE. The codec's output already ends in
+    // '\n' and so does the row, so a single append lands one row per
+    // line with exactly one terminator. Nothing below re-splits on '\n'
+    // to decide where a row begins, so this is not load-bearing — but
+    // the file is user-editable, so it stays clean.
+    QByteArray written = data;
+    written.append(mhw::serializeConsoleLayoutRow(layoutModeInForce()));
+
     const QString parent = QFileInfo(path).absolutePath();
     if (!QDir().mkpath(parent)) {
         qWarning("monster-control: cannot create config directory %s",
@@ -2176,7 +3008,7 @@ void ControlPanel::saveMaskToDisk() const
                  qPrintable(path), qPrintable(out.errorString()));
         return;
     }
-    if (out.write(data) != data.size()) {
+    if (out.write(written) != written.size()) {
         qWarning("monster-control: cannot atomically write %s: %s",
                  qPrintable(path), qPrintable(out.errorString()));
         out.cancelWriting();
@@ -2242,6 +3074,11 @@ void ControlPanel::rebuildAndRender(int idx)
         p.end();
         if (lab)
             lab->setPixmap(ph);
+        // v0.13: the sub-windows read the same sections the base panel
+        // just stopped drawing, so their previews move too. A no-op in
+        // Single mode (the host is null there), so the call is safe on
+        // every mask change including the four the ctor makes.
+        refreshSplitWindowPreviews();
         return;
     }
 
@@ -2250,6 +3087,9 @@ void ControlPanel::rebuildAndRender(int idx)
         lab->setPixmap(pix);
     if (canvas_)
         canvas_->setPanelPixmap(idx, pix, true);
+    // v0.13: see the note in the disabled arm above — the same section
+    // bits gate this panel's split windows.
+    refreshSplitWindowPreviews();
 }
 
 QPixmap ControlPanel::renderPreview(Panel *p)
