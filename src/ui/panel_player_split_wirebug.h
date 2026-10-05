@@ -45,6 +45,11 @@
 #include "panel.h"
 #include "core/game_snapshot.h"
 #include "player/player_types.h"
+// The shared split rhythm. The .cpp already includes it for its own use;
+// the header needs it too because kPillRowGap below is an alias of a
+// constant in it, and an alias in a header whose include moved elsewhere
+// compiles until someone includes this header first.
+#include "ui/panel_player_split_layout.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -60,7 +65,11 @@
 // inline accessors read them, and duplicating them as header constants
 // would let the two spellings drift.
 inline constexpr int kPillH      = 18;   // HTML: .pill height (panel_player.cpp:753)
-inline constexpr int kPillRowGap = 4;    // vertical pitch between wrapped rows
+// The between-row pitch, aliased to the shared grade rather than spelled
+// with its own 4: the split now has ONE "inside a block" gap, and this
+// window claimed it was 4 while every other window said 7 — which is the
+// kind of difference a user reads as "these are two different systems".
+inline constexpr int kPillRowGap = mhw::split_layout::kSplitGapWithin;
 inline constexpr int kPillGap    = 5;    // horizontal gap between capsules on a row
 // Named for this window rather than the shared `kMargin`: AUTOMOC
 // compiles every moc-bearing header into ONE translation unit, so a
@@ -148,6 +157,30 @@ class PlayerWirebugStripPanel : public Panel {
     Q_OBJECT
 
 public:
+    // The columns dial, on Panel's virtual chain.
+    [[nodiscard]] int  columns() const override { return columns_; }
+    [[nodiscard]] bool supportsColumns() const override { return true; }
+
+    // The row-layout vocabulary the generic wrap is derived from. These
+    // answer "what is one item", and the shared arithmetic in
+    // panel_sizing.h turns them plus a width budget into columns and
+    // rows — the same answers the status strip gives from its own
+    // tokens, so the two strips cannot drift about what a capsule is.
+    [[nodiscard]] int  itemCount() const override
+    {
+        return rows_.capsules.size();
+    }
+    [[nodiscard]] int  naturalItemWidth() const override;
+    [[nodiscard]] int  itemGap() const override { return kPillGap; }
+    [[nodiscard]] int  rowPitch() const override { return kPillH + kPillRowGap; }
+
+    // The width of the capsule grid, derived from the width this window
+    // will ACTUALLY be (appliedWidth, so a lock is honoured) and from
+    // the dial. Both the reservation and the draw go through here, which
+    // is what keeps the capsule slot inside the window's real extent
+    // instead of the one the content asked for.
+    [[nodiscard]] int  wrappedColumns() const;
+
     explicit PlayerWirebugStripPanel(QWidget *parent = nullptr);
 
     // Full snapshot. Caches the resolved capsules for paintPanel() to
@@ -166,6 +199,25 @@ public:
     // the base panels occupy (Panel::isSubWindow).
     [[nodiscard]] bool isSubWindow() const override { return true; }
 
+    // ─── Panel's polymorphic layout contract ────────────────────────
+    //
+    // Answered publicly so a layout question — the console's preview,
+    // main.cpp, the layout consistency test — gets this window's real
+    // numbers without knowing which window it is holding.
+
+    // What the wrapped capsules ask for, before the floor and the lock.
+    [[nodiscard]] int  contentWidth() const override;
+    [[nodiscard]] int  contentHeight() const override;
+
+    // The outer inset: the same kSplitMargin every other split window
+    // answers, so the ring can be asked instead of seven private
+    // constants being trusted to agree.
+    [[nodiscard]] int  contentMargin() const override { return kWirebugMargin; }
+
+    // The columns dial, lifted onto Panel's virtual chain. The base's
+    // default no-op is what keeps every non-row window's [ ] key dead,
+    // which is the whole reason this lives on the base rather than in
+    // three copies of a passthrough contract.
     // The columns dial survives an exit. Not virtual and not an override:
     // Panel's versions are plain non-virtual members reached through
     // Panel*, so these hide rather than extend them — every call site
@@ -197,12 +249,10 @@ protected:
 
 private:
     [[nodiscard]] bool wirebugEnabled() const;
-    [[nodiscard]] int  contentWidth() const;
     // Height the capsule row needs, in logical px. The panel reserves
     // kWirebugGap + kWirebugH = 9 + 18 (panel_player.cpp:752-753); this
     // window keeps the same 18 so a capsule drawn side by side with the
     // panel's is the same size.
-    [[nodiscard]] int  contentHeight() const;
 
     // ─── the columns dial (v0.13) ─────────────────────────────────────
     //
@@ -217,30 +267,7 @@ private:
     // full one-row layout this window shipped with. Clamped to
     // [1, kWirebugMaxColumns]: 1 is the vertical list the user asked
     // for, and above the slot cap there are no columns to draw.
-    [[nodiscard]] int  columns() const override { return columns_; }
     void nudgeColumns(int delta) override;
-    [[nodiscard]] bool supportsColumns() const override { return true; }
-
-    // The row-layout vocabulary the generic wrap is derived from. These
-    // answer "what is one item", and the shared arithmetic in
-    // panel_sizing.h turns them plus a width budget into columns and
-    // rows — the same answers the status strip gives from its own
-    // tokens, so the two strips cannot drift about what a capsule is.
-    [[nodiscard]] int  itemCount() const override
-    {
-        return rows_.capsules.size();
-    }
-    [[nodiscard]] int  naturalItemWidth() const override;
-    [[nodiscard]] int  itemGap() const override { return kPillGap; }
-    [[nodiscard]] int  rowPitch() const override { return kPillH + kPillRowGap; }
-    [[nodiscard]] int  contentMargin() const override { return kWirebugMargin; }
-
-    // The width of the capsule grid, derived from the width this window
-    // will ACTUALLY be (appliedWidth, so a lock is honoured) and from
-    // the dial. Both the reservation and the draw go through here, which
-    // is what keeps the capsule slot inside the window's real extent
-    // instead of the one the content asked for.
-    [[nodiscard]] int  wrappedColumns() const;
 
     mhw::WirebugModel rows_{};
     // True while what is on screen came from setupDemoData(); the first

@@ -83,6 +83,7 @@
 #include "panel.h"
 #include "core/game_snapshot.h"
 #include "quest/quest_types.h"
+#include "panel_player_split_layout.h"
 
 #include <QString>
 
@@ -139,6 +140,21 @@ class PlayerInfoStripPanel : public Panel {
     Q_OBJECT
 
 public:
+    // ─── the split's shared rhythm, answered the same way by all seven ──
+    //
+    // kSplitMargin, the same constant the .cpp's own kMargin is now an
+    // alias for. This window already had the tightest pitch arithmetic
+    // of the seven (every row height measured off QFontMetrics) and the
+    // shared type scale 9/10/12 came from here, so it is the window the
+    // others were made to match — this override is the half of that
+    // promise a layout can actually verify.
+    [[nodiscard]] int contentMargin() const override
+    {
+        return mhw::split_layout::kSplitMargin;
+    }
+
+    [[nodiscard]] int contentHeight() const override;
+    [[nodiscard]] int contentWidth() const override;
     explicit PlayerInfoStripPanel(QWidget *parent = nullptr);
 
     // Full snapshot. Caches the resolved row for paintPanel() to read,
@@ -187,12 +203,10 @@ private:
     // per drawn line (ceil(QFontMetrics::height()) for that line's
     // tallest font), one gap between consecutive drawn lines, margins on
     // both sides. See the header comment and the .cpp's streamHeight().
-    [[nodiscard]] int contentHeight() const;
 
     // Width the widest drawn line needs, measured in the same fonts the
     // paint sets and ceiled the same way. Never 378 — that was
     // PlayerPanel's width and belongs to it.
-    [[nodiscard]] int contentWidth() const;
 
     // Which streams this snapshot actually draws. Both gates are read
     // once here and every consumer downstream (height, width, paint)

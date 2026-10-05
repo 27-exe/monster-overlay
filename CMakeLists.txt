@@ -252,8 +252,6 @@ add_library(mhw-ui STATIC
     src/ui/panel_player_split_weapon.h
     src/ui/panel_player_split_info.cpp
     src/ui/panel_player_split_info.h
-    src/ui/panel_player_split_sharpness.cpp
-    src/ui/panel_player_split_sharpness.h
     src/ui/panel_player_split_wirebug.cpp
     src/ui/panel_player_split_wirebug.h
     # The grid arithmetic every split window above shares: one definition of
@@ -1116,6 +1114,19 @@ add_executable(world-severable-scan-tests
     target_compile_options(player-weapon-strip-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME player-weapon-strip-tests COMMAND player-weapon-strip-tests)
 
+    # v0.12: the shared rhythm every split window's layout is built from —
+    # one margin, two gap grades, one font stack, and the promise that the
+    # size a window reserves is the size it draws into. Added because the
+    # windows had drifted (the status strip's margin was 6 while every
+    # other window's was 11) and nothing was asserting it.
+    add_executable(split-layout-consistency-tests
+        tests/split_layout_consistency_tests.cpp
+    )
+    target_link_libraries(split-layout-consistency-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(split-layout-consistency-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(split-layout-consistency-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME split-layout-consistency-tests COMMAND split-layout-consistency-tests)
+
     # v0.12: the 「任务/进程」 window's content model — what the snapshot's
     # quest block and connection block resolve to, and which half of them
     # is allowed to be empty. The window exists to give the diagnostic
@@ -1129,18 +1140,6 @@ add_executable(world-severable-scan-tests
     target_compile_options(player-info-strip-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME player-info-strip-tests COMMAND player-info-strip-tests)
 
-    # v0.12: the sharpness sub-window. It has no model function of its own
-    # — it delegates to the same drawPlayerSharpnessBar() the panel used,
-    # which is why the migration was nearly free — so what is pinned here
-    # is the width contract and, more importantly, the migration that keeps
-    # the gauge visible for anyone whose persisted mask predates the bit.
-    add_executable(player-sharpness-strip-tests
-        tests/player_sharpness_strip_tests.cpp
-    )
-    target_link_libraries(player-sharpness-strip-tests PRIVATE Qt6::Core mhw-ui)
-    target_include_directories(player-sharpness-strip-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_compile_options(player-sharpness-strip-tests PRIVATE -Wall -Wextra -Wpedantic)
-    add_test(NAME player-sharpness-strip-tests COMMAND player-sharpness-strip-tests)
 
     # v0.12: the startup mask priority chain (explicit --mask-* CLI value >
     # the console's conf row > everything visible). Both headers are
@@ -1530,6 +1529,18 @@ endif()
 # ---------------------------------------------------------------------------
 find_program(PYTHON3_EXECUTABLE NAMES python3 REQUIRED)
 
+# A cached interpreter path can go stale: a virtualenv recreated, a
+# Hermes-managed venv pruned. CMake would keep the cached path, and every
+# python-based test would then report "Not Run" — which ctest counts as a
+# FAILURE — while the identical command run by hand passes. Re-searching
+# here means a broken interpreter surfaces at configure time, where it
+# is actionable, instead of silently at test time.
+if(NOT EXISTS "${PYTHON3_EXECUTABLE}")
+    message(STATUS "cached PYTHON3_EXECUTABLE no longer exists; re-searching")
+    unset(PYTHON3_EXECUTABLE CACHE)
+    find_program(PYTHON3_EXECUTABLE NAMES python3 REQUIRED)
+endif()
+
 set(MHW_I18N_GATES check parity unused)
 
 foreach(gate IN LISTS MHW_I18N_GATES)
@@ -1538,6 +1549,14 @@ foreach(gate IN LISTS MHW_I18N_GATES)
         COMMAND ${PYTHON3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/i18n_gate.py
                 ${gate} -q
+    )
+    # The scripts locate the i18n tree relative to the CURRENT directory,
+    # and ctest runs from the build tree by default — where no scripts/ or
+    # src/resources/ exists, so every gate reported "Not Run" while the
+    # same command run by hand from the repo root passed. Pinning the
+    # working directory makes the ctest result mean what it says.
+    set_tests_properties(i18n-gate-${gate} PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
 endforeach()
 

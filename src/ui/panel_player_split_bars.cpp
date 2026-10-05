@@ -18,6 +18,9 @@
 // (:429 / :436). Declared in namespace PlayerSection, not mhw.
 #include "ui/panel_sections.h"
 #include "ui/panel_sizing.h"
+// The shared split rhythm (kSplitMargin, the font stack, the two gap
+// grades) that every split window answers contentMargin() from.
+#include "ui/panel_player_split_layout.h"
 
 #include <QFontMetrics>
 #include <QLinearGradient>
@@ -48,15 +51,19 @@ constexpr int kPanelW   = 378;     // HTML: .op width:378px — the SOURCE
                                    // reference the extracted numbers came
                                    // from. This window never sets a
                                    // content size of 378.
-constexpr int kMargin   = 11;      // HTML: .op padding:11
+constexpr int kMargin   = mhw::split_layout::kSplitMargin;  // HTML: .op padding:11
 constexpr int kBarH     = 15;      // HTML: .bar height:15px (HP)
 constexpr int kStBarH   = 12;      // HTML: .bar.st height (ST). The panel's
                                    // comment records that this was raised
                                    // from the HTML spec's 9 so the 8px
                                    // glyph sits comfortably and aligns with
                                    // the HP bar padding.
-constexpr int kGapBar   = 7;       // HTML: .bar margin-bottom:7px
-constexpr int kBarsGap  = kGapBar;  // panel_player.cpp:726
+// The HP/ST pair is ONE block, so its internal gap is the split's
+// within-block value. What used to be the HTML .bar margin-bottom:7px
+// copied off the panel is now the same constant the wirebug and mantles
+// windows read.
+constexpr int kGapBar   = mhw::split_layout::kSplitGapWithin;
+constexpr int kBarsGap  = mhw::split_layout::kSplitLead;   // panel_player.cpp:726
 
 // ---- Colour palette (panel_player.cpp:76-80) ----
 constexpr int kHpGreen    = 76;  constexpr int kHpGreenG  = 175; constexpr int kHpGreenB  = 80;

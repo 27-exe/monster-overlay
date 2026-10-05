@@ -2051,11 +2051,12 @@ void ControlPanel::loadMaskFromDisk()
         // calls already established.
         return;
     }
-    // File format (4 mask lines, key=value hex32):
+    // File format (4 mask lines + the schema marker, key=value):
     //   player=<hex32>
     //   monster=<hex32>
     //   damage=<hex32>
     //   pets=<hex32>
+    //   maskVersion=<int>      (schema marker — see panel_mask_codec.h)
     // Anything malformed is silently ignored — we never want a bad
     // config to make the console unstartable.
     QTextStream in(&f);
@@ -2063,6 +2064,40 @@ void ControlPanel::loadMaskFromDisk()
     const QString text = in.readAll();
 
     const mhw::PanelMaskSet masks = mhw::parsePanelMasks(text);
+
+    // v0.12.1: THE ONE-TIME BIT MIGRATION, and why it is keyed on the
+    // schema marker rather than on the value's shape.
+    //
+    // `PlayerSection::Sharpness` (1u << 8) was added to a `player=`
+    // field that had only ever needed bits 0-7, so every mask written
+    // before it stores bit 8 as ZERO — byte-identical to the value a
+    // user who deliberately switches the gauge off stores. Reading it
+    // verbatim would open 「斩味完全不见了」 back up.
+    //
+    // A value-shaped heuristic (migrateOldSharpnessBit's bit-width test)
+    // cannot separate "old build" from "user turned it off" and therefore
+    // resurrects the gauge on every startup. The marker can: v0.12.1
+    // reads an UNMARKED file, migrates bit 8 in memory, and the next
+    // save stamps `maskVersion=1` — after which the same ff on disk is
+    // stored intent and nothing migrates again. That is why this branch
+    // is taken exactly once per file, and why the save side needs no
+    // condition of its own.
+    //
+    // NOTE (deliberately localised here): the migration is applied to the
+    // value handed to the checkboxes, so the console's own sharpness row
+    // shows the state the user is actually going to get. The overlay's
+    // runtime path (panel_player.cpp) reads the same mask and applies the
+    // same transform; both halves must agree, or the console would
+    // advertise ON while the panel hides it.
+    uint32_t playerMaskConf = masks.player;
+    if (masks.playerValid && masks.needsSchemaMigration()) {
+        playerMaskConf = mhw::PlayerSection::migrateOldSharpnessBit(
+            masks.player);
+        qInfo("monster-control: mask conf carries no maskVersion= row; "
+              "migrating Sharpness bit once (player mask %08x -> %08x). "
+              "The next save stamps the schema marker.",
+              masks.player, playerMaskConf);
+    }
 
     // v0.9 i18n (integration fix): the optional `locale=` row is the
     // console->overlay handshake (core/locale_conf.h). It is resolved at
@@ -2084,7 +2119,9 @@ void ControlPanel::loadMaskFromDisk()
         for (int b = 0; b < c.subs.size(); ++b)
             c.subs[b]->setChecked((mask & (1u << b)) != 0u);
     };
-    applyTo(masks.playerValid, masks.player, ctl_[0]);
+    // The player slot is the one whose value may have been migrated
+    // above; the other three pass their parsed masks through unchanged.
+    applyTo(masks.playerValid, playerMaskConf, ctl_[0]);
     applyTo(masks.monsterValid, masks.monster, ctl_[1]);
     applyTo(masks.damageValid, masks.damage, ctl_[2]);
     applyTo(masks.petsValid, masks.pets, ctl_[3]);
@@ -2099,9 +2136,17 @@ void ControlPanel::saveMaskToDisk() const
     const uint32_t md = ControlPanel::maskFor(ctl_[2]);
     const uint32_t mt = ControlPanel::maskFor(ctl_[3]);
 
-    // The mask writer owns exactly these four rows. Preserve locale, comments
-    // and unknown/future keys in their original relative order, while removing
-    // every old copy of a canonical mask row so duplicates converge.
+    // The mask writer owns exactly these five rows (four masks + the
+    // schema marker). Preserve locale, comments and unknown/future keys
+    // in their original relative order, while removing every old copy of
+    // a canonical mask row so duplicates converge.
+    //
+    // The `maskVersion=1` row is emitted unconditionally by the codec:
+    // this is the write half of the one-time schema migration. An
+    // unmarked file read by loadMaskFromDisk() migrated its Sharpness bit
+    // in memory; the next save stamps the marker, and from then on the
+    // stored value is stored intent — the console can never resurrect a
+    // gauge the user switched off.
     QString preservedText;
     if (QFileInfo::exists(path)) {
         QFile existing(path);

@@ -58,10 +58,10 @@ namespace {
 //
 // So every height below is either measured from metrics or a spacing
 // constant, and no font size is ever reused as a row height.
-constexpr int kMargin       = 11;   // HTML: .op padding:11 (panel:39)
+constexpr int kMargin       = mhw::split_layout::kSplitMargin;  // HTML: .op padding:11
 constexpr int kLabelGap     = 8;    // label/value separation inside one cell
 constexpr int kColGap       = 16;   // separation between the two cells on a line
-constexpr int kGapLine      = 3;    // vertical between the stream's lines
+constexpr int kGapLine      = mhw::split_layout::kSplitGapWithin;  // vertical between lines
 constexpr int kDotInset     = 12;   // panel_player.cpp:830, text past the dot
 
 // The point sizes, named so the pitch derivation and the draw read the
@@ -69,10 +69,17 @@ constexpr int kDotInset     = 12;   // panel_player.cpp:830, text past the dot
 // (panel_player.cpp:810-814). kMetaFontSize was 11: the ONE number in
 // this file that is deliberately smaller than it was, because 11pt costs
 // 398px of inner width for one line (see the header comment).
-constexpr int kLabelPt      = 9;    // qFontL
-constexpr int kValuePt      = 10;   // qFontL10
-constexpr int kTimerPt      = 12;   // qFontL12
-constexpr int kMetaFontSize = 9;    // provenance line; panel's conn row is 8pt
+// The type scale reads the split's shared stack now. The VALUES are
+// unchanged — this window was the one that arrived at 9/10/12 after its
+// own clipping round, and that is exactly why it became the stack — so
+// the pitch table above and every measure below still compute the same
+// numbers. What changes is that a future edit to the split's label size
+// has one home instead of four, and the two windows that were
+// inconsistent with it (bars at 9/8, mantles at 9/8) move to it.
+constexpr int kLabelPt      = mhw::split_layout::kSplitFontLabel;   // qFontL
+constexpr int kValuePt      = mhw::split_layout::kSplitFontValue;   // qFontL10
+constexpr int kTimerPt      = mhw::split_layout::kSplitFontAccent;  // qFontL12
+constexpr int kMetaFontSize = mhw::split_layout::kSplitFontLabel;   // panel's conn row is 8pt
 
 // ---- Colour palette (the four the Quest rows use) -----------------------
 constexpr int kLabelR  = 146; constexpr int kLabelG  = 148; constexpr int kLabelB  = 149;  // --t3

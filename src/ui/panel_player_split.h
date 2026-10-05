@@ -40,6 +40,7 @@
 // Panel::paintPanelChrome() returns without touching the painter.
 
 #include "panel.h"
+#include "panel_player_split_layout.h"
 #include "core/game_snapshot.h"
 #include "player/player_types.h"
 
@@ -139,6 +140,37 @@ class PlayerStatusStripPanel : public Panel {
     Q_OBJECT
 
 public:
+    [[nodiscard]] bool supportsColumns() const override { return true; }
+
+    // v0.12: this window was carved out of PlayerPanel, so it declares
+    // itself a sub-window (Panel::isSubWindow, whose header comment names
+    // a DebuffStrip as the example). That is what lets the console /
+    // HudCanvas slot registry keep it out of the four fixed slots the
+    // base panels occupy, instead of forcing kPanelCount from 4 to 5
+    // while the base panels' contract still says four.
+    [[nodiscard]] bool isSubWindow() const override { return true; }
+
+    // ─── the split's shared rhythm, answered the same way by all seven ──
+    //
+    // Before this override the strip answered the base class's 0, so a
+    // caller asking "where does this window's content start?" got three
+    // different answers from the seven windows: 11 from wirebug and
+    // mantles (which did override it) and 0 from the other five. The
+    // value is the split's kSplitMargin, so a layout that reads
+    // contentMargin() gets one number and the ring of sub-windows is
+    // inset by the same distance on every side.
+    //
+    // It reads the SAME constant the reserve (contentWidth/blockHeight)
+    // and the draw (paintPanel's kMargin) use, which is the point: the
+    // layout question and the paint answer cannot drift apart.
+    [[nodiscard]] int contentMargin() const override
+    {
+        return mhw::split_layout::kSplitMargin;
+    }
+
+    [[nodiscard]] int  columns() const override { return columns_; }
+    [[nodiscard]] int contentWidth() const override;
+    [[nodiscard]] int contentHeight() const override;
     explicit PlayerStatusStripPanel(QWidget *parent = nullptr);
 
     // Full snapshot. Caches the pill model for paintPanel() to read,
@@ -194,17 +226,7 @@ protected:
     // [kStatusStripMinColumns, kStatusStripMaxColumns] = [1, 6]: 0
     // would make statusStripRows() divide by zero and contentWidth()
     // would answer a 0-wide grid.
-    [[nodiscard]] int  columns() const override { return columns_; }
     void nudgeColumns(int delta) override;
-    [[nodiscard]] bool supportsColumns() const override { return true; }
-
-    // v0.12: this window was carved out of PlayerPanel, so it declares
-    // itself a sub-window (Panel::isSubWindow, whose header comment names
-    // a DebuffStrip as the example). That is what lets the console /
-    // HudCanvas slot registry keep it out of the four fixed slots the
-    // base panels occupy, instead of forcing kPanelCount from 4 to 5
-    // while the base panels' contract still says four.
-    [[nodiscard]] bool isSubWindow() const override { return true; }
 
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
@@ -243,14 +265,14 @@ protected:
     bool hasContent() const override;
 
 private:
+    [[nodiscard]] QVector<mhw::StatusPill> debuffRows() const;
+    [[nodiscard]] QVector<mhw::StatusPill> buffRows() const;
     // The pill blocks as the section mask leaves them. Called once per
     // paint (and by contentWidth(), which runs inside the same paint),
     // so width, height reservation and the actual draw all see the SAME
     // set of rows — the v0.10.3 lesson from MonsterPanel's pc grid: two
     // gates that derive their own set is how a strip was drawn at one
     // height and reserved at another.
-    [[nodiscard]] QVector<mhw::StatusPill> debuffRows() const;
-    [[nodiscard]] QVector<mhw::StatusPill> buffRows() const;
 
     // Width the strip needs for the pills it is currently showing, in
     // logical px, from the widest capsule's name + timer. Never a fixed
@@ -260,13 +282,17 @@ private:
     // panel_player_split.cpp and docs/SIZING.md. It is the exact
     // inverse of the gridSlotWidth() drawPillGrid() feeds each capsule,
     // which is the invariant that makes the strip adaptive at all.
-    [[nodiscard]] int contentWidth() const;
 
     // Height of `count` pills laid out `columns_`-wide with inter-row
     // gaps, using the same formula as panel_player.cpp:714-726 so the
     // strip and the panel it was cut from wrap identically at the
     // default column count.
     [[nodiscard]] int blockHeight(int count) const;
+    // Panel's polymorphic extent hook. The strip's height depends on
+    // how many rows it is currently showing — unlike the other
+    // windows, whose extent is a property of their type — so this
+    // reports the live count and the base default of 0 is never
+    // the answer for it.
 
     mhw::GameId            game_{mhw::GameId::World};
     mhw::StatusStripModel  rows_;

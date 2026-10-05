@@ -13,6 +13,11 @@
 #include "player/player_types.h"
 #include "ui/panel_sections.h"
 #include "ui/panel_sizing.h"
+// The split's shared spacing vocabulary. Included here rather than in
+// the header because this .cpp is the only translation unit that owns
+// the constants (the header exposes none of them), and every other
+// split .cpp includes it through its own header.
+#include "panel_player_split_layout.h"
 
 #include "rise/mhr_abnormalities.h"
 
@@ -45,17 +50,28 @@ namespace {
 // Same numeric values as panel_player.cpp so the strip and the block it
 // replaced wrap and space identically. Kept as this file's own constants:
 // retuning the strip must not be able to move PlayerPanel, which is the
-// v0.12 promise.
+// v0.12 promise — with ONE exception, and it is this file's whole reason
+// for being touched at all: the split's shared rhythm.
+//
+// THE EXCEPTION, spelled out. Every other split window inherits
+// `.op { padding: 11px }` from the panel it came from. This window does
+// not: it has always drawn its own outer breathing room (6px, the value
+// af969b2 shipped it with), because its chrome is off and the pills
+// carry their own dark bodies so the window edge is not the pill edge.
+// Seven windows with one inset is the requirement, so this window now
+// reads kSplitMargin like the other six. That costs 10px of width and
+// 10px of height on the way in and is the single largest driver of the
+// new pixel baselines for the two split images.
 //
 // Width is NOT a token: this panel sizes itself to content (see
 // PlayerStatusStripPanel::contentWidth), because a status strip has no
 // title row or bar to align with and a fixed 378 would just be the old
 // panel's width with dead air on the right.
-constexpr int kMargin      = 6;     // outer breathing room (chrome is off)
+constexpr int kMargin      = mhw::split_layout::kSplitMargin;  // outer inset
 constexpr int kPillH       = 18;    // HTML .pill height (panel_player.cpp:49)
-constexpr int kPillRowGap  = 4;     // wrapped-row pitch (panel_player.cpp:57)
-constexpr int kPillGap     = 5;     // horizontal gap inside a row
-constexpr int kBlockGap    = 9;     // between the debuff and buff blocks
+constexpr int kPillRowGap  = mhw::split_layout::kSplitGapWithin;  // between wrapped rows
+constexpr int kPillGap     = mhw::split_layout::kSplitGapWithin;  // horizontal gap in a row
+constexpr int kBlockGap    = mhw::split_layout::kSplitGapBetween; // debuff↔buff blocks
 constexpr int kMinPillW    = 78;    // a one-glyph timer still readable
 
 // The columns dial's range. 1 = a single capsule per row (the tall,
@@ -693,6 +709,33 @@ int PlayerStatusStripPanel::contentWidth() const
     return std::clamp(gridW + 2 * kMargin,
                       std::max(2 * kMargin, kMinPillW),
                       kStripMaxW);
+}
+
+int PlayerStatusStripPanel::contentHeight() const
+{
+    // Panel's polymorphic extent hook, composed exactly the way
+    // paintPanel() composes it: both blocks, the between-block gap only
+    // when there are two blocks, and the margin once on each side.
+    //
+    // Deliberately NOT a re-derivation. The strip's height is the one
+    // place where a second formula for the same number would bite —
+    // contentWidth, blockHeight and setContentSize all have to agree on
+    // what is being measured, and the two-gaps-one-gap rule above is
+    // stated once here rather than twice.
+    //
+    // kMargin here is the WINDOW's own local margin, which is the same 11
+    // contentMargin() reports — they must not drift, but they are not the
+    // same token: the margin is a property of this window's paint, while
+    // contentMargin() is the base's polymorphic answer to the question.
+    const QVector<mhw::StatusPill> debuffs = debuffRows();
+    const QVector<mhw::StatusPill> buffs = buffRows();
+    const int debuffH = blockHeight(debuffs.size());
+    const int buffH = blockHeight(buffs.size());
+    const int contentH = debuffH
+                       + ((!debuffs.isEmpty() && !buffs.isEmpty())
+                              ? kBlockGap : 0)
+                       + buffH;
+    return 2 * kMargin + contentH;
 }
 
 int PlayerStatusStripPanel::blockHeight(int count) const

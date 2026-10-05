@@ -253,7 +253,7 @@ int main(int argc, char *argv[])
             || preserved.count(QStringLiteral("monster=")) != 1
             || preserved.count(QStringLiteral("damage=")) != 1
             || preserved.count(QStringLiteral("pets=")) != 1
-            || lines.size() < 7
+            || lines.size() < 8
             || lines[0] != QStringLiteral("player=%1").arg(hexOf(playerMaskWithWeaponOff()))
             || lines[1] != QStringLiteral("monster=3f")
             || lines[2] != QStringLiteral("damage=f")
@@ -429,11 +429,12 @@ int main(int argc, char *argv[])
     {
         const QString text = readBack();
         const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-        if (lines.size() != 4
+        if (lines.size() != 5
             || lines[0] != QStringLiteral("player=%1").arg(hexOf(playerMaskWithWeaponOff()))
             || lines[1] != QStringLiteral("monster=2f")
             || lines[2] != QStringLiteral("damage=7")
-            || lines[3] != QStringLiteral("pets=1")) {
+            || lines[3] != QStringLiteral("pets=1")
+            || lines[4] != QStringLiteral("maskVersion=1")) {
             fprintf(stderr, "FAIL: mask conf layout wrong (%d lines):\n%s",
                     int(lines.size()), qPrintable(text));
             return 8;

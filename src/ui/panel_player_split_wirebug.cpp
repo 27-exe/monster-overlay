@@ -15,6 +15,9 @@
 #include "ui/panel_player_metrics.h"
 #include "ui/panel_sections.h"
 #include "ui/panel_sizing.h"
+// The shared split rhythm: this window's height and both its gaps are
+// expressed in it, so the .cpp includes what it uses.
+#include "ui/panel_player_split_layout.h"
 
 #include <QFontMetrics>
 #include <QPainter>
@@ -40,7 +43,9 @@ inline QString tr(const QString &key)
 namespace {
 
 // ---- Layout tokens. See panel_player_split_wirebug.h ---------------
-// kWirebugMargin / kPillH / kPillRowGap / kPillGap now live in the header,
+// kWirebugMargin / kPillH / kPillGap now live in the header,
+// alongside the shared mhw::split_layout vocabulary they read from
+// (panel_player_split_layout.h).
 // because the generic column dial's inline accessors read the same
 // numbers the painter does. Only the tokens that are NOT part of the
 // dial's vocabulary stay here.
@@ -444,7 +449,7 @@ int PlayerWirebugStripPanel::contentHeight() const
         ? mhw::panel_sizing::gridRowsFor(n, perRow)
         : mhw::panel_sizing::gridRowsFor(n, std::max(1, columns_));
     const int gridH = mhw::panel_sizing::gridContentHeight(
-        rows, kPillH, kPillRowGap);
+        rows, kPillH, mhw::split_layout::kSplitGapWithin);
     return kWirebugMargin + kWirebugGap + gridH + kWirebugMargin;
 }
 
@@ -551,7 +556,7 @@ void PlayerWirebugStripPanel::paintPanel(QPainter &p)
         const mhw::WirebugRow &row = rows_.capsules[i];
         const int cx = kWirebugMargin + colIdx * (rowSlotW + kPillGap);
         const int cy = kWirebugMargin + kWirebugGap
-                       + rowIdx * (kPillH + kPillRowGap);
+                       + rowIdx * (kPillH + mhw::split_layout::kSplitGapWithin);
         const QRectF pillRect(cx, cy, rowSlotW, kPillH);
         // The label pair is re-resolved at the draw site, exactly as
         // panel_player.cpp:1161-1162 does, so a locale flip lands on the

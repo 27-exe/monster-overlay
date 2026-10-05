@@ -5,12 +5,13 @@
 //
 // WHAT THESE TESTS EXIST TO PROTECT
 // ---------------------------------
-// The four mask rows are a user contract, not an internal detail:
+// The mask rows are a user contract, not an internal detail:
 //
 //     player=<hex32>
 //     monster=<hex32>
 //     damage=<hex32>
 //     pets=<hex32>
+//     maskVersion=<int>          (added v0.12.1 — see schemaVersion below)
 //
 // The overlay's locale_sync.h polls the same file, users hand-edit it, and
 // a pre-pets three-row config must keep loading. Every assertion below is
@@ -28,7 +29,12 @@
 //   * a missing or malformed row leaves the caller's default in place
 //   * a pre-pets config (no `pets=` row) migrates Damage to add the
 //     teammate bit, unless the damage mask is zero (panel was off)
-//   * a save emits exactly 4 mask rows + the preserved lines, LF-terminated
+//   * a save emits exactly 4 mask rows + `maskVersion=1` + the preserved
+//     lines, LF-terminated
+//   * `maskVersion=` is REPORTED by parse (0 = absent, i.e. the one-time
+//     migration still owes a write) and WRITTEN by every save, which is
+//     what makes "migrate once, then never again" true instead of a
+//     read-time heuristic that re-runs at every startup
 //
 // Isolation: the codec is pure, so most cases need no filesystem at all.
 // The cases that DO touch a file (the readLine-equivalence proof) work
@@ -96,6 +102,13 @@ int main(int argc, char **argv)
         // migration — petsLineSeen suppresses it.
         check(s.petsLineSeen == true, "parse: four-row config reports petsLineSeen");
         check(s.damage == 0x7u, "parse: four-row config keeps damage verbatim (no migration)");
+        // A four-row file from BEFORE the marker existed is exactly the
+        // pre-v0.12.1 case: no maskVersion= row, so the one-time
+        // migration is owed. This is the value the shipped config has.
+        check(s.schemaVersion == 0,
+              "parse: a legacy four-row config reports the unmarked schema");
+        check(s.needsSchemaMigration(),
+              "parse: a legacy four-row config still owes the one-time migration");
     }
 
     // ================================================================
@@ -110,6 +123,8 @@ int main(int argc, char **argv)
                   && empty.damage == 0u && empty.pets == 0u,
               "parse: empty text yields zeroed masks");
         check(!empty.petsLineSeen, "parse: empty text reports no pets line");
+        check(empty.schemaVersion == 0,
+              "parse: empty text reports the unmarked schema (first run)");
     }
 
     // Only two of the four rows present: the other two stay invalid, so
@@ -270,6 +285,16 @@ int main(int argc, char **argv)
         check(mhw::classifyPanelMaskLine(QStringLiteral("futurekey=1"))
                   == mhw::PanelMaskLineKind::Preserved,
               "classify: unknown/future key is preserved");
+        // `maskVersion=` is NOT a mask row: it is metadata about the
+        // masks, so classify() must leave it in the Preserved class that
+        // serialize() then drops and re-emits at the modern version.
+        // Classifying it as Canonical would make the save's
+        // duplicate-collapsing branch absorb it, and the row would
+        // silently vanish from the file.
+        check(mhw::classifyPanelMaskLine(QStringLiteral("maskVersion=1"))
+                  == mhw::PanelMaskLineKind::Preserved,
+              "classify: maskVersion= is preserved-classified (dropped and "
+              "re-emitted by serialize, not collapsed)");
     }
 
     // ================================================================
@@ -277,10 +302,15 @@ int main(int argc, char **argv)
     //    their ORIGINAL RELATIVE ORDER, verbatim (whitespace included).
     // ================================================================
     {
-        // The canonical save over an empty previous file.
+        // The canonical save over an empty previous file. `maskVersion=1`
+        // is the schema marker (see the codec's header comment on why it
+        // is written unconditionally); every expectation below includes
+        // it, exactly where the writer puts it.
         check(serializeTo(0xfbu, 0x2fu, 0x7u, 0x1u, QString())
-                  == QByteArrayLiteral("player=fb\nmonster=2f\ndamage=7\npets=1\n"),
-              "serialize: fresh file emits exactly the four rows, LF-terminated");
+                  == QByteArrayLiteral(
+                      "player=fb\nmonster=2f\ndamage=7\npets=1\n"
+                      "maskVersion=1\n"),
+              "serialize: fresh file emits the four rows + maskVersion=1");
 
         // locale + comments + blank + unknown, all preserved in order.
         const QByteArray out = serializeTo(0xfb, 0x2f, 0x7, 0x1, QStringLiteral(
@@ -298,6 +328,7 @@ int main(int argc, char **argv)
             "monster=2f\n"
             "damage=7\n"
             "pets=1\n"
+            "maskVersion=1\n"
             "locale=zh-CN\n"
             "# a hand-written comment\n"
             "\n"
@@ -313,7 +344,7 @@ int main(int argc, char **argv)
             "\n"
             "locale = zh-CN   \n"));
         check(ws == QByteArrayLiteral(
-                  "player=1\nmonster=2\ndamage=3\npets=4\n"
+                  "player=1\nmonster=2\ndamage=3\npets=4\nmaskVersion=1\n"
                   "   # indented comment\n"
                   "\n"
                   "locale = zh-CN   \n"),
@@ -326,8 +357,37 @@ int main(int argc, char **argv)
         const QByteArray indented = serializeTo(0x1, 0x2, 0x3, 0x4, QStringLiteral(
             "  player=1\n"));
         check(indented == QByteArrayLiteral(
-                  "player=1\nmonster=2\ndamage=3\npets=4\n"),
+                  "player=1\nmonster=2\ndamage=3\npets=4\nmaskVersion=1\n"),
               "serialize: an indented mask row is rewritten, not preserved");
+
+        // A marker in the previous file is replaced in place, never
+        // duplicated and never left in the user's comment block.
+        const QByteArray marked = serializeTo(0x1, 0x2, 0x3, 0x4, QStringLiteral(
+            "locale=zh-CN\n"
+            "maskVersion=1\n"
+            "# note\n"));
+        check(marked == QByteArrayLiteral(
+                  "player=1\nmonster=2\ndamage=3\npets=4\nmaskVersion=1\n"
+                  "locale=zh-CN\n"
+                  "# note\n"),
+              "serialize: an existing marker is replaced, not duplicated");
+
+        // An indented marker is still a marker (the same trimmed-line rule
+        // the mask rows use).
+        const QByteArray markedIndented =
+            serializeTo(0x1, 0x2, 0x3, 0x4, QStringLiteral("  maskVersion=1\n"));
+        check(markedIndented.count(QByteArrayLiteral("maskVersion=")) == 1
+                  && markedIndented.endsWith(QByteArrayLiteral("maskVersion=1\n")),
+              "serialize: an indented marker is rewritten, not preserved");
+
+        // A marker the user hand-edited upward is folded back to the
+        // version THIS build writes, rather than being trusted: a file
+        // cannot carry a newer schema than the binary that saved it.
+        const QByteArray markered = serializeTo(0x1, 0x2, 0x3, 0x4, QStringLiteral(
+            "maskVersion=99\n"));
+        check(markered == QByteArrayLiteral(
+                  "player=1\nmonster=2\ndamage=3\npets=4\nmaskVersion=1\n"),
+              "serialize: an unrecognized marker is re-emitted as the current one");
 
         // Duplicate canonical rows in the previous file converge to the
         // single row the writer emits (nothing replicated below it).
@@ -337,7 +397,7 @@ int main(int argc, char **argv)
             "locale=zh-CN\n"
             "pets=9\n"));
         check(duped == QByteArrayLiteral(
-                  "player=f\nmonster=f\ndamage=f\npets=f\n"
+                  "player=f\nmonster=f\ndamage=f\npets=f\nmaskVersion=1\n"
                   "locale=zh-CN\n"),
               "serialize: duplicate canonical rows collapse to one copy");
 
@@ -347,7 +407,8 @@ int main(int argc, char **argv)
         const QByteArray trailing = serializeTo(0x1, 0x2, 0x3, 0x4, QStringLiteral(
             "locale=zh-CN\n"));
         check(trailing == QByteArrayLiteral(
-                  "player=1\nmonster=2\ndamage=3\npets=4\nlocale=zh-CN\n"),
+                  "player=1\nmonster=2\ndamage=3\npets=4\nmaskVersion=1\n"
+                  "locale=zh-CN\n"),
               "serialize: trailing newline adds no phantom blank line");
         check(!trailing.endsWith("\n\n"),
               "serialize: output never ends with a blank line");
@@ -356,17 +417,21 @@ int main(int argc, char **argv)
         const QByteArray noTrail = serializeTo(0x1, 0x2, 0x3, 0x4, QStringLiteral(
             "locale=zh-CN\n# note"));
         check(noTrail == QByteArrayLiteral(
-                  "player=1\nmonster=2\ndamage=3\npets=4\nlocale=zh-CN\n# note\n"),
+                  "player=1\nmonster=2\ndamage=3\npets=4\nmaskVersion=1\n"
+                  "locale=zh-CN\n# note\n"),
               "serialize: an unterminated final line is still preserved");
 
         // All-zero masks are a real state ("all off"), not a missing state.
         const QByteArray zeros = serializeTo(0, 0, 0, 0, QString());
-        check(zeros == QByteArrayLiteral("player=0\nmonster=0\ndamage=0\npets=0\n"),
+        check(zeros == QByteArrayLiteral(
+                  "player=0\nmonster=0\ndamage=0\npets=0\nmaskVersion=1\n"),
               "serialize: all-off masks round-trip as explicit zeros");
     }
 
     // ================================================================
-    // 9. ROUND TRIP — serialize then parse returns the same masks
+    // 9. ROUND TRIP — serialize then parse returns the same masks,
+    //    INCLUDING the schema version, which is what makes the
+    //    one-time migration survive being saved and re-read.
     // ================================================================
     {
         const uint32_t p = 0xfbu, m = 0x2fu, d = 0x7u, pets = 0x1u;
@@ -380,6 +445,13 @@ int main(int argc, char **argv)
               "round trip: masks survive a write-then-read");
         check(back.petsLineSeen,
               "round trip: written file reports the modern four-row layout");
+        // THE schema-version half of the round trip: the bytes this build
+        // writes must report the current schema when read back, or every
+        // subsequent startup would re-run the migration.
+        check(back.schemaVersion == mhw::kPanelMaskSchemaCurrent,
+              "round trip: the written marker reports the current schema");
+        check(!back.needsSchemaMigration(),
+              "round trip: a build-written file does not owe a migration");
 
         // A legacy file that gets migrated, then saved, comes back as a
         // four-row config whose damage mask already carries the bit.
@@ -394,8 +466,152 @@ int main(int argc, char **argv)
                   && reRead.damage == (0x7u | mhw::DamageSection::OtherMembers),
               "round trip: migrated damage mask survives the rewrite");
         check(afterMigration == QByteArrayLiteral(
-                  "player=0\nmonster=0\ndamage=f\npets=0\n"),
-              "round trip: migrated save emits exactly four rows, no leftovers");
+                  "player=0\nmonster=0\ndamage=f\npets=0\nmaskVersion=1\n"),
+              "round trip: migrated save emits the four rows + marker, "
+              "no leftovers");
+    }
+
+    // ================================================================
+    // 9b. THE ONE-TIME PROPERTY — this is the case the whole version
+    //     row exists for, so it is spelled out rather than folded
+    //     into the round trip above.
+    //
+    // ONE player= value used to mean two things: a build that had no
+    // `Sharpness` bit could not say "sharpness off", and a user on a
+    // build that has it could. `ff` was the shared spelling. The
+    // migration in panel_sections.h can only guess, and its guess
+    // resurrected a gauge that had been switched off on purpose —
+    // every startup, forever, because reading never wrote.
+    //
+    // What pins the fix:
+    //   1. the same unmarked text, parsed twice, reports schema 0
+    //      BOTH times (a read is not a write);
+    //   2. once that text has been serialized — which is what a save
+    //      is — re-parsing it reports schema 1 and the migration gate
+    //      closes;
+    //   3. and it stays closed: re-serializing keeps the marker at 1,
+    //      so a second startup inherits the decision.
+    // ================================================================
+    {
+        // The exact conf the user shipped: the pre-v0.12.1 all-on config,
+        // which is also the byte-image of "v0.12.1 all-on, sharpness off".
+        const QString unmarked = QStringLiteral(
+            "player=ff\n"
+            "monster=3f\n"
+            "damage=f\n"
+            "pets=3\n"
+            "locale=zh-CN\n");
+
+        // (1) Reading never writes. The migration is owed, and owes it
+        // again, for as long as nothing persists the marker.
+        const mhw::PanelMaskSet firstRead = mhw::parsePanelMasks(unmarked);
+        const mhw::PanelMaskSet secondRead = mhw::parsePanelMasks(unmarked);
+        check(firstRead.schemaVersion == 0
+                  && secondRead.schemaVersion == 0,
+              "one-time: an unmarked file reports schema 0 on every read");
+        check(firstRead.needsSchemaMigration()
+                  && secondRead.needsSchemaMigration(),
+              "one-time: an unmarked file owes the migration until a save "
+              "happens");
+
+        // (2) The save IS the migration's second half: serialize the
+        // values the caller now holds (after its in-memory migration)
+        // and the marker rides along.
+        const QByteArray afterSave = serializeTo(
+            firstRead.player, firstRead.monster, firstRead.damage,
+            firstRead.pets, unmarked);
+        const mhw::PanelMaskSet reloaded =
+            mhw::parsePanelMasks(QString::fromUtf8(afterSave));
+        check(reloaded.schemaVersion == mhw::kPanelMaskSchemaCurrent,
+              "one-time: after a save the same file reports the current schema");
+        check(!reloaded.needsSchemaMigration(),
+              "one-time: the saved file no longer owes a migration");
+
+        // (3) And it is a fixed point: saving what was just loaded does
+        // not regress the marker, so every later startup reads the
+        // migrated decision as stored intent.
+        const QByteArray reSaved = serializeTo(
+            reloaded.player, reloaded.monster, reloaded.damage,
+            reloaded.pets, QString::fromUtf8(afterSave));
+        check(reSaved == afterSave,
+              "one-time: re-saving a migrated conf is byte-identical");
+
+        // The whole point: the very value that was ambiguous now means
+        // exactly one thing, and it is not resurrected.
+        check(reloaded.player == 0xffu,
+              "one-time: player=ff survives as stored after one migration "
+              "(the old reader would have OR'd the sharpness bit in)");
+    }
+
+    // ================================================================
+    // 9c. MARKER PARSE RULES — absent, present, malformed, higher.
+    //     The malformed rule is the one worth arguing about: an
+    //     unreadable marker must NOT freeze the migration off, because
+    //     "I cannot tell" is the pre-v0.12.1 situation, not the
+    //     "this is a new file" one.
+    // ================================================================
+    {
+        // Present, in every position the writer and a hand-edit put it.
+        check(mhw::parsePanelMasks(QStringLiteral(
+                  "maskVersion=1\nplayer=ff\nmonster=3f\ndamage=f\npets=3\n"))
+                  .schemaVersion == 1,
+              "marker: a leading marker row parses as schema 1");
+        check(mhw::parsePanelMasks(QStringLiteral(
+                  "player=ff\nmaskVersion=1\nmonster=3f\n"))
+                  .schemaVersion == 1,
+              "marker: a marker row between mask rows parses as schema 1");
+        check(mhw::parsePanelMasks(QStringLiteral(
+                  "player=ff\nmaskVersion=1\n"))
+                  .schemaVersion == 1,
+              "marker: a trailing marker row parses as schema 1");
+        check(mhw::parsePanelMasks(QStringLiteral("  maskVersion=1\n"))
+                  .schemaVersion == 1,
+              "marker: an indented marker row is still a marker row");
+
+        // Malformed / empty degrades to unmarked, so the one-time
+        // migration stays reachable instead of silently disabling itself.
+        check(mhw::parsePanelMasks(QStringLiteral("maskVersion=zz\nplayer=1\n"))
+                  .schemaVersion == 0,
+              "marker: a non-numeric marker reports schema 0 (unmarked)");
+        check(mhw::parsePanelMasks(QStringLiteral("maskVersion=\nplayer=1\n"))
+                  .schemaVersion == 0,
+              "marker: an empty marker reports schema 0 (unmarked)");
+        check(mhw::parsePanelMasks(QStringLiteral("maskVersion=-1\nplayer=1\n"))
+                  .schemaVersion == 0,
+              "marker: a negative marker reports schema 0 (unmarked)");
+        check(mhw::parsePanelMasks(QStringLiteral("maskVersion=0\nplayer=1\n"))
+                  .schemaVersion == 0,
+              "marker: an explicit maskVersion=0 is the same as absent");
+
+        // A HIGHER schema is reported literally, never clamped and never
+        // treated as current: a caller that does not know version 2 must
+        // treat the values as opaque rather than guess what changed.
+        check(mhw::parsePanelMasks(QStringLiteral("maskVersion=2\nplayer=1\n"))
+                  .schemaVersion == 2,
+              "marker: a future schema is reported verbatim, not clamped");
+        check(mhw::parsePanelMasks(QStringLiteral("maskVersion=2\nplayer=1\n"))
+                  .needsSchemaMigration() == false,
+              "marker: a future schema does not re-trigger this migration");
+
+        // A row that merely starts with the same letters is not the
+        // marker, and must still be preserved by serialize().
+        check(mhw::parsePanelMasks(QStringLiteral("maskVersionExtra=1\n"))
+                  .schemaVersion == 0,
+              "marker: maskVersionExtra= is a different key entirely");
+        check(serializeTo(0x1, 0x2, 0x3, 0x4, QStringLiteral(
+                  "maskVersionExtra=1\n"))
+                  .endsWith(QByteArrayLiteral("maskVersionExtra=1\n")),
+              "marker: an unknown maskVersion* key survives a save verbatim");
+
+        // The codec does NOT migrate on read — that is the caller's job
+        // (panel_sections.h's migrateOldSharpnessBit). What it must never
+        // do is alter a stored bit itself, marked file or not.
+        check(mhw::parsePanelMasks(QStringLiteral(
+                  "maskVersion=1\nplayer=ff\n")).player == 0xffu,
+              "marker: no stored bit is rewritten by parse, versioned or not");
+        check(mhw::parsePanelMasks(QStringLiteral("player=ff\n")).player
+                  == 0xffu,
+              "marker: no stored bit is rewritten by parse, marked file or not");
     }
 
     // ================================================================
@@ -536,12 +752,13 @@ int main(int argc, char **argv)
             "monster=2f\n"
             "damage=7\n"
             "pets=1\n"
+            "maskVersion=1\n"
             "# monster-overlay.conf\n"
             "locale=zh-CN\n"
             "zoom=2.0\n");
         check(saved == expected,
-              "file contract: save puts the 4 rows first and keeps locale/"
-              "comment/unknown in order");
+              "file contract: save puts the 4 rows + marker first and keeps "
+              "locale/comment/unknown in order");
 
         // Write that out and save again: the second output must be
         // byte-identical, i.e. the migration is a fixed point.
@@ -559,6 +776,15 @@ int main(int argc, char **argv)
             readConfText(path));
         check(again == saved,
               "file contract: re-saving a saved conf is byte-identical");
+
+        // The marker is present exactly once, in the canonical position,
+        // after the four mask rows — never duplicated by the save scan.
+        const QString savedTextForMarker = QString::fromUtf8(saved);
+        check(savedTextForMarker.count(QStringLiteral("maskVersion=")) == 1,
+              "file contract: exactly one maskVersion= row after a mask save");
+        check(savedTextForMarker.startsWith(QStringLiteral(
+                  "player=fb\nmonster=2f\ndamage=7\npets=1\nmaskVersion=1\n")),
+              "file contract: the marker sits directly after the four rows");
 
         // The locale row is never duplicated or dropped by a mask save.
         check(QString::fromUtf8(saved).count(QStringLiteral("locale=")) == 1,

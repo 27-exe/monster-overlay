@@ -35,6 +35,7 @@
 #include "panel.h"
 #include "core/game_snapshot.h"
 #include "player/player_types.h"
+#include "panel_player_split_layout.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -52,16 +53,16 @@
 // See the note on kWirebugMargin: file-scope constants shared by name
 // across two moc-bearing headers collide when AUTOMOC merges them
 // into one translation unit.
-inline constexpr int kMantlesMargin = 11;   // HTML: .op padding:11
+inline constexpr int kMantlesMargin = mhw::split_layout::kSplitMargin;
 inline constexpr int kMbH        = 60;   // .mb svg ~26px + cn + tm
                                          // (panel_player.cpp:729)
-inline constexpr int kMbGap      = 8;    // HTML gap:8 inside .mantlerow
-inline constexpr int kMantleRowGap = 8;  // vertical pitch when the two
-                                         // boxes are stacked (dial = 1).
-                                         // Same 8 as the horizontal gap:
-                                         // one token that already exists
-                                         // for "the space between two
-                                         // mantle boxes".
+// Both gaps now read the split's shared within-block value. What were
+// two window-local 8s are the same token the wirebug window reads, so a
+// stacked mantle pair and a wrapped wirebug row are pitched alike — the
+// one difference the user could see as "these are two different
+// systems" and that this change exists to remove.
+inline constexpr int kMbGap      = mhw::split_layout::kSplitGapWithin;
+inline constexpr int kMantleRowGap = mhw::split_layout::kSplitGapWithin;
 
 // The default dial position and range. 2 = the historical two-box row;
 // 1 = the two boxes stacked vertically (the vertical layout the user
@@ -133,6 +134,26 @@ class PlayerMantlesStripPanel : public Panel {
     Q_OBJECT
 
 public:
+    [[nodiscard]] int  itemCount() const override { return rows_.boxes.size(); }
+    [[nodiscard]] int  naturalItemWidth() const override;
+    [[nodiscard]] int  itemGap() const override { return kMbGap; }
+    // The fourth of the set, and the one whose absence is invisible until
+    // a layout asks: without it the window answers the base's 0, so a
+    // vertical pair wraps at a zero pitch. supportsColumns() above is
+    // true, which is exactly why all four have to be present.
+    [[nodiscard]] int  rowPitch() const override { return kMbH + kMantleRowGap; }
+    void paintPanel(QPainter &p) override;
+    [[nodiscard]] bool supportsColumns() const override { return true; }
+
+    // Columns per row from the width this window will ACTUALLY be, so a
+    // lock narrows the layout instead of being ignored.
+    [[nodiscard]] int  wrappedColumns() const;
+
+    [[nodiscard]] int  contentMargin() const override { return kMantlesMargin; }
+
+    [[nodiscard]] int contentWidth() const override;
+    [[nodiscard]] int contentHeight() const override;
+    [[nodiscard]] int  columns() const override { return columns_; }
     explicit PlayerMantlesStripPanel(QWidget *parent = nullptr);
 
     // Full snapshot. Caches the resolved mantles for paintPanel() to read,
@@ -162,7 +183,8 @@ public:
     void saveConfig();
 
 protected:
-    void paintPanel(QPainter &p) override;
+
+    // The row-layout vocabulary, same contract as the wirebug row's.
     void setupDemoData() override;
 
     // "No data, no window". Empty under Rise (no mantle system, so
@@ -176,10 +198,8 @@ protected:
 
 private:
     [[nodiscard]] bool mantlesEnabled() const;
-    [[nodiscard]] int  contentWidth() const;
     // Height the two boxes need, in logical px. Both boxes are one row;
     // kMbH is the same 60px the panel reserves (panel_player.cpp:729).
-    [[nodiscard]] int  contentHeight() const;
 
     // ─── the columns dial (v0.13) ─────────────────────────────────────
     //
@@ -191,20 +211,7 @@ private:
     // Pressing `[` gives 1, which stacks the two boxes vertically —
     // "衣装两格竖排 = 上下堆叠", the other half of the direction the
     // user asked for.
-    [[nodiscard]] int  columns() const override { return columns_; }
     void nudgeColumns(int delta) override;
-    [[nodiscard]] bool supportsColumns() const override { return true; }
-
-    // The row-layout vocabulary, same contract as the wirebug row's.
-    [[nodiscard]] int  itemCount() const override { return rows_.boxes.size(); }
-    [[nodiscard]] int  naturalItemWidth() const override;
-    [[nodiscard]] int  itemGap() const override { return kMbGap; }
-    [[nodiscard]] int  rowPitch() const override { return kMbH + kMantleRowGap; }
-    [[nodiscard]] int  contentMargin() const override { return kMantlesMargin; }
-
-    // Columns per row from the width this window will ACTUALLY be, so a
-    // lock narrows the layout instead of being ignored.
-    [[nodiscard]] int  wrappedColumns() const;
 
     mhw::MantleModel rows_{};
     // True while what is on screen came from setupDemoData(); the first

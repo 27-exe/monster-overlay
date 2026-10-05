@@ -32,6 +32,75 @@ enum class Corner {
 class Panel : public QMainWindow {
     Q_OBJECT
 public:
+
+
+    // ─── the polymorphic layout contract ─────────────────────────────
+    //
+    // What a split sub-window answers about its own geometry, so the
+    // console's preview, main.cpp's layout arithmetic and the layout
+    // consistency test can ask any window the same ten questions without
+    // knowing which window it is holding.
+    //
+    // This is ONE section on purpose. The hooks used to sit in three
+    // places — some under `protected:` beside the paint helpers, two
+    // stranded next to the constructor, and several overrides buried in
+    // the subclasses' own private sections — which is how a test came to
+    // need three different tricks just to read a window's size. A single
+    // public vocabulary has no such seams.
+    //
+    // Every default answers "I do not do that", never a number: the four
+    // shipped panels answer 0 for all ten and are therefore unaffected by
+    // these hooks existing at all. A 0 default is also a stronger promise
+    // than an empty virtual body, because it makes "does this window have
+    // a direction?" a question with an answer rather than a call that
+    // silently does nothing.
+
+    // ── the extent, before the user's floor and lock ──
+    //
+    // contentWidth() / contentHeight() are what the CONTENT asks for. The
+    // floor (minW/minH) and the lock (lockW/lockH) are applied inside
+    // setContentSize(), so a caller can ask "how wide does this want to
+    // be?" without also having to model the user's dials.
+    virtual int  contentWidth() const { return 0; }
+    virtual int  contentHeight() const { return 0; }
+
+    // ── the wrapped-row dial ──
+    //
+    // columns() is the user's current "how many per row", nudgeColumns()
+    // applies a dial step, and supportsColumns() is the honest "would this
+    // dial do anything" — the console greys the key instead of letting a
+    // user press a dead one. Default false, and only the row-shaped
+    // windows override it.
+    virtual int  columns() const { return 0; }
+    virtual void nudgeColumns(int delta) { (void)delta; }
+    virtual bool supportsColumns() const { return false; }
+
+    // One step of the columns dial. A named constant rather than a literal
+    // at the call site because the [ / ] handler in Panel::keyPressEvent
+    // and the subclass's own nudgeColumns() both apply it, and the two
+    // must step by the same amount — a dial whose key and whose call
+    // disagree is a dial that feels broken in a way no screenshot shows.
+    static constexpr int kColumnsStep = 1;
+
+    // ── what a LAYOUT reads to derive a wrap ──
+    //
+    // Not the dial: a window's item count is a property of its data, the
+    // dial is a property of the user's choice. These four let the wrap be
+    // derived rather than re-measured per window.
+    virtual int  itemCount() const { return 0; }
+    virtual int  naturalItemWidth() const { return 0; }
+    virtual int  itemGap() const { return 0; }
+    virtual int  rowPitch() const { return 0; }
+
+    // ── the outer inset ──
+    //
+    // Reported so every window in the ring can be asked for the number
+    // instead of the ring trusting that seven private constants happen to
+    // agree. They did not: the status strip's own margin was 6 while
+    // every other window's was 11, which is exactly the drift a single
+    // query is here to prevent.
+    virtual int  contentMargin() const { return 0; }
+
     Panel(const QString &settingsKey, Corner corner, QWidget *parent = nullptr);
 
     // Schedule a repaint. Needed externally because the per-panel
@@ -487,53 +556,6 @@ protected:
     //   * supportsColumns() is the honest "would this dial do anything"
     //     question, so a console can grey the keys instead of letting a
     //     user press a dead key. It is default false and the two rows
-    //     that support it override it to true alongside the dial.
-    //   * itemCount() / naturalItemWidth() / itemGap() / rowPitch() /
-    //     contentMargin() are what a LAYOUT reads, as opposed to the
-    //     dial, so the wrap can be derived rather than re-measured per
-    //     window. They are not the dial and never were: a window's item
-    //     count is a property of its data, the dial is a property of the
-    //     user's choice.
-    virtual int columns() const { return 0; }
-    virtual void nudgeColumns(int delta) { (void)delta; }
-    virtual bool supportsColumns() const { return false; }
-
-    // One column per press. 1 was the step the status strip shipped its
-    // `[` / `]` handler with (panel_player_split.cpp:kColumnsStep), and it
-    // stays: a strip's column count is a small integer where any larger
-    // step would jump past the interesting range in one press — from the
-    // default 3 to a vertical list is two presses, not one.
-    static constexpr int kColumnsStep = 1;
-
-    // ─── the generic row-layout vocabulary a column dial is derived from
-    //
-    // These five answer, for a window whose content is a horizontal
-    // row of N items in a window `width` px wide: how many items there
-    // are, how wide and how tall one is, how much air sits between two
-    // of them, and how much padding the content inset has. They exist so
-    // the columns dial does not have to be re-derived per subclass: the
-    // wirebug strip, the mantles strip and the status strip all answer
-    // them, and the wrap arithmetic in panel_sizing.h is shared.
-    //
-    // DEFAULTS ARE THE "NOT A ROW" ANSWER, which is why an override is
-    // safe to add: a window that does not answer them gets 1 item per
-    // row of 0 px, which is the collapsed single-frame case, and every
-    // caller that reaches them is a window that DID override them.
-    virtual int itemCount() const { return 0; }
-    // Natural width of ONE item at full size, in logical px — the
-    // number a column's budget is measured against (the widest
-    // capsule's column arithmetic, the widest mantle box). NOT the
-    // window's content width.
-    virtual int naturalItemWidth() const { return 0; }
-    // Horizontal gap between two adjacent items in a row.
-    virtual int itemGap() const { return 0; }
-    // Vertical pitch of one wrapped row: item height + row gap.
-    virtual int rowPitch() const { return 0; }
-    // The margin this window's content starts at on each side. The base
-    // panels' margins are not this concept — they are chrome padding —
-    // which is why these default to 0 and only the content strips
-    // answer them.
-    virtual int contentMargin() const { return 0; }
 
 private:
     void applyGeometry();

@@ -11,10 +11,40 @@
 //     damage=<hex32>
 //     pets=<hex32>
 //
+// and, since v0.12.1, a fifth row that says which SCHEMA those four
+// values are written in:
+//
+//     maskVersion=<int>
+//
 // Those rows are a USER CONTRACT, not an internal detail: the overlay's
 // `locale_sync.h` polls the same file, users hand-edit it, and an older
 // three-row config (pre-pets) must keep loading. This header exists so
 // the contract is pinned down by assertions instead of by a QA click.
+//
+// WHY THE VERSION ROW EXISTS. `PlayerSection::Sharpness` (1u << 8) was
+// added to a `player=` field that had only ever needed bits 0-7, so
+// every mask written before it stores bit 8 as ZERO — which is
+// byte-identical to the value a user who deliberately turns sharpness
+// OFF on the new build stores. One value, two meanings: a read-time
+// heuristic cannot separate them (see panel_sections.h's
+// migrateOldSharpnessBit, which has to guess and therefore resurrects
+// a gauge the user switched off).
+//
+// The version row removes the ambiguity by making the FILE say which
+// schema it was written in. It is therefore NOT a migration in this
+// header — this codec only turns text into values and back. What it
+// does own is the third fact a caller needs to act: WHICH SCHEMA the
+// text declared, reported as `PanelMaskSet::schemaVersion`
+// (0 = no maskVersion= row at all, i.e. a pre-v0.12.1 file).
+//
+// THE ONE-TIME SHAPE this enables, and why the version is written on
+// EVERY save rather than only when something changed: the first reader
+// of an unmarked file migrates in memory and then writes the file back
+// with `maskVersion=1` on the very next save. From that moment the
+// same `ff` on disk means "everything off" and no reader migrates it
+// again — the ambiguity is spent, not re-litigated at every startup.
+// Parsing the same unmarked text twice reports version 0 both times,
+// which is the assertion that pins it: reading must never write.
 //
 // Hard rule, same as ConsoleLayoutStore / DamageViewModel /
 // MonsterViewModel / RiseReframeworkStatus / console_text_helpers: this
@@ -45,6 +75,27 @@
 
 namespace mhw {
 
+// ---- the mask schema version -------------------------------------------
+//
+// 0 = no version row (every file written before this constant existed).
+// 1 = `maskVersion=1`: the four masks were written by a build whose
+// PlayerSection table includes Sharpness, so a zero bit 8 is a decision.
+//
+// Bump this ONLY when a stored value's meaning changes without its text
+// changing. Adding a section bit is exactly that event; adding a whole
+// panel with its own row is not (a new row parses as absent and keeps
+// the caller's default, which is already handled).
+//
+// Declared BEFORE PanelMaskSet because needsSchemaMigration() reads it
+// from inside the struct, and a namespace-scope constant that follows
+// its user is not in scope there.
+inline constexpr int kPanelMaskSchemaUnmarked = 0;
+inline constexpr int kPanelMaskSchemaCurrent  = 1;
+
+// The row spelling. One literal in the codec's comments and one here, so
+// a rename has to touch both.
+inline constexpr char kPanelMaskVersionKey[] = "maskVersion";
+
 // One parsed section-mask set, plus the two facts that decide how the
 // caller applies it: whether a mask line was present at all, and whether
 // a `pets=` line was present (which is what distinguishes a pre-pets
@@ -65,14 +116,39 @@ struct PanelMaskSet {
     // True once a `pets=` row is seen, even if its value was malformed.
     bool petsLineSeen{false};
 
+    // THE MASK SCHEMA this text declared.
+    //
+    //   0 — no `maskVersion=` row. A pre-v0.12.1 file: its bits mean
+    //       whatever the build that wrote them understood, and the
+    //       `player=` value's bit 8 is unconstrained by intent (an old
+    //       build could not set it; a new user who turned sharpness off
+    //       also stores 0). This is the value that makes a caller
+    //       migrate, ONCE.
+    //   1 — this build wrote it. Every `maskVersion=` writer emits
+    //       kPanelMaskSchemaVersion (below), so bit 8 means exactly what
+    //       the checkboxes said.
+    //
+    // A future schema (2, 3, ...) is reported as its literal number, NOT
+    // clamped: a caller that does not recognise it must treat the values
+    // as opaque rather than guess. The migration is keyed on == 0.
+    //
+    // Deliberately NOT named `version`: this is the schema of the stored
+    // VALUES, which is a different axis from the file's feature set and
+    // from MONSTER_VERSION.
+    int schemaVersion{0};
+
     // Plain field setters. The legacy three-row migration is applied
     // exactly once, in parsePanelMasks — putting it here as well would
     // OR `OtherMembers` in twice, which happens to be idempotent but
     // hides the fact that the rule has two owners.
+    //
+    // schemaVersion is a parameter rather than a setter call for the
+    // same reason: it is decided by the scan, so it travels with the
+    // result that carries it.
     [[nodiscard]] static PanelMaskSet make(
         uint32_t player, uint32_t monster, uint32_t damage, uint32_t pets,
         bool playerValid, bool monsterValid, bool damageValid,
-        bool petsValid, bool petsLineSeen)
+        bool petsValid, bool petsLineSeen, int schemaVersion = 0)
     {
         PanelMaskSet s;
         s.player = player;
@@ -84,7 +160,18 @@ struct PanelMaskSet {
         s.damageValid = damageValid;
         s.petsValid = petsValid;
         s.petsLineSeen = petsLineSeen;
+        s.schemaVersion = schemaVersion;
         return s;
+    }
+
+    // True when this text carries no schema marker, i.e. when the one-time
+    // bit migration still owes the user a write. Kept as a member because
+    // the two call sites (the console's load, the overlay's startup) must
+    // not each restate the == 0 test — that is how one of them drifts to
+    // `<= 0` or `!= 1` later.
+    [[nodiscard]] bool needsSchemaMigration() const noexcept
+    {
+        return schemaVersion == kPanelMaskSchemaUnmarked;
     }
 };
 
@@ -159,6 +246,20 @@ inline void parsePanelMaskValue(const QString &text,
 // Duplicate mask rows converge: the last valid one wins, matching the
 // wheel that rewrites the file with a single row per key. Missing or
 // malformed rows leave `valid` false so the caller's defaults hold.
+//
+// `maskVersion=` is read here, not inferred. It is the ONE row this
+// codec neither masks nor migrates on: it is metadata about the four
+// values, and reporting it verbatim is what lets the caller run its one-
+// time migration and then never again. Two rules make that auditable:
+//
+//   * an ABSENT row reports kPanelMaskSchemaUnmarked (0) — this is the
+//     pre-v0.12.1 case, and the only one that owes a write;
+//   * a MALFORMED row (`maskVersion=zz`, `maskVersion=`) also reports
+//     0, because "unreadable marker" is not "newer than me" and the
+//     migration must stay reachable rather than silently switching off;
+//   * a HIGHER number than this build knows is passed through literally
+//     — the caller sees 2 and treats the values as opaque, which is the
+//     only honest answer available.
 [[nodiscard]] inline PanelMaskSet parsePanelMasks(const QString &text)
 {
     uint32_t playerMask = 0;
@@ -170,6 +271,7 @@ inline void parsePanelMaskValue(const QString &text,
     bool damageValid = false;
     bool petsValid = false;
     bool petsLineSeen = false;
+    int schemaVersion = kPanelMaskSchemaUnmarked;
 
     // QTextStream over a plain QString* performs NO text-mode
     // translation, so readLine() here reproduces the line list the
@@ -188,6 +290,16 @@ inline void parsePanelMaskValue(const QString &text,
         } else if (line.startsWith(QLatin1String("pets="))) {
             petsLineSeen = true;
             parsePanelMaskValue(line.mid(5), petsMask, petsValid);
+        } else if (line.startsWith(QLatin1String("maskVersion="))) {
+            // Trimmed line, same as the mask rows above: an indented
+            // `  maskVersion=1` is still this row. A value that is not
+            // a non-negative int leaves schemaVersion at "unmarked",
+            // so a truncated or hand-mangled marker degrades to the
+            // pre-v0.12.1 path instead of to a frozen migration.
+            bool ok = false;
+            const int v = line.mid(12).toInt(&ok);
+            if (ok && v > 0)
+                schemaVersion = v;
         }
     }
 
@@ -196,7 +308,7 @@ inline void parsePanelMaskValue(const QString &text,
 
     return PanelMaskSet::make(
         playerMask, monsterMask, damageMask, petsMask, playerValid,
-        monsterValid, damageValid, petsValid, petsLineSeen);
+        monsterValid, damageValid, petsValid, petsLineSeen, schemaVersion);
 }
 
 // ---- serialize ---------------------------------------------------------
@@ -208,15 +320,28 @@ inline void parsePanelMaskValue(const QString &text,
 // file does not exist yet — the original `QFileInfo::exists()` guard
 // lives in ControlPanel, which is the part that owns the filesystem.
 //
-// The layout is fixed and user-visible: the four canonical rows first,
-// in player/monster/damage/pets order, then every non-mask line of the
-// previous file in its original relative order (`locale=`, comments,
-// blank lines, unknown and future keys). Each non-mask line is copied
-// VERBATIM — leading and trailing whitespace included — because
-// preserving a user's hand-edited spacing is the point of classifying
-// rather than parsing those lines.
+// The layout is fixed and user-visible: the FOUR canonical mask rows
+// first, in player/monster/damage/pets order, then the schema marker
+// `maskVersion=1`, then every non-mask line of the previous file in its
+// original relative order (`locale=`, comments, blank lines, unknown and
+// future keys). Each non-mask line is copied VERBATIM — leading and
+// trailing whitespace included — because preserving a user's hand-edited
+// spacing is the point of classifying rather than parsing those lines.
 //
-// The scan is a QTextStream loop, not `split(QLatin1Char('\n'))`: a
+// THE MARKER IS EMITTED UNCONDITIONALLY, on every save, even when the
+// previous file already had it and even when nothing migrated. That is
+// what makes the one-time property hold: the write that follows a
+// migration is an ordinary save, so there is exactly one code path to
+// audit instead of "migrate, then hope the next save happens". A file
+// with no marker is by construction one this build has never written.
+//
+// `maskVersion=` is a PRESERVED-classified row: the save replaces the
+// one it finds (so duplicates cannot accumulate) and re-emits it at the
+// version this build writes. It therefore does NOT fall through to the
+// verbatim-preserved block below, which would keep a stale or
+// hand-edited copy alive.
+//
+// The scan is a QTextStream loop, not `split(QLatin1String('\\n'))`: a
 // trailing newline makes split() yield one extra empty element (an
 // artifact the original `while (!in.atEnd())` never produced), and that
 // phantom line would land in the user's conf on every save.
@@ -233,6 +358,11 @@ inline void parsePanelMaskValue(const QString &text,
     QTextStream in(&scan);
     while (!in.atEnd()) {
         const QString line = in.readLine();
+        // The marker is dropped here and re-emitted by hand below, so it
+        // never appears twice and never appears at an arbitrary position
+        // in the user's comment block.
+        if (line.trimmed().startsWith(QLatin1String("maskVersion=")))
+            continue;
         if (classifyPanelMaskLine(line) == PanelMaskLineKind::Preserved)
             preserved.append(line);
     }
@@ -242,6 +372,8 @@ inline void parsePanelMaskValue(const QString &text,
     data += "monster=" + QString::number(monsterMask, 16).toUtf8() + '\n';
     data += "damage=" + QString::number(damageMask, 16).toUtf8() + '\n';
     data += "pets=" + QString::number(petsMask, 16).toUtf8() + '\n';
+    data += QByteArray(kPanelMaskVersionKey) + '='
+            + QByteArray::number(kPanelMaskSchemaCurrent) + '\n';
     for (const QString &line : preserved)
         data += line.toUtf8() + '\n';
     return data;

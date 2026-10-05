@@ -43,6 +43,13 @@ enum : uint32_t {
     // for its own window while the bar stayed in PlayerPanel, so one bit
     // for both would have made "turn the weapon row off" also hide "am I
     // about to bounce". See Sharpness below.
+    //
+    // The bar is now in the trio's window again, so the two bits are
+    // claimed together by one row of kPlayerSplitTargets — but they are
+    // still two bits, because they still answer two questions. One bit
+    // for both would put "which window draws it" and "is this block on"
+    // behind the same switch, which is the exact confusion the split
+    // created the bit to end.
     Weapon  = 1u << 2,
     Bars    = 1u << 3,   // HP + ST 两条
     Mantles = 1u << 4,   // 衣装两格 (World only — Rise hides this)
@@ -53,9 +60,18 @@ enum : uint32_t {
     // slot + name + MR + sharpness bar", which is four things behind one
     // toggle; with the identity trio carved into its own window the bar
     // had to be told apart from the trio, or turning the weapon row off
-    // in the console would also hide "am I about to bounce". Read by
-    // panel_player.cpp's prow block and NOT claimed by any split window
-    // (it stays in PlayerPanel by design — see kPlayerSplitTargets).
+    // in the console would also hide "am I about to bounce".
+    //
+    // It then spent one release as the sole claim of a window of its own
+    // (PlayerSharpnessStripPanel, settingsKey "player-sharpness"), and
+    // the second round of user testing said the gauge and the weapon
+    // row belong in ONE window — in HunterPie they are one control
+    // (WeaponSharpnessView). So the gauge's window is gone and this bit
+    // is claimed by the WEAPON row of kPlayerSplitTargets. What did not
+    // change is the reason the bit exists: it is still read by its own
+    // gate (PlayerWeaponStripPanel::sharpnessEnabled()), so turning it
+    // off still answers exactly one question and leaves the trio alone.
+    // The bit is about TOGGLING, never about which window draws.
     Sharpness = 1u << 8, // 锋利度条 (独立于 Weapon 位)
 };
 constexpr uint32_t kAll =
@@ -277,7 +293,29 @@ enum : int {
     // subscripts the table with this value, so a slot that skipped an
     // index would silently answer 0 ("draw nothing") at runtime with no
     // compile-time complaint beyond the shared row-count assert.
-    Weapon = 4,   // 武器身份三件套            -> PlayerWeaponStripPanel
+    // 武器身份三件套 + 锋利度条: 图标 + 玩家名 + MR + 7 段色条。ONE
+    // window, TWO bits. The gauge left with the trio and then came back
+    // — the user's verdict on the arrangement was「武器身份三件套」和
+    // 「锋利度条」属于同一个面板, and in HunterPie they are literally
+    // one control (HunterPie.UI/Overlay/Widgets/Player/Views/
+    // WeaponSharpnessView.xaml, mounted in PlayerHudView.xaml:380-387).
+    //
+    // TWO BITS DOES NOT MEAN ONE TOGGLE. Claiming the union is what
+    // makes ONE window, and the two Users toggles stay independent —
+    // Weapon answers "show my weapon row", Sharpness answers "is my
+    // blade about to bounce", which is exactly why Sharpness became its
+    // own bit in abaa70e. The window reads both through its own
+    // weaponEnabled() / sharpnessEnabled() and drops each stream from
+    // the width, height and paint on its own
+    // (panel_player_split_weapon.cpp). So "off" for either one leaves
+    // the other one drawing, exactly as the bits always promised; it
+    // only changes where.
+    //
+    // The width is what the merge buys: the merged window is
+    // max(identity line, gauge block) ≈ 218px, where the two separate
+    // fragments were ~170 + ~196 = 366 added together. The identity
+    // line's leftover width is what the gauge row now gets for free.
+    Weapon = 4,   // 武器身份三件套 + 锋利度条   -> PlayerWeaponStripPanel
     // 「任务/进程」: the Quest block and the Conn block as ONE window
     // (design 02-interaction-design.md §4.2 「方案 A」). The only split
     // target that claims two sections, and the only one built around
@@ -287,23 +325,22 @@ enum : int {
     // Same warning as Weapon above: the value MUST be the subscript of the
     // row appended to kPlayerSplitTargets below.
     Info = 5,     // 任务四行 + 进程信息        -> PlayerInfoStripPanel
-    // THE SEVENTH, and the one that makes the split TOTAL. The sharpness
-    // gauge was deliberately left behind by v0.12's weapon split because
-    // "174px of hard cost that buys nothing in its own window" — a
-    // statement about a panel that was keeping five other blocks in a
-    // 378px shell. Once the six rows below claimed every other
-    // PlayerSection bit, the leftover was a PlayerPanel holding ONE bar
-    // in a window that always draws a title row, and the user asked
-    // whether there was any point keeping it. There is not: the panel's
-    // derived mask is now 0x00000000 in Split mode and the gauge gets
-    // the window it was always too expensive to deserve.
+    // THE SIXTH AND LAST ROW. There used to be a seventh,
+    // `Sharpness = 6 -> PlayerSharpnessStripPanel`, added because
+    // v0.12's weapon split left the gauge behind and the leftover was a
+    // PlayerPanel holding ONE bar in a window that always draws a title
+    // row — the user's 「1所说的这个面板真有存在必要么？」. The answer
+    // was to give the gauge a window, and a second round of testing said
+    // the same thing about THAT: the gauge and the weapon row belong in
+    // one window (HunterPie's WeaponSharpnessView is one control), so the
+    // row is gone and its `Sharpness` bit joined Weapon's on row 4.
     //
-    // Same warning as Weapon above: the value MUST be the subscript of
-    // the row appended to kPlayerSplitTargets below.
-    Sharpness = 6, // 锋利度条 + 数字徽章        -> PlayerSharpnessStripPanel
+    // `kCount` is 6 now and `static_assert` below re-checks it against
+    // the table's row count, so a future row cannot be appended here
+    // without the table following.
 };
 // The row count of kPlayerSplitTargets, cross-checked by static_assert.
-constexpr int kCount = 7;
+constexpr int kCount = 6;
 } // namespace PlayerSplitSlot
 
 // One split window's claim on PlayerSection bits: "these blocks leave
@@ -354,22 +391,34 @@ constexpr PlayerSplitTarget kPlayerSplitTargets[] = {
     // player glancing at them mid-hunt.
     {mhw::PlayerSection::Bars},
 
-    // 武器身份三件套: 图标 + 玩家名 + MR. PARTIAL extraction by design —
-    // the row in the source panel is 352px (wslot + name + MR + the
-    // sharpness gauge), and the gauge alone is 174px of hard cost that
-    // buys nothing in its own window, so the bar stays behind. The
-    // claim is therefore `Weapon` WITHOUT `Sharpness`: the two bits used
-    // to be one ("weapon slot + name + MR + sharpness bar", the original
-    // enum comment above), and pulling the trio out while the bar stayed
-    // is exactly why Sharpness became its own bit. See design
-    // 02-interaction-design.md §3.4.
+    // 武器身份三件套 + 锋利度条: 图标 + 玩家名 + MR + 7 段色条。The
+    // merged row. It used to be `Weapon` ALONE, with the gauge claimed
+    // by a seventh row further down ("PARTIAL extraction by design —
+    // the row in the source panel is 352px and the gauge alone is 174px
+    // of hard cost that buys nothing in its own window"), and the gauge
+    // then got its own window, and then the user's second round of
+    // testing said both fragments belong together: in HunterPie they
+    // are ONE control (WeaponSharpnessView.xaml, mounted in
+    // PlayerHudView.xaml:380-387), and two windows at two addresses is
+    // over-splitting. Both rows are now this one, which claims the
+    // UNION of the two bits.
+    //
+    // The union does NOT merge the toggles: the window reads each bit
+    // through its own gate and drops each stream from the width, the
+    // height and the paint independently
+    // (panel_player_split_weapon.cpp's weaponEnabled() /
+    // sharpnessEnabled()). Weapon off keeps the gauge, Sharpness off
+    // keeps the trio — the promise the two bits always made, with one
+    // fewer window to drag around.
     //
     // The measured width, 170px (probe weapon_row_probe.cpp: wslot 26 +
     // 8 + name + 8 + MR, the widest pair off the shipped demo names), is
     // what the panel's 378 could never give the name — the gauge's
     // centred block left the name column a 49px band and elided every
-    // non-empty player name in single mode.
-    {mhw::PlayerSection::Weapon},
+    // non-empty player name in single mode. The gauge block is 174px
+    // wide, and the merged window takes max(170, 174) rather than their
+    // sum, which is the compactness the merge is for.
+    {mhw::PlayerSection::Weapon | mhw::PlayerSection::Sharpness},
     // 「任务/进程」: the Quest block and the Conn block as ONE window
     // (design 02-interaction-design.md §4.2 「方案 A」). The only split
     // target that claims two sections, and the only one built around
@@ -391,46 +440,20 @@ constexpr PlayerSplitTarget kPlayerSplitTargets[] = {
     // Worth 82px of the single panel's 361 — 22.7%, the largest single
     // win left in it.
     {mhw::PlayerSection::Conn | mhw::PlayerSection::Quest},
-
-    // 锋利度条 + 数字徽章. THE LAST ONE OUT, and what makes the split
-    // total: with this row every PlayerSection bit is claimed, so
-    // PlayerPanel's derived mask in Split mode is 0x00000000.
-    //
-    // v0.12 left it behind with a recorded reason, and the reason was
-    // about the wrong thing. "174px of hard cost that buys nothing in
-    // its own window" (02-interaction-design.md §3.4, quoted above) is
-    // true of a 378px panel that still needs to hold five other blocks;
-    // it says nothing about a window that exists for exactly one block.
-    // Weighing the cost per block instead of per panel reverses the
-    // answer, and the evidence that the old answer was wrong is the
-    // arrangement it produced: a PlayerPanel whose only content was a
-    // gauge, beside a title row that `totalH = kMargin + kTitleH` always
-    // draws. The user's question about it — 「1所说的这个面板真有存在
-    // 必要么？」 — has one honest answer.
-    //
-    // The other two objections are smaller than they looked. "The
-    // right-edge avoidance arithmetic is welded to the name column that
-    // just left" no longer binds: the paintable is a free function that
-    // takes a right edge, and with no name in the window the edge IS
-    // the margin, so the arithmetic goes away rather than migrating.
-    // And the band is 174 + 22 = 196px of width, which as a fraction of
-    // a window that has nothing else in it is 100% — there is no
-    // "hard cost" left to compare against.
-    {mhw::PlayerSection::Sharpness},
 };
 
 // NOT in this table, and why — the audit's remaining candidates are
 // named here so the omission is a recorded decision rather than an
 // oversight:
 //   (none — every PlayerSection bit is claimed. Sharpness used to be
-//   here: "left in PlayerPanel on purpose: 174px of gauge + badge with
-//   no width return, and the right-edge avoidance arithmetic is welded
-//   to the name column that just left". Both halves of that argument
-//   expired. The width argument is a per-panel ratio, and the panel it
-//   was defending ended up holding exactly one block — the thing worth
-//   protecting was already gone. The arithmetic argument expired with
-//   the name column: the paintable takes a right edge, and with nothing
-//   else in the window the edge is the margin. See the seventh row.)
+//   NOT claimed, with the recorded reason "left in PlayerPanel on
+//   purpose: 174px of gauge + badge with no width return, and the
+//   right-edge avoidance arithmetic is welded to the name column that
+//   just left". Both halves of that argument expired, and what replaced
+//   it was a gauge window of its own, and what replaced THAT was this
+//   row: the gauge joins the weapon row on row 4, because in HunterPie
+//   they are one control and splitting them was over-splitting. See the
+//   Weapon entry above.)
 //
 // Conn and Quest are NOT listed here any more — they moved, together, in
 // the row above. The coupling argument that kept them behind was that

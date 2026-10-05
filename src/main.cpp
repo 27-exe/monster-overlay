@@ -38,7 +38,6 @@
 // block reads that bit on its own.
 #include "ui/panel_player_split_weapon.h"
 #include "ui/panel_player_split_info.h"
-#include "ui/panel_player_split_sharpness.h"
 #include "ui/panel_sections.h"
 // The four conf mask rows are parsed with the console's own codec, so
 // both sides of the console <-> overlay handshake share one format
@@ -378,13 +377,46 @@ int main(int argc, char **argv)
     // and the four masks are only needed here.
     const QString confMaskText = mhw::readPanelMaskConfText(confPath);
     const mhw::PanelMaskSet confMasks = mhw::parsePanelMasks(confMaskText);
-    const mhw::PanelMaskConfRow confMaskPlayer  = {confMasks.playerValid,  confMasks.player};
+    const mhw::PanelMaskConfRow confMaskPlayer = {confMasks.playerValid,  confMasks.player};
     const mhw::PanelMaskConfRow confMaskMonster = {confMasks.monsterValid, confMasks.monster};
     const mhw::PanelMaskConfRow confMaskDamage  = {confMasks.damageValid,  confMasks.damage};
     const mhw::PanelMaskConfRow confMaskPets    = {confMasks.petsValid,    confMasks.pets};
 
+    // ─── the one-time schema migration ───────────────────────────────────
+    //
+    // v0.12 added PlayerSection::Sharpness = 1u << 8. A conf file written by
+    // v0.11 stores `player=ff` — eight bits, no bit 8, because the bit did
+    // not exist yet. But a v0.12 user who opens the console and TURNS THE
+    // GAUGE OFF also stores `player=ff`, because clearing bit 8 is exactly
+    // how "off" is written. One value, two intents, and no function of the
+    // value alone can tell them apart.
+    //
+    // So the file now declares its own schema. `maskVersion=1` means "these
+    // four values were written by a build that knows about the bit, and a
+    // clear bit 8 is a real choice". Its ABSENCE means "written before the
+    // bit existed", and that — only that — is what triggers the one-time
+    // migration below.
+    //
+    // The overlay does not write the conf file: locale_sync.h's single-writer
+    // contract reserves that to the console. So if the user runs the overlay
+    // directly and never opens the console, the migration is re-applied on
+    // each start — which is the same visible outcome as before this change
+    // (the gauge reads as on), not a regression. Opening the console and
+    // saving anything writes maskVersion=1 and ends the migration for good.
+    uint32_t playerMaskConfValue = confMaskPlayer.value;
+    if (confMasks.playerValid && confMasks.needsSchemaMigration()) {
+        const uint32_t migrated =
+            mhw::PlayerSection::migrateOldSharpnessBit(confMasks.player);
+        qInfo("overlay: mask conf has no %s= (pre-v0.12 schema); migrating "
+              "the Sharpness bit once: %08x -> %08x",
+              mhw::kPanelMaskVersionKey, confMasks.player, migrated);
+        playerMaskConfValue = migrated;
+    }
+    const mhw::PanelMaskConfRow migratedMaskPlayer = {confMasks.playerValid,
+                                                      playerMaskConfValue};
+
     const uint32_t maskPlayer  = mhw::resolveStartupPanelMask(
-                                     cliMaskPlayer,  confMaskPlayer,
+                                     cliMaskPlayer,  migratedMaskPlayer,
                                      mhw::PanelMaskSlot::Player).value;
     const uint32_t maskMonster = mhw::resolveStartupPanelMask(
                                      cliMaskMonster, confMaskMonster,
@@ -520,7 +552,6 @@ int main(int argc, char **argv)
     PlayerWirebugStripPanel playerWirebugStripPanel;
     PlayerWeaponStripPanel playerWeaponStripPanel;
     PlayerInfoStripPanel playerInfoStripPanel;
-    PlayerSharpnessStripPanel playerSharpnessStripPanel;
 
     playerPanel.setEditMode(editMode);
     monsterPanel.setEditMode(editMode);
@@ -532,7 +563,6 @@ int main(int argc, char **argv)
     playerWirebugStripPanel.setEditMode(editMode);
     playerWeaponStripPanel.setEditMode(editMode);
     playerInfoStripPanel.setEditMode(editMode);
-    playerSharpnessStripPanel.setEditMode(editMode);
 
     // L1: apply section masks BEFORE show() so the first paint reflects
     // them — no one-frame flash of "all visible" if a mask is restrictive.
@@ -575,7 +605,6 @@ int main(int argc, char **argv)
     playerWirebugStripPanel.setSectionMask(maskPlayer);
     playerWeaponStripPanel.setSectionMask(maskPlayer);
     playerInfoStripPanel.setSectionMask(maskPlayer);
-    playerSharpnessStripPanel.setSectionMask(maskPlayer);
     damagePanel.setRiseDisplayOptions(riseDamageDisplayOptions);
     petDamagePanel.setDisplayOptions(riseDamageDisplayOptions);
     // Master gate: maps to the control console's "面板启用"
@@ -621,7 +650,6 @@ int main(int argc, char **argv)
     playerWirebugStripPanel.setPanelEnabled(playerSplitOn);
     playerWeaponStripPanel.setPanelEnabled(playerSplitOn);
     playerInfoStripPanel.setPanelEnabled(playerSplitOn);
-    playerSharpnessStripPanel.setPanelEnabled(playerSplitOn);
 
 
     // v0.8: CLI --output-* overrides whatever the persisted panels.ini
@@ -697,7 +725,6 @@ int main(int argc, char **argv)
         playerWirebugStripPanel.setVisible(editMode);
         playerWeaponStripPanel.setVisible(editMode);
         playerInfoStripPanel.setVisible(editMode);
-        playerSharpnessStripPanel.setVisible(editMode);
     }
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
@@ -829,7 +856,6 @@ int main(int argc, char **argv)
         playerWirebugStripPanel.retranslateUi();
         playerWeaponStripPanel.retranslateUi();
         playerInfoStripPanel.retranslateUi();
-        playerSharpnessStripPanel.retranslateUi();
     };
 
     QObject::connect(&timer, &QTimer::timeout, [&] {
@@ -980,12 +1006,6 @@ int main(int argc, char **argv)
             playerInfoStripPanel.setVisible(
                 playerInfoStripPanel.panelEnabled()
                 && playerInfoStripPanel.hasVisibleContent());
-            const bool keepSharpnessDemo = skipUpdate(playerSharpnessStripPanel);
-            if (!keepSharpnessDemo)
-                playerSharpnessStripPanel.update(snap);
-            playerSharpnessStripPanel.setVisible(
-                playerSharpnessStripPanel.panelEnabled()
-                && playerSharpnessStripPanel.hasVisibleContent());
         }
 
         monsterPanel.setMultiplayer(snap.isMultiplayer);
@@ -1173,7 +1193,6 @@ int main(int argc, char **argv)
             playerWirebugStripPanel.saveConfig();
             playerWeaponStripPanel.saveConfig();
             playerInfoStripPanel.saveConfig();
-            playerSharpnessStripPanel.saveConfig();
         }
     }
 

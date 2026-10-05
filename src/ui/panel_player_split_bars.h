@@ -56,6 +56,11 @@
 #include "player/player_types.h"
 #include "ui/formatters.h"
 #include "ui/panel_player_metrics.h"
+// The shared split rhythm. Included here rather than only in the .cpp
+// because this header answers contentMargin() from it: an inline member
+// that names a constant it does not include compiles until someone
+// includes the header first, and then stops.
+#include "ui/panel_player_split_layout.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -158,6 +163,31 @@ public:
     // the base panels occupy (Panel::isSubWindow).
     [[nodiscard]] bool isSubWindow() const override { return true; }
 
+    // ─── Panel's polymorphic layout contract ────────────────────────
+    //
+    // The window answers the base's extent and inset hooks rather than
+    // leaving them at the base's "I do not do that" defaults, so a layout
+    // question — from the console's preview, from main.cpp, or from the
+    // layout consistency test — gets this window's real numbers without
+    // anyone having to know which window they are holding.
+
+    // What the two gauges and their numbers ask for. The floor and the
+    // lock are applied later, inside Panel::setContentSize().
+    [[nodiscard]] int contentWidth() const override;
+
+    // Panel's height hook. The window already had a name for this number
+    // and paintPanel() calls it directly, so this is the other spelling
+    // of it rather than a second definition.
+    [[nodiscard]] int contentHeight() const override { return barsBlockHeight(); }
+
+    // The outer inset, the same kSplitMargin every other split window
+    // answers. Reported so the ring can be asked instead of seven private
+    // constants being trusted to agree.
+    [[nodiscard]] int contentMargin() const override
+    {
+        return mhw::split_layout::kSplitMargin;
+    }
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
@@ -189,7 +219,6 @@ private:
     // Width the widest row needs for its two numbers, in logical px, from
     // the fonts paintPanel() actually sets. Never 378 — that was
     // PlayerPanel's width and belongs to it.
-    [[nodiscard]] int contentWidth() const;
 
     mhw::BarsModel  rows_{};
     // True while what is on screen came from setupDemoData(); the first

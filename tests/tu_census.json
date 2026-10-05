@@ -1,5 +1,5 @@
 {
-  "_comment": "Census of src translation units, refreshed by `python3 scripts/zero_reference_gate.py --update-snapshot`. The ctest gate (zero-reference-gate) compares the src/*.cpp set on disk against the keys here, so a new TU fails the build until it appears in this file \u2014 with a class and either an owner test target or an EXEMPT entry in the script. `class` is DIRECT when some test target compiles the TU itself, INDIRECT when a test target needs one of its symbols, ZERO when nothing does, UNKNOWN when it has no external symbol to measure.",
+  "_comment": "Census of src translation units, refreshed by `python3 scripts/zero_reference_gate.py --update-snapshot`. The ctest gate (zero-reference-gate) compares the src/*.cpp set on disk against the keys here, so a new TU fails the build until it appears in this file — with a class and either an owner test target or an EXEMPT entry in the script. `class` is DIRECT when some test target compiles the TU itself, INDIRECT when a test target needs one of its symbols, ZERO when nothing does, UNKNOWN when it has no external symbol to measure.",
   "method": "nm --extern-only undefined/defined, per object file, pre-link",
   "tus": {
     "src/core/game_capabilities.cpp": {
@@ -391,7 +391,6 @@
         "player-sharpness-tests"
       ],
       "refs": [
-        "player-sharpness-strip-tests",
         "player-sharpness-tests"
       ],
       "symbols": 5
@@ -428,12 +427,6 @@
         "player-split-strips-tests"
       ],
       "symbols": 35
-    },
-    "src/ui/panel_player_split_sharpness.cpp": {
-      "class": "ZERO",
-      "compiled_by": [],
-      "refs": [],
-      "symbols": 18
     },
     "src/ui/panel_player_split_weapon.cpp": {
       "class": "INDIRECT",

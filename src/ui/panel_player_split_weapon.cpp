@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// PlayerWeaponStripPanel — the weapon identity trio as its own window.
+// PlayerWeaponStripPanel — PlayerPanel's weapon row as its own window.
 // See panel_player_split_weapon.h for what this window is, why the
-// sharpness gauge is NOT in it, and why the mask claim is `Weapon`
-// without `Sharpness`.
+// sharpness gauge is in it again (it left, the user sent it back), and
+// why the mask claim is `Weapon | Sharpness` while the two toggles
+// still answer their own questions.
 //
 // The weapon-slot painter below is this file's own copy of drawWslot()
 // (panel_player.cpp:224-236), which lives in that file's anonymous
@@ -12,6 +13,15 @@
 // a shared header would mean editing panel_player.cpp, which this
 // change may not touch. The copy is confined to the block being
 // extracted, so it disappears the day the two merge again.
+//
+// The gauge painter is NOT a copy. panel_player_sharpness.{h,cpp}
+// exports it as a free function precisely so it can be reached from a
+// second window, and calling it from here is the same call
+// panel_player.cpp:966-968 makes. Its own rowY / rowH are different —
+// the split window gives the block its own 30px row so the badge is
+// never clipped by the row edge the way the panel's 26px prow let it
+// be (numRect starts 2px ABOVE prowY there, see
+// panel_player_sharpness.cpp:89-90).
 
 #include "panel_player_split_weapon.h"
 
@@ -28,6 +38,7 @@
 #include <QRectF>
 #include <QString>
 
+#include <cmath>
 #include <algorithm>
 
 // i18n lookup, defined the same way panel_player.cpp:31-33 defines it.
@@ -46,13 +57,31 @@ inline QString tr(const QString &key)
 } // namespace mh
 
 namespace {
+// ---- Layout tokens --------------------------------------------------
+// The merged window's size arithmetic lives in the header, in namespace
+// weapon_row, where the model test can reach it — the width and height
+// are decisions the user sees, and a test of them that cannot call the
+// same functions paintPanel() calls is a test of nothing. What stays
+// here is only what the PAINTER needs: the colours, the fonts, and the
+// text shapes.
 
-// ---- Layout tokens (panel_player.cpp:37-63, the ones this block owns) --
-constexpr int kMargin     = 11;     // HTML: .op padding:11
-constexpr int kWslot      = 26;     // HTML: .wslot 26x26 (panel_player.cpp:46)
-constexpr int kWeaponGap  = 9;      // panel_player.cpp:724 (kGapSection)
-constexpr int kWeaponH    = 26;     // panel_player.cpp:725 (prow height)
-constexpr int kIconTextGap = 8;     // panel_player.cpp:960 (.prow gap:8)
+// Aliases, so the paint body below reads the same names it always did
+// while the numbers stay defined once, in one place. Note the
+// qualification: weapon_row lives in namespace mhw (see the header), so
+// an unqualified `using weapon_row::kMargin;` here would not resolve.
+using mhw::weapon_row::kMargin;
+using mhw::weapon_row::kWslot;
+using mhw::weapon_row::kWeaponGap;
+using mhw::weapon_row::kIconTextGap;
+// The gap between the two rows and the gauge row's height, both of which
+// the paint places by hand — the header's arithmetic uses them too, so
+// they are defined once there and aliased here rather than copied.
+using mhw::weapon_row::kIdentityLineGap;
+using mhw::weapon_row::kGaugeRowH;
+// The slot's own height. The panel's prow is the same 26px, which is
+// why the identity row is max(pitch, this) rather than the slot alone
+// (mhw::weapon_row::identityRowHeight()).
+constexpr int kWeaponH = mhw::weapon_row::kWslot;
 
 // The .wslot's border and body colours (panel_player.cpp:227-228). The
 // border is (58,61,63) and the body (14,16,18).
@@ -118,6 +147,46 @@ void drawWeaponSlot(QPainter &p, const QRectF &slotRect, const QPixmap &icon)
     }
 }
 
+// ---- One measurement, three consumers ---------------------------------
+//
+// The arithmetic itself — row heights, stream widths, and the two max()
+// trees the window's size comes from — lives in the header, in namespace
+// mhw::weapon_row, so player_weapon_strip_tests can assert on the actual
+// numbers with a QtCore-only target. What is here is the measurement of
+// the two strings, which needs the fonts the painter sets and therefore
+// cannot leave this file.
+
+struct WeaponRowMetrics {
+    int nameW{0};        // identity stream's name column, measured
+    int mrW{0};          // identity stream's MR column, measured
+    int identityW{0};    // kWslot + gap + nameW + gap + mrW
+    int identityRowH{0}; // max(ceil(font height), kWslot)
+    int gaugeW{0};       // playerSharpnessBarTotalWidth(), or 0
+};
+
+// `withIdentity` / `withGauge` are the callers' own answers from the two
+// gates: a bit that goes off must drop its stream from the width, the
+// height AND the paint, and the three callers must not each re-derive
+// which streams are on.
+WeaponRowMetrics measureWeaponRow(const mhw::WeaponIdentityRow &row,
+                                  bool withIdentity, bool withGauge)
+{
+    WeaponRowMetrics m;
+    m.identityRowH = mhw::weapon_row::identityRowHeight();
+
+    if (withIdentity) {
+        const QFontMetrics nameMetrics(identityNameFont());
+        const QFontMetrics mrMetrics(identityMrFont());
+        m.nameW = nameMetrics.horizontalAdvance(nameText(row.name));
+        m.mrW   = mrMetrics.horizontalAdvance(mrText(row.masterRank));
+        m.identityW = mhw::weapon_row::identityStreamWidth(m.nameW, m.mrW);
+    }
+    if (withGauge)
+        m.gaugeW = mhw::weapon_row::gaugeStreamWidth();
+
+    return m;
+}
+
 } // namespace
 
 namespace mhw {
@@ -139,6 +208,12 @@ WeaponIdentityRow buildWeaponIdentityModel(const mhw::GameSnapshot &snap)
     row.name       = id.name;
     row.hasName    = !id.name.isEmpty();
     row.masterRank = id.masterRank;
+
+    // The sharpness block the panel mirrors from the same snapshot
+    // (panel_player.cpp:580-582). Verbatim, so the painter's own
+    // valid / level guards decide what gets drawn — this window adds no
+    // second opinion about whether a gauge should show.
+    row.sharpness  = snap.player.sharpness;
     return row;
 }
 
@@ -147,16 +222,16 @@ WeaponIdentityRow buildWeaponIdentityModel(const mhw::GameSnapshot &snap)
 PlayerWeaponStripPanel::PlayerWeaponStripPanel(QWidget *parent)
     : Panel(QStringLiteral("player-weapon"), Corner::TopLeft, parent)
 {
-    // No chrome, no title row: the identity trio is a fragment of the
+    // No chrome, no title row: the weapon row is a fragment of the
     // player panel, not a panel. setChromeVisible(false) suppresses the
     // v0.3 rounded body, left accent stripe and border entirely, so the
     // window surface stays transparent apart from the slot's own dark
-    // body and the two text columns. isSubWindow() (in the header)
+    // body and the text columns. isSubWindow() (in the header)
     // declares the same fact for the console's slot registry.
     setChromeVisible(false);
 
-    // Own window-title key, the one the other four split windows use.
-    // The trio draws no label of its own, so there is nothing more
+    // Own window-title key, the one the other split windows use.
+    // The row draws no label of its own, so there is nothing more
     // specific to title it, and reusing ui.player_strip_title means
     // main.cpp's applyLocale re-sets it from exactly the same key the
     // others do instead of this file inventing a second one.
@@ -167,9 +242,10 @@ void PlayerWeaponStripPanel::update(const mhw::GameSnapshot &snap)
 {
     // Same shape as PlayerPanel::update(): cache what paintPanel() needs,
     // schedule one repaint. The panel's other mirrored fields (zone,
-    // quest, connection, vitals, sharpness) are not read here — this
-    // window draws none of them, which is the whole point of the trio
-    // being a fragment.
+    // quest, connection, vitals) are not read here — this window draws
+    // none of them, which is the whole point of the row being a
+    // fragment. `sharpness` IS mirrored, and is the whole reason this
+    // window is a window again rather than two of them.
     row_ = mhw::buildWeaponIdentityModel(snap);
 
     // Demo identity is never live state (the rule PetDamagePanel and the
@@ -207,83 +283,116 @@ void PlayerWeaponStripPanel::retranslateUi()
 bool PlayerWeaponStripPanel::weaponEnabled() const
 {
     // The section mask is a separate axis from the master switch (see
-    // Panel::setPanelEnabled). Reads `Weapon` and NOT `Sharpness`: the
-    // sharpness bar has had its own bit since this window was added, so
-    // the console's weapon toggle hides the trio and leaves the bar in
-    // PlayerPanel drawing. panel_sections.h records the same decision
-    // from the table's side (the row claims Weapon, and the bar is named
-    // in the "NOT in this table" note).
+    // Panel::setPanelEnabled). Reads `Weapon` and NOT `Sharpness`:
+    // the console's weapon toggle hides the identity trio and leaves
+    // the gauge drawing, which is the whole reason Sharpness became its
+    // own bit back in abaa70e.
     return (sectionMask() & mhw::PlayerSection::Weapon) != 0;
+}
+
+bool PlayerWeaponStripPanel::sharpnessEnabled() const
+{
+    // The gauge's own gate. Same shape, same role, opposite bit: this is
+    // what keeps "turn the weapon row off" from also answering "am I
+    // about to bounce". Reads the bit AND the snapshot's own validity —
+    // a ranged weapon has no gauge and must not reserve 174px of width
+    // or 30px of height for one.
+    if ((sectionMask() & mhw::PlayerSection::Sharpness) == 0)
+        return false;
+    return mhw::weaponIdentitySharpnessDrawable(row_.sharpness);
 }
 
 bool PlayerWeaponStripPanel::hasContent() const
 {
     if (demoData_ && editMode())
         return true;
-    if (!weaponEnabled())
+    if (!identityOrSharpnessOn())
         return false;
-    // No name AND no weapon: the reader has nothing to say about who is
-    // playing, so the window must not exist — the main loop's
-    // hasVisibleContent() answers false and the layer-shell surface is
-    // never mounted. PlayerPanel is visible in that state precisely
-    // because it has a "not connected" placeholder to show; a fragment
-    // window has no such obligation, and an icon next to "--" next to
-    // "MR --" would be three placeholders with nothing behind them.
+    // No name, no weapon AND no drawable sharpness: the reader has
+    // nothing to say about who is playing, so the window must not exist
+    // — the main loop's hasVisibleContent() answers false and the
+    // layer-shell surface is never mounted. PlayerPanel is visible in
+    // that state precisely because it has a "not connected" placeholder
+    // to show; a fragment window has no such obligation, and an icon
+    // next to "--" next to "MR --" would be three placeholders with
+    // nothing behind them.
+    //
+    // A LIVE GAUGE IS DATA. This is the merge's one semantic change to
+    // hasContent(), and it is the same answer the gauge's own window
+    // gave: a melee weapon reads its sharpness every poll, so the bar
+    // is worth a window even when both the id and the name fail to
+    // resolve — the exact state the "icon + MR with no gauge" report
+    // came out of.
     return !row_.isEmpty();
 }
 
 int PlayerWeaponStripPanel::contentHeight() const
 {
-    // One identity row. The panel reserves kWeaponGap + kWeaponH (9 + 26,
-    // panel_player.cpp:724-725) for the same block; this window keeps
-    // both numbers plus the margin at each end, so a trio drawn side by
-    // side with the panel's is the same height at the same distance from
-    // the window's top edge.
-    return kMargin + kWeaponGap + kWeaponH + kMargin;
+    // The band for the streams that are on, plus the panel's own leading
+    // gap and the margin at each end. All of the arithmetic is the
+    // header's mhw::weapon_row::contentHeight() — this window and the
+    // model test read the same three numbers.
+    //
+    //   both on : 11 + 9 + (26 + 6 + 30) + 11 = 93
+    //   identity: 11 + 9 + 26 + 11            = 57
+    //   gauge   : 11 + 9 + 30 + 11            = 61
+    //   neither : 22 (2*kMargin, alive but unmounted)
+    return mhw::weapon_row::contentHeight(weaponEnabled(),
+                                          sharpnessEnabled());
 }
 
 int PlayerWeaponStripPanel::contentWidth() const
 {
-    // Content width, not a chrome width: the fixed columns with the
-    // panel's own 8px gaps, plus the margin on both sides.
-    //
-    // The name is measured, never elided and never re-wrapped — that is
-    // the whole reason the trio is worth its own window. In the panel
-    // it sat in a 49px band between the icon and the centred gauge and
-    // took the elide branch on every non-empty name; here the same
-    // measurement is the reservation, so the two agree by construction
-    // (the v0.10.3 lesson, and the reason the width comes from the same
-    // helpers paintPanel() calls).
-    if (!weaponEnabled())
-        return 2 * kMargin;
+    if (!identityOrSharpnessOn())
+        return 2 * mhw::weapon_row::kMargin;
 
-    const QFontMetrics nameMetrics(identityNameFont());
-    const QFontMetrics mrMetrics(identityMrFont());
+    // One measurement pass, three consumers (this reservation, the
+    // paint's placement, and the collapse branch) — see
+    // measureWeaponRow() above for what is measured where.
+    const WeaponRowMetrics m = measureWeaponRow(
+        row_, weaponEnabled(), sharpnessEnabled());
 
-    const int nameW = nameMetrics.horizontalAdvance(nameText(row_.name));
-    const int mrW   = mrMetrics.horizontalAdvance(mrText(row_.masterRank));
-
-    return kWslot + kIconTextGap + nameW + kIconTextGap + mrW + 2 * kMargin;
+    // The two rows SHARE one width budget instead of accumulating. That
+    // is the whole compactness argument for merging the two windows: the
+    // pair's widths added up to 331px (135 + 196), the merged window is
+    // max(135, 174) + 22 = 196, because the identity row's leftover
+    // width is exactly what the gauge row now gets for free.
+    return mhw::weapon_row::contentWidth(m.identityW, m.gaugeW);
 }
 
 void PlayerWeaponStripPanel::setupDemoData()
 {
     // Edit-mode preview: the same hunter the panel's own demo seeds
     // (panel_player.cpp:1291-1293 — Great Sword, MR 247, the localized
-    // data.demo.player_name), so the two windows' previews agree and
-    // neither has to be explained twice.
+    // data.demo.player_name), plus a sharpness block that reads the way
+    // a live melee weapon's does, so the edit preview shows the gauge
+    // instead of a trio with a hole where the bar should be.
     //
     // Built as a snapshot and pushed through the same builder the live
     // path uses rather than filling the row by hand: the demo then
-    // exercises the real transformation, and a fix to the identity
-    // merge lands in the preview too. `valid = true` is what keeps
-    // resolveIdentity() off its not-attached branch, which would
+    // exercises the real transformation, and a fix to the identity or
+    // sharpness merge lands in the preview too. `valid = true` is what
+    // keeps resolveIdentity() off its not-attached branch, which would
     // collapse the weapon to -1 (player_view_model.cpp:41-46).
+    mhw::SharpnessSnapshot shp;
+    shp.valid      = true;
+    shp.level      = 4;                 // green — mid-gauge, visibly "on"
+    shp.thresholds[0] = 60;
+    shp.thresholds[1] = 120;
+    shp.thresholds[2] = 180;
+    shp.thresholds[3] = 240;
+    shp.thresholds[4] = 340;
+    shp.thresholds[5] = 0;              // unreachable colours stay 0
+    shp.thresholds[6] = 0;
+    shp.maxHits    = 100;
+    shp.currentHits = 40;
+
     mhw::PlayerSnapshot pl;
     pl.valid      = true;
     pl.weaponId   = 0;                 // Great Sword, panel_player.cpp:1291
     pl.masterRank = 247;               // panel_player.cpp:1292
     pl.name       = mh::tr("data.demo.player_name");
+    pl.sharpness  = shp;
     mhw::GameSnapshot snap;
     snap.game   = mhw::GameId::World;
     snap.player = pl;
@@ -294,6 +403,9 @@ void PlayerWeaponStripPanel::setupDemoData()
 void PlayerWeaponStripPanel::paintPanel(QPainter &p)
 {
     // ---- One gateset, three consumers: width, reservation, draw. ------
+    const bool withIdentity = weaponEnabled();
+    const bool withGauge = sharpnessEnabled();
+
     const int h = contentHeight();
     const int w = contentWidth();
 
@@ -301,7 +413,12 @@ void PlayerWeaponStripPanel::paintPanel(QPainter &p)
     // window never renders a leftover sliver. The live path never reaches
     // here — the main loop asks hasVisibleContent() first. This is the
     // edit-preview / defensive branch.
-    if (!weaponEnabled() || row_.isEmpty()) {
+    //
+    // `h` is contentHeight(), which for this state IS 2*kMargin — the
+    // two numbers are the same by construction now (see
+    // weapon_row::contentHeight), so the collapsed branch cannot
+    // disagree with the reservation the way the first draft's did.
+    if (!withIdentity && !withGauge) {
         setContentSize(2 * kMargin, h);
         return;
     }
@@ -323,59 +440,100 @@ void PlayerWeaponStripPanel::paintPanel(QPainter &p)
     const int drawnW = mhw::panel_sizing::effectiveWidth(w, minWidth());
 
     // Chrome: NONE. drawV03Chrome() is deliberately not called — the
-    // slot carries its own dark body and the two text columns have no
+    // slot carries its own dark body and the text columns have no
     // background in the source panel either, so a frame around them is
     // the shape the split exists to remove. This panel calls neither
     // drawV03Chrome() nor paintPanelChrome(), exactly like the other
-    // four.
+    // split windows.
     const int innerW = drawnW - 2 * kMargin;
-    const int rowY   = kMargin + kWeaponGap;
-    const int rowH   = kWeaponH;
 
-    // The trio's own width, from the same measurements contentWidth()
-    // reserved. Centred in the available row: at the natural size the
-    // window and the content are the same width and this is a no-op;
-    // when the user has widened the window with the `-` / `=` floor
-    // keys, the fragment sits in the middle of its window instead of
-    // hugging the left edge of a mostly-empty surface. That mirrors what
-    // the panel did with the gauge it centred in the same row
-    // (panel_player.cpp:966) and is the only sensible answer to "more
-    // width than the content needs" for fixed-size glyphs.
-    const QFontMetrics nameMetrics(identityNameFont());
-    const QFontMetrics mrMetrics(identityMrFont());
+    // The content band, from the window's top edge: the panel's own
+    // leading gap, then the band for the streams that are on. The slot
+    // and both rows are laid out relative to it.
+    const int bandY = kMargin + kWeaponGap;
+
+    const WeaponRowMetrics m = measureWeaponRow(row_, withIdentity, withGauge);
     const QString nm = nameText(row_.name);
     const QString mr = mrText(row_.masterRank);
-    const int nameW = nameMetrics.horizontalAdvance(nm);
-    const int mrW   = mrMetrics.horizontalAdvance(mr);
-    const int trioW = kWslot + kIconTextGap + nameW + kIconTextGap + mrW;
-    const int left  = kMargin + std::max(0, (innerW - trioW) / 2);
 
-    // ---- weapon slot ----
+    // The left edge of both rows. Flush kMargin, not centred: HunterPie
+    // sets the same HorizontalAlignment="Left" on the weapon cell, and a
+    // gauge stretched or centred across width the NAME bought is the
+    // panel's own mistake made in reverse. The consequence is a ragged
+    // right edge in the default case — the identity stream measures 113
+    // inside a 196px window — and that is preferred to floating two
+    // unrelated rows around inside the frame.
+    const int left = kMargin;
+
+    // ---- weapon slot (identity row's left column) ----------------------
     // An unresolved weapon id (<0) leaves the slot empty but drawn: the
     // frame is the slot's identity and a missing read is not a missing
     // slot. Same branch as panel_player.cpp:949-951, including that an
     // empty path handed to Icon::render() produces a null pixmap the
     // painter already handles.
-    const QRectF slotRect(left, rowY, kWslot, rowH);
-    const QString wp = row_.weaponId >= 0
-        ? mhw::Icon::weaponPath(row_.weaponId, 1) : QString();
-    drawWeaponSlot(p, slotRect, mhw::Icon::render(wp, kWslot));
+    //
+    // Drawn on the identity row, and the identity row is the taller of
+    // the glyph pitch and the slot (see identityRowHeight()), so there
+    // is no slack to distribute and no centring arithmetic to get wrong:
+    // the slot always fits its own row exactly, and the row always fits
+    // the band. The vertical arithmetic that the first draft's plain
+    // pitch got wrong is now impossible.
+    if (withIdentity) {
+        const QRectF slotRect(left, bandY, kWslot, kWeaponH);
+        const QString wp = row_.weaponId >= 0
+            ? mhw::Icon::weaponPath(row_.weaponId, 1) : QString();
+        drawWeaponSlot(p, slotRect, mhw::Icon::render(wp, kWslot));
+    }
 
-    // ---- name, then MR glued after it ----
+    // ---- identity text (same row, right of the slot) -------------------
     // The panel's .prow is a flex row: MR follows the name with an 8px
     // gap and is NOT pushed to the right edge
-    // (panel_player.cpp:955-997). This window keeps that reading order,
-    // which is also what makes the centring above meaningful — the trio
-    // moves as one block.
-    const int nameLeftX = static_cast<int>(slotRect.right()) + kIconTextGap;
+    // (panel_player.cpp:955-997). That reading order is kept, and it is
+    // what keeps the trio reading as one unit now that it is stacked
+    // above the gauge instead of squeezed beside it.
+    //
+    // The row's rect is the measured width, drawn left-aligned and
+    // vertically centred, so a name is never elided and never wrapped.
+    if (withIdentity) {
+        const int rowOneY = bandY;
+        const int rowOneX = left + kWslot + kIconTextGap;
 
-    p.setFont(identityNameFont());
-    p.setPen(QColor(kNamePenR, kNamePenG, kNamePenB));
-    p.drawText(QRectF(nameLeftX, rowY, nameW, rowH),
-               Qt::AlignLeft | Qt::AlignVCenter, nm);
+        p.setFont(identityNameFont());
+        p.setPen(QColor(kNamePenR, kNamePenG, kNamePenB));
+        p.drawText(QRectF(rowOneX, rowOneY, m.nameW, m.identityRowH),
+                   Qt::AlignLeft | Qt::AlignVCenter, nm);
 
-    p.setFont(identityMrFont());
-    p.setPen(QColor(kMrPenR, kMrPenG, kMrPenB));
-    p.drawText(QRectF(nameLeftX + nameW + kIconTextGap, rowY, mrW, rowH),
-               Qt::AlignLeft | Qt::AlignVCenter, mr);
+        p.setFont(identityMrFont());
+        p.setPen(QColor(kMrPenR, kMrPenG, kMrPenB));
+        p.drawText(QRectF(rowOneX + m.nameW + kIconTextGap, rowOneY,
+                          m.mrW, m.identityRowH),
+                   Qt::AlignLeft | Qt::AlignVCenter, mr);
+    }
+
+    // ---- sharpness gauge (row two) ------------------------------------
+    // THE SAME PAINTER the panel calls (panel_player.cpp:966-968), with
+    // the same three arguments it takes: a right edge, a row Y and a row
+    // height. The right edge is the inner right margin, so the badge is
+    // flush against it — the HunterPie arrangement, where the badge
+    // rides at the gauge's right (WeaponSharpnessView.xaml:108-121).
+    //
+    // Its OWN row, kGaugeRowH tall: the badge is 30px and the panel's
+    // 26px prow let it start 2px above the row and end 2px below it
+    // (panel_player_sharpness.cpp:89-90). Not reproduced here on
+    // purpose — this is a new window, not a baseline, and a badge
+    // clipped by its own row edge is a defect the panel could not have
+    // fixed without moving the gauge.
+    //
+    // rowY = the band's top plus the identity row and the gap when the
+    // identity is present; the band's top when it is not. The band
+    // height is defined as exactly the rows it contains (see
+    // weaponBandHeight()), so this offset and the height can never
+    // disagree and no stream can be drawn outside the window.
+    if (withGauge) {
+        const int rowTwoY = bandY
+            + (withIdentity ? m.identityRowH + kIdentityLineGap : 0);
+        const int gaugeRightX = left + innerW;
+        drawPlayerSharpnessBar(p, row_.sharpness, gaugeRightX, rowTwoY,
+                               kGaugeRowH);
+    }
 }
