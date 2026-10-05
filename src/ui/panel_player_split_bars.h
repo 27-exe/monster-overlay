@@ -188,9 +188,26 @@ public:
         return mhw::split_layout::kSplitMargin;
     }
 
+    // v0.13: the game this window's demo seed represents. The two bars'
+    // demo values are unit-sensitive (staminaDisplayValue() divides by
+    // 30 on Rise and by 1 on World), so a preview that ignores the game
+    // prints World-shaped numbers under a Rise-rail selection — the
+    // exact class of mismatch the user reported for 衣装/翔虫.
+    //
+    // PUBLIC, matching PlayerStatusStripPanel::setGameForDemo and
+    // PlayerPanel::setGameForDemo: main.cpp is the caller and it holds
+    // plain stack objects, not pointers through a base class.
+    //
+    // Same shape as the strip's, and for the same reason: main.cpp
+    // resolves the game once and pushes it into every window whose demo
+    // varies by game. Calling it after the demo is primed drops the seed
+    // so the next paint re-runs it.
+    void setGameForDemo(mhw::GameId game);
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
+
 
     // "No data, no window", the split's shared rule: with neither bar
     // resolved the window answers false here and the main loop's
@@ -221,6 +238,10 @@ private:
     // PlayerPanel's width and belongs to it.
 
     mhw::BarsModel  rows_{};
+    // v0.13: the game the demo below seeds. Seeded to World so the
+    // window's very first (pre-injection) preview is the historical one;
+    // main.cpp overwrites it before the first paint.
+    mhw::GameId     game_{mhw::GameId::World};
     // True while what is on screen came from setupDemoData(); the first
     // authoritative snapshot clears it (and the rows with it) so a demo
     // preview can never survive into a live session.

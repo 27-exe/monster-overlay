@@ -21,6 +21,7 @@
 #include "ui/panel_pet_damage.h"
 #include "ui/panel_player.h"
 #include "ui/panel_player_split.h"
+#include "ui/panel_settings_game.h"
 // v0.12: the split's other three windows — HP/ST bars, mantles and
 // wirebug. Same includes shape as the pilot strip above them, and the
 // same reason for all four: the windows are declared in the header
@@ -520,6 +521,22 @@ int main(int argc, char **argv)
     QApplication::setApplicationDisplayName(
         QStringLiteral("Monster Overlay · %1").arg(mhw::gameDisplayName(gameId)));
 
+    // v0.13: the panels' layout namespace is per game. Every panel's
+    // settings section is now `[<game>/<key>]` inside panels.ini, so the
+    // two games' window geometry, scale, floors, margins and columns
+    // dials cannot overwrite each other. Why prefixing rather than a
+    // file per game, and why the game is injected here rather than
+    // asked of Panel — panel_settings_game.h argues both.
+    //
+    // This MUST run before the first Panel is constructed. LoadConfig()
+    // is called from the Panel ctor, so a panel built before this line
+    // would read (and on its first save, migrate) the WRONG game's
+    // namespace — the two games are constructed in one burst below and
+    // the event loop has not started yet, so one call is sufficient and
+    // there is no mid-session game change to guard against: the reader
+    // is immutable for this process and switching games restarts it.
+    mhw::setPanelSettingsGame(gameId);
+
     PlayerPanel playerPanel;
     MonsterPanel monsterPanel;
     DamagePanel damagePanel;
@@ -618,7 +635,38 @@ int main(int argc, char **argv)
     // v0.10.1: the pet damage surface is Rise-only. World never mounts it,
     // regardless of --mask-pets / --no-pets; the console hides the matching
     // controls in World mode for the same reason.
-    petDamagePanel.setPanelEnabled(isRise && !parser.isSet(noPetsOption));
+    // v0.13: the pet-damage panel is gated on the FEED, not on the game
+    // literal. The reason is evidence, not symmetry:
+    //
+    //  * `petDamagePanel.updateRiseDamage()` is fed by
+    //    mhw::RiseDamageReader, and `riseDamageReaders` is only populated
+    //    above `if (isRise)`. Under World the three readers do not exist
+    //    and nothing ever hands the panel a snapshot.
+    //  * `mhw::enrichRiseDamageSnapshot()` returns immediately unless
+    //    `game.game == GameId::Rise` (src/rise/rise_damage_roster.cpp:87),
+    //    so the owner/name resolution that turns a raw pet JSON actor into
+    //    a readable row is Rise-only too.
+    //  * The JSON vocabulary itself is a Lua producer protocol with
+    //    no World counterpart (reader_descriptors.cpp names Rise's
+    //    install dir; nothing in world/*.cpp mentions a damage feed).
+    //
+    // So the panel genuinely has no World data source — this is not a
+    // capability guess. What changed is only WHAT the gate is spelled
+    // on: the old `isRise &&` bundled two questions into one expression
+    // ("does this game have the data?" and "did the user disable it via
+    // --no-pets?"). Separating them matters because sectionMask_ and
+    // panelEnabled_ are already two separate axes everywhere else in
+    // Panel: the MASK bits control CONTENT (which pet rows are drawn)
+    // and panelEnabled controls MOUNTING (whether the surface exists at
+    // all). Writing `isRise &&` here made "the game has no pets" look
+    // like a user toggle, so a World run reported the panel as
+    // user-disabled and the console's pets card drew its "Rise only"
+    // placeholder for the wrong reason.
+    //
+    // The mask half is already correct and stays: maskPets is passed to
+    // setSectionMask() above and reads PetDamageSection::LocalPets /
+    // ::OtherPets, which filter rows rather than the window.
+    petDamagePanel.setPanelEnabled(!parser.isSet(noPetsOption));
 
     // v0.12: THE MASTER GATES for the whole split — one predicate, four
     // windows, and this is the single place the default path is decided.
@@ -692,17 +740,51 @@ int main(int argc, char **argv)
     //   * The base class seeds demo data itself: Panel::paintEvent calls
     //     setupDemoData() on the first paint once editMode_ is set
     //     (panel.cpp:503-506). So all four windows are drivable with no
-    //     per-object call at all; the strip's setGameForDemo() is the extra
-    //     step it needs because its demo DOES vary by game.
-    if (playerSplitOn)
-        playerStatusStripPanel.setGameForDemo(gameId);
+    //     per-object call at all; setGameForDemo() is the extra
+    //     step each one needs because its demo DOES vary by game.
+    //
+    // v0.13: this was ONE window's call. Five of the six sub-windows
+    // hard-coded a game in their demo seed — 衣装 built a World snapshot,
+    // 翔虫 a Rise one — which is precisely the "衣装 and 翔虫 at the same
+    // time" the user reported: both windows seeded their own game's data
+    // regardless of which game the run was actually reading, and both
+    // answered hasContent() from it. Every window now takes the game from
+    // the same resolved value the reader is built from.
+    //
+    // Ungated by playerSplitOn on purpose: setGameForDemo() only stores a
+    // member and drops the demo seed, neither of which mounts a surface
+    // or touches panels.ini, so the default path pays for it only in six
+    // stores.
+    playerStatusStripPanel.setGameForDemo(gameId);
+    playerBarsStripPanel.setGameForDemo(gameId);
+    playerMantlesStripPanel.setGameForDemo(gameId);
+    playerWirebugStripPanel.setGameForDemo(gameId);
+    playerWeaponStripPanel.setGameForDemo(gameId);
+    playerInfoStripPanel.setGameForDemo(gameId);
 
     playerPanel.show();
     monsterPanel.show();
     damagePanel.show();
-    // Never flash an empty fourth frame at startup. In edit mode Rise can
-    // show its demo immediately; live mode waits for a visible pet row.
-    petDamagePanel.setVisible(isRise && editMode);
+    // Never flash an empty fourth frame at startup. In edit mode the
+    // panel's own demo seed (panel_pet_damage.cpp's setupDemoData) makes
+    // it immediately drivable; live mode waits for a visible pet row.
+    //
+    // v0.13: the `isRise &&` was removed for the SAME reason as the
+    // enable gate above. With the game taken out of the equation here,
+    // World edit mode now shows the pet panel's demo exactly like every
+    // other panel does — which is what makes the preview honest: the
+    // console already hides its pets card in World mode with a "Rise
+    // only" placeholder (control_panel.cpp:2223-2246), so the overlay's
+    // edit preview following the console rather than inventing a second
+    // opinion is the behaviour the user asked for ("every panel has two
+    // modes, and the preview must stay in sync").
+    //
+    // Live mode is unaffected in either direction: the poll loop's
+    // setVisible(panelEnabled() && hasVisibleContent()) at :1175 answers
+    // false for a World run because the demo is only seeded on the first
+    // EDIT-mode paint and updateRiseDamage() is never called (no
+    // riseDamageReaders exist), so the panel stays unmounted.
+    petDamagePanel.setVisible(editMode);
     // v0.12: the four windows' first-show. Two things make this safe on the
     // default path, where the answer is simply "nothing happens":
     //   * setPanelEnabled(false) was applied above, so Panel::setVisible()

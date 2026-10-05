@@ -24,7 +24,6 @@
 #include <QColor>
 #include <QFont>
 #include <QFontMetrics>
-#include <QKeyEvent>
 #include <QPainter>
 #include <QPen>
 #include <QRectF>
@@ -438,23 +437,6 @@ void PlayerStatusStripPanel::setPillsPerRow(int perRow)
     triggerUpdate();
 }
 
-void PlayerStatusStripPanel::keyPressEvent(QKeyEvent *e)
-{
-    // The `[` `]` columns dial moved to the base class in v0.13
-    // (Panel::columns / nudgeColumns / kColumnsStep), so the branch
-    // that used to claim those two keys here is gone: Panel::
-    // keyPressEvent routes them through supportsColumns(), which this
-    // strip answers true for and every non-row panel answers false
-    // for.
-    //
-    // This override remains ONLY to keep the delegate explicit and
-    // documented. It claims nothing the base would not have claimed,
-    // so every key — Space (minimize), Esc (quit), the arrow margin
-    // nudge, the -/= size dials, and [ ] — behaves exactly as the
-    // v0.12 passthrough contract promised.
-    Panel::keyPressEvent(e);
-}
-
 void PlayerStatusStripPanel::nudgeColumns(int delta)
 {
     // One step in the dial's [1, 6] range. Same clamp setPillsPerRow()
@@ -481,7 +463,14 @@ void PlayerStatusStripPanel::saveConfig()
     QSettings s(QSettings::IniFormat, QSettings::UserScope,
                 QStringLiteral("monster-overlay"),
                 QStringLiteral("panels"));
+    // v0.13: the game-scoped group, NOT the bare key and NOT the file
+    // root. `s.setValue("columns", ...)` at the top of this function
+    // would land in [General], where it collided with every other
+    // window's dial and belonged to no game at all — see the comment
+    // below on what the fix is and why it is a behaviour change.
+    s.beginGroup(settingsGroup());
     s.setValue(QStringLiteral("columns"), columns_);
+    s.endGroup();
     s.sync();
 }
 
@@ -491,12 +480,25 @@ void PlayerStatusStripPanel::loadConfig()
     // section missing this key reads the same default the constructor
     // installs, which is what makes the first read of an older
     // panels.ini behave exactly as before.
+    //
+    // v0.13: two things moved. The key is now per-game (this window's
+    // section, prefixed), and it moved OUT of the file root. It used to
+    // be written with a bare `s.setValue("columns", ...)`, which landed
+    // in [General] — so the status strip's dial shared one slot with
+    // the mantles and wirebug windows' dials, and all three windows
+    // overwrote each other's setting with whichever happened to save
+    // last. A first read of a pre-v0.13 file therefore reads the
+    // constructor default (the same default an absent key gives), which
+    // is the honest answer for a value that was never really this
+    // window's to begin with.
     Panel::loadConfig();
     QSettings s(QSettings::IniFormat, QSettings::UserScope,
                 QStringLiteral("monster-overlay"),
                 QStringLiteral("panels"));
+    s.beginGroup(settingsGroup());
     setPillsPerRow(s.value(QStringLiteral("columns"),
                            mhw::kStatusStripPillsPerRow).toInt());
+    s.endGroup();
 }
 
 void PlayerStatusStripPanel::update(const mhw::GameSnapshot &snap)

@@ -365,7 +365,13 @@ void PlayerMantlesStripPanel::saveConfig()
     QSettings s(QSettings::IniFormat, QSettings::UserScope,
                 QStringLiteral("monster-overlay"),
                 QStringLiteral("panels"));
+    // v0.13: the game-scoped group. The key also moved out of the file
+    // root — it used to be a bare `s.setValue("columns", ...)`, which
+    // landed in [General] and collided with the status and wirebug
+    // windows' identical key. See PlayerStatusStripPanel::loadConfig().
+    s.beginGroup(settingsGroup());
     s.setValue(QStringLiteral("columns"), columns_);
+    s.endGroup();
     s.sync();
 }
 
@@ -374,12 +380,19 @@ void PlayerMantlesStripPanel::loadConfig()
     // Absent key reads the constructor's default (kMantlesColumns = 2,
     // the historical two-box row), NOT the dial's floor. A present but
     // out-of-range value is clamped.
+    //
+    // v0.13: the section is now prefixed with the game, and the key is
+    // read from inside it rather than from [General] where the old bare
+    // `s.value("columns")` looked — see PlayerStatusStripPanel::
+    // loadConfig() for what that collision cost.
     Panel::loadConfig();
     QSettings s(QSettings::IniFormat, QSettings::UserScope,
                 QStringLiteral("monster-overlay"),
                 QStringLiteral("panels"));
+    s.beginGroup(settingsGroup());
     const int stored = std::max(1, s.value(QStringLiteral("columns"),
                                            kMantlesColumns).toInt());
+    s.endGroup();
     columns_ = std::clamp(stored, 1, kMantlesMaxColumns);
 }
 
@@ -490,6 +503,20 @@ int PlayerMantlesStripPanel::contentHeight() const
     return kMantlesMargin + kMantleGap + gridH + kMantlesMargin;
 }
 
+void PlayerMantlesStripPanel::setGameForDemo(mhw::GameId game)
+{
+    if (game_ == game)
+        return;
+    game_ = game;
+    // Drop the one-shot demo seed so the next paint re-runs
+    // setupDemoData() with the new game's arm. Under Rise the arm seeds
+    // nothing and hasContent() answers false, so the window simply does
+    // not mount — which is the honest preview for a game with no
+    // mantle system.
+    resetDemoPrimed();
+    triggerUpdate();
+}
+
 void PlayerMantlesStripPanel::setupDemoData()
 {
     // Edit-mode preview: both slots equipped, one running and one cooling,
@@ -499,6 +526,12 @@ void PlayerMantlesStripPanel::setupDemoData()
     // (0 = Ghillie, 3 = Rocksteady — the same pair PlayerPanel's own demo
     // seeds at panel_player.cpp:1327-1331), and the timers match that
     // seed's numbers so the two windows' previews agree.
+    //
+    // v0.13: seeded under `game_` rather than a hard-coded World. The
+    // hard-coded snapshot is what made a Rise-rail preview claim mantle
+    // data — the same defect the user reported as "衣装 and 翔虫 at the
+    // same time". Under Rise this seeds a Rise snapshot, buildMantleModel
+    // answers empty, and hasContent() keeps the window unmounted.
     mhw::PlayerSnapshot pl;
     pl.valid = true;
     pl.mantleSlot0Id = 0;
@@ -508,7 +541,7 @@ void PlayerMantlesStripPanel::setupDemoData()
     pl.mantleSlot1Cooldown = 96.0F;
     pl.mantleSlot1Timer = 0.0F;
     mhw::GameSnapshot snap;
-    snap.game = mhw::GameId::World;
+    snap.game = game_;
     snap.player = pl;
     rows_ = mhw::buildMantleModel(snap);
     demoData_ = true;

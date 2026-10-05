@@ -182,10 +182,20 @@ public:
     void loadConfig();
     void saveConfig();
 
+    // v0.13: the game this window's demo seed represents. Mantles are a
+    // World system, so the World arm seeds both slots; the Rise arm seeds
+    // nothing and buildMantleModel answers empty (see the switch in
+    // panel_player_split_mantles.cpp). This is what stops a Rise preview
+    // from claiming mantle data a Rise session cannot have.
+    //
+    // Same shape and same caller as PlayerStatusStripPanel::setGameForDemo.
+    void setGameForDemo(mhw::GameId game);
+
 protected:
 
     // The row-layout vocabulary, same contract as the wirebug row's.
     void setupDemoData() override;
+
 
     // "No data, no window". Empty under Rise (no mantle system, so
     // neither slot ever resolves), and empty whenever both slots are
@@ -214,6 +224,10 @@ private:
     void nudgeColumns(int delta) override;
 
     mhw::MantleModel rows_{};
+    // v0.13: the game the demo below seeds. Defaults to World, which is
+    // the only game whose arm produces boxes; main.cpp overwrites it
+    // before the first paint.
+    mhw::GameId     game_{mhw::GameId::World};
     // True while what is on screen came from setupDemoData(); the first
     // authoritative snapshot clears it (and the rows with it) so a demo
     // preview can never survive into a live session.

@@ -590,6 +590,17 @@ int PlayerInfoStripPanel::contentWidth() const
     return widest + 2 * kMargin;
 }
 
+void PlayerInfoStripPanel::setGameForDemo(mhw::GameId game)
+{
+    if (game_ == game)
+        return;
+    game_ = game;
+    // Drop the one-shot demo seed so the next paint re-runs
+    // setupDemoData() with the new game's zone vocabulary.
+    resetDemoPrimed();
+    triggerUpdate();
+}
+
 void PlayerInfoStripPanel::setupDemoData()
 {
     // Edit-mode preview: attached, in a quest, in a four-man party — the
@@ -598,14 +609,24 @@ void PlayerInfoStripPanel::setupDemoData()
     // neither has to be explained twice. Built as a snapshot and pushed
     // through the same builder the live path uses rather than filling the
     // row by hand, so the demo exercises the real transformation.
+    // v0.13: seeded under `game_` rather than a hard-coded World. The
+    // zone id below is an Ancient Forest id from the WORLD table, so
+    // under a Rise rail it has to be replaced by a Rise zone id or
+    // zoneLabel() would ask the World vocabulary for a name Rise never
+    // assigned. 0 (Jungle) is Rise's first zone and the mirror of
+    // AncientForest's index here.
     mhw::GameSnapshot snap;
-    snap.game     = mhw::GameId::World;
+    snap.game     = game_;
     snap.attached = true;
     snap.pid      = 12345;
     snap.imageBase = 0x7FFE00000000ULL;
     snap.party.resize(4);   // panel_player.cpp:1294, partyCount_ = 4
-    snap.zone     = mhw::ZoneRef{mhw::GameId::World,
+    if (game_ == mhw::GameId::Rise) {
+        snap.zone = mhw::ZoneRef{mhw::GameId::Rise, 0};   // Jungle
+    } else {
+        snap.zone = mhw::ZoneRef{mhw::GameId::World,
                                  static_cast<int>(mhw::WorldZone::AncientForest)};
+    }
     // Order matches QuestSnapshot: id, stars, isAnomaly, rank, state,
     // category, deaths, maxDeaths, timeLeftSeconds, maxTimerSeconds,
     // elapsedSeconds, active.

@@ -246,12 +246,42 @@ int main()
     checkNotContains(coreTarget, "src/rise/rise_damage_types.h",
                      "the kernel no longer carries a Rise-specific header");
 
-    // v0.10.1: the companion (pets) surface is Rise-only end to end.
+    // v0.10.1: the companion (pets) surface has no World data source —
+    // `mhw::enrichRiseDamageSnapshot()` returns immediately unless the game
+    // is Rise (src/rise/rise_damage_roster.cpp:87), and the JSON feed itself
+    // is a Lua producer protocol with no World counterpart.
     const std::string panelSource =
         compact(readFile(root / "src/ui/control_panel.cpp"));
+    //
+    // v0.13 separated what used to be one expression. The old spelling was
+    // `setPanelEnabled(isRise && !parser.isSet(noPetsOption))`, which
+    // bundled "does this game have the data?" with "did the user switch it
+    // off?" — two questions that live on two different axes everywhere else
+    // in Panel (sectionMask_ filters CONTENT, panelEnabled_ decides
+    // MOUNTING). It also made a World run report the pets panel as
+    // USER-disabled, so the console drew its "Rise only" placeholder for
+    // the wrong reason.
+    //
+    // So the gate is now the user toggle alone, and "the game has no pets"
+    // is expressed where it belongs: the main loop's
+    // `panelEnabled() && hasVisibleContent()` collapses a World pets window
+    // instead of mounting an empty frame. Asserting the toggle is NOT
+    // conflated with the game is the invariant — a regression back to
+    // `isRise &&` would fail here.
     checkContains(mainSource,
-                  "setPanelEnabled(isRise&&!parser.isSet(noPetsOption))",
-                  "World never mounts the Rise-only pet surface");
+                  "setPanelEnabled(!parser.isSet(noPetsOption))",
+                  "the pets panel's mount is gated on the USER toggle, not "
+                  "on the game, so the console can tell a user-disabled "
+                  "panel from a game without pets");
+    checkNotContains(mainSource,
+                     "setPanelEnabled(isRise&&!parser.isSet(noPetsOption))",
+                     "the pets panel's mount no longer bundles the game into "
+                     "the user toggle — that conflation is what made a World "
+                     "run look user-disabled");
+    checkContains(mainSource,
+                  "petDamagePanel.setVisible(petDamagePanel.panelEnabled()",
+                  "a World pets window is collapsed by hasVisibleContent(), "
+                  "not left as an empty frame");
     checkContains(panelSource, "navButton->setVisible(petsAvailable)",
                   "console hides the pets rail card per game");
     checkContains(panelSource, "setPanelPresent(3,petsAvailable)",

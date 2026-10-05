@@ -349,7 +349,13 @@ void PlayerWirebugStripPanel::saveConfig()
     QSettings s(QSettings::IniFormat, QSettings::UserScope,
                 QStringLiteral("monster-overlay"),
                 QStringLiteral("panels"));
+    // v0.13: the game-scoped group. The key also moved out of the file
+    // root — it used to be a bare `s.setValue("columns", ...)`, which
+    // landed in [General] and collided with the status and mantles
+    // windows' identical key. See PlayerStatusStripPanel::loadConfig().
+    s.beginGroup(settingsGroup());
     s.setValue(QStringLiteral("columns"), columns_);
+    s.endGroup();
     s.sync();
 }
 
@@ -361,6 +367,11 @@ void PlayerWirebugStripPanel::loadConfig()
     // which is what makes the first read of an older panels.ini behave
     // exactly as before: the dial is at its default, no lock, and the
     // window is the one row it always was.
+    //
+    // v0.13: that section is now prefixed with the game, and the key is
+    // read from inside it rather than from [General] where the old bare
+    // `s.value("columns")` looked — see PlayerStatusStripPanel::
+    // loadConfig() for what that collision cost.
     Panel::loadConfig();
     QSettings s(QSettings::IniFormat, QSettings::UserScope,
                 QStringLiteral("monster-overlay"),
@@ -372,8 +383,10 @@ void PlayerWirebugStripPanel::loadConfig()
     // load, which is a layout change no user asked for. A present but
     // corrupt or out-of-range value is clamped, which is what the
     // std::max(1, ...) below guards.
+    s.beginGroup(settingsGroup());
     const int stored = std::max(1, s.value(QStringLiteral("columns"),
                                            kWirebugColumns).toInt());
+    s.endGroup();
     columns_ = std::clamp(stored, 1, kWirebugMaxColumns);
 }
 
@@ -453,6 +466,20 @@ int PlayerWirebugStripPanel::contentHeight() const
     return kWirebugMargin + kWirebugGap + gridH + kWirebugMargin;
 }
 
+void PlayerWirebugStripPanel::setGameForDemo(mhw::GameId game)
+{
+    if (game_ == game)
+        return;
+    game_ = game;
+    // Drop the one-shot demo seed so the next paint re-runs
+    // setupDemoData() with the new game's arm. Under World the arm seeds
+    // a World snapshot, buildWirebugModel answers empty, and hasContent()
+    // keeps the window unmounted — the honest preview for a game with no
+    // wirebug system.
+    resetDemoPrimed();
+    triggerUpdate();
+}
+
 void PlayerWirebugStripPanel::setupDemoData()
 {
     // Edit-mode preview: three recovering wirebugs, one default and two
@@ -461,6 +488,13 @@ void PlayerWirebugStripPanel::setupDemoData()
     // and the cooldowns are the same ones PlayerPanel's own demo seeds
     // (panel_player.cpp:1309-1325), so the two windows' previews agree
     // and neither has to be explained twice.
+    //
+    // v0.13: seeded under `game_` rather than a hard-coded Rise. The
+    // hard-coded snapshot is what made a World-rail preview claim
+    // wirebugs — the same defect the user reported as "衣装 and 翔虫 at
+    // the same time". Under World this seeds a World snapshot,
+    // buildWirebugModel answers empty, and hasContent() keeps the window
+    // unmounted.
     mhw::PlayerSnapshot pl;
     pl.valid = true;
     mhw::WirebugSnapshot w0;
@@ -484,7 +518,7 @@ void PlayerWirebugStripPanel::setupDemoData()
     pl.wirebugs.append(w3);
 
     mhw::GameSnapshot snap;
-    snap.game = mhw::GameId::Rise;
+    snap.game = game_;
     snap.player = pl;
     rows_ = mhw::buildWirebugModel(snap);
     demoData_ = true;

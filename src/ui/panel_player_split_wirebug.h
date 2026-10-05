@@ -234,9 +234,21 @@ public:
     void loadConfig();
     void saveConfig();
 
+    // v0.13: the game this window's demo seed represents. Wirebugs are a
+    // Rise system, so the Rise arm seeds three recovering capsules and
+    // the World arm seeds nothing (buildWirebugModel's World arm
+    // deliberately reads nothing — see the switch in
+    // panel_player_split_wirebug.cpp). This is what stops a World-rail
+    // preview from claiming wirebugs a World session cannot have: the
+    // exact defect the user reported as "衣装 and 翔虫 at the same time".
+    //
+    // Same shape and same caller as PlayerStatusStripPanel::setGameForDemo.
+    void setGameForDemo(mhw::GameId game);
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
+
 
     // "No data, no window": empty under World (no wirebug system, so the
     // reader publishes nothing) and when every wirebug is ready. The main
@@ -270,6 +282,10 @@ private:
     void nudgeColumns(int delta) override;
 
     mhw::WirebugModel rows_{};
+    // v0.13: the game the demo below seeds. Defaults to Rise, which is
+    // the only game whose arm produces capsules; main.cpp overwrites it
+    // before the first paint.
+    mhw::GameId      game_{mhw::GameId::Rise};
     // True while what is on screen came from setupDemoData(); the first
     // authoritative snapshot clears it (and the rows with it) so a demo
     // preview can never survive into a live session.

@@ -258,6 +258,13 @@ add_library(mhw-ui STATIC
     # "how wide is a row of N items", so the width a window reserves and the
     # slot width it draws into cannot drift apart again.
     src/ui/panel_sizing.h
+    # v0.13: the per-game layout namespace. A panel's persisted section is
+    # scoped to the game it was tuned for — [world/player-status] and
+    # [rise/player-status] in the same file — because one flat namespace
+    # made the two games' windows read each other's geometry, and a
+    # preview showed a World-only mantle beside a Rise-only wirebug.
+    src/ui/panel_settings_game.cpp
+    src/ui/panel_settings_game.h
     src/ui/panel_player_sharpness.cpp
     src/ui/panel_player_sharpness.h
     src/ui/viewmodel/player_view_model.cpp
@@ -1126,6 +1133,31 @@ add_executable(world-severable-scan-tests
     target_include_directories(split-layout-consistency-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(split-layout-consistency-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME split-layout-consistency-tests COMMAND split-layout-consistency-tests)
+
+    # v0.13: the per-game layout namespace. What it pins is the migration's
+    # four guarantees — only the current game's namespace is written, an
+    # already-scoped section is never overwritten, a second run is a no-op,
+    # and the handle is passed in so no test opens the developer's real
+    # config.
+    add_executable(panel-settings-game-scoping-tests
+        tests/panel_settings_game_scoping_tests.cpp
+    )
+    target_link_libraries(panel-settings-game-scoping-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(panel-settings-game-scoping-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(panel-settings-game-scoping-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME panel-settings-game-scoping-tests COMMAND panel-settings-game-scoping-tests)
+
+    # v0.13: what each window says it can do, derived from the layout hooks
+    # it actually answers. A window that claims the columns dial without
+    # overriding the vocabulary behind it is a dead key, and this is the
+    # test that catches the difference.
+    add_executable(panel-capabilities-tests
+        tests/panel_capabilities_tests.cpp
+    )
+    target_link_libraries(panel-capabilities-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(panel-capabilities-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(panel-capabilities-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME panel-capabilities-tests COMMAND panel-capabilities-tests)
 
     # v0.12: the 「任务/进程」 window's content model — what the snapshot's
     # quest block and connection block resolve to, and which half of them

@@ -334,6 +334,19 @@ int PlayerBarsStripPanel::contentWidth() const
     return widest + 2 * 8 + 2 * kMargin;
 }
 
+void PlayerBarsStripPanel::setGameForDemo(mhw::GameId game)
+{
+    if (game_ == game)
+        return;
+    game_ = game;
+    // Drop the one-shot demo seed so the next paint re-runs
+    // setupDemoData() with the new game's stamina units. Without this the
+    // window would keep printing World-shaped stamina under a Rise rail —
+    // or Rise-shaped (÷30) numbers under a World one.
+    resetDemoPrimed();
+    triggerUpdate();
+}
+
 void PlayerBarsStripPanel::setupDemoData()
 {
     // Edit-mode preview: the two bars at plausible live values, one of
@@ -344,10 +357,20 @@ void PlayerBarsStripPanel::setupDemoData()
     pl.valid = true;
     pl.health = 132.0F;
     pl.maxHealth = 150.0F;
-    pl.stamina = 90.0F;
-    pl.maxStamina = 100.0F;
+    // v0.13: the same unit rule PlayerPanel::setupDemoData() applies —
+    // seed RAW stamina for Rise (bar value x30, so the preview exercises
+    // the real conversion) and bar-domain values for World. Both render
+    // the identical "90 / 100", which is what makes the two games'
+    // previews agree while the underlying data stays honest.
+    if (game_ == mhw::GameId::Rise) {
+        pl.stamina = 90.0F * 30.0F;   // 90 displayed (90 x 30)
+        pl.maxStamina = 100.0F * 30.0F;
+    } else {
+        pl.stamina = 90.0F;
+        pl.maxStamina = 100.0F;
+    }
     mhw::GameSnapshot snap;
-    snap.game = mhw::GameId::World;
+    snap.game = game_;
     snap.player = pl;
     rows_ = mhw::buildBarsModel(snap);
     demoData_ = true;

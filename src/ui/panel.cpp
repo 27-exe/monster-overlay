@@ -1,12 +1,14 @@
 #include "panel.h"
 
 #include "panel_accent.h"
+#include "panel_settings_game.h"
 #include "panel_sizing.h"
 
 #include <LayerShellQt/Window>
 
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QDebug>
 #include <QFocusEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -41,6 +43,38 @@ QSettings &settings()
                        QStringLiteral("panels"));
     return s;
 }
+
+// ─── the game-scoped settings namespace (v0.13) ──────────────────────
+//
+// Panels used to all live in ONE flat namespace. One `[player-status]`
+// section, one `[player-wirebug]` section, and no way to say which game
+// they were tuned for. The user found the result immediately: a single
+// preview showed 衣装 (World-only) and 翔虫 (Rise-only) at the same
+// time, because both games' data landed in the same section and both
+// split windows read it.
+//
+// So every section is now per-game: `[world/player-status]` under World,
+// `[rise/player-status]` under Rise, in the SAME file. Why group
+// prefixing rather than a file per game, and why the game is injected
+// rather than asked of Panel — panel_settings_game.h argues both.
+//
+// The game this process is persisting into is a launch-time fact (main()
+// resolves it from --game / process detection and calls
+// mhw::setPanelSettingsGame before the first Panel exists). The overlay
+// builds all ten windows in one burst before the event loop starts, so
+// one-shot injection is sufficient and there is no "game changed under
+// a live panel" case: the reader is immutable for the process lifetime
+// and switching games restarts the process.
+//
+// The un-prefixed spelling a pre-v0.13 file uses is migrated ONCE, on
+// the first panel to read it — mhw::migrateLegacyPanelSection, called
+// from Panel::loadConfig below. Its guarantees and the test that pins
+// them are in panel_settings_game.h.
+QString scopedKey(const QString &key)
+{
+    return mhw::panelSettingsGroupFor(mhw::panelSettingsGame(), key);
+}
+
 
 // Default margin (offset from the anchored edges) per corner. Chosen
 // so the three panels (player=top-left, monster=top-right,
@@ -227,10 +261,32 @@ void Panel::applyGeometry()
     layer->setDesiredSize(size());
 }
 
+QString Panel::settingsGroup() const
+{
+    // The one place a scoped group name is derived from a panel's own
+    // key. panel.cpp's scopedKey() above is the same function for the
+    // base class's own three accesses; the subclasses that open their
+    // own QSettings handle (the three column-dial windows) call this so
+    // the prefix is spelled exactly once per access path rather than
+    // four times.
+    return mhw::panelSettingsGroupFor(mhw::panelSettingsGame(), key_);
+}
+
 void Panel::loadConfig()
 {
     const QMargins def = defaultMarginsFor(corner_);
-    settings().beginGroup(key_);
+    // v0.13: migrate a pre-v0.13 un-prefixed section into this game's
+    // namespace BEFORE reading it, so a user's existing layout is not
+    // silently abandoned (its keys would otherwise read as "absent").
+    // Idempotent and one-shot: see panel_settings_game.h for the four
+    // guarantees and why the handle is passed rather than opened here.
+    if (mhw::migrateLegacyPanelSection(settings(), mhw::panelSettingsGame(),
+                                       key_)) {
+        qInfo("panels.ini: migrated the un-prefixed [%s] section into [%s]; "
+              "the other game's sections are untouched",
+              qPrintable(key_), qPrintable(scopedKey(key_)));
+    }
+    settings().beginGroup(scopedKey(key_));
     // Read the stored value verbatim — NO clampMargin here. Clamping at
     // read time is what made a 4K position unrecoverable: the console
     // opens with fewer screens attached and the mere act of reading
@@ -305,7 +361,7 @@ void Panel::loadConfig()
 
 void Panel::saveConfig()
 {
-    settings().beginGroup(key_);
+    settings().beginGroup(scopedKey(key_));
     settings().setValue(QStringLiteral("ml"), margins_.left());
     settings().setValue(QStringLiteral("mt"), margins_.top());
     settings().setValue(QStringLiteral("mr"), margins_.right());
@@ -348,7 +404,7 @@ void Panel::saveConfig()
 
 void Panel::saveAppearance()
 {
-    settings().beginGroup(key_);
+    settings().beginGroup(scopedKey(key_));
     settings().setValue(QStringLiteral("scale"), scale_);
     settings().setValue(QStringLiteral("minW"), minW_);
     settings().setValue(QStringLiteral("minH"), minH_);

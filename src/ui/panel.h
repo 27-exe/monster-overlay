@@ -101,6 +101,23 @@ public:
     // query is here to prevent.
     virtual int  contentMargin() const { return 0; }
 
+    // ── what the user has asked the window to be ──
+    //
+    // The floor and the lock, both readable from outside. A layout — or a
+    // probe, or the console's preview — needs to answer "what will this
+    // window actually be", and the answer is max(content, floor) with the
+    // lock overriding both. Reporting only the content half is what makes
+    // a stale floor invisible: the window is quietly four pixels taller
+    // than anything the code says it should be.
+
+    // The FLOOR: never narrower than this, however small the content.
+    int  minWidth() const { return minW_; }
+    int  minHeight() const { return minH_; }
+    // The SET size: a non-zero lock makes the window exactly this wide
+    // whatever the content measured. See panel_sizing.h's lockedWidth().
+    int  lockWidth() const { return lockW_; }
+    int  lockHeight() const { return lockH_; }
+
     Panel(const QString &settingsKey, Corner corner, QWidget *parent = nullptr);
 
     // Schedule a repaint. Needed externally because the per-panel
@@ -309,6 +326,28 @@ public:
     // while the World one hid correctly.
     [[nodiscard]] bool hasVisibleContent() const { return hasContent(); }
 
+    // ─── the settings group this window persists into ──────────────────
+    //
+    // v0.13: every panel's section is per-game (`world/player-status`
+    // under World, `rise/player-status` under Rise) so the two games'
+    // layouts cannot overwrite each other — the reason is in
+    // panel_settings_game.h and the migration rule in panel.cpp.
+    //
+    // Why a protected method and not just reusing `key_`: this is the
+    // spelling a SUBCLASS needs when it opens its own QSettings handle,
+    // which the three column-dial windows do (menu of reasons in
+    // panel_player_split.cpp's saveConfig). They used to reach for
+    // QSettings(IniFormat, UserScope, "monster-overlay", "panels") and
+    // the bare group name each, which is four spellings of one file
+    // plus four of one prefix. Routing the prefix through here keeps
+    // the concatenation in exactly one place.
+    //
+    // `settingsGroup()` is the group with the prefix applied. A caller
+    // that wants to open the same file the base class uses can
+    // reconstruct it from panelSettingsGame() and the four literals the
+    // base owns — but it should use this for the group.
+    [[nodiscard]] QString settingsGroup() const;
+
 protected:
     virtual void paintPanel(QPainter &p) = 0;
     virtual void paintDemo(QPainter &) {}
@@ -461,14 +500,6 @@ protected:
     // has never been dialled has no key, reads 0, and max(w, 0) == w —
     // which is why the four shipped panels' pixel baselines are
     // unaffected by any of this.
-    int  minWidth() const { return minW_; }
-    int  minHeight() const { return minH_; }
-    // The user's SET size, when there is one: a non-zero lockW_ makes
-    // the window exactly this wide, whatever the content measured. See
-    // panel_sizing.h's lockedWidth() and the block below for why a lock
-    // sits next to the floor instead of replacing it.
-    int  lockWidth() const { return lockW_; }
-    int  lockHeight() const { return lockH_; }
     // The dial's step. 16px because it is about a fifth of one capsule,
     // so six or seven presses take a strip from its content width to a
     // 300px window without the first press jumping past what the user

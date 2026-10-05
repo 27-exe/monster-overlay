@@ -173,9 +173,16 @@ public:
     // the base panels occupy (Panel::isSubWindow).
     [[nodiscard]] bool isSubWindow() const override { return true; }
 
+    // v0.13: the game this window's demo seed represents. The zone label
+    // is resolved through a per-game vocabulary, so a preview that
+    // ignores the game asks the wrong table for the zone's name. Same
+    // shape and same caller as PlayerStatusStripPanel::setGameForDemo.
+    void setGameForDemo(mhw::GameId game);
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
+
 
     // "No data, no window" — with ONE deliberate exception, and it is the
     // reason this window is not shaped like the other five. A hunter who
@@ -223,6 +230,13 @@ private:
     // retranslateUi().
     mhw::ZoneRef         zone_{};
     mhw::QuestSnapshot   quest_{};
+    // v0.13: the game the demo below seeds. The demo's zone label comes
+    // from a per-game vocabulary (zoneLabel() dispatches on
+    // ZoneRef::game), so a world-shaped id under a Rise rail would ask
+    // the World table for a name Rise never assigned — or fall through to
+    // "outpost 4". Same shape and same caller as
+    // PlayerStatusStripPanel::setGameForDemo.
+    mhw::GameId          game_{mhw::GameId::World};
     // True while what is on screen came from setupDemoData(); the first
     // authoritative snapshot clears it (and the row with it) so a demo
     // preview can never survive into a live session.

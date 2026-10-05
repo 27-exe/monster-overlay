@@ -340,3 +340,77 @@ and returns focus to the console.
 **Console**: `1`/`2`/`3`/`4` select the player / monster / damage / pets card,
 `Ctrl`+wheel zooms the preview canvas, `←→↑↓` move the selected panel in the
 canvas (10 px, `Shift` = 50 px).
+
+### 12.1 What each window supports
+
+Before the split, one panel meant one key set and the answer was memorised.
+Now a window can be one of ten, and the honest answer to "which keys do I
+have on THIS window?" was identical everywhere except the one row that
+matters: the **columns dial**, `[` and `]`.
+
+Everything below is a capability of the window, not of the moment. Whether a
+press does anything *right now* is a separate question — the five edit-mode
+capabilities are gated on edit mode (§4), while `Space` and `Esc` work in
+live mode too.
+
+| Window | Move | Scale | Fold | Quit | Width | Height | Columns |
+|---|---|---|---|---|---|---|---|
+| Player | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Monster | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Damage | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Pets | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Status strip | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Bars | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Mantles | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Wirebug | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Weapon | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Info | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+
+**Move** — `←` `↑` `↓` `→` nudge the margins 10 px, `Shift` = 50 px. Edit mode
+only. Wayland layer-shell cannot place a window at an arbitrary coordinate,
+so a position is the anchor corner plus margins and these keys are the offset.
+
+**Scale** — mouse wheel, 0.5× to 3×. Edit mode only, and persisted
+immediately (see the no-`Ctrl+S` note in §4).
+
+**Fold** — `Space` collapses the window to a 32×32 block; press again to
+restore. Works in edit **and** live mode, because a window hiding under the
+action is the case folding exists for.
+
+**Quit** — `Esc` saves the window's position and quits the overlay. Also
+edit and live. A window that is unpinned but still mounted keeps the key: the
+dispatch is on the base class, not on the live mount.
+
+**Width / Height** — `-` and `=` dial the minimum width, `Shift`+`-` /
+`Shift`+`=` the minimum height, 16 px per press. Edit mode only.
+`Ctrl` is a *different quantity on the same two faces*, not a mode:
+`Ctrl`+`-` / `Ctrl`+`=` dial the SET size (a lock that makes the window
+exactly that wide whatever the content measures) instead of the floor. The
+first press starts one step from the window's current width rather than from
+zero, and dialling below one step clears the lock rather than parking a
+0-width window.
+
+**Columns** — `[` and `]` re-flow a wrapped row: `]` spreads the items into
+one flat row, `[` narrows it until at 1 the items stack vertically. Edit mode
+only. Only the three rows that have something to re-flow answer it — the
+status strip's pills (1–6 per row), the two mantle boxes (1–2), and the
+recovering-wirebug capsules (1–4, the Rise slot cap being the ceiling). This
+is the dial 「无法通过调整来调整成竖排排列」 asked for.
+
+Two things that follow from the table:
+
+- **A key is never half-supported.** On a window whose row says `—`, `[` and
+  `]` do nothing at all rather than doing something partly: the dispatch asks
+  `supportsColumns()` and an unclaimed key falls through to Qt, which is the
+  same destination it had before the base class owned the keys at all.
+- **Every window answers the other seven the same way.** That is the
+  unification. The answer used to be seven copies of a passthrough contract,
+  each of which had to remember to forward the keys it did not claim, and the
+  status strip was the last one still carrying its own `keyPressEvent`.
+
+This list is queried, not believed. `mhw::panelCapabilities()` derives it from
+the same public hooks `Panel::keyPressEvent` dispatches through, and
+`tests/panel_capabilities_tests.cpp` asserts the table above matches the
+derivation — including a row check against both language copies of this page.
+A future window that forgets to answer `supportsColumns()` fails that test
+rather than shipping a dead key with no documentation.

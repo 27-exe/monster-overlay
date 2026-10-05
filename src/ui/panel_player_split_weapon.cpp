@@ -360,6 +360,17 @@ int PlayerWeaponStripPanel::contentWidth() const
     return mhw::weapon_row::contentWidth(m.identityW, m.gaugeW);
 }
 
+void PlayerWeaponStripPanel::setGameForDemo(mhw::GameId game)
+{
+    if (game_ == game)
+        return;
+    game_ = game;
+    // Drop the one-shot demo seed so the next paint re-runs
+    // setupDemoData() under the new game.
+    resetDemoPrimed();
+    triggerUpdate();
+}
+
 void PlayerWeaponStripPanel::setupDemoData()
 {
     // Edit-mode preview: the same hunter the panel's own demo seeds
@@ -387,6 +398,11 @@ void PlayerWeaponStripPanel::setupDemoData()
     shp.maxHits    = 100;
     shp.currentHits = 40;
 
+    // v0.13: seeded under `game_` rather than a hard-coded World, the
+    // same seam the other five split windows gained. Both games' harness
+    // is identical today (Great Sword, MR 247, the same sharpness
+    // levels), so this changes nothing visible — it only stops a future
+    // per-game weapon id from being resolved against the wrong table.
     mhw::PlayerSnapshot pl;
     pl.valid      = true;
     pl.weaponId   = 0;                 // Great Sword, panel_player.cpp:1291
@@ -394,7 +410,7 @@ void PlayerWeaponStripPanel::setupDemoData()
     pl.name       = mh::tr("data.demo.player_name");
     pl.sharpness  = shp;
     mhw::GameSnapshot snap;
-    snap.game   = mhw::GameId::World;
+    snap.game   = game_;
     snap.player = pl;
     row_ = mhw::buildWeaponIdentityModel(snap);
     demoData_ = true;

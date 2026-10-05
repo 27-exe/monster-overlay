@@ -298,9 +298,19 @@ public:
     // the base panels occupy (Panel::isSubWindow).
     [[nodiscard]] bool isSubWindow() const override { return true; }
 
+    // v0.13: the game this window's demo seed represents. Same shape and
+    // same caller as PlayerStatusStripPanel::setGameForDemo. The harness
+    // (validity, weapon id, MR, sharpness levels) is currently identical
+    // in both games, so this changes nothing visible today — which is
+    // exactly why it belongs here: it is the seam a future per-game
+    // weapon (a Rise weapon id this table does not name) fills, instead
+    // of a World-shaped hard-code that silently mislabels it.
+    void setGameForDemo(mhw::GameId game);
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
+
 
     // "No data, no window": no resolved name AND no weapon id AND no
     // drawable sharpness means the reader has nothing to say about who
@@ -373,6 +383,10 @@ private:
     // measured in the same helper paintPanel() places with.
 
     mhw::WeaponIdentityRow row_{};
+    // v0.13: the game the demo below seeds. Same seam as the other five
+    // split windows; see setGameForDemo above for why it is here even
+    // though both games' harnesses agree today.
+    mhw::GameId          game_{mhw::GameId::World};
     // True while what is on screen came from setupDemoData(); the first
     // authoritative snapshot clears it (and the row with it) so a demo
     // preview can never survive into a live session.

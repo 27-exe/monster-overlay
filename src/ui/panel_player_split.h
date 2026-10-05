@@ -231,25 +231,6 @@ protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;
 
-    // THE COLUMNS DIAL'S KEY HANDLER — now a DELEGATE, not an interceptor.
-    //
-    // v0.12 claimed [ ] here because PlayerPanel's keyPressEvent had no
-    // column plumbing. v0.13 moved the dial to the base class
-    // (Panel::columns / nudgeColumns / kColumnsStep), so the base's own
-    // keyPressEvent routes the keys; this override exists only because
-    // the base's implementation must stay reachable for the panels that
-    // do NOT support columns, and an override here documents the strip's
-    // claim explicitly. Its body is one line: claim nothing the base
-    // would have handled, forward everything.
-    //
-    // The passthrough contract is unchanged: Space (minimize), Esc
-    // (quit), the arrow-key margin nudge and the -/= size dials all
-    // still reach Panel::keyPressEvent from this class.
-    //
-    // Edit mode only, matching the other edit-mode affordances: a live
-    // hunter's keystrokes belong to the game, not the overlay.
-    void keyPressEvent(QKeyEvent *e) override;
-
     // HunterPie's core "no data, no window" mechanism, three layers deep
     // (§6.3 of the design report): with nothing to show the strip
     // answers false here, the main loop's hasVisibleContent() answers
