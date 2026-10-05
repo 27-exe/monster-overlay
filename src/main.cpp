@@ -38,6 +38,17 @@
 // leaves PlayerSection::Sharpness behind, and panel_player.cpp's prow
 // block reads that bit on its own.
 #include "ui/panel_player_split_weapon.h"
+// v0.12 third wave: the monster panel's blocks and the damage panel's two
+// width-hungry blocks. Same reason again — each is declared by its split
+// table row in panel_sections.h but constructed here, so this file is the
+// one place that knows all seven new names.
+#include "ui/panel_monster_split_hp.h"
+#include "ui/panel_monster_split_stamina.h"
+#include "ui/panel_monster_split_enrage.h"
+#include "ui/panel_monster_split_ail.h"
+#include "ui/panel_monster_split_parts.h"
+#include "ui/panel_damage_split_share.h"
+#include "ui/panel_damage_split_chart.h"
 #include "ui/panel_player_split_info.h"
 #include "ui/panel_sections.h"
 // The four conf mask rows are parsed with the console's own codec, so
@@ -416,11 +427,35 @@ int main(int argc, char **argv)
     const mhw::PanelMaskConfRow migratedMaskPlayer = {confMasks.playerValid,
                                                       playerMaskConfValue};
 
+    // v0.12 third wave: the SAME one-time migration for the monster panel.
+    //
+    // MonsterSection::Stamina (1u << 6) was split out of Hp, so a conf
+    // written before that has bit 6 clear — and reading it literally hides
+    // the stamina bar for every user who upgrades. migrateOldMonster-
+    // StaminaBit() is the guard, and it is only reachable from here: a
+    // pure function nobody calls is dead code that reads like a fix.
+    //
+    // Its guard is narrower than the player one because the new bit sits
+    // INSIDE the old bit range rather than above it — the pre-split set
+    // is 63 non-zero masks, not "everything below bit 8" — so the sweep
+    // in monster_split_models_tests.cpp covers both ranges exhaustively.
+    uint32_t monsterMaskConfValue = confMaskMonster.value;
+    if (confMaskMonster.valid && confMasks.needsSchemaMigration()) {
+        const uint32_t migrated = mhw::MonsterSection::migrateOldMonsterStaminaBit(
+            confMasks.monster);
+        qInfo("overlay: mask conf has no %s= (pre-v0.12 schema); migrating "
+              "the monster Stamina bit once: %08x -> %08x",
+              mhw::kPanelMaskVersionKey, confMasks.monster, migrated);
+        monsterMaskConfValue = migrated;
+    }
+    const mhw::PanelMaskConfRow migratedMaskMonster = {confMaskMonster.valid,
+                                                       monsterMaskConfValue};
+
     const uint32_t maskPlayer  = mhw::resolveStartupPanelMask(
                                      cliMaskPlayer,  migratedMaskPlayer,
                                      mhw::PanelMaskSlot::Player).value;
     const uint32_t maskMonster = mhw::resolveStartupPanelMask(
-                                     cliMaskMonster, confMaskMonster,
+                                     cliMaskMonster, migratedMaskMonster,
                                      mhw::PanelMaskSlot::Monster).value;
     const uint32_t maskDamage  = mhw::resolveStartupPanelMask(
                                      cliMaskDamage,  confMaskDamage,
@@ -480,6 +515,19 @@ int main(int argc, char **argv)
         playerSplitLayout.mode;
     const uint32_t maskPlayerForPanel = mhw::PlayerSection::playerPanelMaskFor(
         playerSplitLayoutMode, maskPlayer);
+    // v0.12 third wave: the monster and damage panels derive their own the
+    // same way — the mask each PANEL receives is the user's mask minus the
+    // rows that moved out, so a block is drawn by exactly one surface.
+    //
+    // Without this the panel keeps every bit in Split mode and draws the
+    // HP bar and the stamina bar alongside the new windows that draw the
+    // same two bars. The Single arm of each *PanelMaskFor() is `return
+    // mask` verbatim, which is what keeps the ten single-mode baselines
+    // byte-identical.
+    const uint32_t maskMonsterForPanel =
+        mhw::monsterPanelMaskFor(playerSplitLayoutMode, maskMonster);
+    const uint32_t maskDamageForPanel =
+        mhw::damagePanelMaskFor(playerSplitLayoutMode, maskDamage);
     if (playerSplitLayoutMode == mhw::PlayerSection::PlayerLayoutMode::Split) {
         qInfo("v0.12 split: layout=split; %d player sub-window(s); player "
               "mask %08x -> %08x",
@@ -568,6 +616,13 @@ int main(int argc, char **argv)
     PlayerMantlesStripPanel playerMantlesStripPanel;
     PlayerWirebugStripPanel playerWirebugStripPanel;
     PlayerWeaponStripPanel playerWeaponStripPanel;
+    MonsterHpStripPanel monsterHpStripPanel;
+    MonsterStaminaStripPanel monsterStaminaStripPanel;
+    MonsterEnrageStripPanel monsterEnrageStripPanel;
+    MonsterAilStripPanel monsterAilStripPanel;
+    MonsterPartsStripPanel monsterPartsStripPanel;
+    DamageShareStripPanel damageShareStripPanel;
+    DamageChartStripPanel damageChartStripPanel;
     PlayerInfoStripPanel playerInfoStripPanel;
 
     playerPanel.setEditMode(editMode);
@@ -579,6 +634,13 @@ int main(int argc, char **argv)
     playerMantlesStripPanel.setEditMode(editMode);
     playerWirebugStripPanel.setEditMode(editMode);
     playerWeaponStripPanel.setEditMode(editMode);
+    monsterHpStripPanel.setEditMode(editMode);
+    monsterStaminaStripPanel.setEditMode(editMode);
+    monsterEnrageStripPanel.setEditMode(editMode);
+    monsterAilStripPanel.setEditMode(editMode);
+    monsterPartsStripPanel.setEditMode(editMode);
+    damageShareStripPanel.setEditMode(editMode);
+    damageChartStripPanel.setEditMode(editMode);
     playerInfoStripPanel.setEditMode(editMode);
 
     // L1: apply section masks BEFORE show() so the first paint reflects
@@ -613,14 +675,25 @@ int main(int argc, char **argv)
     // the table in panel_sections.h is the only thing that knows which
     // section belongs to which window, and it derives both.
     playerPanel.setSectionMask(maskPlayerForPanel);
-    monsterPanel.setSectionMask(maskMonster);
-    damagePanel.setSectionMask(maskDamage);
+    monsterPanel.setSectionMask(maskMonsterForPanel);
+    damagePanel.setSectionMask(maskDamageForPanel);
     petDamagePanel.setSectionMask(maskPets);
     playerStatusStripPanel.setSectionMask(maskPlayer);
     playerBarsStripPanel.setSectionMask(maskPlayer);
     playerMantlesStripPanel.setSectionMask(maskPlayer);
     playerWirebugStripPanel.setSectionMask(maskPlayer);
     playerWeaponStripPanel.setSectionMask(maskPlayer);
+    // The sub-windows take the USER’s mask, not the derived one: what they
+    // draw is filtered by the rows the table says each one owns
+    // (monsterSubWindowMask), so a bit another window claims never
+    // reaches them. The panel is the one that gets the reduced mask.
+    monsterHpStripPanel.setSectionMask(maskMonster);
+    monsterStaminaStripPanel.setSectionMask(maskMonster);
+    monsterEnrageStripPanel.setSectionMask(maskMonster);
+    monsterAilStripPanel.setSectionMask(maskMonster);
+    monsterPartsStripPanel.setSectionMask(maskMonster);
+    damageShareStripPanel.setSectionMask(maskDamage);
+    damageChartStripPanel.setSectionMask(maskDamage);
     playerInfoStripPanel.setSectionMask(maskPlayer);
     damagePanel.setRiseDisplayOptions(riseDamageDisplayOptions);
     petDamagePanel.setDisplayOptions(riseDamageDisplayOptions);
@@ -692,11 +765,24 @@ int main(int argc, char **argv)
     // kPlayerSplitTargets, one PlayerSplitSlot alias. Nothing else.
     const bool playerSplitOn = playerSplitLayoutMode
         == mhw::PlayerSection::PlayerLayoutMode::Split;
+    // v0.12 third wave: the same master gate for the monster and damage
+    // windows. ONE predicate per panel — the mode is a property of the
+    // layout, not of the panel, so three panels in one mode share one
+    // bool rather than each re-deriving it.
+    const bool monsterSplitOn = playerSplitOn;
+    const bool damageSplitOn = playerSplitOn;
     playerStatusStripPanel.setPanelEnabled(playerSplitOn);
     playerBarsStripPanel.setPanelEnabled(playerSplitOn);
     playerMantlesStripPanel.setPanelEnabled(playerSplitOn);
     playerWirebugStripPanel.setPanelEnabled(playerSplitOn);
     playerWeaponStripPanel.setPanelEnabled(playerSplitOn);
+    monsterHpStripPanel.setPanelEnabled(monsterSplitOn);
+    monsterStaminaStripPanel.setPanelEnabled(monsterSplitOn);
+    monsterEnrageStripPanel.setPanelEnabled(monsterSplitOn);
+    monsterAilStripPanel.setPanelEnabled(monsterSplitOn);
+    monsterPartsStripPanel.setPanelEnabled(monsterSplitOn);
+    damageShareStripPanel.setPanelEnabled(damageSplitOn);
+    damageChartStripPanel.setPanelEnabled(damageSplitOn);
     playerInfoStripPanel.setPanelEnabled(playerSplitOn);
 
 
@@ -761,6 +847,11 @@ int main(int argc, char **argv)
     playerWirebugStripPanel.setGameForDemo(gameId);
     playerWeaponStripPanel.setGameForDemo(gameId);
     playerInfoStripPanel.setGameForDemo(gameId);
+    monsterHpStripPanel.setGameForDemo(gameId);
+    monsterStaminaStripPanel.setGameForDemo(gameId);
+    monsterEnrageStripPanel.setGameForDemo(gameId);
+    monsterAilStripPanel.setGameForDemo(gameId);
+    monsterPartsStripPanel.setGameForDemo(gameId);
 
     playerPanel.show();
     monsterPanel.show();
@@ -807,6 +898,17 @@ int main(int argc, char **argv)
         playerWirebugStripPanel.setVisible(editMode);
         playerWeaponStripPanel.setVisible(editMode);
         playerInfoStripPanel.setVisible(editMode);
+    }
+    if (monsterSplitOn) {
+        monsterHpStripPanel.setVisible(editMode);
+        monsterStaminaStripPanel.setVisible(editMode);
+        monsterEnrageStripPanel.setVisible(editMode);
+        monsterAilStripPanel.setVisible(editMode);
+        monsterPartsStripPanel.setVisible(editMode);
+    }
+    if (damageSplitOn) {
+        damageShareStripPanel.setVisible(editMode);
+        damageChartStripPanel.setVisible(editMode);
     }
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
@@ -937,6 +1039,13 @@ int main(int argc, char **argv)
         playerMantlesStripPanel.retranslateUi();
         playerWirebugStripPanel.retranslateUi();
         playerWeaponStripPanel.retranslateUi();
+        monsterHpStripPanel.retranslateUi();
+        monsterStaminaStripPanel.retranslateUi();
+        monsterEnrageStripPanel.retranslateUi();
+        monsterAilStripPanel.retranslateUi();
+        monsterPartsStripPanel.retranslateUi();
+        damageShareStripPanel.retranslateUi();
+        damageChartStripPanel.retranslateUi();
         playerInfoStripPanel.retranslateUi();
     };
 
@@ -1089,7 +1198,6 @@ int main(int argc, char **argv)
                 playerInfoStripPanel.panelEnabled()
                 && playerInfoStripPanel.hasVisibleContent());
         }
-
         monsterPanel.setMultiplayer(snap.isMultiplayer);
         if (!snap.monsters.isEmpty() || showAll) {
             monsterPanel.setVisible(true);
@@ -1105,6 +1213,48 @@ int main(int argc, char **argv)
                     displayedMonsterAddress = snap.monsters[selected].address;
                     monsterPanel.update(snap.monsters[selected]);
                 }
+        // v0.12 third wave: the monster panel’s blocks — the SAME
+        // selected monster the panel is showing, so a window and the
+        // panel it was carved from can never disagree about which
+        // monster’s HP bar is on screen.
+        if (monsterSplitOn) {
+            const bool keepHpDemo = skipUpdate(monsterHpStripPanel);
+            if (!keepHpDemo)
+                monsterHpStripPanel.update(snap.monsters[selected]);
+            monsterHpStripPanel.setVisible(
+                monsterHpStripPanel.panelEnabled()
+                && monsterHpStripPanel.hasVisibleContent());
+
+            const bool keepStaminaDemo = skipUpdate(monsterStaminaStripPanel);
+            if (!keepStaminaDemo)
+                monsterStaminaStripPanel.update(snap.monsters[selected]);
+            monsterStaminaStripPanel.setVisible(
+                monsterStaminaStripPanel.panelEnabled()
+                && monsterStaminaStripPanel.hasVisibleContent());
+
+            const bool keepEnrageDemo = skipUpdate(monsterEnrageStripPanel);
+            if (!keepEnrageDemo)
+                monsterEnrageStripPanel.update(snap.monsters[selected]);
+            monsterEnrageStripPanel.setVisible(
+                monsterEnrageStripPanel.panelEnabled()
+                && monsterEnrageStripPanel.hasVisibleContent());
+
+            const bool keepAilDemo = skipUpdate(monsterAilStripPanel);
+            if (!keepAilDemo)
+                monsterAilStripPanel.update(snap.monsters[selected]);
+            monsterAilStripPanel.setVisible(
+                monsterAilStripPanel.panelEnabled()
+                && monsterAilStripPanel.hasVisibleContent());
+
+            const bool keepPartsDemo = skipUpdate(monsterPartsStripPanel);
+            if (!keepPartsDemo)
+                monsterPartsStripPanel.update(snap.monsters[selected]);
+            monsterPartsStripPanel.setVisible(
+                monsterPartsStripPanel.panelEnabled()
+                && monsterPartsStripPanel.hasVisibleContent());
+
+        }
+
             }
         } else {
             monsterPanel.setVisible(false);
@@ -1242,6 +1392,29 @@ int main(int argc, char **argv)
                 damagePanel.update(damageSnap);
                 damagePanel.setVisible(!damageSnap.party.isEmpty() || showAll);
             }
+
+        // v0.12 third wave: the damage panel's two width-hungry blocks —
+        // the share bar and the line chart. They take the same party
+        // snapshot the panel takes, so a row that appears in one appears
+        // in both. Rows stays with the panel deliberately: it is the DPS
+        // panel's substance, and a panel left holding only a title row is
+        // the "is this panel still worth having" question the player split
+        // already answered once.
+        if (damageSplitOn) {
+            const bool keepShareDemo = skipUpdate(damageShareStripPanel);
+            if (!keepShareDemo)
+                damageShareStripPanel.update(damageSnap);
+            damageShareStripPanel.setVisible(
+                damageShareStripPanel.panelEnabled()
+                && damageShareStripPanel.hasVisibleContent());
+
+            const bool keepChartDemo = skipUpdate(damageChartStripPanel);
+            if (!keepChartDemo)
+                damageChartStripPanel.update(damageSnap);
+            damageChartStripPanel.setVisible(
+                damageChartStripPanel.panelEnabled()
+                && damageChartStripPanel.hasVisibleContent());
+        }
         }
     });
     timer.start(pollMs);  // consistent poll rate regardless of mode
@@ -1275,6 +1448,13 @@ int main(int argc, char **argv)
             playerWirebugStripPanel.saveConfig();
             playerWeaponStripPanel.saveConfig();
             playerInfoStripPanel.saveConfig();
+            monsterHpStripPanel.saveConfig();
+            monsterStaminaStripPanel.saveConfig();
+            monsterEnrageStripPanel.saveConfig();
+            monsterAilStripPanel.saveConfig();
+            monsterPartsStripPanel.saveConfig();
+            damageShareStripPanel.saveConfig();
+            damageChartStripPanel.saveConfig();
         }
     }
 

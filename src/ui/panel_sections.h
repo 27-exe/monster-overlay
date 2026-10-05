@@ -752,8 +752,31 @@ enum : uint32_t {
     Ail      = 1u << 3,    // 异常状态卡 (.srow)
     Parts    = 1u << 4,    // 部位网格 (.pgrid)
     Tenderize = 1u << 5,   // v0.7.3: 勾爪软化倒计时胶囊
+    // v0.12 (monster split): 怪物耐力/疲劳条 (.bar.st) — its OWN bit.
+    //
+    // It has never had one. v0.8.4-r23 added the gauge and parked it
+    // behind `Hp` ("Follows the HP toggle until a dedicated section bit
+    // exists", panel_monster.cpp's stamDrawn), which is fine for one
+    // panel and useless for a window of its own: the v0.12 split gives
+    // the fatigue meter its own layer-shell surface
+    // (MonsterStaminaStripPanel, settingsKey "monster-stamina"), and a
+    // window whose visibility rides on another window's bit cannot be
+    // toggled on its own. HunterPie draws it as its own gauge
+    // (BossMonsterWidget's Stamina bar, directly under the HP bar), so
+    // "is my monster out of stamina" is one question and "how hurt is
+    // it" is another.
+    //
+    // APPENDED AT BIT 6, NOT INSERTED. The console builds its switch
+    // rows from names()/displayName() in index order and writes each
+    // row's state as `1u << b` (control_panel.cpp:196), so the ith name
+    // and the ith bit are the same thing by construction. Inserting
+    // Stamina anywhere but the end would rename every existing row in
+    // the console while the enum kept the old values — the switch
+    // labelled "耐力" would write the Enrage bit.
+    Stamina = 1u << 6,
 };
-constexpr uint32_t kAll = Info | Hp | Enrage | Ail | Parts | Tenderize;
+constexpr uint32_t kAll = Info | Hp | Enrage | Ail | Parts | Tenderize
+                        | Stamina;
 
 inline const QStringList &names()
 {
@@ -764,11 +787,12 @@ inline const QStringList &names()
         QStringLiteral("ail"),
         QStringLiteral("parts"),
         QStringLiteral("tenderize"),
+        QStringLiteral("stamina"),
     };
     return n;
 }
 
-constexpr int kCount = 6;
+constexpr int kCount = 7;
 
 inline QString displayName(int index)
 {
@@ -779,6 +803,7 @@ inline QString displayName(int index)
         "console.section.monster.ail",
         "console.section.monster.parts",
         "console.section.monster.tenderize",
+        "console.section.monster.stamina",
     };
     if (index < 0 || index >= kCount)
         return {};
@@ -794,7 +819,71 @@ inline QStringList displayNames()
         n << displayName(i);
     return n;
 }
+
+// =====================================================================
+// v0.12 (monster split): THE BIT-THAT-DID-NOT-EXIST, take two —
+// back-compat for a persisted `monster=` mask written before the
+// fatigue gauge had a bit.
+// =====================================================================
+// The shape is PlayerSection::migrateOldSharpnessBit's above, and the
+// reasoning applies verbatim; what differs is stated here.
+//
+// THE DEFECT: every `monster=` row written before this change stores bits
+// 0-5, with bit 6 zero because there was no bit 6 to store. Reading that
+// verbatim in a build that gives the fatigue gauge its own bit (and its
+// own window) makes 「怪物耐力条不见了」 — a gauge the user has been
+// looking at since v0.8.4-r23 disappearing on the first launch after an
+// upgrade, with nothing in the UI to explain it.
+//
+// WHAT IS INTERPRETED, NOT REWRITTEN: the stored text is untouched and no
+// function here writes anything. This is a read-time transform consumed
+// at startup, exactly like the Sharpness one. The console's next save
+// writes whatever its checkboxes now say, and the console's new 「耐力」
+// row shows the migrated state, so a user who truly wants the gauge off
+// can turn it off for real. One bit further along than Sharpness, the
+// same argument: the user could not have expressed "stamina off" before
+// the bit existed.
+//
+// WHY THE GUARD MATTERS MORE HERE THAN FOR SHARPNESS: Sharpness is bit 8,
+// a whole byte above the old schema's top bit, so the "some bit outside
+// the old schema is set" test clears almost every new-schema mask for
+// free. Stamina is bit 6 of a mask whose other five bits are all in
+// active use, so the guard has to be tested properly and one bit is the
+// only thing it protects. See the body.
+[[nodiscard]] constexpr uint32_t migrateOldMonsterStaminaBit(
+    uint32_t mask) noexcept
+{
+    // Everything a pre-v0.12 monster build could express: bits 0-5. The
+    // Stamina bit is deliberately NOT in this set — that is the bit
+    // being tested for.
+    constexpr uint32_t kPreSplitMask = Info | Hp | Enrage | Ail | Parts
+                                    | Tenderize;
+
+    // Not an old-schema value: some bit outside 0-5 is set, so this mask
+    // was written by a binary that already knew the fatigue bit. Leave
+    // every bit alone — including a deliberate bit-6 zero.
+    if ((mask & ~kPreSplitMask) != 0u)
+        return mask;
+
+    // A fully-zero mask is ambiguous ("old build, nothing hidden" vs
+    // "user hid everything") and resolves the way the Sharpness one
+    // does: hiding a whole panel is a real decision that must survive.
+    if (mask == 0u)
+        return mask;
+
+    // The gauge rode on Hp (panel_monster.cpp's
+    // `stamDrawn = onHp && maxStamina > 0`). A hunter who had turned the
+    // HP bar off saw no fatigue meter either, so honour that instead of
+    // resurrecting a block inside a panel they had switched off.
+    if ((mask & Hp) == 0u)
+        return mask;
+
+    return mask | Stamina;
+}
 } // namespace MonsterSection
+
+static_assert(MonsterSection::kCount == 7);
+static_assert(MonsterSection::kAll == 0x7Fu);
 
 // ----- Damage panel sections ----------------------------------------------
 namespace DamageSection {
@@ -843,6 +932,241 @@ inline QStringList displayNames()
 }
 } // namespace DamageSection
 
+// ============================================================================
+// Damage panel window topology (v0.12 third wave: monster / damage split)
+//
+// The player split's pattern, applied to the DPS panel. ONE enum value
+// still decides which windows exist (PlayerLayoutMode, reused verbatim —
+// see below) and ONE table says which DamageSection bits each window
+// owns. A third window means a row in the table, not a flag.
+//
+// The five claims this section is held to, all by static_assert at the
+// bottom of this file:
+//
+//   1. Single mode returns the mask UNCHANGED. This is the whole
+//      pixel-identity promise behind the ten single-mode baselines,
+//      all_damage.png included, and it is the arm every pre-split user
+//      resolves through.
+//   2. Every row is a non-empty subset of DamageSection::kAll.
+//   3. No bit is claimed by two windows, counted per row — a duplicate
+//      bit's OR would be absorbed and the two counts would diverge.
+//   4. In Split mode the panel and every window claim disjoint bits,
+//      and their union is exactly what the user toggled.
+//   5. The removed bits are exactly the table's rows.
+//
+// Widget-free on purpose, for the reason the player table is:
+// everything below is constexpr / inline over uint32_t, so it is
+// unit-testable from a plain main() and adds NO translation unit to any
+// target — therefore no zero-reference-gate census entry either.
+// ============================================================================
+
+// ---- Which split window a DamageSection bit group belongs to. ----
+//
+// The index is the subscript into kDamageSplitTargets, so adding a
+// window is adding a row to that table plus one entry here — never a
+// new CLI flag, never a new mask expression.
+//
+// This reuses the PLAYER table's PlayerLayoutMode rather than opening a
+// DamageLayoutMode. The value names the whole window arrangement (one
+// big panel / several small windows), not which panel it is about, and
+// one enum answering "which topology" cannot disagree with itself
+// between two panels: --layout=split has to mean the same topology for
+// both, and the player split's resolveStartupLayoutMode() already owns
+// the cli > compat-flag > conf > default chain that resolves it. A second
+// enum would be a second precedence chain, and the day the two resolved
+// differently a user running --layout=split would get five player
+// windows and one un-split damage panel.
+//
+// Rows and the bits they claim:
+//
+//   Share=1        -> DamageShareStripPanel  (panel_damage.cpp:422-430)
+//   Chart=2        -> DamageChartStripPanel  (panel_damage.cpp:432-434)
+//   OtherMembers=3 -> DamageChartStripPanel's roster only, via the
+//                     section mask this shared header reads. It is NOT
+//                     claimed by a row of its own; see the comment
+//                     below on why the follower half stays with the
+//                     panel rather than becoming a third window.
+//
+// WHY ONLY THESE TWO ROWS. The user's ask「同样的对怪物和dps进行拆分」
+// is a window count, and these are the only two blocks whose
+// WIDTH-OR-ASPECT the panel was actively getting wrong:
+//
+//   * the share bar was pinned to the panel's own 380px, so four
+//     players always produced four ~74px strips whether the user wanted
+//     a bar or a colour budget;
+//   * the chart lost kChartLeft (36) of its 358 to the y-axis labels, so
+//     the four curves shared 318px no matter how the panel was resized
+//     — widening the panel moved the labels but the plot area grew by
+//     the same amount regardless of what the curves needed.
+//
+// Neither is true of the other two blocks, which is the argument that
+// grounds the design:
+//
+//   * Rows (bit 0) is the DPS panel's SUBSTANCE — name / weapon icon /
+//     MR / total / DPS. Splitting it would leave a panel that mounts as
+//     an empty title row, which is precisely the「1所说的这个面板真有
+//     存在必要么？」the player split's Sharpness removal answered by
+//     NOT doing it. A panel whose only remaining content is a title
+//     should have its title merged, not its substance removed.
+//   * OtherMembers (bit 3) is the roster filter, not a block. It exists
+//     as a bit because riseDisplayOptions.showOtherMembers is derived
+//     from it at startup (main.cpp:433-434) and the ViewModel's own
+//     actor filter reads that option — the bit decides WHICH ROWS the
+//     panel and the windows draw. Its per-row rendering is Rows', so a
+//     window claiming it would claim the same pixels the rows window
+//     claims, and static_assert 3 would fail the build. That is not an
+//     oversight to work around: it is the table doing its job.
+namespace DamageSplitSlot {
+enum : int {
+    Share = 0,   // 横向占比条 -> DamageShareStripPanel
+    Chart = 1,   // 折线图      -> DamageChartStripPanel
+};
+// The row count of kDamageSplitTargets, cross-checked by static_assert.
+constexpr int kCount = 2;
+} // namespace DamageSplitSlot
+
+// One split window's claim on DamageSection bits: "these blocks leave
+// DamagePanel and are drawn by this window instead".
+struct DamageSplitTarget {
+    uint32_t mask;
+};
+
+// THE TABLE. Declarative, compile-time, and the single source of truth
+// for "which bits left DamagePanel".
+//
+// main.cpp contains no bit arithmetic at all: it asks this table through
+// damagePanelMaskFor() / damageSubWindowMask(). To add a window you add
+// ONE row here (plus one panel instance in main.cpp and one
+// DamageSplitSlot entry) and every mask, the log line and the "nothing
+// is painted twice" proof follow from the table.
+//
+// Held to by the static_asserts below: every row is a non-empty subset
+// of DamageSection::kAll, and no bit is claimed by two windows — two
+// windows drawing one block is the failure a user notices immediately
+// and a pixel baseline may not.
+constexpr DamageSplitTarget kDamageSplitTargets[] = {
+    // The share bar. First out for the same reason the player split's
+    // status pill went first: it maps onto a HunterPie control of its
+    // own (the damage meter's share strip) and carries the least state
+    // of the two candidates — one last-sample read, no history walk.
+    {DamageSection::Share},
+    // The chart. The heaviest of the two, and the one the width change
+    // does the most for: the y-axis label column is a fixed 36px, so
+    // every extra pixel of window width is a pixel of plot area.
+    {DamageSection::Chart},
+};
+
+// How many bits the table's rows claim in total, counted per row. Unlike
+// damageSplitRemovedBits() this does NOT fold the rows through an OR, so
+// two rows sharing a bit are counted twice here and once there — and
+// the difference between the two counts is exactly the failure being
+// asserted.
+[[nodiscard]] constexpr int damageSplitBitCount(uint32_t bits) noexcept
+{
+    int n = 0;
+    while (bits != 0) {
+        bits &= static_cast<uint32_t>(bits - 1);   // clear the lowest set bit
+        ++n;
+    }
+    return n;
+}
+
+// The mask DamagePanel itself keeps: the user's toggles minus the rows
+// above.
+[[nodiscard]] constexpr uint32_t damagePanelMaskFor(
+    PlayerSection::PlayerLayoutMode mode, uint32_t mask) noexcept
+{
+    // SINGLE: the user's mask verbatim. Every pre-split user resolves
+    // here and gets one window painted byte-for-byte what it always
+    // painted.
+    if (mode == PlayerSection::PlayerLayoutMode::Single)
+        return mask;
+    // SPLIT: the panel only ever loses blocks that moved out.
+    uint32_t removed = 0;
+    for (const DamageSplitTarget &t : kDamageSplitTargets)
+        removed |= t.mask;
+    return mask & ~removed;
+}
+
+// The mask ONE sub-window draws: its own claim, intersected with what
+// the user left on.
+//
+// An out-of-range slot answers 0 (draw nothing) rather than reading
+// past the table, so a registry row naming a window the table does not
+// have is inert instead of UB.
+[[nodiscard]] constexpr uint32_t damageSubWindowMask(
+    int slot, uint32_t mask) noexcept
+{
+    if (slot < 0 || slot >= DamageSplitSlot::kCount)
+        return 0;
+    return kDamageSplitTargets[slot].mask & mask;
+}
+
+// The removed bits are the table's rows OR-ed together, and no row's
+// bit is claimed twice.
+[[nodiscard]] constexpr uint32_t damageSplitRemovedBits() noexcept
+{
+    uint32_t removed = 0;
+    for (const DamageSplitTarget &t : kDamageSplitTargets)
+        removed |= t.mask;
+    return removed;
+}
+
+[[nodiscard]] constexpr int damageSplitClaimedBitCount() noexcept
+{
+    int n = 0;
+    for (const DamageSplitTarget &t : kDamageSplitTargets)
+        n += damageSplitBitCount(t.mask);
+    return n;
+}
+
+// ---- Compile-time proofs ------------------------------------------------
+
+[[nodiscard]] constexpr bool damageSplitTargetsAreValid() noexcept
+{
+    for (int i = 0; i < DamageSplitSlot::kCount; ++i) {
+        const uint32_t m = kDamageSplitTargets[i].mask;
+        if (m == 0)                                  return false; // no claim
+        if ((m & ~DamageSection::kAll) != 0)    return false; // not a bit
+        for (int j = i + 1; j < DamageSplitSlot::kCount; ++j)
+            if ((m & kDamageSplitTargets[j].mask) != 0) return false; // twice
+    }
+    return true;
+}
+
+static_assert(damageSplitTargetsAreValid(),
+              "kDamageSplitTargets rows must be non-empty, inside "
+              "DamageSection::kAll and pairwise disjoint — two windows "
+              "claiming one DamageSection bit would draw it twice");
+static_assert(DamageSplitSlot::kCount == 2,
+              "DamageSplitSlot::kCount must match the kDamageSplitTargets "
+              "row count");
+static_assert(damageSplitBitCount(damageSplitRemovedBits())
+                  == damageSplitClaimedBitCount(),
+              "the removed bits must be exactly the table's rows, with no "
+              "bit claimed by two windows: an overlapping row's OR would "
+              "lose a duplicate and these two counts would diverge");
+// The whole pixel-identity argument, as two compile-time checks: in
+// Single mode the derived mask IS the input mask.
+static_assert(damagePanelMaskFor(PlayerSection::PlayerLayoutMode::Single, 0xDEADBEEFu)
+                  == 0xDEADBEEFu,
+              "Single mode must return the mask unchanged (non-zero case)");
+static_assert(damagePanelMaskFor(PlayerSection::PlayerLayoutMode::Single, 0u) == 0u,
+              "Single mode must return the mask unchanged (zero case)");
+// And the split's invariant: the removed bits and what the panel keeps
+// share no bit, so exactly one window draws a given block in either mode.
+static_assert((damagePanelMaskFor(PlayerSection::PlayerLayoutMode::Split, 0xFFFFFFFFu)
+               & damageSplitRemovedBits())
+                  == 0,
+              "in Split mode DamagePanel must hold none of the removed bits");
+// The two rows claim exactly the two bits they name, and no third bit
+// leaves the panel — so Rows and OtherMembers stay put with the panel.
+static_assert(damageSplitRemovedBits()
+                  == (DamageSection::Share
+                      | DamageSection::Chart),
+              "the damage split owns exactly Share|Chart; Rows stays the "
+              "panel's substance and OtherMembers is a filter over Rows");
+
 // ----- Pet damage panel sections ------------------------------------------
 namespace PetDamageSection {
 enum : uint32_t {
@@ -889,4 +1213,230 @@ static_assert(DamageSection::kAll == 0x0Fu);
 static_assert(PetDamageSection::kCount == 2);
 static_assert(PetDamageSection::kAll == 0x03u);
 
+// =====================================================================
+// v0.12 (monster split): the monster panel's window topology.
+// =====================================================================
+// The same two questions PlayerSection's section above answers, asked of
+// MonsterPanel for the same reason: ONE decision for which windows exist
+// (`PlayerSection::PlayerLayoutMode`, REUSED — see the note at the enum
+// below), ONE table for which MonsterSection bits each window owns, and
+// TWO pure functions that turn (mode, user mask) into the two masks
+// main.cpp hands out.
+//
+// The pixel-identity promise rests entirely on the Single arm of
+// monsterPanelMaskFor() returning `mask` VERBATIM, exactly as
+// playerPanelMaskFor() does: single mode hands MonsterPanel the value
+// v0.12 hands it today, so the 10 single-mode baselines cannot move.
+//
+// Widget-free, like everything above: inline constexpr over uint32_t, so
+// the whole table is checkable from a plain main() and adds no
+// translation unit to any target (therefore no census entry).
+
+namespace MonsterSplitSlot {
+// One alias per row of kMonsterSplitTargets. The value MUST be the
+// subscript of the row below, and kCount is cross-checked against the
+// table's row count by static_assert at the bottom.
+enum : int {
+    Hp      = 0,   // 总 HP 条            -> MonsterHpStripPanel
+    Stamina = 1,   // 怪物耐力/疲劳条      -> MonsterStaminaStripPanel
+    Enrage  = 2,   // 怒气计量条           -> MonsterEnrageStripPanel
+    Ail     = 3,   // 异常状态卡 (.srow)   -> MonsterAilStripPanel
+    Parts   = 4,   // 部位网格 (.pgrid)    -> MonsterPartsStripPanel
+};
+constexpr int kCount = 5;
+} // namespace MonsterSplitSlot
+
+// One split window's claim on MonsterSection bits: "these blocks leave
+// MonsterPanel and are drawn by this window instead".
+struct MonsterSplitTarget {
+    uint32_t mask;
+};
+
+constexpr MonsterSplitTarget kMonsterSplitTargets[] = {
+    // 总 HP 条. The panel's headline block and the first thing out. It
+    // is 15px of bar plus its 3px top/bottom padding (21 logical px
+    // total) and, as its own window, it is narrow enough to sit beside
+    // the target instead of under the hex portrait — the whole point
+    // of the split, since in the panel it is 362px wide with a number
+    // pair whose only job is being read from across the room.
+    {mhw::MonsterSection::Hp},
+
+    // 怪物耐力/疲劳条. HunterPie draws this gauge 10px tall directly
+    // under the HP bar (BossMonsterWidget), and v0.8.4-r23 copied that.
+    // This is the block the new MonsterSection::Stamina bit (1u << 6)
+    // exists for — see the bit's comment and
+    // migrateOldMonsterStaminaBit(). It gets its own window rather
+    // than riding on the HP window because the value of a separate
+    // surface is exactly the toggle: "is my target out of stamina" is
+    // a question a hunter asks on its own timing, and one bit for both
+    // would force them to be asked together.
+    //
+    // Short bar + a 体力 label on the left, so it is the narrowest of
+    // the five windows at ~90px of label plus fill.
+    {mhw::MonsterSection::Stamina},
+
+    // 怒气计量条. The block that is least coupled to anything else in
+    // the panel and most often wanted on its own: a hunter watching
+    // for a rage window needs the meter, not the portrait it was
+    // sitting under. 12px tall (6 + 2*3), with the value right-aligned
+    // in the bar itself, so its window is a hair shorter than the HP
+    // one and draws no label of its own.
+    //
+    // It MIGHT have stayed in the panel with the HP bar the way it is
+    // in the panel's stack, the reason it did not being that the bar
+    // carries a 1.6 s pulse (MonsterPanel's enragePhase_ /
+    // kPulsePeriodMs) and a window that pulses independently of the
+    // HP bar it used to sit next to is a strictly better fit for a
+    // "my monster is about to rage" alarm than the panel's block is.
+    {mhw::MonsterSection::Enrage},
+
+    // 异常状态卡 (.srow, 4 columns). The card grid the ailment rows
+    // used to build inline inside paintPanel, with the 15 s
+    // change-based AutoHide table (ailTrack_) and the game-keyed
+    // colour lookup (ailmentStyle) resolved here in the window's own
+    // content model. A 4-column grid whose card count varies 0..N is a
+    // width a fixed-panel column cannot express, so it is the clearest
+    // case in the five for a window: the wrap is the window's own
+    // question, nobody else's.
+    //
+    // The AutoHide state is the one piece of mutable state the window
+    // has to carry, which is exactly what
+    // MonsterPartListBuilder::partTrack_ does for .pc cards — same
+    // pattern, and the panel's ailTrack_ member can be reduced to it
+    // as a follow-up (the panel still owns the single-mode copy
+    // today).
+    {mhw::MonsterSection::Ail},
+
+    // 部位网格 (.pgrid, 3 columns). The heaviest of the five and the
+    // one with the most shared machinery: PcEntry, the ONLY producer
+    // (MonsterPartListBuilder::build) and the ONLY height calculator
+    // (pcGaugeExtraH) already live in ui/viewmodel/monster_view_model.h
+    // with no widget dependency, so the window's content model is a
+    // thin wrapper that owns the builder and asks it for the list. It
+    // keeps the builder as a MEMBER, for the same reason MonsterPanel
+    // does: build() mutates the 15 s PartAutoHide table and a fresh
+    // one per paint would re-pin every card every frame.
+    //
+    // It also inherits the panel's multiplayer suppression verbatim —
+    // the builder takes `multiplayer` as a plain parameter — so a
+    // non-host client's frozen Health pair is not drawn as HP in the
+    // window any more than it is in the panel.
+    {mhw::MonsterSection::Parts},
+};
+
+// NOT in this table, and why — the two remaining MonsterSection bits
+// are named here so their omission is a recorded decision rather than an
+// oversight:
+//
+//   Info (1u << 0)      — 六角肖像 + 金冠 + 名字 + 大小 + 激怒标签. Its
+//                         width is set by the CONTENT (the monster's
+//                         name at 15px Chakra Bold, letter-spacing 1),
+//                         not by a wrap question, so a window returns
+//                         almost nothing over the panel: the panel's
+//                         380px already lets the name run to its
+//                         natural width. It is also the block that
+//                         carries the panel's identity — "which
+//                         monster am I fighting" — and splitting a
+//                         title row from the bars it titles is the
+//                         one split that makes both fragments harder
+//                         to read, not easier.
+//   Tenderize (1u << 5) — 勾爪软化倒计时胶囊. NOT a block of its own:
+//                         since v0.7.4 PR C it is a strip INSIDE each
+//                         .pc card, drawn and height-reserved by the
+//                         same pcHasTenderize() gate the parts grid
+//                         uses (panel_monster.cpp). Giving it a window
+//                         would mean either re-parenting a strip that
+//                         is defined by the card it sits in, or
+//                         drawing it twice. It travels with Parts,
+//                         which is where it lives.
+//
+// Rows are OR-disjoint by construction below, so exactly one window
+// draws a given block in Split mode and the panel draws none of them.
+
+// Row count of the table, as a constant the functions below index with.
+inline constexpr int kMonsterSplitTargetCount = static_cast<int>(
+    sizeof(kMonsterSplitTargets) / sizeof(kMonsterSplitTargets[0]));
+
+// OR of every window's claim: exactly the bits that leave MonsterPanel
+// in Split mode.
+[[nodiscard]] constexpr uint32_t monsterSplitRemovedBits() noexcept
+{
+    uint32_t bits = 0;
+    for (const MonsterSplitTarget &t : kMonsterSplitTargets)
+        bits |= t.mask;
+    return bits;
+}
+
+// The mask MonsterPanel must receive. THE expression the "single-panel
+// mode is pixel-identical" promise rests on: in Single mode it returns
+// `mask` verbatim, bit for bit, so monsterPanel.setSectionMask() is
+// handed exactly the value v0.12 hands it and no downstream code can
+// detect the difference.
+[[nodiscard]] constexpr uint32_t monsterPanelMaskFor(
+    PlayerSection::PlayerLayoutMode mode, uint32_t mask) noexcept
+{
+    return mode == PlayerSection::PlayerLayoutMode::Split
+               ? static_cast<uint32_t>(mask & ~monsterSplitRemovedBits())
+               : mask;
+}
+
+// The mask split window `slot` must receive: the USER's own toggles
+// intersected with what the table says that window owns. An out-of-range
+// slot answers 0 (draw nothing) rather than reading past the table.
+[[nodiscard]] constexpr uint32_t monsterSubWindowMask(
+    int slot, uint32_t mask) noexcept
+{
+    if (slot < 0 || slot >= kMonsterSplitTargetCount)
+        return 0;
+    return kMonsterSplitTargets[slot].mask & mask;
+}
+
+// Compile-time proof that the table says what it claims, pairwise over
+// every row pair: no empty claim, no bit outside MonsterSection::kAll,
+// and no bit claimed twice.
+[[nodiscard]] constexpr bool monsterSplitTargetsAreValid() noexcept
+{
+    for (int i = 0; i < kMonsterSplitTargetCount; ++i) {
+        const uint32_t m = kMonsterSplitTargets[i].mask;
+        if (m == 0)                                   return false;
+        if ((m & ~mhw::MonsterSection::kAll) != 0)     return false;
+        for (int j = i + 1; j < kMonsterSplitTargetCount; ++j)
+            if ((m & kMonsterSplitTargets[j].mask) != 0) return false;
+    }
+    return true;
+}
+
+static_assert(monsterSplitTargetsAreValid(),
+              "kMonsterSplitTargets rows must be non-empty, inside "
+              "MonsterSection::kAll and pairwise disjoint — two windows "
+              "claiming one MonsterSection bit would draw it twice");
+static_assert(MonsterSplitSlot::kCount == kMonsterSplitTargetCount,
+              "MonsterSplitSlot::kCount must match the "
+              "kMonsterSplitTargets row count");
+static_assert(monsterPanelMaskFor(PlayerSection::PlayerLayoutMode::Single,
+                                  0xDEADBEEFu) == 0xDEADBEEFu,
+              "Single mode must return the mask unchanged (non-zero case)");
+static_assert(monsterPanelMaskFor(PlayerSection::PlayerLayoutMode::Single,
+                                  0u) == 0u,
+              "Single mode must return the mask unchanged (zero case)");
+static_assert((monsterPanelMaskFor(PlayerSection::PlayerLayoutMode::Split,
+                                   0xFFFFFFFFu)
+               & monsterSplitRemovedBits()) == 0,
+              "in Split mode MonsterPanel must hold none of the removed "
+              "bits");
+// Bits set in `bits`, counted rather than OR-folded — the same
+// disjointness proof playerSplitRemovedBits() pairs with.
+[[nodiscard]] constexpr int monsterSplitBitCount(uint32_t bits) noexcept
+{
+    int n = 0;
+    while (bits != 0) {
+        bits &= static_cast<uint32_t>(bits - 1);
+        ++n;
+    }
+    return n;
+}
+static_assert(monsterSplitBitCount(monsterSplitRemovedBits())
+                  == kMonsterSplitTargetCount,
+              "the removed bits must be exactly the table's rows, with "
+              "no bit claimed by two windows");
 } // namespace mhw

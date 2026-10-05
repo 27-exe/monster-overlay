@@ -46,6 +46,7 @@
     "damage_chart_waiting": "等待数据...",
     "pet_damage_header": "伙伴伤害  PET DAMAGE",
     "pet_damage_total": "伙伴总伤害",
-    "pet_name_fallback": "伙伴"
+    "pet_name_fallback": "伙伴",
+    "monster_strip_title": "怪物信息"
   }
 }

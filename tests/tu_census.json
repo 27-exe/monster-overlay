@@ -1,5 +1,5 @@
 {
-  "_comment": "Census of src translation units, refreshed by `python3 scripts/zero_reference_gate.py --update-snapshot`. The ctest gate (zero-reference-gate) compares the src/*.cpp set on disk against the keys here, so a new TU fails the build until it appears in this file — with a class and either an owner test target or an EXEMPT entry in the script. `class` is DIRECT when some test target compiles the TU itself, INDIRECT when a test target needs one of its symbols, ZERO when nothing does, UNKNOWN when it has no external symbol to measure.",
+  "_comment": "Census of src translation units, refreshed by `python3 scripts/zero_reference_gate.py --update-snapshot`. The ctest gate (zero-reference-gate) compares the src/*.cpp set on disk against the keys here, so a new TU fails the build until it appears in this file \u2014 with a class and either an owner test target or an EXEMPT entry in the script. `class` is DIRECT when some test target compiles the TU itself, INDIRECT when a test target needs one of its symbols, ZERO when nothing does, UNKNOWN when it has no external symbol to measure.",
   "method": "nm --extern-only undefined/defined, per object file, pre-link",
   "tus": {
     "src/core/game_capabilities.cpp": {
@@ -88,6 +88,7 @@
       ],
       "refs": [
         "console-text-helpers-tests",
+        "damage-split-parity-tests",
         "game-world-direct-tests",
         "monster-control",
         "monster-control-l2-smoke",
@@ -95,6 +96,7 @@
         "monster-core-tests",
         "monster-locale-tests",
         "monster-reader-tests",
+        "monster-split-models-tests",
         "monster-view-model-tests",
         "player-info-strip-tests",
         "reframework-fetcher-tests",
@@ -112,7 +114,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 1141
+      "symbols": 1309
     },
     "src/main_control.cpp": {
       "class": "ZERO",
@@ -343,7 +345,10 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "damage-split-parity-tests",
+        "damage-split-windows-tests",
         "monster-control-p0-test",
+        "monster-parts-window-tests",
         "panel-capabilities-tests",
         "snapshot-regression-tests",
         "split-layout-consistency-tests"
@@ -354,11 +359,28 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "damage-split-parity-tests",
         "monster-control-p0-test",
         "panel-capabilities-tests",
         "snapshot-regression-tests"
       ],
-      "symbols": 480
+      "symbols": 856
+    },
+    "src/ui/panel_damage_split_chart.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "damage-split-windows-tests"
+      ],
+      "symbols": 702
+    },
+    "src/ui/panel_damage_split_share.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "damage-split-windows-tests"
+      ],
+      "symbols": 526
     },
     "src/ui/panel_monster.cpp": {
       "class": "INDIRECT",
@@ -369,6 +391,46 @@
         "snapshot-regression-tests"
       ],
       "symbols": 660
+    },
+    "src/ui/panel_monster_split_ail.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-split-models-tests"
+      ],
+      "symbols": 470
+    },
+    "src/ui/panel_monster_split_enrage.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-split-models-tests"
+      ],
+      "symbols": 169
+    },
+    "src/ui/panel_monster_split_hp.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-split-models-tests"
+      ],
+      "symbols": 195
+    },
+    "src/ui/panel_monster_split_parts.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-parts-window-tests"
+      ],
+      "symbols": 449
+    },
+    "src/ui/panel_monster_split_stamina.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "monster-split-models-tests"
+      ],
+      "symbols": 190
     },
     "src/ui/panel_pet_damage.cpp": {
       "class": "INDIRECT",
@@ -551,6 +613,8 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "damage-split-model-tests",
+        "damage-split-parity-tests",
         "damage-view-model-tests"
       ],
       "symbols": 864
@@ -561,6 +625,7 @@
         "monster-view-model-tests"
       ],
       "refs": [
+        "monster-split-models-tests",
         "monster-view-model-tests"
       ],
       "symbols": 228

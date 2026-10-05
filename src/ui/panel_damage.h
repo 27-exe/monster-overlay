@@ -4,6 +4,12 @@
 #include "core/game_snapshot.h"
 #include "ui/viewmodel/damage_view_model.h"
 
+// The share bar and the line chart are shared with the split sub-windows
+// through ui/panel_damage_blocks.h — its declarations are this header's,
+// not a copy of them (see that header for why the draw code was hoisted
+// rather than duplicated).
+#include "ui/panel_damage_blocks.h"
+
 #include <QPainter>
 #include <QRectF>
 #include <QVector>
@@ -18,6 +24,15 @@
 // one repaint, and paintPanel()/drawChart()/drawShareBar() read the VM's
 // read-only views. The ViewModel carries no widget or painter dependency,
 // so the statistic itself is now testable without a QApplication.
+//
+// v0.12 third wave (monster / damage split): the Share bar and the Chart
+// left for their own layer-shell windows (DamageShareStripPanel /
+// DamageChartStripPanel, see panel_damage_split_{share,chart}.h). Their
+// drawing code was HOISTED, not copied — it now lives in
+// ui/panel_damage_blocks.h and both the panel and the two windows call the
+// same functions with the same models. drawShareBar()/drawChart() are no
+// longer members of this class; the comment above the old declarations
+// explained the whole arrangement and the header carries that text now.
 class DamagePanel : public Panel {
     Q_OBJECT
 public:
@@ -55,9 +70,5 @@ protected:
     bool hasContent() const override { return m_vm.hasData(); }
 
 private:
-    // paintPanel helpers — extracted to keep the main layout short.
-    void drawChart(QPainter &p, const QRectF &chartRect);
-    void drawShareBar(QPainter &p, const QRectF &barRect);
-
     mhw::DamageViewModel m_vm;
 };

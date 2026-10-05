@@ -166,7 +166,7 @@ int main(int argc, char *argv[])
     // bit should make this expression change, not make this test fail —
     // though it should be noticed when it does, because the mask layout
     // assertions further down compare against the same number.
-    if (!writeConfig(QStringLiteral("player=%1\nmonster=2f\ndamage=7\n")
+    if (!writeConfig(QStringLiteral("player=%1\nmonster=6f\ndamage=7\n")
                          .arg(hexOf(playerMaskWithWeaponOff())))) {
         fprintf(stderr, "FAIL: could not seed legacy config\n");
         return 20;
@@ -193,7 +193,7 @@ int main(int argc, char *argv[])
     // Invalid and overflowing hexadecimal masks are ignored independently;
     // they must retain each panel's all-on default rather than parse as zero.
     if (!writeConfig(QStringLiteral(
-            "player=%1\nmonster=2f\ndamage=not-hex\npets=100000000\n")
+            "player=%1\nmonster=6f\ndamage=not-hex\npets=100000000\n")
             .arg(hexOf(playerMaskWithWeaponOff())))) {
         fprintf(stderr, "FAIL: could not seed invalid config\n");
         return 23;
@@ -371,7 +371,7 @@ int main(int argc, char *argv[])
         // After all flips the file must read:
         //   player=<kAll & ~Weapon>  (a literal "fb" here went stale the
 //                         moment PlayerSection grew past 8 bits)
-        //   monster=2f (0x3f & ~(1<<4))
+        //   monster=6f (0x3f & ~(1<<4))
         //   damage=7   (0x0f & ~(1<<3))
         //   pets=1     (0x03 & ~(1<<1))
         app.processEvents();
@@ -431,7 +431,7 @@ int main(int argc, char *argv[])
         const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
         if (lines.size() != 5
             || lines[0] != QStringLiteral("player=%1").arg(hexOf(playerMaskWithWeaponOff()))
-            || lines[1] != QStringLiteral("monster=2f")
+            || lines[1] != QStringLiteral("monster=6f")
             || lines[2] != QStringLiteral("damage=7")
             || lines[3] != QStringLiteral("pets=1")
             || lines[4] != QStringLiteral("maskVersion=1")) {
@@ -506,7 +506,7 @@ int main(int argc, char *argv[])
         const QString afterEn = readBack();
         if (!afterEn.contains(QStringLiteral("locale=en-US"))
             || !afterEn.contains(QStringLiteral("player=%1").arg(hexOf(playerMaskWithWeaponOff())))
-            || !afterEn.contains(QStringLiteral("monster=2f"))
+            || !afterEn.contains(QStringLiteral("monster=6f"))
             || !afterEn.contains(QStringLiteral("damage=7"))
             || !afterEn.contains(QStringLiteral("pets=1"))) {
             fprintf(stderr, "FAIL: mask rows must survive the locale write:\n%s",

@@ -7,6 +7,15 @@
 #include "ui/icon.h"
 #include "ui/panel_sections.h"
 
+// v0.9 i18n: local alias for the shared StringTable. Identical definition
+// to the other panels (inline → ODR-safe across translation units). Kept
+// HERE rather than in panel_damage_blocks.h: the shared header's drawing
+// code uses damage_blocks::tr, and a header that spelled `mh::tr` would
+// collide with the copy control_panel.cpp already has.
+namespace mh {
+inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(key); }
+} // namespace mh
+
 #include <QPainter>
 #include <QPainterPath>
 #include <QFontMetrics>
@@ -49,26 +58,13 @@ constexpr int kChartLeft = 36;    // widened from 28 so 3-char "184k" labels at 
 constexpr int kShareBarH = 10;    // clean single-line bar (was 16)
 
 constexpr int kMaxSamples = 900;
-constexpr int kMaxPlayers = 4;
 
-// HunterPie default damage meter colors (PlayerConfigHelper.cs):
-// slot 0 = #F24891 (pink), slot 1 = #50C5B7 (teal),
-// slot 2 = #49CFF5 (sky blue), slot 3 = #FF8040 (orange).
-// Self override = #A74FFF (purple) when isSelf.
-const QColor kPlayerColors[] = {
-    QColor(0xF2, 0x48, 0x91),  // slot 0 — pink
-    QColor(0x50, 0xC5, 0xB7),  // slot 1 — teal
-    QColor(0x49, 0xCF, 0xF5),  // slot 2 — sky blue
-    QColor(0xFF, 0x80, 0x40),  // slot 3 — orange
-};
-
-// Returns the player colour for a row: purple for self, otherwise the
-// slot's normal hue. Mirrors the HTML `style="--dc:#a74fff"` for self.
-QColor colorForRow(int slot, bool isSelf)
-{
-    if (isSelf) return QColor(0xA7, 0x4F, 0xFF);  // --dc self
-    return kPlayerColors[(slot % kMaxPlayers + kMaxPlayers) % kMaxPlayers];
-}
+// The per-row palette and colourForRow() moved to
+// ui/panel_damage_blocks.h in the v0.12 third wave: the share bar and
+// the chart resolve a row's colour too, and they are shared with the
+// split sub-windows, so one spelling now serves the row's contribution
+// bar, the share segment and the chart polyline alike.
+using mhw::damage_block::colorForRow;
 
 // Draws the 1px accent stripe + dark cell behind the dps value when
 // the row is self. HTML: .drow[data-self="true"] gets a purple
@@ -147,9 +143,10 @@ void drawContribBar(QPainter &p, const QRectF &row, float pct,
 
 } // namespace
 
-namespace mh {
-inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(key); }
-} // namespace mh
+// i18n lookup. Moved into ui/panel_damage_blocks.h in the v0.12 third
+// wave, because the share bar and the chart it was only used by are now
+// shared with the split sub-windows. See panel_damage_blocks.h for why
+// the drawing code was hoisted rather than duplicated.
 
 DamagePanel::DamagePanel(QWidget *parent)
     : Panel(QStringLiteral("dps"), Corner::TopRight, parent),
@@ -425,173 +422,28 @@ void DamagePanel::paintPanel(QPainter &p)
     if (onShare && n > 0) {
         y += 9;
         const QRectF shareRect(kMargin, y, kPanelW - 2 * kMargin, kShareBarH - 2);
-        drawShareBar(p, shareRect);
+        // v0.12 third wave: the bar's own body is shared with
+        // DamageShareStripPanel (ui/panel_damage_blocks.h). The model
+        // and the draw are one call apart instead of a private member
+        // reading this class's own m_vm, so the panel and the window
+        // can never diverge about which segment is which colour.
+        drawDamageShareBar(p, shareRect, buildDamageShareModel(vm));
         y += kShareBarH + 4;
     }
 
     // --- Line chart ---
     if (onChart)
-        drawChart(p, QRectF(kMargin, y, kPanelW - 2 * kMargin, kChartH));
+        drawDamageChart(p, QRectF(kMargin, y, kPanelW - 2 * kMargin, kChartH),
+                        buildDamageChartModel(vm));
 }
 
-void DamagePanel::drawShareBar(QPainter &p, const QRectF &barRect)
-{
-    const auto &vm = m_vm;
-    const int n = vm.rowCount();
-    if (n == 0) return;
-
-    qint64 total = 0;
-    QVector<int> dmgs(n, 0);
-    if (!vm.history().isEmpty()) {
-        const auto &last = vm.history().last();
-        for (int i = 0; i < n && i < last.damage.size(); ++i) {
-            dmgs[i] = last.damage[i];
-            total += dmgs[i];
-        }
-    }
-    if (total == 0) total = 1;
-
-    // Invisible track — dark grey, no rounded corners.
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(42, 45, 47));          // --line, same as panel chrome
-    p.drawRect(barRect);
-
-    // Four colored segments, flat abutted edges, no gaps, no text.
-    int xCursor = static_cast<int>(barRect.x());
-    const int trackRight = static_cast<int>(barRect.right());
-    for (int i = 0; i < n; ++i) {
-        if (dmgs[i] <= 0) continue;
-        const int segW = std::max(1,
-            static_cast<int>(barRect.width() * static_cast<double>(dmgs[i])
-                              / static_cast<double>(total)));
-        if (xCursor >= trackRight) break;
-        const int segWidth = std::min(segW, trackRight - xCursor);
-        const QRectF seg(xCursor, barRect.y(), segWidth, barRect.height());
-        const QColor segColor = colorForRow(vm.partySlots().value(i, i),
-                                             vm.locals().value(i, false));
-        p.setBrush(segColor);
-        p.drawRect(seg);
-        xCursor += segWidth;
-    }
-}
-
-void DamagePanel::drawChart(QPainter &p, const QRectF &chartRect)
-{
-    // HTML: .chart {background:rgba(30,30,30,.6); border:1px solid --line;}
-    // 2026-07-27: dropped chart alpha 153 → 100 → 65 → 35 → 15 (~6%) to
-    // match the translucent panel body and let the wallpaper show.
-    p.setPen(QPen(QColor(42, 45, 47), 1));
-    p.setBrush(QColor(30, 30, 30, 15));
-    p.drawRoundedRect(chartRect, 4, 4);
-
-    const auto &vm = m_vm;
-    const int n = vm.rowCount();
-    if (vm.history().size() < 2 || n == 0) {
-        p.setPen(QColor(150, 150, 150));
-        p.setFont(QFont(QStringLiteral("Chakra Petch"), 8));
-        p.drawText(chartRect, Qt::AlignCenter, mh::tr("ui.damage_chart_waiting"));
-        return;
-    }
-
-    // Compute global max across history.
-    int maxDmg = 0;
-    for (const auto &s : vm.history())
-        for (int i = 0; i < s.damage.size() && i < n; ++i)
-            maxDmg = std::max(maxDmg, s.damage[i]);
-    if (maxDmg == 0) maxDmg = 1;
-
-    const int firstTick = vm.history().first().tick;
-    const int lastTick  = vm.history().last().tick;
-    const int tickSpan  = lastTick - firstTick;
-    if (tickSpan <= 0) return;
-
-    // Y-axis area: leave room for the 24px label column on the left
-    // (HTML: .chart .ylabel 24px wide, .chart svg starts at left:28).
-    const QRectF plotRect(chartRect.left() + kChartLeft,
-                          chartRect.top() + 2,
-                          chartRect.width() - kChartLeft - 4,
-                          chartRect.height() - 4);
-
-    // y-grid (HTML: .chart .ygrid i.t/i.m, two faint horizontal lines).
-    p.setPen(QPen(QColor(255, 255, 255, 10), 1));
-    p.drawLine(plotRect.left(),  plotRect.top(),
-               plotRect.right(), plotRect.top());
-    p.drawLine(plotRect.left(),  plotRect.top() + plotRect.height() / 2,
-               plotRect.right(), plotRect.top() + plotRect.height() / 2);
-
-    // Y-axis labels (HTML: 400 / 200 / 0). Round the global max up
-    // to a nice number for the top label so it reads as a real scale.
-    auto roundUp = [](int v) -> int {
-        int scale = 100;
-        while (scale < v) scale *= 2;
-        return std::max(scale, v);
-    };
-    const int yMax = roundUp(maxDmg);
-    const int yMid = yMax / 2;
-    QFont yFont(QStringLiteral("Chakra Petch"), 8);
-    yFont.setStyleStrategy(QFont::PreferAntialias);
-    p.setFont(yFont);
-
-    // Compact formatter for y-axis labels (HTML .ylabel 8px, --t4 #505355):
-    //   < 1,000       → "123"  (integer)
-    //   1k–9,999      → "1k"   (integer k, always no decimal — looks
-    //                          tighter than "1.2k" and matches HTML v8
-    //                          visual rhythm at typical quest lengths)
-    //   10k–999,999   → "184k" (integer k)
-    auto fmtCompact = [](int v) -> QString {
-        if (v < 1000) return QString::number(v);
-        // 1000..999 → 1k..999k (rounded to nearest 1k).
-        const int k = (v + 500) / 1000;
-        return QString::number(k) + QLatin1Char('k');
-    };
-    // Right-anchored inside yLabelRect so wider "184k" never clips.
-    const QRectF yLabelRect(chartRect.left() + 2, chartRect.top(),
-                            kChartLeft - 6, chartRect.height());
-    QFontMetrics yFm(yFont);
-    const int labelH = yFm.height();
-    auto drawRightAligned = [&](const QString &s, qreal topY) {
-        const int textW = yFm.horizontalAdvance(s);
-        // Higher-contrast direct label: the chart stays visually clean and
-        // transparent, while brighter text survives non-black scenes.
-        p.setPen(QColor(220, 224, 226, 245));
-        p.drawText(QRectF(yLabelRect.right() - textW, topY,
-                          textW, labelH),
-                   Qt::AlignLeft | Qt::AlignVCenter, s);
-    };
-    const int top    = static_cast<int>(chartRect.top()) + 2;
-    const int mid    = static_cast<int>(chartRect.top())
-                     + static_cast<int>(chartRect.height()) / 2 - labelH / 2;
-    const int bottom = static_cast<int>(chartRect.bottom()) - labelH - 2;
-    drawRightAligned(fmtCompact(yMax), top);
-    drawRightAligned(fmtCompact(yMid), mid);
-    drawRightAligned(QStringLiteral("0"), bottom);
-
-    // Polyline per player (HTML: 4 polylines, no fill, stroke-width 1.6).
-    // Colour must match the row's colour exactly: the row reads
-    // slots_/locals_ at draw time; the chart does the same here so the
-    // line and the row header are visually linked.
-    for (int pi = 0; pi < n; ++pi) {
-        const QColor c = colorForRow(vm.partySlots().value(pi, pi),
-                                      vm.locals().value(pi, false));
-        p.setPen(QPen(c, 1.6));
-        p.setBrush(Qt::NoBrush);
-        QPainterPath path;
-        bool first = true;
-        for (const auto &s : vm.history()) {
-            const float x = plotRect.left()
-                + static_cast<float>(s.tick - firstTick) / tickSpan * plotRect.width();
-            const float d = static_cast<float>(s.damage.value(pi, 0));
-            const float y = plotRect.bottom() - (d / yMax) * plotRect.height();
-            if (first) { path.moveTo(x, y); first = false; }
-            else       { path.lineTo(x, y); }
-        }
-        p.drawPath(path);
-    }
-
-    // No elapsed-time label here: the previous '+1s' demo marker was
-    // neither a real x-axis nor useful gameplay information, and it
-    // collided with the top y-axis value on transparent backgrounds.
-}
+// The share bar's and the chart's bodies moved to ui/panel_damage_blocks.h
+// in the v0.12 third wave, shared verbatim with DamageShareStripPanel and
+// DamageChartStripPanel. They were the two blocks of this panel whose
+// painting had already been extracted into one-caller member functions
+// with no access to any other member, which is exactly the shape that can
+// be hoisted without a body edit — see that header's comment for the
+// line-by-line equivalence and the reason a hoist rather than a copy.
 
 void DamagePanel::setupDemoData()
 {

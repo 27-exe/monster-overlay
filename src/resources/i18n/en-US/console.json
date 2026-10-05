@@ -183,7 +183,8 @@
         "enrage": "Enrage",
         "ail": "Ailments",
         "parts": "Parts",
-        "tenderize": "Tenderize"
+        "tenderize": "Tenderize",
+        "stamina": "Stamina"
       },
       "damage": {
         "rows": "Player rows",

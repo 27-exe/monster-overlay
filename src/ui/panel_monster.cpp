@@ -966,6 +966,7 @@ void MonsterPanel::paintPanel(QPainter &p)
     const bool onEnrage   = smask & mhw::MonsterSection::Enrage;
     const bool onAil      = smask & mhw::MonsterSection::Ail;
     const bool onParts    = smask & mhw::MonsterSection::Parts;
+    const bool onStamina  = smask & mhw::MonsterSection::Stamina;
     // v0.8.4-r23: the 软化/TENDERIZE control-panel toggle gates the
     // per-part tenderize strip again. v0.7.4 PR C dropped the standalone
     // .tsc section and left `onTenderize` computed-but-unused, which
@@ -977,8 +978,21 @@ void MonsterPanel::paintPanel(QPainter &p)
 
     // v0.8.4-r23 fatigue-semantics: monster stamina row. The reader only
     // fills the pair when the 0x320 chain resolved (0/0 = unknown → row
-    // hidden). Follows the HP toggle until a dedicated section bit exists.
-    const bool stamDrawn = onHp && monster_.maxStamina > 0.0F;
+    // hidden).
+    //
+    // v0.12 (monster split): THE BIT SPLIT. `onHp &&` is GONE. Stamina
+    // used to ride on the HP toggle ("Follows the HP toggle until a
+    // dedicated section bit exists" — the v0.8.4-r23 comment, and the bit
+    // now exists), so in Single mode this reads exactly the same as
+    // before: kAll carries both bits, so a stock single-mode mask has
+    // Hp set and therefore Stamina set, and the row follows the HP toggle
+    // precisely as it always did. What changes is that a user who turns
+    // 「耐力」 off in the console on a single-mode mask can now say so —
+    // and that a conf written before v0.12 (monster=<bits 0-5>, bit 6
+    // zero because it did not exist) is migrated in at startup by
+    // mhw::MonsterSection::migrateOldMonsterStaminaBit rather than losing
+    // the gauge.
+    const bool stamDrawn = onStamina && monster_.maxStamina > 0.0F;
 
     const bool showRage = monster_.enrageMaxBuildup > 0.0F || monster_.enraged;
     const bool rageDrawn = onEnrage && showRage;

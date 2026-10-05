@@ -218,6 +218,16 @@ add_library(mhw-ui STATIC
     src/ui/panel_accent.h
     src/ui/panel_damage.cpp
     src/ui/panel_damage.h
+    # v0.12 third wave: the DPS panel's two width-hungry blocks as their
+    # own windows. The draw code is HOISTED into a shared header rather
+    # than copied, so the panel and the two windows paint the same bytes
+    # from one definition — the alternative is a second spelling that
+    # drifts a pixel and makes all_damage.png disagree with the window.
+    src/ui/panel_damage_blocks.h
+    src/ui/panel_damage_split_share.cpp
+    src/ui/panel_damage_split_share.h
+    src/ui/panel_damage_split_chart.cpp
+    src/ui/panel_damage_split_chart.h
     src/ui/viewmodel/damage_view_model.cpp
     src/ui/viewmodel/damage_view_model.h
     src/ui/viewmodel/monster_view_model.cpp
@@ -228,6 +238,21 @@ add_library(mhw-ui STATIC
     src/ui/viewmodel/rise_reframework_status.h
     src/ui/panel_monster.cpp
     src/ui/panel_monster.h
+    # v0.12 third wave: the monster panel's blocks as their own windows.
+    # HP / Stamina / Enrage are three bars; Ail is a wrapped card row and
+    # Parts the part grid, both answering the columns dial. Info and
+    # Tenderize deliberately stay in the panel — see the NOT-in-table note
+    # by kMonsterSplitTargets for why each one is not worth a window.
+    src/ui/panel_monster_split_hp.cpp
+    src/ui/panel_monster_split_hp.h
+    src/ui/panel_monster_split_stamina.cpp
+    src/ui/panel_monster_split_stamina.h
+    src/ui/panel_monster_split_enrage.cpp
+    src/ui/panel_monster_split_enrage.h
+    src/ui/panel_monster_split_ail.cpp
+    src/ui/panel_monster_split_ail.h
+    src/ui/panel_monster_split_parts.cpp
+    src/ui/panel_monster_split_parts.h
     src/ui/panel_pet_damage.cpp
     src/ui/panel_pet_damage.h
     src/ui/panel_player.cpp
@@ -1158,6 +1183,75 @@ add_executable(world-severable-scan-tests
     target_include_directories(panel-capabilities-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(panel-capabilities-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME panel-capabilities-tests COMMAND panel-capabilities-tests)
+
+    # v0.12 third wave: the monster panel's blocks as their own windows.
+    # What it pins is the migration's two exhaustive sweeps (63 old-schema
+    # masks and 64 new-schema ones), the table's disjointness, and the
+    # Single arm's byte-identity across all 64 monster masks.
+    add_executable(monster-split-models-tests
+        tests/monster_split_models_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(monster-split-models-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(monster-split-models-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(monster-split-models-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME monster-split-models-tests
+             COMMAND monster-split-models-tests)
+    set_tests_properties(monster-split-models-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # v0.12 third wave: the parts window as an OBJECT. The model test covers
+    # buildMonsterPartsModel, which is inline in the header and therefore
+    # emits no symbol — leaving this .cpp's 21 exported members with nothing
+    # asking for them. What only an object test can pin is the display
+    # filter it inherits, the columns dial's clamp, and that the height it
+    # reports is the height it asks the compositor for.
+    add_executable(monster-parts-window-tests
+        tests/monster_parts_window_tests.cpp
+    )
+    target_link_libraries(monster-parts-window-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets mhw-ui)
+    target_include_directories(monster-parts-window-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(monster-parts-window-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME monster-parts-window-tests COMMAND monster-parts-window-tests)
+    set_tests_properties(monster-parts-window-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # v0.12 third wave: the DPS panel's Share / Chart windows. Three
+    # targets, because the claim has three parts: what each window draws
+    # (model), that the hoisted draw functions and the panel's own inline
+    # expressions produce the SAME bytes at four widths (parity), and that
+    # a constructed window reserves exactly what it paints (windows).
+    add_executable(damage-split-model-tests
+        tests/damage_split_model_tests.cpp
+    )
+    target_link_libraries(damage-split-model-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(damage-split-model-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(damage-split-model-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME damage-split-model-tests COMMAND damage-split-model-tests)
+
+    add_executable(damage-split-parity-tests
+        tests/damage_split_parity_tests.cpp
+    )
+    target_link_libraries(damage-split-parity-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(damage-split-parity-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(damage-split-parity-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME damage-split-parity-tests COMMAND damage-split-parity-tests)
+    set_tests_properties(damage-split-parity-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    add_executable(damage-split-windows-tests
+        tests/damage_split_windows_tests.cpp
+    )
+    target_link_libraries(damage-split-windows-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(damage-split-windows-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(damage-split-windows-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME damage-split-windows-tests COMMAND damage-split-windows-tests)
+    set_tests_properties(damage-split-windows-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     # v0.12: the 「任务/进程」 window's content model — what the snapshot's
     # quest block and connection block resolve to, and which half of them

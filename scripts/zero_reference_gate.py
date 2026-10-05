@@ -322,6 +322,20 @@ def gate(repo: str, snap_path: str, quiet: bool = False) -> int:
         print(f"  ZERO at snapshot time: {len(census_zero)}")
 
     failed = False
+    # A snapshot entry whose TU is no longer on disk is a STALE RECORD, not a
+    # coverage finding. Reporting it under "measured ZERO with no EXEMPT
+    # entry" sends the reader looking for a missing test that cannot exist,
+    # which is how a deleted file's entry survived three snapshot refreshes:
+    # --update-snapshot only ever ADDS, so nothing pruned it.
+    if gone:
+        failed = True
+        print("\nFAIL: snapshot entries whose TU is no longer on disk:",
+              file=sys.stderr)
+        for t in gone:
+            print(f"  ! {t}", file=sys.stderr)
+        print("  these are stale records, not coverage gaps. They are pruned\n"
+              "  automatically by the next --update-snapshot.",
+              file=sys.stderr)
     if unjustified_zero:
         failed = True
         print("\nFAIL: src TUs measured ZERO with no EXEMPT entry:",
@@ -395,6 +409,24 @@ def update_snapshot(repo: str, snap_path: str, census: dict, warnings: list) -> 
         "method": "nm --extern-only undefined/defined, per object file, pre-link",
         "tus": census,
     }
+    # Prune entries whose TU is no longer on disk, so a deleted file's
+    # record cannot outlive it. --update-snapshot used to only ever ADD a
+    # measured TU, which is how one deleted TU's entry survived three
+    # refreshes and kept the gate red demanding a test that could not
+    # possibly exist.
+    #
+    # Pruning is the default rather than an opt-in flag: a snapshot entry
+    # for a file that does not exist is never information anybody wants,
+    # and the flag is what left it there in the first place.
+    on_disk_now = set()
+    for dirpath, _dirs, files in os.walk(os.path.join(repo, "src")):
+        for f in files:
+            if f.endswith(".cpp"):
+                on_disk_now.add(os.path.relpath(os.path.join(dirpath, f), repo))
+    for gone_tu in sorted(set(census) - on_disk_now):
+        census.pop(gone_tu, None)
+        print(f"pruned stale snapshot entry: {gone_tu}")
+
     os.makedirs(snap_dir, exist_ok=True)
     tmp = snap_path + ".tmp"
     with open(tmp, "w") as fh:

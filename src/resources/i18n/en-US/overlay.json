@@ -46,6 +46,7 @@
     "damage_chart_waiting": "Waiting for data...",
     "pet_damage_header": "PET DAMAGE",
     "pet_damage_total": "Total pet damage",
-    "pet_name_fallback": "Buddy"
+    "pet_name_fallback": "Buddy",
+    "monster_strip_title": "Monster Info"
   }
 }
