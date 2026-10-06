@@ -344,8 +344,8 @@ canvas (10 px, `Shift` = 50 px).
 ### 12.1 What each window supports
 
 Before the split, one panel meant one key set and the answer was memorised.
-Now a window can be one of ten, and the honest answer to "which keys do I
-have on THIS window?" was identical everywhere except the one row that
+Now a window can be one of seventeen, and the honest answer to "which keys
+do I have on THIS window?" is identical everywhere except the one row that
 matters: the **columns dial**, `[` and `]`.
 
 Everything below is a capability of the window, not of the moment. Whether a
@@ -365,6 +365,18 @@ live mode too.
 | Wirebug | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Weapon | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Info | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| 怪物血条 Monster HP | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| 怪物耐力 Monster Stamina | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| 怪物怒气 Monster Enrage | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| 怪物异常 Monster Ailments | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 怪物部位 Monster Parts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 伤害占比 Damage Share | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| 伤害折线 Damage Chart | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+
+> The player panel's sub-windows only exist under `--layout split` (or when
+> the console selects 分块); so do the monster and damage ones. In Single
+> mode only the first four rows exist, and the behaviour is pixel-identical
+> to v0.11.
 
 **Move** — `←` `↑` `↓` `→` nudge the margins 10 px, `Shift` = 50 px. Edit mode
 only. Wayland layer-shell cannot place a window at an arbitrary coordinate,
@@ -392,10 +404,14 @@ zero, and dialling below one step clears the lock rather than parking a
 
 **Columns** — `[` and `]` re-flow a wrapped row: `]` spreads the items into
 one flat row, `[` narrows it until at 1 the items stack vertically. Edit mode
-only. Only the three rows that have something to re-flow answer it — the
-status strip's pills (1–6 per row), the two mantle boxes (1–2), and the
-recovering-wirebug capsules (1–4, the Rise slot cap being the ceiling). This
-is the dial 「无法通过调整来调整成竖排排列」 asked for.
+only. Only the rows that have something to re-flow answer it — the status
+strip's pills (1–6 per row), the two mantle boxes (1–2), the
+recovering-wirebug capsules (1–4, the Rise slot cap being the ceiling), the
+monster ailment cards (1–6) and the monster part cards (1–3). This is the
+dial 「无法通过调整来调整成竖排排列」 asked for.
+
+The monster HP, stamina and enrage bars do NOT answer it: each is one bar
+with no axis to re-flow. The damage share bar and line chart are the same.
 
 Two things that follow from the table:
 
@@ -403,6 +419,11 @@ Two things that follow from the table:
   `]` do nothing at all rather than doing something partly: the dispatch asks
   `supportsColumns()` and an unclaimed key falls through to Qt, which is the
   same destination it had before the base class owned the keys at all.
+- **The other seven are answered identically by every window.** That is what
+  unification bought. It used to be seven pass-through contracts, each of
+  which had to remember to forward unclaimed keys, and the status strip was
+  the last one still carrying its own `keyPressEvent`. Since v0.12 all
+  seventeen windows share one dispatcher.
 - **Every window answers the other seven the same way.** That is the
   unification. The answer used to be seven copies of a passthrough contract,
   each of which had to remember to forward the keys it did not claim, and the
