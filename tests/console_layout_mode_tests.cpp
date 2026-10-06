@@ -109,6 +109,32 @@ bool hasFlag(const QStringList &args, const QString &flag)
     return args.contains(flag);
 }
 
+// How many `layout=` rows a conf text carries. Counted rather than
+// inferred, because "at most one" is the invariant and the parser cannot
+// see a pile — it stops at the first row it can read as Split, which is
+// precisely how the pile went unnoticed.
+[[nodiscard]] int countRows(const QString &conf)
+{
+    int n = 0;
+    for (const QString &line : conf.split(QLatin1Char('\n'))) {
+        if (line.trimmed().startsWith(
+                QLatin1String(mhw::kConsoleLayoutRowKey)
+                + QLatin1String("=")))
+            ++n;
+    }
+    return n;
+}
+
+// Resolve a conf text the way the console does, so a test can assert what
+// a USER's file would decode to rather than what the writer emitted.
+[[nodiscard]] Mode readMode(const QString &conf)
+{
+    return mhw::parseConsoleLayoutRow(conf).source
+                   == mhw::PlayerLayoutSource::Conf
+               ? Mode::Split
+               : Mode::Single;
+}
+
 // =====================================================================
 // A. OLD CONF, NO KEY → SINGLE
 // =====================================================================
@@ -284,6 +310,109 @@ void test_priorityChain()
 // too. `singleSaveWritesNoRow` fails, proving that the "old conf has no
 // key" case is not a migration path nobody exercises but the state every
 // non-split user actually lives in.
+void test_repeatedSavesDoNotStackTheRow()
+{
+    std::printf("D2. repeated saves keep ONE row (the drop-old-first "
+                "contract)\n");
+
+    // What saveMaskToDisk() used to do was append a fresh row and drop
+    // nothing. Parsing survives that — the parser scans every line and
+    // stops at the first it can read as Split — so nothing failed and the
+    // defect stayed invisible while the conf grew a row per save. The
+    // saves run on close, before START, and on every apply, so a session
+    // that switched modes ended with the file's LAST row contradicting the
+    // mode in force, and the next launch read that last row. That is the
+    // "I switched and nothing happened" symptom.
+    //
+    // This is the composition step saveMaskToDisk() performs, restated so
+    // the invariant is testable without a widget: take the existing text,
+    // drop every layout row, append the codec's row for the mode in force.
+    auto compose = [](const QString &existing, Mode mode) {
+        const QStringList lines = existing.split(QLatin1Char('\n'));
+        QStringList kept;
+        kept.reserve(lines.size() + 1);
+        for (const QString &line : lines) {
+            if (line.trimmed().startsWith(
+                    QLatin1String(mhw::kConsoleLayoutRowKey)
+                    + QLatin1String("=")))
+                continue;
+            kept.append(line);
+        }
+        QString out = kept.join(QLatin1Char('\n'));
+        if (existing.endsWith(QLatin1Char('\n')) && !out.endsWith(
+                QLatin1Char('\n')))
+            out += QLatin1Char('\n');
+        out += QString::fromLatin1(mhw::serializeConsoleLayoutRow(mode));
+        return out;
+    };
+
+    const QString seed = QStringLiteral("player=1ff\nmonster=7f\n"
+                                        "damage=3ff\npets=3\n"
+                                        "maskVersion=1\nlocale=zh-CN\n");
+
+    // Split, saved ten times in a row: still exactly one row.
+    QString conf = seed;
+    for (int i = 0; i < 10; ++i)
+        conf = compose(conf, Mode::Split);
+    check(countRows(conf) == 1,
+          "ten split saves leave ONE layout row, not ten");
+    check(readMode(conf) == Mode::Split,
+          "and it still resolves to split");
+
+    // Alternating modes, which is the case that actually bit: the last
+    // write wins, so the file and the console never disagree.
+    //
+    // `(i & 1) ? Split : Single` starts on Single (i = 0), so an EVEN
+    // number of writes ends on SPLIT and an odd one ends on single. The
+    // expectations below follow that parity — stating it here because
+    // getting the parity backwards is exactly the kind of mistake that
+    // makes a passing test prove the opposite of what its name says.
+    conf = seed;
+    for (int i = 0; i < 5; ++i)   // single..single, ends on SINGLE
+        conf = compose(conf, (i & 1) ? Mode::Split : Mode::Single);
+    check(countRows(conf) == 0,
+          "ending on single leaves NO layout row — the default is not "
+          "written down");
+    check(readMode(conf) == Mode::Single,
+          "so it resolves to single, which is what the user last chose");
+
+    for (int i = 0; i < 6; ++i)   // ends on SPLIT
+        conf = compose(conf, (i & 1) ? Mode::Split : Mode::Single);
+    check(countRows(conf) == 1,
+          "six alternating writes end on split and leave exactly one row");
+    check(readMode(conf) == Mode::Split,
+          "and it resolves to split — the LAST write, not the first");
+
+    // A user's hand-edited duplicate converges too. It is not this
+    // function's job to undo it, but it must not double it.
+    QString dup = seed;
+    dup += QStringLiteral("layout=split\nlayout=split\n");
+    check(countRows(dup) == 2, "the hand-duplicated input has two rows");
+    conf = compose(dup, Mode::Split);
+    check(countRows(conf) == 1,
+          "one save collapses a hand-duplicated pair back to one");
+
+    // The mask rows must survive untouched — dropping a stray row is not
+    // licence to drop anything else.
+    for (const QString &need : {QStringLiteral("player=1ff"),
+                                QStringLiteral("monster=7f"),
+                                QStringLiteral("damage=3ff"),
+                                QStringLiteral("pets=3"),
+                                QStringLiteral("maskVersion=1"),
+                                QStringLiteral("locale=zh-CN")})
+        check(conf.contains(need),
+              "every mask row survives the rewrite verbatim");
+
+    // A file with no trailing newline must not gain a blank line per save.
+    QString noNl = QStringLiteral("player=1ff\nlocale=zh-CN");
+    QString after = noNl;
+    for (int i = 0; i < 5; ++i)
+        after = compose(after, Mode::Split);
+    check(!after.contains(QLatin1String("\n\n")),
+          "a conf without a trailing newline does not accumulate blanks");
+    check(countRows(after) == 1, "and still ends with exactly one row");
+}
+
 void test_flagAndRoundTrip()
 {
     std::printf("D. --layout only in split; the conf round trip\n");
@@ -359,6 +488,7 @@ int main(int argc, char **argv)
     test_oldConfResolvesSingle();
     test_confSplitResolvesSplitWithSource();
     test_priorityChain();
+    test_repeatedSavesDoNotStackTheRow();
     test_flagAndRoundTrip();
 
     std::printf("=======================================================\n");

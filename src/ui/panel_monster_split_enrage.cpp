@@ -147,8 +147,9 @@ MonsterEnrageModel buildMonsterEnrageModel(
 
 } // namespace mhw
 
-MonsterEnrageStripPanel::MonsterEnrageStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("monster-enrage"), Corner::TopLeft, parent)
+MonsterEnrageStripPanel::MonsterEnrageStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("monster-enrage"), Corner::TopLeft, parent,
+        subWindowIndex)
 {
     // No chrome, no title row: an enrage meter is a fragment of the
     // monster panel, not a panel. The translucent body still comes from

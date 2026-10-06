@@ -145,7 +145,12 @@ class MonsterPartsStripPanel : public Panel {
     Q_OBJECT
 
 public:
-    explicit MonsterPartsStripPanel(QWidget *parent = nullptr);
+    // `subWindowIndex` is this window’s row in its parent’s split table. It
+    // arrives at construction time because the base Panel constructor calls
+    // loadConfig(), and the index exists only to pick that call’s first-run
+    // default — see defaultMarginsForSubWindow() in panel.cpp. A setter
+    // would always be one call too late.
+    explicit MonsterPartsStripPanel(QWidget *parent = nullptr, int subWindowIndex = 0);
 
     // Full monster snapshot. Caches the resolved cards for paintPanel()
     // to read, mirroring MonsterPanel's `monster_` member + update().

@@ -4,6 +4,11 @@
 
 #include "ui/panel.h"
 #include "ui/panel_accent.h"
+// v0.13: the per-game layout namespace. The console constructs the split
+// preview windows itself, so it must declare which game they belong to —
+// the scoping is a process-global that only main.cpp used to set, which
+// left every console preview reading the World sections.
+#include "ui/panel_settings_game.h"
 #include "ui/panel_player.h"
 #include "ui/panel_monster.h"
 #include "ui/panel_damage.h"
@@ -171,7 +176,7 @@ constexpr int kSplitWindowRowCount =
 static_assert(mhw::PlayerSection::kPlayerSplitTargetCount == 6,
               "kPlayerSplitTargets row count changed: add a line to "
               "kSplitWindowRows AND a case in makeSplitWindow()");
-static_assert(mhw::kMonsterSplitTargetCount == 5,
+static_assert(mhw::kMonsterSplitTargetCount == 2,
               "kMonsterSplitTargets row count changed: add a line to "
               "kSplitWindowRows AND a case in makeSplitWindow()");
 static_assert(mhw::DamageSplitSlot::kCount == 2,
@@ -2299,13 +2304,38 @@ void ControlPanel::switchGame(mhw::GameId game)
     // v0.13: the split windows' demo seeds are game-specific (衣装 seeds
     // a World player, 翔虫 a Rise one), so the same retarget the base
     // panel gets. The windows that have no seed variance need nothing.
-    if (splitPreview_) {
-        splitPreview_->syncAll(game,
-                               ControlPanel::maskFor(ctl_[0]),
-                               ControlPanel::maskFor(ctl_[1]),
-                               ControlPanel::maskFor(ctl_[2]));
-        splitPreview_->renderAll(canvas_);
-    }
+    //
+    // THIS IS NOT ENOUGH, AND THAT IS THE RAIL-SWITCH BUG.
+    //
+    // syncAll() retargets the demo data and re-pushes the section masks,
+    // which is everything a window's CONTENT depends on. What it cannot
+    // do is re-read the window's QSettings namespace, because a Panel
+    // reads that exactly once — inside its constructor (Panel::loadConfig()
+    // -> Panel::settingsGroup()) — and the result is already in the
+    // members of a live widget. Setting the game before the windows exist
+    // works; setting it afterwards has no reader. The user's disk was the
+    // evidence: a `[rise/...]` section with ZERO sub-window keys beside a
+    // `[world/...]` section holding all thirteen, because the host that
+    // would have written them was constructed while the namespace still
+    // said World and never rebuilt.
+    //
+    // So the switch has to go through syncSplitPreviewToCanvas(), which
+    // sets the panel-settings game FIRST and then destroys and rebuilds
+    // the host when the game it was built for differs from the game now
+    // in force. That is the only path on which a new Panel constructor
+    // runs, and a new constructor is the only thing that can pick up the
+    // new namespace.
+    //
+    // WHY THIS IS SAFE IN SINGLE MODE. syncSplitPreviewToCanvas() pushes
+    // the mode into the canvas first and returns early when it is not
+    // Split, so in Single mode this call costs one comparison and builds
+    // nothing — the fourteen layer-shell surfaces a Split preview holds
+    // are never created by a rail click while the user is in Single.
+    //
+    // WHY A PUBLIC METHOD AND NOT switchGame() INLINING IT. The mode
+    // in force is private state and the canvas's bindings must not be
+    // dependent on any caller getting that ordering right.
+    syncSplitPreviewToCanvas();
     // Toggle visibility of the World-only / Rise-only section rows in
     // place. The rows were created once at construction; show/hide them
     // as the rail selection flips. Rebuilt-then-deleteLater turned out
@@ -2801,13 +2831,80 @@ void ControlPanel::syncSplitPreviewToCanvas()
         // Single: the windows are no longer needed, and keeping them
         // alive would hold fourteen layer-shell surfaces open for a
         // preview nobody is looking at.
+        //
+        // THE HOST AND THE CANVAS ARE TWO HALVES OF ONE FACT.
+        // setLayoutMode(Single) above already emptied the canvas's
+        // subSlots_, but it is re-entrant-safe rather than
+        // order-guaranteed: the next call to
+        // setSubWindowBindings() would happily re-fill them, and
+        // refreshSplitWindowPreviews() renders into them. Resetting the
+        // host here is therefore not sufficient on its own — the canvas
+        // must be told the same thing, or the two can disagree about
+        // what is drawn.
         splitPreview_.reset();
+        canvas_->setSubWindowBindings({});
         return;
     }
 
-    if (!splitPreview_) {
+    // v0.13: THE GAME FIRST, ALWAYS. The window objects read their
+    // persisted layout inside the Panel constructor (loadConfig ->
+    // settingsGroup()), so the game has to be in force BEFORE the first
+    // one is constructed — setting it afterwards retargets the demo SEED
+    // but leaves the window sitting on whatever geometry it loaded. That
+    // is why a Rise preview showed World's corners, and why a drag in the
+    // Rise preview was written back into World's namespace: the windows
+    // were built while the scoping global still held its World default,
+    // because only main.cpp:586 ever set it and the console is a separate
+    // process.
+    //
+    // Also run this before a REBUILD, not only a first build: switching
+    // the rail to the other game destroys and recreates the host, and the
+    // new host must load that game's sections.
+    mhw::setPanelSettingsGame(currentGame());
+
+    // THE GAME THE CURRENT HOST WAS BUILT FOR. Recorded at build time so
+    // the next call can tell "I am new" (build a host) apart from "I am
+    // for the OTHER game" (destroy and build a new one) apart from "I am
+    // for this game already" (do nothing). Three states, not two: the
+    // middle one is the whole rail-switch bug.
+    //
+    // WHY REBUILD AND NOT RESYNC. A Panel caches everything the panel
+    // namespace decides for it, and it reads it exactly once, inside its
+    // constructor: loadConfig() runs there and calls settingsGroup(),
+    // which resolves the game-scoped group name and then reads ml / mt /
+    // mr / mb / scale / minW / minH / opacity / bgAlpha out of it. By the
+    // time the constructor returns, those numbers are already members of
+    // a live widget. So setPanelSettingsGame() — the one thing that could
+    // redirect them — has nothing left to act on: the geometry was read
+    // from a group name that was resolved with the OLD game and there is
+    // no reader to run again.
+    //
+    // syncAll() cannot fix that, and trying it is what produced the user's
+    // «Rise 预览不同步». syncAll() re-seeds the demo data, which changes
+    // WHAT a window paints, and re-pushes the section masks, which change
+    // WHICH blocks it paints. Neither touches margins, scale, opacity,
+    // floors or the columns dial — the four things that decide where the
+    // window sits and how big it is. So the preview kept World's
+    // geometry while drawing Rise's demo pills, which is precisely the
+    // mismatch reported. The only way to make a Panel re-read its
+    // namespace is to run its constructor again.
+    //
+    // The fourteen windows are also the expensive objects the host exists
+    // to own, and rebuild-on-rail-switch is bounded by the user clicking
+    // a rail button — twice a session at most. That is the right trade
+    // against a preview that lies.
+    const mhw::GameId hostGame = splitPreviewHostGame_;
+    const bool needsRebuild = !splitPreview_
+                             || hostGame != currentGame();
+    if (needsRebuild) {
+        // Destroy FIRST. The old host's windows own PanelSourceAdapters
+        // the canvas holds raw pointers to, and dropping the host frees
+        // them; the new bindings below arrive before the next paint, so
+        // the canvas never observes a freed source.
+        splitPreview_.reset();
         splitPreview_ = std::make_unique<SplitWindowPreviewHost>();
         splitPreview_->ensureBuilt();
+        splitPreviewHostGame_ = currentGame();
         canvas_->setSubWindowBindings(splitPreview_->bindings());
         // The first paint needs pixmaps; a later mask change goes
         // through refreshSplitWindowPreviews() instead.
@@ -2817,8 +2914,9 @@ void ControlPanel::syncSplitPreviewToCanvas()
                                ControlPanel::maskFor(ctl_[2]));
         splitPreview_->renderAll(canvas_);
         qInfo("monster-control: split preview: %d sub-window(s) "
-              "(%d player, %d monster, %d damage)",
+              "built for %s (%d player, %d monster, %d damage)",
               splitPreview_->count(),
+              currentGame() == mhw::GameId::Rise ? "rise" : "world",
               splitPreview_->countForParent(0),
               splitPreview_->countForParent(1),
               splitPreview_->countForParent(2));
@@ -2871,9 +2969,32 @@ void ControlPanel::applyLayoutChoice(mhw::PlayerSection::PlayerLayoutMode mode)
     // No child: the choice is written to disk and picked up by the NEXT
     // launch. No dialog — nothing was interrupted, nothing to confirm.
     if (!overlay_->isRunning()) {
-        saveMaskToDisk();     // also rewrites the layout= row
+        // AND THE CANVAS MOVES TOO. This is the arm the user actually
+        // hits: the console is open, the overlay is not, and they are
+        // deciding what the NEXT launch should look like. It used to
+        // return here, so the combo, the conf row and the preview all
+        // disagreed until the console was reopened — the user's
+        // «切换完全没反应», seen from the no-child side.
+        //
+        // THE ORDER IS THE OTHER HALF OF THE SAME BUG.
+        // saveMaskToDisk() serialises the `layout=` row FROM
+        // layoutModeInForce_, so the mode has to move before the write,
+        // not after it. With the old ordering the row on disk named the
+        // mode the user was LEAVING: every apply on the no-child path
+        // wrote one mode behind, and the console then reported one
+        // layout while the conf declared another — the exact
+        // inconsistency saveMaskToDisk()'s own comment describes as the
+        // symptom it was written to remove.
         layoutModeInForce_ = mode;
         updateLayoutApplyEnabled();
+        saveMaskToDisk();     // also rewrites the layout= row
+        //
+        // Nothing else has to move: the mode is a whole-canvas decision,
+        // the four base panels' pixmaps are unchanged by a topology
+        // switch, and the split windows either get built here (Split) or
+        // dropped here (Single), both of which
+        // syncSplitPreviewToCanvas() owns.
+        syncSplitPreviewToCanvas();
         qInfo("monster-control: layout=%s saved; the next launch uses it",
               mode == mhw::PlayerSection::PlayerLayoutMode::Split ? "split"
                                                                  : "single");
@@ -2892,12 +3013,21 @@ void ControlPanel::applyLayoutChoice(mhw::PlayerSection::PlayerLayoutMode mode)
         return;
     }
 
-    saveMaskToDisk();         // the row the relaunched child will read
+    // THE SAME ORDER FIX, on the running-child arm. saveMaskToDisk()
+    // writes the row FROM layoutModeInForce_, and buildOverlayArgv()
+    // spells the flag from it as well, so both reads must observe the
+    // new mode. Writing first and moving the mode afterwards left the
+    // relaunched child with a `layout=` row one mode behind the
+    // `--layout` it was handed — and since the CLI flag outranks the
+    // conf row, the overlay would have come back in the NEW mode while
+    // the user's own hand-written override was silently discarded by
+    // the contradiction. The mode moves first, and everything after
+    // reads the mode the user just chose.
     layoutModeInForce_ = mode;
     updateLayoutApplyEnabled();
+    saveMaskToDisk();         // the row the relaunched child will read
     // v0.13: the canvas follows the mode immediately, so the user sees
     // the preview change before the child has even been asked to exit.
-    // This is the ONLY other place the mode in force moves.
     syncSplitPreviewToCanvas();
 
     // THE RESTART MECHANISM, reusing what the game hot-swap invented:
@@ -2987,12 +3117,43 @@ void ControlPanel::saveMaskToDisk() const
     // a file with `layout=single` resolve identically — which is the
     // property that keeps an old conf byte-for-byte single.
     //
+    // WHY THE OLD ONE IS DROPPED FIRST. The parser scans every line and
+    // stops at the first one it can read as Split, so duplicates resolve
+    // correctly — which is exactly what made them invisible: nothing
+    // failed, the conf just grew a row per save. What stopped being true
+    // is the thing the user actually watches. saveMaskToDisk() runs on
+    // close, before START, and on every apply, so a session that toggled
+    // between two modes ended with the file's LAST row contradicting the
+    // mode now in force — and the next launch read that last row. The
+    // console was then reporting one layout while the conf declared
+    // another, which is the "I switched and nothing happened" symptom.
+    //
+    // So the row is a SET, not a pile: every existing one is removed and a
+    // single fresh row appended iff Split. Two saves in a row still
+    // produce one row, and a mode that changed in between produces the
+    // row for the mode that is now in force.
+    QByteArray written = data;
+    const QByteArray layoutKey(mhw::kConsoleLayoutRowKey);
+    {
+        QList<QByteArray> lines = data.split('\n');
+        QList<QByteArray> kept;
+        kept.reserve(lines.size() + 1);
+        for (const QByteArray &line : lines) {
+            if (line.trimmed().startsWith(layoutKey + '='))
+                continue;   // drop every stale copy; see WHY above
+            kept.append(line);
+        }
+        written = kept.join('\n');
+        // join() leaves a trailing NUL when the source ended in '\n'
+        // (split's last element is empty), which join does not re-add.
+        if (data.endsWith('\n') && !written.endsWith('\n'))
+            written.append('\n');
+    }
     // NO TRAILING-NEWLINE DOUBLE. The codec's output already ends in
     // '\n' and so does the row, so a single append lands one row per
     // line with exactly one terminator. Nothing below re-splits on '\n'
     // to decide where a row begins, so this is not load-bearing — but
     // the file is user-editable, so it stays clean.
-    QByteArray written = data;
     written.append(mhw::serializeConsoleLayoutRow(layoutModeInForce()));
 
     const QString parent = QFileInfo(path).absolutePath();

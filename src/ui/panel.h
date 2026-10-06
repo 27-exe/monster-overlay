@@ -118,7 +118,17 @@ public:
     int  lockWidth() const { return lockW_; }
     int  lockHeight() const { return lockH_; }
 
-    Panel(const QString &settingsKey, Corner corner, QWidget *parent = nullptr);
+    // `subWindowIndex` is the window's row in its parent's split table, or
+    // 0 for a base panel. It has to arrive HERE rather than through a
+    // setter because loadConfig() runs inside this constructor, and the
+    // index only affects loadConfig()'s first-run default — see
+    // defaultMarginsForSubWindow() in panel.cpp for why a setter would
+    // always be too late.
+    //
+    // Defaulted to 0 so the four base panels and every existing
+    // constructor call compile and behave exactly as before.
+    Panel(const QString &settingsKey, Corner corner, QWidget *parent = nullptr,
+          int subWindowIndex = 0);
 
     // Schedule a repaint. Needed externally because the per-panel
     // update(Data) overloads shadow QWidget::update().
@@ -230,6 +240,18 @@ public:
     // the point: the four shipped panels keep answering "no" and every
     // existing PanelSourceAdapter keeps reporting isSubWindow()==false.
     [[nodiscard]] virtual bool isSubWindow() const { return false; }
+
+    // This sub-window's row in its parent's split table, or 0 for a base
+    // panel. It answers ONE question — where the window sits the FIRST
+    // time it is ever shown, before the user has dragged anything — and
+    // it answers it as a cascade rather than a coordinate: see
+    // defaultMarginsForSubWindow() in panel.cpp.
+    //
+    // It has to come from outside because Panel cannot know the table it
+    // belongs to, and a base panel has no row. Default 0, so the four
+    // shipped panels keep their own defaultMarginsFor() result unchanged.
+    void setSubWindowIndex(int index) { subWindowIndex_ = index; }
+    [[nodiscard]] int subWindowIndex() const { return subWindowIndex_; }
 
     // Edit-mode demo data is built once on first paint after entering
     // edit mode, then reused — keeps paint() O(display).
@@ -658,6 +680,9 @@ private:
 
     QString key_;
     Corner corner_;
+    // 0 = a base panel, or a sub-window's first row. Only loadConfig()
+    // reads it, and only to pick a first-run default; see setSubWindowIndex().
+    int subWindowIndex_ = 0;
     QSize logicalSize_;
     QMargins margins_;
     double scale_{Panel::kDefaultScale};

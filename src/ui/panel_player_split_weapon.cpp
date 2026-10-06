@@ -219,8 +219,9 @@ WeaponIdentityRow buildWeaponIdentityModel(const mhw::GameSnapshot &snap)
 
 } // namespace mhw
 
-PlayerWeaponStripPanel::PlayerWeaponStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("player-weapon"), Corner::TopLeft, parent)
+PlayerWeaponStripPanel::PlayerWeaponStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("player-weapon"), Corner::TopLeft, parent,
+        subWindowIndex)
 {
     // No chrome, no title row: the weapon row is a fragment of the
     // player panel, not a panel. setChromeVisible(false) suppresses the

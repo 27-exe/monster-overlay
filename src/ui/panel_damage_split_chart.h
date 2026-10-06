@@ -58,7 +58,12 @@ class DamageChartStripPanel : public Panel {
     Q_OBJECT
 
 public:
-    explicit DamageChartStripPanel(QWidget *parent = nullptr);
+    // `subWindowIndex` is this window’s row in its parent’s split table. It
+    // arrives at construction time because the base Panel constructor calls
+    // loadConfig(), and the index exists only to pick that call’s first-run
+    // default — see defaultMarginsForSubWindow() in panel.cpp. A setter
+    // would always be one call too late.
+    explicit DamageChartStripPanel(QWidget *parent = nullptr, int subWindowIndex = 0);
 
     // Full snapshot, the same entry point DamagePanel has. The World
     // feed and the Rise feed both land in the ViewModel, so one update()

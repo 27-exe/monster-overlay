@@ -276,8 +276,9 @@ void drawPc(QPainter &p, const QRectF &cell, const PcEntry &e)
 
 } // namespace
 
-MonsterPartsStripPanel::MonsterPartsStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("monster-parts"), Corner::TopLeft, parent)
+MonsterPartsStripPanel::MonsterPartsStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("monster-parts"), Corner::TopLeft, parent,
+        subWindowIndex)
 {
     // No chrome, no title row: a card grid is a fragment of the monster
     // panel, not a panel. The translucent body still comes from

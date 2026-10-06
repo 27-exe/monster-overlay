@@ -400,6 +400,18 @@ private:
     // definition to destroy an inline member. Pushed into the canvas
     // whenever the mode is in force AND the mode changes; never read in
     // Single mode, where the canvas's subSlots_ is empty by contract.
+    //
+    // v0.13 (the rail-switch fix): the host is ALSO rebuilt when the GAME
+    // changes, because a Panel reads its game-scoped QSettings group
+    // inside its constructor and no second read ever runs — so re-pointing
+    // the namespace cannot reach a window that already exists, and the
+    // only honest update is a new one.
+    // splitPreviewHostGame_ records which game the current host was built
+    // for, so syncSplitPreviewToCanvas() can tell "no host" apart from
+    // "host for the OTHER game" apart from "host for this game". The
+    // sentinel is World, which is both the namespace default and the game
+    // a fresh console starts on when nothing has been built yet.
+    mhw::GameId splitPreviewHostGame_{mhw::GameId::World};
     std::unique_ptr<SplitWindowPreviewHost> splitPreview_;
 
     // v0.6 Phase 5: most recent successful /proc scan (persisted under the

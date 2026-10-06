@@ -226,8 +226,9 @@ BarsModel buildBarsModel(const mhw::GameSnapshot &snap)
 
 } // namespace mhw
 
-PlayerBarsStripPanel::PlayerBarsStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("player-bars"), Corner::TopLeft, parent)
+PlayerBarsStripPanel::PlayerBarsStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("player-bars"), Corner::TopLeft, parent,
+        subWindowIndex)
 {
     // No chrome, no title row: a bar pair is a fragment of the player
     // panel, not a panel. setChromeVisible(false) suppresses the v0.3

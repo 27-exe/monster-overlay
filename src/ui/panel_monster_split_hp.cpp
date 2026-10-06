@@ -143,8 +143,9 @@ MonsterHpModel buildMonsterHpModel(const mhw::MonsterSnapshot &m)
 
 } // namespace mhw
 
-MonsterHpStripPanel::MonsterHpStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("monster-hp"), Corner::TopLeft, parent)
+MonsterHpStripPanel::MonsterHpStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("monster-hp"), Corner::TopLeft, parent,
+        subWindowIndex)
 {
     // No chrome, no title row: an HP bar is a fragment of the monster
     // panel, not a panel. setChromeVisible(false) suppresses the v0.3

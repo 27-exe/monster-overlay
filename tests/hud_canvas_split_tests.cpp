@@ -120,14 +120,18 @@ void testTableDerivation()
 {
     check(mhw::PlayerSection::kPlayerSplitTargetCount == 6,
           "kPlayerSplitTargets has 6 rows (one per player sub-window)");
-    check(mhw::kMonsterSplitTargetCount == 5,
-          "kMonsterSplitTargets has 5 rows (one per monster sub-window)");
+    // v0.13: the monster table was regrouped from five single-block rows
+    // to two, on the user's verdict that the split was「切太狠了」 — the
+    // portrait/enrage/HP glance belongs together, and the ailments/parts
+    // plan belongs together. Fewer windows, each with more in it.
+    check(mhw::kMonsterSplitTargetCount == 2,
+          "kMonsterSplitTargets has 2 rows (one per monster sub-window)");
     check(mhw::DamageSplitSlot::kCount == 2,
           "kDamageSplitTargets has 2 rows (one per damage sub-window)");
     check(mhw::PlayerSection::kPlayerSplitTargetCount
               + mhw::kMonsterSplitTargetCount
-              + mhw::DamageSplitSlot::kCount == 13,
-          "the three tables' rows sum to 13 sub-windows");
+              + mhw::DamageSplitSlot::kCount == 10,
+          "the three tables' rows sum to 10 sub-windows");
 
     // Every row must claim at least one bit. A row that claims nothing
     // would produce a preview box for a window that draws nothing, and
@@ -214,7 +218,7 @@ void testSingleModeLeavesSubSlotsEmpty()
 
 // ─── §3. One sub-window per table row, in table order ─────────────────
 //
-// A canvas told the full 13-row set must hold exactly 13 sub-windows,
+// A canvas told the full table-row set must hold exactly that many sub-windows,
 // because the split's window count is a property of the tables and not
 // of anything the preview chose. The derivation itself (which row maps
 // to which class) is in control_panel.cpp; what is pinned here is the
@@ -263,8 +267,8 @@ void testSubWindowCountMatchesTableRows()
     canvas.setSubWindowBindings(bindings);
     check(canvas.subWindowCount() == kPlayerRows + kMonsterRows + kDamageRows,
           "one sub-window per split-table row (13 for the three tables)");
-    check(canvas.subWindowCount() == 13,
-          "the bound is 13 = 6 player + 5 monster + 2 damage");
+    check(canvas.subWindowCount() == 10,
+          "the bound is 10 = 6 player + 2 monster + 2 damage");
 
     // A null source in the list is a row whose window did not resolve.
     // It must not become a box: a null dereference in the paint path is
@@ -275,7 +279,7 @@ void testSubWindowCountMatchesTableRows()
     nullRow.tableRow = 3;
     bindings.append(nullRow);
     canvas.setSubWindowBindings(bindings);
-    check(canvas.subWindowCount() == 13,
+    check(canvas.subWindowCount() == 10,
           "a binding with a null source is skipped, not counted");
 
     // A re-set replaces rather than appends: the caller re-derives the

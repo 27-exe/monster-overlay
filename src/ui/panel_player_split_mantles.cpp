@@ -227,8 +227,9 @@ MantleModel buildMantleModel(const mhw::GameSnapshot &snap)
 
 } // namespace mhw
 
-PlayerMantlesStripPanel::PlayerMantlesStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("player-mantles"), Corner::TopLeft, parent)
+PlayerMantlesStripPanel::PlayerMantlesStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("player-mantles"), Corner::TopLeft, parent,
+        subWindowIndex)
 {
     // No chrome, no title row: two mantle boxes are a fragment of the
     // player panel, not a panel. setChromeVisible(false) suppresses the
@@ -289,10 +290,23 @@ bool PlayerMantlesStripPanel::mantlesEnabled() const
 
 bool PlayerMantlesStripPanel::hasContent() const
 {
-    if (demoData_ && editMode())
-        return true;
     if (!mantlesEnabled())
         return false;
+    // The rows ARE the answer, in edit mode and out of it.
+    //
+    // It used to be `if (demoData_ && editMode()) return true;` ahead of
+    // this, and that is what put an empty mantle window into a Rise
+    // preview: demoData_ records that the seed RAN, not that it produced
+    // anything, and the seed under Rise deliberately produces nothing
+    // (buildMantleModel's Rise arm reads nothing). So the flag said "a demo
+    // happened" while rows_ was empty, and the window mounted to show the
+    // user an empty rectangle they had no way to explain.
+    //
+    // Every other decision in this window keys off rows_, and edit mode is
+    // already handled by the mask above (the demo keeps the same section
+    // bits a live read would), so nothing is lost by asking the same
+    // question the live path asks.
+    //
     // Empty on Rise (the reader fills no mantle slot) and whenever both
     // slots are unequipped. Either way the window must not exist: the
     // main loop's hasVisibleContent() answers false and the layer-shell

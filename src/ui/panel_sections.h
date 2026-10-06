@@ -1236,14 +1236,18 @@ namespace MonsterSplitSlot {
 // One alias per row of kMonsterSplitTargets. The value MUST be the
 // subscript of the row below, and kCount is cross-checked against the
 // table's row count by static_assert at the bottom.
+//
+// v0.13: TWO slots, not five. The rows they name are the user's own
+// grouping (「图标、激怒、血量在一块；异常状态和部位在一块」) — the
+// per-block windows that preceded them were a layout nobody asked for
+// and the first complaint was that five fragments was too many. The
+// names are Identity / Conditions because that is the distinction the
+// rows actually draw.
 enum : int {
-    Hp      = 0,   // 总 HP 条            -> MonsterHpStripPanel
-    Stamina = 1,   // 怪物耐力/疲劳条      -> MonsterStaminaStripPanel
-    Enrage  = 2,   // 怒气计量条           -> MonsterEnrageStripPanel
-    Ail     = 3,   // 异常状态卡 (.srow)   -> MonsterAilStripPanel
-    Parts   = 4,   // 部位网格 (.pgrid)    -> MonsterPartsStripPanel
+    Identity   = 0,   // 肖像+名字+大小+HP+激怒(+耐力) -> MonsterIdentityStripPanel
+    Conditions = 1,   // 异常状态卡 + 部位网格          -> MonsterConditionsStripPanel
 };
-constexpr int kCount = 5;
+constexpr int kCount = 2;
 } // namespace MonsterSplitSlot
 
 // One split window's claim on MonsterSection bits: "these blocks leave
@@ -1252,94 +1256,126 @@ struct MonsterSplitTarget {
     uint32_t mask;
 };
 
+// =====================================================================
+// THE TWO ROWS, AND WHY TWO.
+//
+// The user's report, verbatim: 「怪物的切太狠了，应该图标，激怒，血量
+// 是在一块，异常状态和部位在一块。同时还可选择性的关闭部分，比如激怒条」.
+// Three decisions, all recorded here.
+//
+// WHAT THE ROWS MEAN
+// ------------------
+//   Identity  = the monster as an ACTOR: who it is (六角肖像 + 金冠 +
+//              名字 + 大小) and how it is doing right now (HP 条 /
+//              怒气条 / 耐力条). This is the window a hunter looks at
+//              to answer "can I fight this and how is it going".
+//   Conditions = the monster as an OPPONENT: what is wrong with it
+//               (异常状态卡) and what can be broken (部位网格), plus
+//               the 勾爪软化 strip that lives INSIDE each .pc card.
+//              This is the window a hunter looks at to answer "where
+//              do I hit next".
+//
+// The two questions are asked at different times and read at different
+// speeds: identity is a glance, conditions is a plan. Splitting one
+// column into two windows that separate them is what "the split was too
+// aggressive" was describing — five fragments forced the user to
+// assemble the picture themselves, every hunt.
+//
+// WHAT THIS GIVES UP
+// ------------------
+// Two windows instead of five. Five windows meant five sub-windows to
+// arrange, five panels.ini sections to place, and a clipboard of
+// "which window is which" knowledge the user never asked for. Two is
+// the number at which the windows are distinguishable by their CONTENT
+// rather than by their geometry.
+//
+// WHAT IT DOES NOT GIVE UP
+// ------------------------
+// The per-block toggles. This is the third recorded decision, and the
+// one that keeps the user's "还可选择性的关闭部分，比如激怒条" from
+// being a regression: EVERY MonsterSection bit the two rows claim is
+// still readable from the windows' own section mask. The row's mask
+// is the UNION of the bits that block's SURFACE is allowed to draw;
+// each block inside the window re-tests its own bit before drawing.
+//
+// The mechanism, and why the window reads the mask itself rather than
+// being gated by an outer layer:
+//
+//   * The claim row is the union; the WINDOW receives
+//     monsterSubWindowMask(slot, userMask) — the user's own toggles
+//     intersected with the union. It then divides the received mask
+//     back out per block at every consumer of that block:
+//     the height reservation, the width reservation and the paint all
+//     call identityEnrageEnabled() / conditionsPartsEnabled() etc.,
+//     never the row's mask directly.
+//
+//   * That is the SAME discipline the split already has (the ail
+//     window's ailEnabled() the parts window's partsEnabled(), the
+//     hp window's hpEnabled()), just applied INSIDE a window instead
+//     of as the window's whole identity. Each window's own title
+//     case is still partly defined by what the user turned off:
+//     identity with Enrage off is portrait+name+HP, still a window.
+//     conditions with Ail off is parts alone, still a window.
+//
+//   * The outer layer CANNOT do it for us: a window's outer mask is
+//     the union of FOUR bits (Info|Hp|Enrage|Stamina) and the window's
+//     mount/unmount question is decided by that union. Gating the
+//     window on "every bit off" and then gating the blocks on their
+//     own bits is correct, but it means every DRAW site has to be
+//     block-aware. Making the draw site block-aware is the honest
+//     answer, not a complication to be avoided.
+//
+// So: four blocks can be turned off independently inside one surface,
+// and the surface still exists while any of them is on. That is what
+// the user asked for and it costs no new bits — Enrage is still
+// MonsterSection::Enrage, the console's existing 激怒 row still
+// changes it, and the console's slot-based mask writing
+// (control_panel.cpp:196) is untouched because MonsterSection's bit
+// order never moved.
+//
+// Row order is the cascade order (main.cpp's setSubWindowIndex), so
+// Identity cascades from the monster panel's own corner and Conditions
+// one step further out.
 constexpr MonsterSplitTarget kMonsterSplitTargets[] = {
-    // 总 HP 条. The panel's headline block and the first thing out. It
-    // is 15px of bar plus its 3px top/bottom padding (21 logical px
-    // total) and, as its own window, it is narrow enough to sit beside
-    // the target instead of under the hex portrait — the whole point
-    // of the split, since in the panel it is 362px wide with a number
-    // pair whose only job is being read from across the room.
-    {mhw::MonsterSection::Hp},
-
-    // 怪物耐力/疲劳条. HunterPie draws this gauge 10px tall directly
-    // under the HP bar (BossMonsterWidget), and v0.8.4-r23 copied that.
-    // This is the block the new MonsterSection::Stamina bit (1u << 6)
-    // exists for — see the bit's comment and
-    // migrateOldMonsterStaminaBit(). It gets its own window rather
-    // than riding on the HP window because the value of a separate
-    // surface is exactly the toggle: "is my target out of stamina" is
-    // a question a hunter asks on its own timing, and one bit for both
-    // would force them to be asked together.
+    // ── Identity — the monster as an ACTOR ──────────────────────────
     //
-    // Short bar + a 体力 label on the left, so it is the narrowest of
-    // the five windows at ~90px of label plus fill.
-    {mhw::MonsterSection::Stamina},
-
-    // 怒气计量条. The block that is least coupled to anything else in
-    // the panel and most often wanted on its own: a hunter watching
-    // for a rage window needs the meter, not the portrait it was
-    // sitting under. 12px tall (6 + 2*3), with the value right-aligned
-    // in the bar itself, so its window is a hair shorter than the HP
-    // one and draws no label of its own.
+    // Info|Hp|Enrage|Stamina. The four blocks the panel used to stack
+    // in one column (六角肖像, .bar.hp, .bar.st, .bar.er), and the four
+    // that answer the two most frequent in-hunt questions: WHICH
+    // monster is this, and HOW HURT it is.
     //
-    // It MIGHT have stayed in the panel with the HP bar the way it is
-    // in the panel's stack, the reason it did not being that the bar
-    // carries a 1.6 s pulse (MonsterPanel's enragePhase_ /
-    // kPulsePeriodMs) and a window that pulses independently of the
-    // HP bar it used to sit next to is a strictly better fit for a
-    // "my monster is about to rage" alarm than the panel's block is.
-    {mhw::MonsterSection::Enrage},
-
-    // 异常状态卡 (.srow, 4 columns). The card grid the ailment rows
-    // used to build inline inside paintPanel, with the 15 s
-    // change-based AutoHide table (ailTrack_) and the game-keyed
-    // colour lookup (ailmentStyle) resolved here in the window's own
-    // content model. A 4-column grid whose card count varies 0..N is a
-    // width a fixed-panel column cannot express, so it is the clearest
-    // case in the five for a window: the wrap is the window's own
-    // question, nobody else's.
+    // THE STACKING ORDER IS THE PANEL'S OWN. The window draws them in
+    // exactly the sequence panel_monster.cpp does (Info, then HP, then
+    // stamina, then enrage) so the fragment a hunter already knows how
+    // to read does not get reordered on the way out.
     //
-    // The AutoHide state is the one piece of mutable state the window
-    // has to carry, which is exactly what
-    // MonsterPartListBuilder::partTrack_ does for .pc cards — same
-    // pattern, and the panel's ailTrack_ member can be reduced to it
-    // as a follow-up (the panel still owns the single-mode copy
-    // today).
-    {mhw::MonsterSection::Ail},
+    // Info is the block that USED to be excluded, and the reason it
+    // is now here is the user's grouping. Portrait + name + size +
+    // crown + the enrage tag is what makes the window read as "this
+    // monster"; a window holding only bars has no subject.
+    {mhw::MonsterSection::Info | mhw::MonsterSection::Hp
+     | mhw::MonsterSection::Enrage | mhw::MonsterSection::Stamina},
 
-    // 部位网格 (.pgrid, 3 columns). The heaviest of the five and the
-    // one with the most shared machinery: PcEntry, the ONLY producer
-    // (MonsterPartListBuilder::build) and the ONLY height calculator
-    // (pcGaugeExtraH) already live in ui/viewmodel/monster_view_model.h
-    // with no widget dependency, so the window's content model is a
-    // thin wrapper that owns the builder and asks it for the list. It
-    // keeps the builder as a MEMBER, for the same reason MonsterPanel
-    // does: build() mutates the 15 s PartAutoHide table and a fresh
-    // one per paint would re-pin every card every frame.
+    // ── Conditions — the monster as an OPPONENT ────────────────────
     //
-    // It also inherits the panel's multiplayer suppression verbatim —
-    // the builder takes `multiplayer` as a plain parameter — so a
-    // non-host client's frozen Health pair is not drawn as HP in the
-    // window any more than it is in the panel.
-    {mhw::MonsterSection::Parts},
+    // Ail|Parts. The 15 s change-based AutoHide card grid and the
+    // 3-column part grid: the two grids' wrap is what a window is for,
+    // and Tenderize travels here because since v0.7.4 PR C the 勾爪
+    // 软化 countdown is a strip INSIDE each .pc card, height-reserved
+    // by the same predicate that draws it. It cannot be separated from
+    // Parts without drawing it twice.
+    //
+    // Both blocks are the panel's heaviest data and the least
+    // glanceable, which is exactly why they belong together: a hunter
+    // opening this window is planning an attack, not checking a
+    // status.
+    {mhw::MonsterSection::Ail | mhw::MonsterSection::Parts},
 };
 
-// NOT in this table, and why — the two remaining MonsterSection bits
-// are named here so their omission is a recorded decision rather than an
+// NOT in this table, and why — the ONE remaining MonsterSection bit is
+// named here so its omission is a recorded decision rather than an
 // oversight:
 //
-//   Info (1u << 0)      — 六角肖像 + 金冠 + 名字 + 大小 + 激怒标签. Its
-//                         width is set by the CONTENT (the monster's
-//                         name at 15px Chakra Bold, letter-spacing 1),
-//                         not by a wrap question, so a window returns
-//                         almost nothing over the panel: the panel's
-//                         380px already lets the name run to its
-//                         natural width. It is also the block that
-//                         carries the panel's identity — "which
-//                         monster am I fighting" — and splitting a
-//                         title row from the bars it titles is the
-//                         one split that makes both fragments harder
-//                         to read, not easier.
 //   Tenderize (1u << 5) — 勾爪软化倒计时胶囊. NOT a block of its own:
 //                         since v0.7.4 PR C it is a strip INSIDE each
 //                         .pc card, drawn and height-reserved by the
@@ -1347,8 +1383,9 @@ constexpr MonsterSplitTarget kMonsterSplitTargets[] = {
 //                         uses (panel_monster.cpp). Giving it a window
 //                         would mean either re-parenting a strip that
 //                         is defined by the card it sits in, or
-//                         drawing it twice. It travels with Parts,
-//                         which is where it lives.
+//                         drawing it twice. It travels with Parts
+//                         (and therefore with Conditions), which is
+//                         where it lives.
 //
 // Rows are OR-disjoint by construction below, so exactly one window
 // draws a given block in Split mode and the panel draws none of them.
@@ -1435,8 +1472,29 @@ static_assert((monsterPanelMaskFor(PlayerSection::PlayerLayoutMode::Split,
     }
     return n;
 }
+
+// How many bits the table's rows claim in total, counted PER ROW.
+// Unlike monsterSplitRemovedBits() this does not fold the rows through
+// an OR, so two rows sharing a bit are counted twice here and once
+// there — and the difference between the two counts is exactly the
+// failure being asserted.
+//
+// v0.13: this function did not exist, because every row used to claim
+// exactly one bit and `bitCount(removed) == kMonsterSplitTargetCount`
+// was the same statement. The two grouped rows (Identity claims FOUR
+// bits, Conditions TWO) break that identity, so the assertion below is
+// now the player table's: COUNTED CLAIMS against the OR-folded union.
+// The guarantee it buys is the same one and it is stronger — it still
+// fails the instant two rows overlap.
+[[nodiscard]] constexpr int monsterSplitClaimedBitCount() noexcept
+{
+    int n = 0;
+    for (const MonsterSplitTarget &t : kMonsterSplitTargets)
+        n += monsterSplitBitCount(t.mask);
+    return n;
+}
 static_assert(monsterSplitBitCount(monsterSplitRemovedBits())
-                  == kMonsterSplitTargetCount,
+                  == monsterSplitClaimedBitCount(),
               "the removed bits must be exactly the table's rows, with "
               "no bit claimed by two windows");
 } // namespace mhw

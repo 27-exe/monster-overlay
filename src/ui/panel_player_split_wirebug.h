@@ -181,7 +181,12 @@ public:
     // instead of the one the content asked for.
     [[nodiscard]] int  wrappedColumns() const;
 
-    explicit PlayerWirebugStripPanel(QWidget *parent = nullptr);
+    // `subWindowIndex` is this window’s row in its parent’s split table. It
+    // has to arrive at construction time (not via a setter) because
+    // loadConfig() runs inside the base constructor and the index only
+    // affects that call’s first-run default — see
+    // defaultMarginsForSubWindow() in panel.cpp.
+    explicit PlayerWirebugStripPanel(QWidget *parent = nullptr, int subWindowIndex = 0);
 
     // Full snapshot. Caches the resolved capsules for paintPanel() to
     // read, mirroring PlayerPanel's `player_` member + update() pattern.

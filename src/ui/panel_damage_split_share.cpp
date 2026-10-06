@@ -22,8 +22,9 @@
 // definition here would be a redefinition error. The title key this
 // window asks for reaches the same table through it.
 
-DamageShareStripPanel::DamageShareStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("damage-share"), Corner::TopRight, parent),
+DamageShareStripPanel::DamageShareStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("damage-share"), Corner::TopRight, parent,
+        subWindowIndex),
       m_vm(this)
 {
     // No chrome, no title row: a share bar is a fragment of the damage

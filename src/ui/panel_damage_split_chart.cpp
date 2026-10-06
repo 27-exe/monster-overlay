@@ -26,8 +26,9 @@
 // in through this window's own header — a second definition here would
 // be a redefinition error.
 
-DamageChartStripPanel::DamageChartStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("damage-chart"), Corner::TopRight, parent),
+DamageChartStripPanel::DamageChartStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("damage-chart"), Corner::TopRight, parent,
+        subWindowIndex),
       m_vm(this)
 {
     // No chrome, no title row: a chart is a fragment of the damage

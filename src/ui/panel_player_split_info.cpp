@@ -405,8 +405,9 @@ InfoRow buildInfoModel(const mhw::GameSnapshot &snap)
 
 } // namespace mhw
 
-PlayerInfoStripPanel::PlayerInfoStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("player-info"), Corner::TopLeft, parent)
+PlayerInfoStripPanel::PlayerInfoStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("player-info"), Corner::TopLeft, parent,
+        subWindowIndex)
 {
     // No chrome, no title row: quest and process metadata are fragments of
     // the player panel, not a panel. setChromeVisible(false) suppresses

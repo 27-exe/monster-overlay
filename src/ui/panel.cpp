@@ -90,6 +90,73 @@ QMargins defaultMarginsFor(Corner corner)
     return QMargins(20, 20, 0, 0);
 }
 
+// ─── First-run placement of a sub-window ───────────────────────────────
+//
+// Every split window used to hard-code Corner::TopLeft, and a TopLeft
+// default is (20,20) — SAME FOR ALL OF THEM. So a first run stacked
+// eleven windows on one pixel. The user's own panels.ini says it: four
+// windows with identical `ml=20 mt=20`, three of them byte-identical,
+// which is the fingerprint of "never been dragged, using the default".
+//
+// The fix is a cascade, not a sprinkle of hand-picked coordinates. A
+// hand-picked set is right at one resolution and wrong at every other,
+// and it cannot answer "why is THIS window HERE". A cascade answers both
+// questions from the table the split is already driven by:
+//
+//   sub-window i of parent P sits offset from P by (i * kCascadeStepX,
+//   i * kCascadeStepY)
+//
+// which is exactly the relation the split expresses ("this block was
+// carved out of that panel") and which needs no screen size, no output
+// enumeration, and no per-window magic. The step is deliberately larger
+// than any sub-window's own margin so two neighbours never touch, and
+// small enough that six of them stay within a 1080p screen.
+//
+// It is a DEFAULT only. A stored value still wins outright — this path is
+// reached only when the section has no `ml`/`mt` at all, so a user who has
+// ever dragged a window keeps their layout, and a user who has not gets
+// something that looks arranged rather than something that looks broken.
+//
+// `indexInParent` is the row of the window in its own split table, so it
+// is 0 for the first sub-window of each parent. That means different
+// parents cascade from their own origin — a monster sub-window does not
+// inherit the player cascade's offset — and it is what keeps two clusters
+// from drifting on top of one another as rows are added.
+constexpr int kCascadeStepX = 24;
+constexpr int kCascadeStepY = 24;
+
+QMargins defaultMarginsForSubWindow(Corner corner, int indexInParent)
+{
+    QMargins m = defaultMarginsFor(corner);
+    if (indexInParent <= 0)
+        return m;
+    const int dx = indexInParent * kCascadeStepX;
+    const int dy = indexInParent * kCascadeStepY;
+    // Only the two axes the corner actually READS get the cascade: a
+    // TopLeft panel is placed by its left+top margins, and the other two
+    // components are unused. Adding to them would be dead arithmetic that
+    // looks like a position and saves into the file as noise.
+    switch (corner) {
+    case Corner::TopLeft:
+        m.setLeft(m.left() + dx);
+        m.setTop(m.top() + dy);
+        break;
+    case Corner::TopRight:
+        m.setRight(m.right() + dx);
+        m.setTop(m.top() + dy);
+        break;
+    case Corner::BottomLeft:
+        m.setLeft(m.left() + dx);
+        m.setBottom(m.bottom() + dy);
+        break;
+    case Corner::BottomRight:
+        m.setRight(m.right() + dx);
+        m.setBottom(m.bottom() + dy);
+        break;
+    }
+    return m;
+}
+
 // Absolute ceiling for a margin component whose anchored edge is not
 // the binding constraint — i.e. the two components a corner anchor
 // never reads (see Panel::clampMarginsToScreen). Kept at the historical
@@ -114,10 +181,12 @@ int clampMargin(int v, int limit)
 
 } // namespace
 
-Panel::Panel(const QString &settingsKey, Corner corner, QWidget *parent)
+Panel::Panel(const QString &settingsKey, Corner corner, QWidget *parent,
+             int subWindowIndex)
     : QMainWindow(parent)
     , key_(settingsKey)
     , corner_(corner)
+    , subWindowIndex_(subWindowIndex)
     , margins_(defaultMarginsFor(corner))
 {
     setObjectName(QStringLiteral("mhw-panel-%1").arg(settingsKey));
@@ -274,7 +343,13 @@ QString Panel::settingsGroup() const
 
 void Panel::loadConfig()
 {
-    const QMargins def = defaultMarginsFor(corner_);
+    // A sub-window's first run is a CASCADE from its parent, not the same
+    // corner default as everyone else — see defaultMarginsForSubWindow()
+    // for why eleven TopLeft windows on one pixel was the previous
+    // behaviour. A stored value still wins outright.
+    const QMargins def = (subWindowIndex_ > 0)
+        ? defaultMarginsForSubWindow(corner_, subWindowIndex_)
+        : defaultMarginsFor(corner_);
     // v0.13: migrate a pre-v0.13 un-prefixed section into this game's
     // namespace BEFORE reading it, so a user's existing layout is not
     // silently abandoned (its keys would otherwise read as "absent").

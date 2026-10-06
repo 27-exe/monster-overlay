@@ -41,12 +41,16 @@
 // v0.12 third wave: the monster panel's blocks and the damage panel's two
 // width-hungry blocks. Same reason again — each is declared by its split
 // table row in panel_sections.h but constructed here, so this file is the
-// one place that knows all seven new names.
-#include "ui/panel_monster_split_hp.h"
-#include "ui/panel_monster_split_stamina.h"
-#include "ui/panel_monster_split_enrage.h"
-#include "ui/panel_monster_split_ail.h"
-#include "ui/panel_monster_split_parts.h"
+// one place that knows all the new names.
+//
+// v0.13: the monster's five are now TWO. The user asked for the
+// grouping 「图标，激怒，血量一块；异常状态和部位一块」, so
+// kMonsterSplitTargets has two rows and this file constructs the two
+// windows that answer for them. The old five single-block headers are
+// still in the tree (the parent session deletes them in one go), but
+// nothing here includes or names them any more.
+#include "ui/panel_monster_split_identity.h"
+#include "ui/panel_monster_split_conditions.h"
 #include "ui/panel_damage_split_share.h"
 #include "ui/panel_damage_split_chart.h"
 #include "ui/panel_player_split_info.h"
@@ -611,19 +615,43 @@ int main(int argc, char **argv)
     // nothing to delete. Their table rows are kPlayerSplitTargets[1..3],
     // and PlayerSplitSlot names the index each main.cpp block below uses
     // for playerSubWindowMask().
-    PlayerStatusStripPanel playerStatusStripPanel;
-    PlayerBarsStripPanel playerBarsStripPanel;
-    PlayerMantlesStripPanel playerMantlesStripPanel;
-    PlayerWirebugStripPanel playerWirebugStripPanel;
-    PlayerWeaponStripPanel playerWeaponStripPanel;
-    MonsterHpStripPanel monsterHpStripPanel;
-    MonsterStaminaStripPanel monsterStaminaStripPanel;
-    MonsterEnrageStripPanel monsterEnrageStripPanel;
-    MonsterAilStripPanel monsterAilStripPanel;
-    MonsterPartsStripPanel monsterPartsStripPanel;
-    DamageShareStripPanel damageShareStripPanel;
-    DamageChartStripPanel damageChartStripPanel;
-    PlayerInfoStripPanel playerInfoStripPanel;
+    // v0.13: each sub-window carries its row in its parent's split table
+    // as a CONSTRUCTOR argument, spelled from the enum rather than from a
+    // literal. It has to be here because the base Panel constructor calls
+    // loadConfig(), and the index exists solely to pick that call's
+    // first-run default — a setter after construction is a no-op for the
+    // one thing the value is for.
+    //
+    // The argument is what makes a first run a CASCADE instead of a pile:
+    // defaultMarginsFor(TopLeft) is (20,20) for every window on earth, so
+    // eleven of them hard-coding TopLeft used to stack on one pixel. The
+    // user's panels.ini showed exactly that: four windows with identical
+    // ml=20 mt=20, which is the fingerprint of "never been dragged".
+    //
+    // PlayerSplitSlot is nested in PlayerSection; MonsterSplitSlot and
+    // DamageSplitSlot sit at mhw level. That asymmetry is the existing
+    // layout of panel_sections.h and is recorded here so the next person
+    // does not have to rediscover it by compiler error.
+    PlayerStatusStripPanel playerStatusStripPanel(
+        nullptr, mhw::PlayerSection::PlayerSplitSlot::Status);
+    PlayerBarsStripPanel playerBarsStripPanel(
+        nullptr, mhw::PlayerSection::PlayerSplitSlot::Bars);
+    PlayerMantlesStripPanel playerMantlesStripPanel(
+        nullptr, mhw::PlayerSection::PlayerSplitSlot::Mantles);
+    PlayerWirebugStripPanel playerWirebugStripPanel(
+        nullptr, mhw::PlayerSection::PlayerSplitSlot::Wirebug);
+    PlayerWeaponStripPanel playerWeaponStripPanel(
+        nullptr, mhw::PlayerSection::PlayerSplitSlot::Weapon);
+    MonsterIdentityStripPanel monsterIdentityStripPanel(
+        nullptr, mhw::MonsterSplitSlot::Identity);
+    MonsterConditionsStripPanel monsterConditionsStripPanel(
+        nullptr, mhw::MonsterSplitSlot::Conditions);
+    DamageShareStripPanel damageShareStripPanel(
+        nullptr, mhw::DamageSplitSlot::Share);
+    DamageChartStripPanel damageChartStripPanel(
+        nullptr, mhw::DamageSplitSlot::Chart);
+    PlayerInfoStripPanel playerInfoStripPanel(
+        nullptr, mhw::PlayerSection::PlayerSplitSlot::Info);
 
     playerPanel.setEditMode(editMode);
     monsterPanel.setEditMode(editMode);
@@ -634,11 +662,8 @@ int main(int argc, char **argv)
     playerMantlesStripPanel.setEditMode(editMode);
     playerWirebugStripPanel.setEditMode(editMode);
     playerWeaponStripPanel.setEditMode(editMode);
-    monsterHpStripPanel.setEditMode(editMode);
-    monsterStaminaStripPanel.setEditMode(editMode);
-    monsterEnrageStripPanel.setEditMode(editMode);
-    monsterAilStripPanel.setEditMode(editMode);
-    monsterPartsStripPanel.setEditMode(editMode);
+    monsterIdentityStripPanel.setEditMode(editMode);
+    monsterConditionsStripPanel.setEditMode(editMode);
     damageShareStripPanel.setEditMode(editMode);
     damageChartStripPanel.setEditMode(editMode);
     playerInfoStripPanel.setEditMode(editMode);
@@ -687,11 +712,17 @@ int main(int argc, char **argv)
     // draw is filtered by the rows the table says each one owns
     // (monsterSubWindowMask), so a bit another window claims never
     // reaches them. The panel is the one that gets the reduced mask.
-    monsterHpStripPanel.setSectionMask(maskMonster);
-    monsterStaminaStripPanel.setSectionMask(maskMonster);
-    monsterEnrageStripPanel.setSectionMask(maskMonster);
-    monsterAilStripPanel.setSectionMask(maskMonster);
-    monsterPartsStripPanel.setSectionMask(maskMonster);
+    //
+    // v0.13: this is now MORE important than it was, because the two
+    // monster windows carry several blocks each. The Identity window is
+    // handed the full user mask and divides it back out per block
+    // (identityInfoEnabled / hpEnabled / staminaEnabled / enrageEnabled),
+    // which is exactly how 「把激怒条单独关掉」 works: the console's 激怒
+    // toggle still writes MonsterSection::Enrage, and the window reads
+    // that bit at every consumer of the enrage row. The Conditions
+    // window does the same with Ail and Parts.
+    monsterIdentityStripPanel.setSectionMask(maskMonster);
+    monsterConditionsStripPanel.setSectionMask(maskMonster);
     damageShareStripPanel.setSectionMask(maskDamage);
     damageChartStripPanel.setSectionMask(maskDamage);
     playerInfoStripPanel.setSectionMask(maskPlayer);
@@ -776,11 +807,8 @@ int main(int argc, char **argv)
     playerMantlesStripPanel.setPanelEnabled(playerSplitOn);
     playerWirebugStripPanel.setPanelEnabled(playerSplitOn);
     playerWeaponStripPanel.setPanelEnabled(playerSplitOn);
-    monsterHpStripPanel.setPanelEnabled(monsterSplitOn);
-    monsterStaminaStripPanel.setPanelEnabled(monsterSplitOn);
-    monsterEnrageStripPanel.setPanelEnabled(monsterSplitOn);
-    monsterAilStripPanel.setPanelEnabled(monsterSplitOn);
-    monsterPartsStripPanel.setPanelEnabled(monsterSplitOn);
+    monsterIdentityStripPanel.setPanelEnabled(monsterSplitOn);
+    monsterConditionsStripPanel.setPanelEnabled(monsterSplitOn);
     damageShareStripPanel.setPanelEnabled(damageSplitOn);
     damageChartStripPanel.setPanelEnabled(damageSplitOn);
     playerInfoStripPanel.setPanelEnabled(playerSplitOn);
@@ -847,11 +875,8 @@ int main(int argc, char **argv)
     playerWirebugStripPanel.setGameForDemo(gameId);
     playerWeaponStripPanel.setGameForDemo(gameId);
     playerInfoStripPanel.setGameForDemo(gameId);
-    monsterHpStripPanel.setGameForDemo(gameId);
-    monsterStaminaStripPanel.setGameForDemo(gameId);
-    monsterEnrageStripPanel.setGameForDemo(gameId);
-    monsterAilStripPanel.setGameForDemo(gameId);
-    monsterPartsStripPanel.setGameForDemo(gameId);
+    monsterIdentityStripPanel.setGameForDemo(gameId);
+    monsterConditionsStripPanel.setGameForDemo(gameId);
 
     playerPanel.show();
     monsterPanel.show();
@@ -900,11 +925,8 @@ int main(int argc, char **argv)
         playerInfoStripPanel.setVisible(editMode);
     }
     if (monsterSplitOn) {
-        monsterHpStripPanel.setVisible(editMode);
-        monsterStaminaStripPanel.setVisible(editMode);
-        monsterEnrageStripPanel.setVisible(editMode);
-        monsterAilStripPanel.setVisible(editMode);
-        monsterPartsStripPanel.setVisible(editMode);
+        monsterIdentityStripPanel.setVisible(editMode);
+        monsterConditionsStripPanel.setVisible(editMode);
     }
     if (damageSplitOn) {
         damageShareStripPanel.setVisible(editMode);
@@ -1039,11 +1061,8 @@ int main(int argc, char **argv)
         playerMantlesStripPanel.retranslateUi();
         playerWirebugStripPanel.retranslateUi();
         playerWeaponStripPanel.retranslateUi();
-        monsterHpStripPanel.retranslateUi();
-        monsterStaminaStripPanel.retranslateUi();
-        monsterEnrageStripPanel.retranslateUi();
-        monsterAilStripPanel.retranslateUi();
-        monsterPartsStripPanel.retranslateUi();
+        monsterIdentityStripPanel.retranslateUi();
+        monsterConditionsStripPanel.retranslateUi();
         damageShareStripPanel.retranslateUi();
         damageChartStripPanel.retranslateUi();
         playerInfoStripPanel.retranslateUi();
@@ -1217,42 +1236,34 @@ int main(int argc, char **argv)
         // selected monster the panel is showing, so a window and the
         // panel it was carved from can never disagree about which
         // monster’s HP bar is on screen.
+        //
+        // v0.13: TWO windows now, and each carries several blocks. The
+        // Identity window draws portrait+HP+stamina+enrage; the
+        // Conditions window draws ailments+parts. Neither receives a
+        // per-block mask here — both receive `maskMonster` once at
+        // startup and read their own bits at every consumer, which is
+        // what lets the user close the enrage bar without closing the
+        // monster.
         if (monsterSplitOn) {
-            const bool keepHpDemo = skipUpdate(monsterHpStripPanel);
-            if (!keepHpDemo)
-                monsterHpStripPanel.update(snap.monsters[selected]);
-            monsterHpStripPanel.setVisible(
-                monsterHpStripPanel.panelEnabled()
-                && monsterHpStripPanel.hasVisibleContent());
+            const bool keepIdentityDemo = skipUpdate(monsterIdentityStripPanel);
+            if (!keepIdentityDemo)
+                monsterIdentityStripPanel.update(snap.monsters[selected]);
+            monsterIdentityStripPanel.setVisible(
+                monsterIdentityStripPanel.panelEnabled()
+                && monsterIdentityStripPanel.hasVisibleContent());
 
-            const bool keepStaminaDemo = skipUpdate(monsterStaminaStripPanel);
-            if (!keepStaminaDemo)
-                monsterStaminaStripPanel.update(snap.monsters[selected]);
-            monsterStaminaStripPanel.setVisible(
-                monsterStaminaStripPanel.panelEnabled()
-                && monsterStaminaStripPanel.hasVisibleContent());
-
-            const bool keepEnrageDemo = skipUpdate(monsterEnrageStripPanel);
-            if (!keepEnrageDemo)
-                monsterEnrageStripPanel.update(snap.monsters[selected]);
-            monsterEnrageStripPanel.setVisible(
-                monsterEnrageStripPanel.panelEnabled()
-                && monsterEnrageStripPanel.hasVisibleContent());
-
-            const bool keepAilDemo = skipUpdate(monsterAilStripPanel);
-            if (!keepAilDemo)
-                monsterAilStripPanel.update(snap.monsters[selected]);
-            monsterAilStripPanel.setVisible(
-                monsterAilStripPanel.panelEnabled()
-                && monsterAilStripPanel.hasVisibleContent());
-
-            const bool keepPartsDemo = skipUpdate(monsterPartsStripPanel);
-            if (!keepPartsDemo)
-                monsterPartsStripPanel.update(snap.monsters[selected]);
-            monsterPartsStripPanel.setVisible(
-                monsterPartsStripPanel.panelEnabled()
-                && monsterPartsStripPanel.hasVisibleContent());
-
+            const bool keepConditionsDemo =
+                skipUpdate(monsterConditionsStripPanel);
+            if (!keepConditionsDemo)
+                monsterConditionsStripPanel.update(snap.monsters[selected]);
+            // v0.13: the parts grid's World-multiplayer suppression is a
+            // per-session fact the builder reads, so the Conditions
+            // window is told about it here — exactly as MonsterPanel
+            // is told, above.
+            monsterConditionsStripPanel.setMultiplayer(snap.isMultiplayer);
+            monsterConditionsStripPanel.setVisible(
+                monsterConditionsStripPanel.panelEnabled()
+                && monsterConditionsStripPanel.hasVisibleContent());
         }
 
             }
@@ -1448,11 +1459,8 @@ int main(int argc, char **argv)
             playerWirebugStripPanel.saveConfig();
             playerWeaponStripPanel.saveConfig();
             playerInfoStripPanel.saveConfig();
-            monsterHpStripPanel.saveConfig();
-            monsterStaminaStripPanel.saveConfig();
-            monsterEnrageStripPanel.saveConfig();
-            monsterAilStripPanel.saveConfig();
-            monsterPartsStripPanel.saveConfig();
+            monsterIdentityStripPanel.saveConfig();
+            monsterConditionsStripPanel.saveConfig();
             damageShareStripPanel.saveConfig();
             damageChartStripPanel.saveConfig();
         }

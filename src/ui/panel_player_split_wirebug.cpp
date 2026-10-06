@@ -217,8 +217,9 @@ WirebugModel buildWirebugModel(const mhw::GameSnapshot &snap)
 
 } // namespace mhw
 
-PlayerWirebugStripPanel::PlayerWirebugStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("player-wirebug"), Corner::TopLeft, parent)
+PlayerWirebugStripPanel::PlayerWirebugStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("player-wirebug"), Corner::TopLeft, parent,
+        subWindowIndex)
 {
     // No chrome, no title row: a capsule row is a fragment of the player
     // panel, not a panel. setChromeVisible(false) suppresses the v0.3
@@ -276,10 +277,15 @@ bool PlayerWirebugStripPanel::wirebugEnabled() const
 
 bool PlayerWirebugStripPanel::hasContent() const
 {
-    if (demoData_ && editMode())
-        return true;
     if (!wirebugEnabled())
         return false;
+    // The rows ARE the answer, in edit mode and out of it — the same fix
+    // and the same reasoning as PlayerMantlesStripPanel::hasContent(). The
+    // `if (demoData_ && editMode()) return true;` that used to precede this
+    // asserted that the seed RAN rather than that it produced anything, so
+    // a World preview mounted an empty window: buildWirebugModel's World
+    // arm reads nothing on purpose, and the flag overrode that.
+    //
     // Empty under World (the reader publishes nothing) and when every
     // wirebug is ready. Either way the window must not exist: the main
     // loop's hasVisibleContent() answers false and the layer-shell

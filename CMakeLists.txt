@@ -253,6 +253,23 @@ add_library(mhw-ui STATIC
     src/ui/panel_monster_split_ail.h
     src/ui/panel_monster_split_parts.cpp
     src/ui/panel_monster_split_parts.h
+    # v0.13: the regrouped monster windows. The user's verdict on the
+    # five-way split was「切太狠了」 — 图标/激怒/血量 belong together as the
+    # glance, 异常/部位 belong together as the plan — so the table went
+    # from five rows to two. The five single-block windows above are no
+    # longer referenced by kMonsterSplitTargets; they stay listed here
+    # because panel_monster_split_ail.{h,cpp} still owns the ail model that
+    # the conditions window includes, and because deleting them is a
+    # separate, deliberate step rather than a side effect of this one.
+    #
+    # Every block still has its own MonsterSection bit, so turning 激怒 off
+    # removes the bar AND its gap from the identity window rather than
+    # gating the whole window — which is what「还可选择性的关闭部分」asked
+    # for.
+    src/ui/panel_monster_split_identity.cpp
+    src/ui/panel_monster_split_identity.h
+    src/ui/panel_monster_split_conditions.cpp
+    src/ui/panel_monster_split_conditions.h
     src/ui/panel_pet_damage.cpp
     src/ui/panel_pet_damage.h
     src/ui/panel_player.cpp
@@ -1145,6 +1162,13 @@ add_executable(world-severable-scan-tests
     target_include_directories(player-weapon-strip-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(player-weapon-strip-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME player-weapon-strip-tests COMMAND player-weapon-strip-tests)
+    # Serialised against the other Widget tests that share the real
+    # ~/.config/monster-overlay/panels.ini: every Panel constructor
+    # reads and writes it, so running these concurrently aborts them.
+    # Offscreen too, so they never grab the user's display.
+    set_tests_properties(player-weapon-strip-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
 
     # v0.12: the shared rhythm every split window's layout is built from —
     # one margin, two gap grades, one font stack, and the promise that the
@@ -1158,6 +1182,13 @@ add_executable(world-severable-scan-tests
     target_include_directories(split-layout-consistency-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(split-layout-consistency-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME split-layout-consistency-tests COMMAND split-layout-consistency-tests)
+    # Serialised against the other Widget tests that share the real
+    # ~/.config/monster-overlay/panels.ini: every Panel constructor
+    # reads and writes it, so running these concurrently aborts them.
+    # Offscreen too, so they never grab the user's display.
+    set_tests_properties(split-layout-consistency-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
 
     # v0.13: the per-game layout namespace. What it pins is the migration's
     # four guarantees — only the current game's namespace is written, an
@@ -1183,6 +1214,13 @@ add_executable(world-severable-scan-tests
     target_include_directories(panel-capabilities-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(panel-capabilities-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME panel-capabilities-tests COMMAND panel-capabilities-tests)
+    # Serialised against the other Widget tests that share the real
+    # ~/.config/monster-overlay/panels.ini: every Panel constructor
+    # reads and writes it, so running these concurrently aborts them.
+    # Offscreen too, so they never grab the user's display.
+    set_tests_properties(panel-capabilities-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
 
     # v0.12 third wave: the monster panel's blocks as their own windows.
     # What it pins is the migration's two exhaustive sweeps (63 old-schema
@@ -1284,6 +1322,89 @@ add_executable(world-severable-scan-tests
     target_compile_options(console-layout-mode-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME console-layout-mode-tests COMMAND console-layout-mode-tests)
 
+    # v0.13: the first-run cascade. Eleven sub-windows used to hard-code
+    # Corner::TopLeft, and a TopLeft default is (20,20) — the same number
+    # for every one of them — so a first launch stacked them all on one
+    # pixel. The user's panels.ini had four windows with identical
+    # ml=20 mt=20, which is the fingerprint of "never dragged".
+    #
+    # What this pins is that no two sub-windows of one parent share a
+    # spot, that a STORED value still wins outright, and that the default
+    # needs no screen size (checked on a 640x480 and a 3840x2160 virtual
+    # output, since a coordinate-based default is right at one resolution
+    # and wrong at every other).
+    add_executable(split-default-placement-tests
+        tests/split_default_placement_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(split-default-placement-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(split-default-placement-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(split-default-placement-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME split-default-placement-tests COMMAND split-default-placement-tests)
+    set_tests_properties(split-default-placement-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # v0.13: no empty window in either game. The reported symptom was "both
+    # Rise and World previews have a completely empty floating window", and
+    # the mechanism was a short-circuit: hasContent() began `if (demoData_
+    # && editMode()) return true;`, which records that the demo seed RAN
+    # rather than that it produced anything. A game whose seed deliberately
+    # produces nothing — buildMantleModel's Rise arm, buildWirebugModel's
+    # World arm, both reading nothing on purpose — therefore mounted an
+    # empty rectangle.
+    #
+    # This asserts the real invariant rather than the two known cases:
+    # anywhere hasContent() answers true, the window must have a measurable
+    # body. A window claiming content at 2x2 or 0x0 is that same bug wearing
+    # a different coat, and this is what catches the next one.
+    add_executable(split-no-empty-window-tests
+        tests/split_no_empty_window_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(split-no-empty-window-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(split-no-empty-window-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(split-no-empty-window-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME split-no-empty-window-tests COMMAND split-no-empty-window-tests)
+    set_tests_properties(split-no-empty-window-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    add_executable(monster-split-grouping-tests
+        tests/monster_split_grouping_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(monster-split-grouping-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(monster-split-grouping-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(monster-split-grouping-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME monster-split-grouping-tests COMMAND monster-split-grouping-tests)
+    set_tests_properties(monster-split-grouping-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # v0.13: the console's split preview follows the game and the mode.
+    # The root of the reported symptom: the sub-window host was guarded by
+    # `if (!splitPreview_)`, true once per process, so a rail switch could
+    # re-seed demo data but could never re-run a Panel constructor — and a
+    # Panel reads its game-scoped QSettings group exactly once, inside that
+    # constructor. Hence 13 sub-window sections under [world] and none
+    # under [rise] in the user's panels.ini.
+    #
+    # The probe compares what the canvas PAINTS per game, so it needs no
+    # new public surface on HudCanvas.
+    add_executable(console-split-sync-tests
+        tests/console_split_sync_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(console-split-sync-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(console-split-sync-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-split-sync-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME console-split-sync-tests COMMAND console-split-sync-tests)
+    set_tests_properties(console-split-sync-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
+
     # v0.12: the 「任务/进程」 window's content model — what the snapshot's
     # quest block and connection block resolve to, and which half of them
     # is allowed to be empty. The window exists to give the diagnostic
@@ -1296,6 +1417,13 @@ add_executable(world-severable-scan-tests
     target_include_directories(player-info-strip-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(player-info-strip-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME player-info-strip-tests COMMAND player-info-strip-tests)
+    # Serialised against the other Widget tests that share the real
+    # ~/.config/monster-overlay/panels.ini: every Panel constructor
+    # reads and writes it, so running these concurrently aborts them.
+    # Offscreen too, so they never grab the user's display.
+    set_tests_properties(player-info-strip-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
 
 
     # v0.12: the startup mask priority chain (explicit --mask-* CLI value >

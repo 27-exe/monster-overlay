@@ -114,8 +114,9 @@ MonsterStaminaModel buildMonsterStaminaModel(const mhw::MonsterSnapshot &m)
 
 } // namespace mhw
 
-MonsterStaminaStripPanel::MonsterStaminaStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("monster-stamina"), Corner::TopLeft, parent)
+MonsterStaminaStripPanel::MonsterStaminaStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("monster-stamina"), Corner::TopLeft, parent,
+        subWindowIndex)
 {
     // No chrome, no title row: a fatigue meter is a fragment of the
     // monster panel, not a panel. The translucent body still comes from

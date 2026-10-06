@@ -198,8 +198,9 @@ MonsterAilModel buildMonsterAilModel(
 
 } // namespace mhw
 
-MonsterAilStripPanel::MonsterAilStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("monster-ail"), Corner::TopLeft, parent)
+MonsterAilStripPanel::MonsterAilStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("monster-ail"), Corner::TopLeft, parent,
+        subWindowIndex)
 {
     // No chrome, no title row: a card grid is a fragment of the monster
     // panel, not a panel. The translucent body still comes from

@@ -160,37 +160,69 @@ int main()
               mhw::PlayerSection::PlayerLayoutMode::Split, 0x7Fu)
               == (0x7Fu & ~removed),
           "mask: in Split mode the panel keeps exactly what it kept before");
-    check(removed == 0x5Eu,
-          "mask: the five split targets claim Hp|Stamina|Enrage|Ail|Parts");
+    check(removed == (mhw::MonsterSection::Info | mhw::MonsterSection::Hp
+                      | mhw::MonsterSection::Stamina
+                      | mhw::MonsterSection::Enrage
+                      | mhw::MonsterSection::Ail
+                      | mhw::MonsterSection::Parts),
+          "mask: the two split targets claim "
+          "Info|Hp|Stamina|Enrage|Ail|Parts");
 
-    // The panel is left with exactly two bits in Split mode: Info (the
-    // portrait it still owns) and Tenderize (the strip that lives inside
-    // a .pc card). Both are the recorded decisions on the table.
+    // The panel is left with exactly ONE bit in Split mode: Tenderize
+    // (the strip that lives inside a .pc card).
+    //
+    // v0.13: it used to be two — Info stayed with the portrait. The
+    // regrouping moved the portrait into the Identity window, because the
+    // user's grouping rule was「图标，激怒，血量是在一块」 and the portrait
+    // is the 图标. So the panel now holds only the tenderize strip, and
+    // asserting Info here would be asserting the pre-regroup world.
     const uint32_t kept = mhw::monsterPanelMaskFor(
         mhw::PlayerSection::PlayerLayoutMode::Split, mhw::MonsterSection::kAll);
-    check(kept == (mhw::MonsterSection::Info | mhw::MonsterSection::Tenderize),
-          "mask: the panel keeps exactly Info and Tenderize in Split mode");
+    check(kept == mhw::MonsterSection::Tenderize,
+          "mask: in Split mode the panel keeps only Tenderize — the "
+          "portrait left with the Identity window in v0.13");
 
-    // Each window's own mask is the user's toggle intersected with its
-    // claim — so turning 「耐力」 off in the console on the split path
-    // hides the stamina window and leaves the HP window drawing.
+    // Each window's own mask is the union of the blocks it claims,
+    // intersected with the user's toggles — so turning 「耐力」 off in the
+    // console on the split path removes the stamina BAR from the identity
+    // window (and its gap) while leaving the identity window mounted,
+    // which is the 「还可选择性的关闭部分」 behaviour.
+    //
+    // v0.13 regrouped the table from five single-block rows to two
+    // multi-block rows, so a sub-window's mask is now a UNION rather than
+    // one bit. The four single-bit expectations this section used to hold
+    // (slot Hp claims Hp, slot Stamina claims Stamina, …) no longer
+    // describe anything and are gone; what replaces them is the union plus
+    // the two independence cases the grouping could have broken.
     check(mhw::monsterSubWindowMask(
-              mhw::MonsterSplitSlot::Hp, 0x7Fu) == mhw::MonsterSection::Hp,
-          "subwindow: slot Hp claims MonsterSection::Hp");
-    check(mhw::monsterSubWindowMask(
-              mhw::MonsterSplitSlot::Stamina, 0x7Fu)
-              == mhw::MonsterSection::Stamina,
-          "subwindow: slot Stamina claims the new bit");
-    // 0x3f is kAll minus bit 6 — the "user turned 耐力 off" case.
-    check(mhw::monsterSubWindowMask(mhw::MonsterSplitSlot::Stamina, 0x3Fu)
-              == 0u,
-          "subwindow: a user toggle that clears bit 6 empties the window");
+              mhw::MonsterSplitSlot::Identity, 0x7Fu)
+              == (mhw::MonsterSection::Info | mhw::MonsterSection::Hp
+                  | mhw::MonsterSection::Enrage
+                  | mhw::MonsterSection::Stamina),
+          "subwindow: Identity claims portrait + HP + enrage + stamina, "
+          "not one bit");
+    check(mhw::monsterSubWindowMask(mhw::MonsterSplitSlot::Conditions,
+                                    0x7Fu)
+              == (mhw::MonsterSection::Ail | mhw::MonsterSection::Parts),
+          "subwindow: Conditions claims ailments + parts");
+    // 0x3f is kAll minus bit 6 — the "user turned 耐力 off" case. The
+    // identity window still has three other blocks, so it MUST stay
+    // mounted; only its mask narrows.
+    check(mhw::monsterSubWindowMask(mhw::MonsterSplitSlot::Identity, 0x3Fu)
+              == (mhw::MonsterSection::Info | mhw::MonsterSection::Hp
+                  | mhw::MonsterSection::Enrage),
+          "subwindow: turning 耐力 off narrows the identity mask but does "
+          "not empty it — the window stays mounted, minus the bar");
+    // The other direction: turning a Conditions block off must not take
+    // the other one with it.
+    check(mhw::monsterSubWindowMask(mhw::MonsterSplitSlot::Conditions,
+                                    ~mhw::MonsterSection::Parts & 0x7Fu)
+              == mhw::MonsterSection::Ail,
+          "subwindow: turning 部位 off leaves 异常状态 alone — the two "
+          "blocks are independent inside the shared window");
     check(mhw::monsterSubWindowMask(-1, 0x7Fu) == 0u
               && mhw::monsterSubWindowMask(99, 0x7Fu) == 0u,
           "subwindow: an out-of-range slot draws nothing");
-    check(mhw::monsterSubWindowMask(mhw::MonsterSplitSlot::Parts, 0x7Fu)
-              == mhw::MonsterSection::Parts,
-          "subwindow: slot Parts claims MonsterSection::Parts");
 
     // =====================================================================
     // 2. The migration — why an old conf does not lose the fatigue gauge.

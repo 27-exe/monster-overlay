@@ -153,6 +153,29 @@ constexpr qreal kSubBoxGap = 5.0;
 // The title strip above each box, so the user can name the window.
 constexpr int kSubTitleH = 12;
 
+// How far DOWN the cluster may grow before it starts a new column.
+//
+// The first cut stacked every sub-window of a parent into one vertical
+// column, because that is the most obvious layout and because it cannot
+// collide with the parent. With the player panel it is also fine: six
+// windows, a few hundred pixels. With seven to thirteen of them the column
+// runs past the edge of a screen that is only ~760px wide at the default
+// fit, and everything below the fold is simply not drawn — the preview
+// then shows "all the panels piled in one corner", which is what the
+// user reported.
+//
+// So the cluster WRAPS at a depth, starting a fresh column further out
+// from the parent, in the direction the cluster is already growing. Depth
+// is measured in boxes rather than pixels so the number of columns is
+// predictable from the mask: 4 max keeps the whole player cluster inside a
+// 1080p screen at the default fit (4 boxes x ~110px = 440px of column,
+// plus the parent's own box).
+constexpr int kSubClusterMaxRows = 4;
+
+// The gap between two columns of the same cluster. Wider than kSubBoxGap
+// so the wrap reads as a deliberate step rather than a stray box.
+constexpr qreal kSubColumnGap = 14.0;
+
 // Every sub-window box is drawn at this fraction of the size its content
 // reserves, for the same reason a parent's pixmap is drawn at the
 // window's own scale: a 380px damage bar drawn 1:1 beside the 378px
@@ -775,6 +798,9 @@ void HudCanvas::paintSubWindowCluster(const QRectF &parentTarget, int parentSlot
                             || parentCorner == Corner::BottomLeft);
     qreal edgeX = growRight ? parentTarget.right() + kSubClusterGap
                             : parentTarget.left() - kSubClusterGap;
+    // Boxes placed in the column currently being filled. Reset when the
+    // column wraps — see the wrap below.
+    int rowsInThisColumn = 0;
     qreal cursorY = parentTarget.top();
     // A right-anchored cluster extends leftwards from the same edge, so
     // `leftX` tracks the next box's left edge as it goes. Both axes are
@@ -819,7 +845,23 @@ void HudCanvas::paintSubWindowCluster(const QRectF &parentTarget, int parentSlot
 
         // Vertical stacking keeps the cluster clear of the screen's
         // other corner, which would otherwise collide when two panels
-        // share the top edge.
+        // share the top edge — until the column is kSubClusterMaxRows
+        // deep, at which point starting another column further out beats
+        // running off the canvas and drawing nothing.
+        //
+        // The wrap is per column, so the row index resets with it: a new
+        // column always starts level with the parent's top edge.
+        ++rowsInThisColumn;
+        if (rowsInThisColumn >= kSubClusterMaxRows) {
+            rowsInThisColumn = 0;
+            cursorY = parentTarget.top();
+            const qreal step = w + kSubColumnGap;
+            if (growRight)
+                edgeX += step;
+            else
+                leftX -= step;
+            continue;
+        }
         cursorY += h + kSubBoxGap;
     }
 

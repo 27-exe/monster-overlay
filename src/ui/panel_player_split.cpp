@@ -368,8 +368,9 @@ StatusStripModel buildStatusStripModel(const mhw::GameSnapshot &snap)
 
 } // namespace mhw
 
-PlayerStatusStripPanel::PlayerStatusStripPanel(QWidget *parent)
-    : Panel(QStringLiteral("player-status"), Corner::TopLeft, parent)
+PlayerStatusStripPanel::PlayerStatusStripPanel(QWidget *parent, int subWindowIndex)
+    : Panel(QStringLiteral("player-status"), Corner::TopLeft, parent,
+        subWindowIndex)
 {
     // A strip is a pure fragment: HunterPie's AbnormalityTray draws no
     // panel title either, and the only thing the base class would add
