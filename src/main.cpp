@@ -310,6 +310,22 @@ int main(int argc, char **argv)
         QStringLiteral("Pet damage panel QScreen name (default: OS primary)"),
         QStringLiteral("name"));
 
+
+    // v0.14: one screen for everything. The four per-panel options above
+    // only ever reached the four BASE panels, so in `--layout split` the
+    // thirteen sub-windows kept landing on whichever screen layer-shell
+    // picked by default — and because a layer-shell surface is positioned
+    // by (anchor corner + margins) with no move gesture, a sub-window on
+    // the wrong output could not be moved to another screen at all. The
+    // user reported exactly that.
+    //
+    // Read AFTER the per-panel options so a specific --output-monster
+    // still wins over a blanket --output-all.
+    QCommandLineOption outputAllOption(
+        QStringLiteral("output-all"),
+        QStringLiteral("Screen (QScreen::name(), e.g. DP-1) for every "
+                       "window, including split sub-windows."),
+        QStringLiteral("name"));
     parser.addOption(mapOption);
     parser.addOption(localeOption);
     parser.addOption(editOption);
@@ -329,6 +345,7 @@ int main(int argc, char **argv)
     parser.addOption(outputMonsterOption);
     parser.addOption(outputDamageOption);
     parser.addOption(outputPetsOption);
+    parser.addOption(outputAllOption);
     parser.process(app);
 
     // i18n startup locale, priority: --locale > conf(locale= row) > system
@@ -910,6 +927,45 @@ int main(int argc, char **argv)
         damagePanel.setOutputName(parser.value(outputDamageOption), false);
     if (parser.isSet(outputPetsOption))
         petDamagePanel.setOutputName(parser.value(outputPetsOption), false);
+
+    // v0.14: --output-all, applied AFTER the four above so a specific
+    // --output-monster still wins over the blanket value.
+    //
+    // It reaches the sub-windows too, which is the whole point: the four
+    // per-panel options were written in v0.8 when "a panel" meant "one of
+    // four big windows", and when the split arrived in v0.12 nothing
+    // extended them. A sub-window's output was therefore unreachable from
+    // the command line, and unreachable from the UI as well, because
+    // layer-shell has no move gesture — an output is fixed by the surface's
+    // anchor and its margins.
+    if (parser.isSet(outputAllOption)) {
+        const QString out = parser.value(outputAllOption);
+        playerPanel.setOutputName(out, false);
+        monsterPanel.setOutputName(out, false);
+        damagePanel.setOutputName(out, false);
+        petDamagePanel.setOutputName(out, false);
+        // Every split sub-window, in one pass. A helper rather than
+        // thirteen lines so a future window cannot be missed: the list
+        // below is checked against kSplitWindowRows by a static_assert in
+        // control_panel.cpp, but nothing checks THIS list, so it is spelled
+        // once and referenced once.
+        for (Panel *sub : {
+                 (Panel *)&playerStatusStripPanel,
+                 (Panel *)&playerBarsStripPanel,
+                 (Panel *)&playerMantlesStripPanel,
+                 (Panel *)&playerWirebugStripPanel,
+                 (Panel *)&playerWeaponStripPanel,
+                 (Panel *)&playerInfoStripPanel,
+                 (Panel *)&monsterIdentityStripPanel,
+                 (Panel *)&monsterConditionsStripPanel,
+                 (Panel *)&damageShareStripPanel,
+                 (Panel *)&damageChartStripPanel,
+             }) {
+            sub->setOutputName(out, false);
+        }
+        qInfo("overlay: --output-all=%s applied to every window",
+              qPrintable(out));
+    }
 
     // v0.12: retarget the strip's edit-mode demo preview at the game this
     // run resolved. There is no equivalent call for playerPanel here today —
