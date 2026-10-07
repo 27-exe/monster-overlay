@@ -31,6 +31,8 @@
 #include "ui/panel_monster_split_parts.h"
 #include "ui/panel_damage_split_share.h"
 #include "ui/panel_damage_split_chart.h"
+#include "ui/panel_monster_split_identity.h"
+#include "ui/panel_monster_split_conditions.h"
 #include "ui/toggle_chip.h"
 #include "ui/section_row.h"
 #include "ui/section_count_bar.h"
@@ -156,12 +158,15 @@ const SplitWindowRow kSplitWindowRows[] = {
     {0, 3, "player-bars"},        // Bars            -> PlayerBarsStripPanel
     {0, 4, "player-weapon"},      // Weapon|Sharpness-> PlayerWeaponStripPanel
     {0, 5, "player-info"},        // Conn | Quest    -> PlayerInfoStripPanel
-    // ---- kMonsterSplitTargets, 5 rows ----
-    {1, 0, "monster-hp"},         // Hp        -> MonsterHpStripPanel
-    {1, 1, "monster-stamina"},    // Stamina   -> MonsterStaminaStripPanel
-    {1, 2, "monster-enrage"},     // Enrage    -> MonsterEnrageStripPanel
-    {1, 3, "monster-ail"},        // Ail       -> MonsterAilStripPanel
-    {1, 4, "monster-parts"},      // Parts     -> MonsterPartsStripPanel
+    // ---- kMonsterSplitTargets, 2 rows ----
+    // v0.13 regrouped these from five single-block windows to two, on the
+    // user's verdict that the split was "切太狠了": the glance (portrait +
+    // enrage + HP + stamina) is one window, the plan (ailments + parts) is
+    // the other. The five single-block classes still exist in the tree but
+    // no split-table row claims them, so a preview that constructed them
+    // was previewing windows that do not ship.
+    {1, 0, "monster-identity"},   // Info|Hp|Enrage|Stamina
+    {1, 1, "monster-conditions"}, // Ail|Parts
     // ---- kDamageSplitTargets, 2 rows ----
     {2, 0, "damage-share"},       // Share -> DamageShareStripPanel
     {2, 1, "damage-chart"},       // Chart -> DamageChartStripPanel
@@ -182,8 +187,14 @@ static_assert(mhw::kMonsterSplitTargetCount == 2,
 static_assert(mhw::DamageSplitSlot::kCount == 2,
               "kDamageSplitTargets row count changed: add a line to "
               "kSplitWindowRows AND a case in makeSplitWindow()");
+// Spelled from the three counts rather than a literal sum, so the monster
+// regrouping (five rows to two) could not leave a `13` behind: a literal
+// there is a fourth place the same number is written, and it was the one
+// that did not change.
 static_assert(kSplitWindowRowCount
-                  == 6 + 5 + 2,
+                  == mhw::PlayerSection::kPlayerSplitTargetCount
+                         + mhw::kMonsterSplitTargetCount
+                         + mhw::DamageSplitSlot::kCount,
               "the build table must have one line per split-table row");
 
 // Construct the window for one row. A switch, not a table of factory
@@ -218,16 +229,15 @@ std::unique_ptr<Panel> makeSplitWindow(const SplitWindowRow &row)
         return std::make_unique<PlayerWeaponStripPanel>();
     case 0 * 100 + 5:
         return std::make_unique<PlayerInfoStripPanel>();
+    // v0.13: the regrouped monster windows. Identity carries the glance
+    // (portrait, enrage, HP, stamina) and Conditions the plan (ailments,
+    // parts) — the two rows of kMonsterSplitTargets, so this switch and
+    // the table cannot drift apart without the row-count static_assert
+    // above failing first.
     case 1 * 100 + 0:
-        return std::make_unique<MonsterHpStripPanel>();
+        return std::make_unique<MonsterIdentityStripPanel>();
     case 1 * 100 + 1:
-        return std::make_unique<MonsterStaminaStripPanel>();
-    case 1 * 100 + 2:
-        return std::make_unique<MonsterEnrageStripPanel>();
-    case 1 * 100 + 3:
-        return std::make_unique<MonsterAilStripPanel>();
-    case 1 * 100 + 4:
-        return std::make_unique<MonsterPartsStripPanel>();
+        return std::make_unique<MonsterConditionsStripPanel>();
     case 2 * 100 + 0:
         return std::make_unique<DamageShareStripPanel>();
     case 2 * 100 + 1:
@@ -258,6 +268,12 @@ QPixmap renderSplitWindow(Panel *p)
 
 // ─── the host ───────────────────────────────────────────────────────────
 
+// How many grid columns the Rise wall is shifted by, relative to World's.
+// One column: enough that a Rise preview is visibly its own arrangement,
+// small enough that the cluster still starts near the corner and the walk
+// still reads outward in table order.
+constexpr int kRiseWallColumnShift = 1;
+
 class SplitWindowPreviewHostImpl {
 public:
     SplitWindowPreviewHostImpl()
@@ -286,9 +302,132 @@ public:
             entry.tableRow = row.tableRow;
             entries_.push_back(std::move(entry));
         }
+
+        // v0.14: THE NON-OVERLAPPING WALL IS LAID BY ensureBuilt(game), NOT
+        // HERE. It used to run at the tail of this constructor, which made it
+        // structurally impossible for it to know which game it was placing:
+        // the host is constructed by make_unique, setGame() can only run after
+        // that returns, and a wall laid before the game is known is laid for
+        // whatever the member's default happens to be — World. The evidence
+        // was a Rise preview painting identically to a World one, 0.0% of
+        // pixels changing on the rail switch, with the host demonstrably
+        // rebuilt underneath.
+        //
+        // The windows are still built here, because everything else about
+        // them (the adapter, the demo seed, the section mask) does not depend
+        // on the game at construction time. Only the wall does.
+    }
+
+    // Apply the overlap-free wall to every window that has not been
+    // moved by the user.
+    //
+    // "Not moved" means the section has no stored ml/mt pair yet: a
+    // Panel's first-run default comes from its subWindowIndex cascade
+    // (panel.cpp's defaultMarginsForSubWindow), which is deliberately
+    // UNRELATED to this wall's cells, so reading "is this the default"
+    // is not a question the Panel can answer for us. Instead the wall
+    // is applied once, at construction, and every drag afterwards
+    // writes through setMargins() — which is what makes a dragged
+    // window immune to the next wall pass, because there is no next
+    // one.
+    // Lays the overlap-free grid over the windows that have no stored
+    // position. Called ONCE per host, from the facade's ensureBuilt(),
+    // after setGame() has said which game this host is for.
+    //
+    // Guarded, not free-running: ensureBuilt() is also called on paths that
+    // do not rebuild, and a second wall pass would flatten whatever the
+    // user dragged since the first one.
+    void applyWall()
+    {
+        if (wallApplied_)
+            return;
+        wallApplied_ = true;
+        // The corner groups, in the canvas's own order. Corner 0==TopLeft
+        // is the one every player and monster window uses; corner 1..3
+        // are held so the table stays correct if a future split window
+        // ships with a different anchor.
+        constexpr Corner kCornerOrder[] = {
+            Corner::TopLeft, Corner::TopRight,
+            Corner::BottomLeft, Corner::BottomRight,
+        };
+        // A screen large enough that no cell runs past the frame at the
+        // preview's fit. The wall's arithmetic is screen-size
+        // independent by design (row/column, not pixels), so the exact
+        // choice is cosmetic — see the header comment on
+        // HudCanvas::subWindowGridRect.
+        const QSize probe(3840, 2160);
+
+        for (Corner corner : kCornerOrder) {
+            // Same walk, different starting cell per game.
+            //
+            // The grid is a pure function of (corner, ordinal), which is
+            // what makes its cells disjoint — and it is also why it gives
+            // BOTH games the same arrangement when neither has saved a
+            // position. A Rise preview then paints identically to a World
+            // one, and the user reads that as "the preview is not
+            // following me".
+            //
+            // Offsetting the ordinal per game keeps both properties: the
+            // cells are still grid cells (so still disjoint, still inside
+            // the screen, still readable in order), and the two games
+            // land on different ones. It also reads correctly — the shift
+            // is one column, not a random scatter — and it disappears the
+            // moment a window is dragged, because a dragged window has a
+            // stored position and the wall skips it entirely.
+            //
+            // The offset is derived from the game the host was built for,
+            // so it cannot drift from the windows it is placing.
+            int ordinal = (game_ == mhw::GameId::Rise) ? kRiseWallColumnShift
+                                                       : 0;
+            for (EntryImpl &entry : entries_) {
+                if (!entry.window) continue;
+                Panel *p = entry.window.get();
+                if (p->corner() != corner) continue;
+                const QRectF cell =
+                    HudCanvas::subWindowGridRect(corner, ordinal, probe);
+                ++ordinal;
+                // Only the two components the corner READS are written;
+                // the other two are dead arithmetic that would save into
+                // the file as noise (the same rule panel.cpp's
+                // defaultMarginsForSubWindow applies).
+                QMargins m;
+                switch (corner) {
+                case Corner::TopLeft:
+                    m = QMargins(int(cell.left()), int(cell.top()), 0, 0);
+                    break;
+                case Corner::TopRight:
+                    m = QMargins(0, int(cell.top()), int(cell.right()), 0);
+                    break;
+                case Corner::BottomLeft:
+                    m = QMargins(int(cell.left()), 0, 0, int(cell.bottom()));
+                    break;
+                case Corner::BottomRight:
+                    m = QMargins(0, 0, int(cell.right()), int(cell.bottom()));
+                    break;
+                }
+                p->setMargins(m, /*persist=*/false);
+            }
+        }
     }
 
     [[nodiscard]] int count() const { return static_cast<int>(entries_.size()); }
+
+    // v0.14: write the drag result into ONE window, by the same index
+    // its binding was passed at. Returns false (and does nothing) for
+    // an index that does not name a window, so a stale drag from a
+    // replaced binding set cannot move the wrong surface.
+    //
+    // persist=false: the console writes on exit, exactly like the four
+    // base panels' panelMoved handler.
+    [[nodiscard]] bool setWindowMargins(int index, const QMargins &m)
+    {
+        if (index < 0 || index >= static_cast<int>(entries_.size()))
+            return false;
+        if (!entries_[index].window)
+            return false;
+        entries_[index].window->setMargins(m, /*persist=*/false);
+        return true;
+    }
 
     // The bindings for the canvas, in this host's order. The canvas
     // indexes its own vector by position, so the entries' order is the
@@ -315,6 +454,7 @@ public:
     void syncAll(mhw::GameId game, uint32_t playerMask, uint32_t monsterMask,
                  uint32_t damageMask)
     {
+        game_ = game;
         for (EntryImpl &e : entries_) {
             switch (e.parentSlot) {
             case 0:
@@ -360,6 +500,11 @@ public:
         return n;
     }
 
+    // Called from the facade's ensureBuilt(), i.e. BEFORE the wall is laid.
+    // Not a setter the rest of the file is free to call later: by then the
+    // wall has already been applied to the previous game's grid.
+    void setGame(mhw::GameId g) { game_ = g; }
+
 private:
     struct EntryImpl {
         std::unique_ptr<Panel> window;
@@ -367,6 +512,19 @@ private:
         int parentSlot{-1};
         int tableRow{-1};
     };
+    // Whether the overlap-free wall has already been laid for this host.
+    // Reset never: the host is destroyed on a rail switch and rebuilt, so
+    // "once" means once per build, and the new host gets a fresh wall
+    // because it is a fresh set of Panel objects reading a DIFFERENT
+    // game's sections. See applyWall() for why once-per-build is the only
+    // rule that keeps both properties at once — a non-overlapping first
+    // layout AND a per-game saved geometry.
+    bool wallApplied_{false};
+    // The game this host was built for. Recorded so the wall can shift its
+    // starting cell per game: the grid is a pure function of (corner,
+    // ordinal) and therefore identical for both games, which is how a Rise
+    // preview ended up painting exactly like a World one.
+    mhw::GameId game_{mhw::GameId::World};
 
     // The per-window demo retarget, spelled as an overload set so a
     // window without setGameForDemo() compiles to a no-op rather than
@@ -421,7 +579,6 @@ private:
     // unique_ptrs these entries own.
     std::vector<EntryImpl> entries_;
 };
-
 // The single public face, delegating to the impl above. This indirection
 // exists so control_panel.h can hold a unique_ptr to a complete type:
 // the header declares the host forward and owns it through a pointer,
@@ -434,10 +591,26 @@ public:
     {
         return impl_ ? impl_->bindings() : QVector<HudCanvas::SubWindowBinding>{};
     }
-    void ensureBuilt()
+    // Passes the game down because the Impl lays its overlap-free wall after
+    // construction, and the wall needs to know which game it is placing.
+    //
+    // THE ORDER IS THE WHOLE POINT. A host built by make_unique lays the
+    // wall in its own constructor, at which moment no caller has been able
+    // to say which game this is — so the wall is laid for the member's
+    // default and every later setGame() is a no-op for it. That is how a
+    // Rise preview came to paint identically to a World one while the host
+    // underneath was demonstrably rebuilt (the rail switch DID fire, the
+    // namespaces DID move, and 0.0% of the canvas changed).
+    //
+    // So: set the game, THEN lay the wall. The Idempotence guard inside
+    // applyWall() keeps a second call from re-flattening what the user has
+    // since dragged.
+    void ensureBuilt(mhw::GameId game)
     {
         if (!impl_)
             impl_ = std::make_unique<SplitWindowPreviewHostImpl>();
+        impl_->setGame(game);
+        impl_->applyWall();
     }
     void syncAll(mhw::GameId game, uint32_t playerMask, uint32_t monsterMask,
                  uint32_t damageMask)
@@ -453,6 +626,20 @@ public:
     [[nodiscard]] int countForParent(int parentSlot) const
     {
         return impl_ ? impl_->countForParent(parentSlot) : 0;
+    }
+    // Write a sub-window's margins, addressed by the index its binding
+    // was passed at. This is the drag's landing place: HudCanvas emits
+    // subWindowMoved(i, margins) in CANVAS pixels, the console routes it
+    // here, and this converts to the window's own logical space and
+    // calls setMargins().
+    //
+    // Returns false for an unknown index or an unchanged value, so the
+    // caller can tell "nothing happened" from "applied". A facade that
+    // returned void would make an out-of-range drag look identical to a
+    // successful one.
+    [[nodiscard]] bool setWindowMargins(int index, const QMargins &m)
+    {
+        return impl_ ? impl_->setWindowMargins(index, m) : false;
     }
 
 private:
@@ -522,7 +709,6 @@ void prepareDamagePreview(DamagePanel *damage,
     snapshot.actors.append(local);
     damage->updateRiseDamage(snapshot, options);
 }
-
 
 // v0.5 P2: map (panel index, section bit index) → SectionRow::Icon.
 // The mapping follows panel_sections.h exactly.
@@ -1082,6 +1268,28 @@ ControlPanel::ControlPanel(QWidget *parent)
         p->setMargins(m, /*persist=*/false);
         rebuildAndRender(idx);
         updatePosLabel(idx);
+    });
+    // v0.14: a dragged SPLIT SUB-WINDOW writes into THAT window's own
+    // QSettings section, not into one of the four base panels'. The
+    // canvas owns the mode and the index space, so this lambda is the
+    // only place a sub-window index is turned into a Panel — and it
+    // reaches the host, which owns the window, rather than panelAt()
+    // which only answers 0..3.
+    //
+    // The write path is the same one the four base panels use:
+    // setMargins(persist=false), followed by a re-render of the box and
+    // a status-line refresh. The console persists on exit (see
+    // saveBeforeLaunch / ~ControlPanel), so a preview-only drag is not
+    // an extra disk write.
+    connect(canvas_, &HudCanvas::subWindowMoved, this,
+            [this](int idx, QMargins m){
+        if (!splitPreview_) return;
+        if (!splitPreview_->setWindowMargins(idx, m)) return;
+        refreshSplitWindowPreviews();
+    });
+    // Selection, so the footer can name the sub-window being dragged.
+    connect(canvas_, &HudCanvas::subWindowSelected, this, [this](int){
+        if (canvas_) canvas_->update();
     });
     connect(safeAreaBtn_, &QPushButton::toggled, this, [this](bool on){
         if (canvas_) canvas_->setShowSafeArea(on);
@@ -2862,6 +3070,23 @@ void ControlPanel::syncSplitPreviewToCanvas()
     // new host must load that game's sections.
     mhw::setPanelSettingsGame(currentGame());
 
+    // v0.14: AND THE MODE. The layout namespace is per (game, layout
+    // mode) — four domains, not two — so a scope is only fully specified
+    // by both. Setting the game alone leaves the mode at its default,
+    // which is Single, so every window the host constructed read and
+    // wrote the SINGLE namespace while the user was looking at a split
+    // preview. That is the console half of exactly the disagreement the
+    // four-domain split was introduced to end: the overlay was told
+    // `--layout split` and read [game/split/...], while the console wrote
+    // [game/single/...].
+    //
+    // The host is only ever built in split mode — the caller returns early
+    // above when the mode is Single — so the mode here is not a choice, it
+    // is what the caller already established. It is spelled out anyway,
+    // because "the default happens to be right" is not something a reader
+    // can verify, and it stops being right the moment a third mode exists.
+    mhw::setPanelSettingsLayout(mhw::PlayerSection::PlayerLayoutMode::Split);
+
     // THE GAME THE CURRENT HOST WAS BUILT FOR. Recorded at build time so
     // the next call can tell "I am new" (build a host) apart from "I am
     // for the OTHER game" (destroy and build a new one) apart from "I am
@@ -2903,7 +3128,7 @@ void ControlPanel::syncSplitPreviewToCanvas()
         // the canvas never observes a freed source.
         splitPreview_.reset();
         splitPreview_ = std::make_unique<SplitWindowPreviewHost>();
-        splitPreview_->ensureBuilt();
+        splitPreview_->ensureBuilt(currentGame());
         splitPreviewHostGame_ = currentGame();
         canvas_->setSubWindowBindings(splitPreview_->bindings());
         // The first paint needs pixmaps; a later mask change goes

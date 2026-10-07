@@ -18,6 +18,7 @@
 #include "core/game_snapshot.h"
 
 #include <QApplication>
+#include <QTemporaryDir>
 #include <QImage>
 #include <QPainter>
 #include <QPoint>
@@ -82,6 +83,19 @@ bool paintsAnything(Panel &p)
 
 int main(int argc, char **argv)
 {
+    // ISOLATE THE CONFIG. Without this the suite reads the developer's real
+    // ~/.config/monster-overlay/panels.ini, and a `scale=0.8` someone wrote
+    // there because they prefer a smaller HUD makes w.height() 44*0.8 = 35
+    // while contentHeight() still answers 44. The reserve/draw assertions
+    // then fail on a machine-dependent number that has nothing to do with
+    // the code under test, which is exactly how this suite went red.
+    //
+    // A scratch directory also makes "no stored position" a state the test
+    // can create rather than inherit.
+    QTemporaryDir configHome;
+    if (configHome.isValid())
+        qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+
     QApplication app(argc, argv);
 
     using mhw::split_layout::kSplitMargin;

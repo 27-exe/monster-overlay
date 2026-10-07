@@ -147,24 +147,34 @@ int main(int argc, char **argv)
               == QStringLiteral("rise"),
           "rise group prefix is 'rise'");
 
-    check(mhw::panelSettingsGroupFor(mhw::GameId::World,
+    // v0.14: the mode axis is now part of the answer, so the single-mode
+    // spelling carries its segment. This file's old assertions pinned the
+    // two-domain spelling (`world/player-status`); the four-domain file
+    // section in tests/panel_settings_scope_tests.cpp is where both axes
+    // are pinned. What remains pinned HERE is the property this file was
+    // written for: the two games do not share a namespace.
+    check(mhw::panelSettingsScopeFor(mhw::GameId::World,
+                                     mhw::PlayerSection::PlayerLayoutMode::Single,
                                      QStringLiteral("player-status"))
-              == QStringLiteral("world/player-status"),
-          "World player-status scopes to world/player-status");
-    check(mhw::panelSettingsGroupFor(mhw::GameId::Rise,
+              == QStringLiteral("world/single/player-status"),
+          "World single player-status scopes to world/single/player-status");
+    check(mhw::panelSettingsScopeFor(mhw::GameId::Rise,
+                                     mhw::PlayerSection::PlayerLayoutMode::Single,
                                      QStringLiteral("player-status"))
-              == QStringLiteral("rise/player-status"),
-          "Rise player-status scopes to rise/player-status");
+              == QStringLiteral("rise/single/player-status"),
+          "Rise single player-status scopes to rise/single/player-status");
     check(mhw::panelSettingsGameGroup(mhw::GameId::World)
               != mhw::panelSettingsGameGroup(mhw::GameId::Rise),
           "the two games do not share a group prefix");
 
     // No idempotence by design: the accessor applies this once per group
     // name. Pinned because a double application would silently address a
-    // third namespace (world/world/player) that nothing else writes.
-    check(mhw::panelSettingsGroupFor(mhw::GameId::World,
-                                     QStringLiteral("world/player"))
-              == QStringLiteral("world/world/player"),
+    // fifth namespace (world/single/world/single/player) that nothing
+    // writes.
+    check(mhw::panelSettingsScopeFor(mhw::GameId::World,
+                                     mhw::PlayerSection::PlayerLayoutMode::Single,
+                                     QStringLiteral("world/single/player"))
+              == QStringLiteral("world/single/world/single/player"),
           "the prefix is applied exactly once by its caller, not folded in");
 
     // ==================================================================
@@ -232,17 +242,17 @@ int main(int argc, char **argv)
         QSettings s = openSettings(path);
 
         // World reads. Every key is copied verbatim, not reinterpreted.
-        check(mhw::migrateLegacyPanelSection(s, mhw::GameId::World,
-                                             QStringLiteral("player")),
+        check(mhw::migrateLegacyPanelSection(s, mhw::PanelSettingsScope{mhw::GameId::World, mhw::PlayerSection::PlayerLayoutMode::Single},
+                                    QStringLiteral("player")),
               "the migration reports it acted");
         s.sync();
-        check(readKey(s, QStringLiteral("world/player"),
+        check(readKey(s, QStringLiteral("world/single/player"),
                       QStringLiteral("scale")) == QStringLiteral("2"),
               "the legacy scale lands in world/player");
-        check(readKey(s, QStringLiteral("world/player"),
+        check(readKey(s, QStringLiteral("world/single/player"),
                       QStringLiteral("ml")) == QStringLiteral("7"),
               "the legacy margin lands in world/player");
-        check(readKey(s, QStringLiteral("world/player"),
+        check(readKey(s, QStringLiteral("world/single/player"),
                       QStringLiteral("minW")) == QStringLiteral("48"),
               "the legacy size floor lands in world/player");
 
@@ -251,11 +261,14 @@ int main(int argc, char **argv)
         check(!hasGroup(s, QStringLiteral("player")),
               "the legacy bare section is removed after the copy");
 
-        // The marker is what makes the second call a no-op.
-        check(readKey(s, QStringLiteral("world/player/legacyMigrated"),
-                      QStringLiteral("1")).isNull() == false
-                  || s.contains(QStringLiteral("world/player/legacyMigrated/1")),
-              "the migrated section carries the legacyMigrated marker");
+        // The marker is what makes the second call a no-op. It is a KEY
+        // ("player") inside the group "world/legacy", so contains() on the
+        // flattened path is the right question — the older spelling of
+        // this check asked for a sub-key that does not exist.
+        check(readKey(s, QStringLiteral("world/legacy"),
+                      QStringLiteral("player")) == QStringLiteral("1")
+                  || s.contains(QStringLiteral("world/legacy/player")),
+              "the game carries the legacyMigrated marker");
 
         // The OTHER window's section is untouched by THIS call: the
         // migration is per-section, not a file-wide rewrite.
@@ -279,10 +292,18 @@ int main(int argc, char **argv)
         qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
         const QString path = iniPath(home);
 
+        // v0.14: Rise's OWN namespace is now four-domain, so its
+        // two-domain `[rise/player]` spelling is itself a legacy section
+        // awaiting the same fold. Seeding it here would make the World
+        // run fold RISE's legacy section — exactly the cross-game
+        // clobber this section exists to forbid — because the
+        // two-domain spelling carries no mode segment to tell it apart.
+        // So the seed uses rise/single, which is what a Rise session
+        // writes today.
         check(writeRaw(path, QStringLiteral("[player]\nscale=9\n\n"
-                                            "[rise/player]\n"
+                                            "[rise/single/player]\n"
                                             "scale=5\nml=700\n\n"
-                                            "[rise/player-status]\n"
+                                            "[rise/single/player-status]\n"
                                             "columns=2\n\n")),
               "seed a legacy section plus a fully-populated Rise "
               "namespace");
@@ -291,44 +312,45 @@ int main(int argc, char **argv)
         // Kept: the comparison below needs the "before" text to prove the
         // migration actually moved bytes rather than passing vacuously.
         const QString riseBefore = slurp(path);
-        check(mhw::migrateLegacyPanelSection(s, mhw::GameId::World,
-                                             QStringLiteral("player")),
+        check(mhw::migrateLegacyPanelSection(s, mhw::PanelSettingsScope{mhw::GameId::World, mhw::PlayerSection::PlayerLayoutMode::Single},
+                                    QStringLiteral("player")),
               "the World migration acts on the legacy section");
         s.sync();
 
-        check(readKey(s, QStringLiteral("world/player"),
+        check(readKey(s, QStringLiteral("world/single/player"),
                       QStringLiteral("scale")) == QStringLiteral("9"),
-              "the World migration reads the legacy value into world/player");
+              "the World migration reads the legacy value into "
+              "world/single/player");
 
         // Rise's sections must survive unchanged. This is the whole point
         // of the feature: two games, two layouts, one file.
         //
         // Asserted through the settings API rather than the raw text: the
         // nested group is on disk as `[rise]` + escaped subkeys, not as
-        // a literal `[rise/player]` header, so a text match on the INI
-        // spelling would fail on a file that is perfectly correct.
-        check(readKey(s, QStringLiteral("rise/player"),
+        // a literal `[rise/single/player]` header, so a text match on the
+        // INI spelling would fail on a file that is perfectly correct.
+        check(readKey(s, QStringLiteral("rise/single/player"),
                       QStringLiteral("scale")) == QStringLiteral("5"),
               "Rise's own scale survives the World migration intact");
-        check(readKey(s, QStringLiteral("rise/player"),
+        check(readKey(s, QStringLiteral("rise/single/player"),
                       QStringLiteral("ml")) == QStringLiteral("700"),
               "Rise's own margin survives the World migration intact");
-        check(readKey(s, QStringLiteral("rise/player-status"),
+        check(readKey(s, QStringLiteral("rise/single/player-status"),
                       QStringLiteral("columns")) == QStringLiteral("2"),
               "Rise's other window survives the World migration intact");
         check(riseBefore != slurp(path),
               "the file did change (so the checks above are not vacuous)");
 
         // Now migrate under RISE. It must NOT re-read [player] (which
-        // World already consumed) and must NOT clobber rise/player.
+        // World already consumed) and must NOT clobber rise/single/player.
         const bool riseMigrated =
-            mhw::migrateLegacyPanelSection(s, mhw::GameId::Rise,
-                                           QStringLiteral("player"));
+            mhw::migrateLegacyPanelSection(s, mhw::PanelSettingsScope{mhw::GameId::Rise, mhw::PlayerSection::PlayerLayoutMode::Single},
+                                    QStringLiteral("player"));
         s.sync();
         check(!riseMigrated,
               "Rise finds nothing to migrate once World has consumed the "
               "legacy section");
-        check(readKey(s, QStringLiteral("rise/player"),
+        check(readKey(s, QStringLiteral("rise/single/player"),
                       QStringLiteral("scale")) == QStringLiteral("5"),
               "Rise's own section keeps its user-edited scale");
     }
@@ -348,25 +370,29 @@ int main(int argc, char **argv)
         qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
         const QString path = iniPath(home);
 
+        // v0.14: the "already scoped" case is now the FOUR-domain
+        // spelling. `[world/player]` is itself a legacy spelling (the
+        // v0.14 target of the two-domain fold), so seeding it here would
+        // assert the opposite of what the migration should do.
         check(writeRaw(path, QStringLiteral("[player]\nscale=9\n\n"
-                                            "[world/player]\n"
+                                            "[world/single/player]\n"
                                             "scale=2\nml=11\n\n")),
-              "seed a file with BOTH a legacy section and a current-game "
-              "section");
+              "seed a file with BOTH a legacy section and a "
+              "current-scope section");
 
         QSettings s = openSettings(path);
         const bool acted =
-            mhw::migrateLegacyPanelSection(s, mhw::GameId::World,
-                                           QStringLiteral("player"));
+            mhw::migrateLegacyPanelSection(s, mhw::PanelSettingsScope{mhw::GameId::World, mhw::PlayerSection::PlayerLayoutMode::Single},
+                                    QStringLiteral("player"));
         s.sync();
 
         check(!acted,
               "a game that already has its own section does not migrate");
-        check(readKey(s, QStringLiteral("world/player"),
+        check(readKey(s, QStringLiteral("world/single/player"),
                       QStringLiteral("scale")) == QStringLiteral("2"),
               "the current game's own scale is not replaced by the legacy "
               "one");
-        check(readKey(s, QStringLiteral("world/player"),
+        check(readKey(s, QStringLiteral("world/single/player"),
                       QStringLiteral("ml")) == QStringLiteral("11"),
               "the current game's own margin is not replaced by the legacy "
               "one");
@@ -391,27 +417,30 @@ int main(int argc, char **argv)
               "seed one legacy section");
 
         QSettings s = openSettings(path);
-        check(mhw::migrateLegacyPanelSection(s, mhw::GameId::World,
-                                             QStringLiteral("player")),
+        check(mhw::migrateLegacyPanelSection(s, mhw::PanelSettingsScope{mhw::GameId::World, mhw::PlayerSection::PlayerLayoutMode::Single},
+                                    QStringLiteral("player")),
               "first run migrates");
         s.sync();
 
         // The user now edits the migrated section, as they are entitled
         // to. A second run must leave it alone.
+        //
+        // v0.14: the edited group is the FOUR-domain spelling, which is
+        // where the first run actually put the section.
         {
             QSettings edit = openSettings(path);
-            edit.beginGroup(QStringLiteral("world/player"));
+            edit.beginGroup(QStringLiteral("world/single/player"));
             edit.setValue(QStringLiteral("scale"), 8);
             edit.endGroup();
             edit.sync();
         }
 
         const bool second =
-            mhw::migrateLegacyPanelSection(s, mhw::GameId::World,
-                                           QStringLiteral("player"));
+            mhw::migrateLegacyPanelSection(s, mhw::PanelSettingsScope{mhw::GameId::World, mhw::PlayerSection::PlayerLayoutMode::Single},
+                                    QStringLiteral("player"));
         s.sync();
         check(!second, "a second run reports no migration");
-        check(readKey(s, QStringLiteral("world/player"),
+        check(readKey(s, QStringLiteral("world/single/player"),
                       QStringLiteral("scale")) == QStringLiteral("8"),
               "a second run does not re-import over the user's edit");
     }
@@ -419,9 +448,15 @@ int main(int argc, char **argv)
     // ==================================================================
     // 7. NOTHING TO MIGRATE IS NOT AN ERROR
     // ==================================================================
-    // A fresh install, or a file written entirely under v0.13. The
+    // A fresh install, or a file written entirely under v0.14. The
     // migration must answer "no" and leave the file untouched, so a
     // first run cannot manufacture a legacy section to migrate.
+    //
+    // v0.14: "written entirely under v0.13" is no longer a no-migration
+    // case — a `[world/player]` file is exactly what this version folds
+    // (that fold is tested in panel_settings_scope_tests.cpp section 3a).
+    // What IS a no-migration case is a file already in the four-domain
+    // spelling with nothing under it, and that is what is seeded here.
     {
         QTemporaryDir home;
         if (!home.isValid()) {
@@ -431,17 +466,20 @@ int main(int argc, char **argv)
         qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
         const QString path = iniPath(home);
 
-        check(writeRaw(path, QStringLiteral("[world/player]\nscale=1\n\n"
-                                            "[rise/player]\nscale=5\n\n")),
-              "seed a fully v0.13 file (no legacy sections at all)");
+        check(writeRaw(path, QStringLiteral("[world/single/player]\n"
+                                            "scale=1\n\n"
+                                            "[rise/single/player]\n"
+                                            "scale=5\n\n")),
+              "seed a fully v0.14 file (four domains, no legacy "
+              "sections)");
 
         QSettings s = openSettings(path);
         const QString before = slurp(path);
-        check(!mhw::migrateLegacyPanelSection(s, mhw::GameId::World,
-                                              QStringLiteral("player")),
+        check(!mhw::migrateLegacyPanelSection(s, mhw::PanelSettingsScope{mhw::GameId::World, mhw::PlayerSection::PlayerLayoutMode::Single},
+                                    QStringLiteral("player")),
               "a file with no legacy section reports no migration");
-        check(!mhw::migrateLegacyPanelSection(s, mhw::GameId::Rise,
-                                              QStringLiteral("player")),
+        check(!mhw::migrateLegacyPanelSection(s, mhw::PanelSettingsScope{mhw::GameId::Rise, mhw::PlayerSection::PlayerLayoutMode::Single},
+                                    QStringLiteral("player")),
               "same under Rise");
         s.sync();
         check(slurp(path) == before,
@@ -449,13 +487,14 @@ int main(int argc, char **argv)
 
         // An EMPTY legacy section is not a migration either: an empty
         // [player] with nothing in it would otherwise create an empty
-        // [world/player] that shadows nothing and means nothing.
+        // [world/single/player] that shadows nothing and means nothing.
         check(writeRaw(path, QStringLiteral("[player]\n\n"
-                                            "[world/player]\nscale=1\n\n")),
+                                            "[world/single/player]\n"
+                                            "scale=1\n\n")),
               "seed an empty legacy section beside a real one");
         QSettings s2 = openSettings(path);
-        check(!mhw::migrateLegacyPanelSection(s2, mhw::GameId::World,
-                                              QStringLiteral("nope")),
+        check(!mhw::migrateLegacyPanelSection(s2, mhw::PanelSettingsScope{mhw::GameId::World, mhw::PlayerSection::PlayerLayoutMode::Single},
+                                    QStringLiteral("nope")),
               "a key with no section of either spelling reports no "
               "migration");
     }
@@ -475,8 +514,9 @@ int main(int argc, char **argv)
         qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
         const QString path = iniPath(home);
 
-        const QString group = mhw::panelSettingsGroupFor(
-            mhw::GameId::World, QStringLiteral("player"));
+        const QString group = mhw::panelSettingsScopeFor(
+            mhw::GameId::World, mhw::PlayerSection::PlayerLayoutMode::Single,
+            QStringLiteral("player"));
         {
             QSettings w = openSettings(path);
             w.beginGroup(group);
@@ -495,7 +535,7 @@ int main(int argc, char **argv)
         // would be a different namespace.
         check(slurp(path).contains(QStringLiteral("player\\scale=1")),
               "the nested path is stored escaped under [world]");
-        check(readKey(r, QStringLiteral("world/player"),
+        check(readKey(r, QStringLiteral("world/single/player"),
                       QStringLiteral("scale")) == QStringLiteral("1"),
               "a key under the prefixed group reads back through a "
               "different handle");

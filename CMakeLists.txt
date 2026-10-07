@@ -1203,6 +1203,24 @@ add_executable(world-severable-scan-tests
     target_compile_options(panel-settings-game-scoping-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME panel-settings-game-scoping-tests COMMAND panel-settings-game-scoping-tests)
 
+    # v0.14: the layout namespace is per (game, layout mode) — four domains
+    # rather than two. What that pins is the property the two-domain version
+    # could not express: a user's single-mode layout and their split-mode
+    # layout are DIFFERENT layouts describing the SAME window, and writing
+    # one while reading the other is exactly the "the console and the
+    # overlay disagree" symptom.
+    #
+    # The migration marker is per game, not per (game, mode) — otherwise a
+    # Single-mode run migrates the whole flat file and a later Split-mode
+    # run no longer recognises it as already migrated.
+    add_executable(panel-settings-scope-tests
+        tests/panel_settings_scope_tests.cpp
+    )
+    target_link_libraries(panel-settings-scope-tests PRIVATE Qt6::Core mhw-ui)
+    target_include_directories(panel-settings-scope-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(panel-settings-scope-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME panel-settings-scope-tests COMMAND panel-settings-scope-tests)
+
     # v0.13: what each window says it can do, derived from the layout hooks
     # it actually answers. A window that claims the columns dial without
     # overriding the vocabulary behind it is a dead key, and this is the

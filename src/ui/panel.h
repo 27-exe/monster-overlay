@@ -278,6 +278,7 @@ public:
     // user's zoom. Keeping these as getters (not setters) means the
     // canvas is always a passive view, never a driver of state.
     [[nodiscard]] Corner corner() const { return corner_; }
+
     [[nodiscard]] QMargins margins() const { return margins_; }
     [[nodiscard]] double scale() const { return scale_; }
     [[nodiscard]] double opacity() const { return opacity_; }
@@ -350,10 +351,12 @@ public:
 
     // ─── the settings group this window persists into ──────────────────
     //
-    // v0.13: every panel's section is per-game (`world/player-status`
-    // under World, `rise/player-status` under Rise) so the two games'
-    // layouts cannot overwrite each other — the reason is in
-    // panel_settings_game.h and the migration rule in panel.cpp.
+    // v0.14: every panel's section is per game AND per layout mode
+    // (`world/single/player-status` under World in single mode,
+    // `world/split/player-status` under World in split mode) so neither
+    // the two games nor one game's two topologies can overwrite each
+    // other's window geometry — the reason is in panel_settings_game.h,
+    // the migration rule in panel.cpp.
     //
     // Why a protected method and not just reusing `key_`: this is the
     // spelling a SUBCLASS needs when it opens its own QSettings handle,
@@ -366,8 +369,9 @@ public:
     //
     // `settingsGroup()` is the group with the prefix applied. A caller
     // that wants to open the same file the base class uses can
-    // reconstruct it from panelSettingsGame() and the four literals the
-    // base owns — but it should use this for the group.
+    // reconstruct it from panelSettingsGame() / panelSettingsLayout()
+    // and the four literals the base owns — but it should use this for
+    // the group.
     [[nodiscard]] QString settingsGroup() const;
 
 protected:

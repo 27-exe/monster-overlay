@@ -144,45 +144,6 @@ QString cornerName(Corner c)
 
 namespace {
 
-// Preview chrome, in CANVAS pixels (not logical screen pixels): the gap
-// between a parent panel and its cluster of sub-windows, and between
-// successive boxes in that cluster. Both have to stay legible at the
-// default fit, where an entire 1920px screen is about 760px wide.
-constexpr qreal kSubClusterGap = 8.0;
-constexpr qreal kSubBoxGap = 5.0;
-// The title strip above each box, so the user can name the window.
-constexpr int kSubTitleH = 12;
-
-// How far DOWN the cluster may grow before it starts a new column.
-//
-// The first cut stacked every sub-window of a parent into one vertical
-// column, because that is the most obvious layout and because it cannot
-// collide with the parent. With the player panel it is also fine: six
-// windows, a few hundred pixels. With seven to thirteen of them the column
-// runs past the edge of a screen that is only ~760px wide at the default
-// fit, and everything below the fold is simply not drawn — the preview
-// then shows "all the panels piled in one corner", which is what the
-// user reported.
-//
-// So the cluster WRAPS at a depth, starting a fresh column further out
-// from the parent, in the direction the cluster is already growing. Depth
-// is measured in boxes rather than pixels so the number of columns is
-// predictable from the mask: 4 max keeps the whole player cluster inside a
-// 1080p screen at the default fit (4 boxes x ~110px = 440px of column,
-// plus the parent's own box).
-constexpr int kSubClusterMaxRows = 4;
-
-// The gap between two columns of the same cluster. Wider than kSubBoxGap
-// so the wrap reads as a deliberate step rather than a stray box.
-constexpr qreal kSubColumnGap = 14.0;
-
-// Every sub-window box is drawn at this fraction of the size its content
-// reserves, for the same reason a parent's pixmap is drawn at the
-// window's own scale: a 380px damage bar drawn 1:1 beside the 378px
-// damage panel it came from would say nothing about why it became a
-// separate window.
-constexpr qreal kSubPreviewScale = 0.5;
-
 // The row's own section label, in the active locale, read from the
 // console's EXISTING section table (console.section.*) — so the split
 // preview names a window with the same word the inspector's switch row
@@ -344,8 +305,20 @@ void HudCanvas::setLayoutMode(mhw::PlayerSection::PlayerLayoutMode mode)
     // hud_canvas_split_tests.cpp pins by asserting the vector is empty
     // after the switch (and the mutation test confirmed it FAILS when
     // this line is removed).
-    if (mode == mhw::PlayerSection::PlayerLayoutMode::Single)
+    if (mode == mhw::PlayerSection::PlayerLayoutMode::Single) {
         subSlots_.clear();
+        // v0.14: the drag state goes with them, for the same reason the
+        // vector does. A drag still in flight when the mode flips would
+        // otherwise keep a live subDragIndex_ into a vector the next
+        // setSubWindowBindings() replaces, and the release would then
+        // move whatever window inherited that index.
+        subDragging_ = false;
+        subDragIndex_ = -1;
+        subSelected_ = -1;
+        subRects_.clear();
+        subRects_.squeeze();
+        unsetCursor();
+    }
     update();
 }
 
@@ -377,6 +350,157 @@ void HudCanvas::setSubWindowPixmap(int index, const QPixmap &pixmap, bool enable
     subSlots_[index].pixmap = pixmap;
     subSlots_[index].enabled = enabled;
     update();
+}
+
+// ─── v0.14: the overlap-free wall ──────────────────────────────────────
+//
+// Read hud_canvas.h's comment on this first — it argues why a per-corner
+// grid and not the vertical stack this replaces.
+//
+// THE ARITHMETIC, in one line: with `ordinal` the window's position among
+// the sub-windows that share its corner,
+//
+//     row = ordinal % kSubWallColumns      column = ordinal / columns
+//
+// and each box occupies its own cell, so two different ordinals land in
+// different cells and their rects cannot intersect. That is the whole
+// non-overlap proof, and it is why the columns constant is asserted by
+// the test rather than left implicit.
+//
+// THE UNIT IS LOGICAL PIXELS. Margins are what a Panel persists, so
+// laying out in margin space means a drag delta needs no second
+// conversion and the wall's extent is independent of the widget's
+// current size — the property the live overlay's own cascade comment
+// demands of a default placement ("needs no screen size, no output
+// enumeration, and no per-window magic").
+QRectF HudCanvas::subWindowGridRect(Corner corner, int ordinal,
+                                    const QSize &logical)
+{
+    const int w = qMax(1, logical.width());
+    const int h = qMax(1, logical.height());
+
+    const int row = ordinal % kSubWallColumns;
+    const int col = ordinal / kSubWallColumns;
+
+    // Primary axis: the one pointing AWAY from the anchored screen edge,
+    // walked column by column. Secondary axis: across the column.
+    //
+    // The direction is chosen per corner rather than derived, because a
+    // TopRight wall must grow leftwards from the right edge while a
+    // TopLeft one grows rightwards from the left; getting that wrong is
+    // how the previous layout ended up drawing every cluster against
+    // the canvas's top edge regardless of which panel it came from.
+    const int inward = kSubWallOrigin + kSubWallOffset;
+    int x = 0;
+    int y = 0;
+    switch (corner) {
+    case Corner::TopLeft:
+        x = kSubWallOrigin + kSubWallOffset + col * kSubWallCellW;
+        y = kSubWallOrigin + kSubWallOffset + row * kSubWallCellH;
+        break;
+    case Corner::TopRight:
+        x = w - inward - kSubWallCellW - col * kSubWallCellW;
+        y = kSubWallOrigin + kSubWallOffset + row * kSubWallCellH;
+        break;
+    case Corner::BottomLeft:
+        x = kSubWallOrigin + kSubWallOffset + col * kSubWallCellW;
+        y = h - inward - kSubWallCellH - row * kSubWallCellH;
+        break;
+    case Corner::BottomRight:
+        x = w - inward - kSubWallCellW - col * kSubWallCellW;
+        y = h - inward - kSubWallCellH - row * kSubWallCellH;
+        break;
+    }
+    Q_UNUSED(inward)
+    return QRectF(x, y, kSubWallCellW, kSubWallCellH);
+}
+
+// The wall for the sub-windows currently bound, in LOGICAL screen
+// pixels, indexable by the same index the matching binding was passed
+// at. Empty in Single mode.
+//
+// GROUPED BY CORNER, NOT BY PARENT. Player and monster sub-windows are
+// both anchored TopLeft, so they share one wall and must share one
+// ordinal counter — counting per parent would hand two of them the
+// same ordinal and place them in the same cell. The corner is the thing
+// that decides which region of the screen a window can be in, so it is
+// the right thing to partition on; parentSlot survives as the accent
+// colour and the title.
+QVector<QRectF> HudCanvas::subWindowWall(const QSize &logical) const
+{
+    QVector<QRectF> out;
+    if (subSlots_.isEmpty())
+        return out;
+    out.resize(subSlots_.size());
+
+    // per-corner ordinal counter
+    QHash<int, int> ordinal;
+    for (int i = 0; i < subSlots_.size(); ++i) {
+        const SubSlot &sub = subSlots_[i];
+        if (!sub.src)
+            continue;   // an unresolved row: no box, keeps the index space
+        const Corner corner = sub.src->corner();
+        const int c = static_cast<int>(corner);
+        const int n = ordinal.value(c, 0);
+        out[i] = subWindowGridRect(corner, n, logical);
+        ordinal.insert(c, n + 1);
+    }
+    return out;
+}
+
+// ─── the one layout pass ───────────────────────────────────────────────
+//
+// Called from paintEvent, which is the only place the frame rectangle,
+// the fit factor and the logical size are all known at once. Fills
+// subRects_ (canvas pixels, by sub-window index) from each window's OWN
+// corner + margins — the same two numbers the four-slot arm reads — so a
+// box the user dragged lands where the panel will actually land, without
+// a second code path for "moved" versus "fresh".
+QVector<HudCanvas::SubWindowPaintInfo> HudCanvas::layoutSubWindows(
+    qreal fit, const QPointF &frameTopLeft, const QSize &logical)
+{
+    QVector<SubWindowPaintInfo> out;
+    if (subSlots_.isEmpty()) {
+        subRects_.clear();
+        return out;
+    }
+    out.reserve(static_cast<int>(subSlots_.size()));
+    subRects_.resize(subSlots_.size());
+
+    for (int i = 0; i < subSlots_.size(); ++i) {
+        subRects_[i] = QRectF();
+        const SubSlot &sub = subSlots_[i];
+        if (!sub.src)
+            continue;
+
+        // THE CONTRACT, READ NOT GUESSED. The box's extent is the
+        // window's own contentWidth()/contentHeight() (Panel's v0.12
+        // layout vocabulary) — the number the live surface reserves the
+        // same way. Nothing here re-derives a width, so a window whose
+        // content grew automatically gets a box that grew with it, and
+        // the split preview cannot drift from the window it previews.
+        const QSize content = sub.src->contentSize();
+        if (content.width() <= 0 || content.height() <= 0)
+            continue;   // nothing reserved, so nothing to represent
+
+        const qreal z = std::max(0.1, sub.src->scale());
+        const QRect lrect = anchoredRect(QRect(QPoint(0, 0), logical),
+                                        sub.src->corner(),
+                                        sub.src->margins(), content, z);
+        const QRectF canvas(frameTopLeft.x() + lrect.x() * fit,
+                           frameTopLeft.y() + lrect.y() * fit,
+                           lrect.width() * fit, lrect.height() * fit);
+        subRects_[i] = canvas;
+
+        SubWindowPaintInfo info;
+        info.rect = canvas;
+        info.parentSlot = sub.parentSlot;
+        info.title = subWindowLabel(sub.parentSlot, sub.tableRow);
+        info.index = i;
+        info.selected = (i == subSelected_);
+        out.append(info);
+    }
+    return out;
 }
 
 void HudCanvas::setZoom(qreal z)
@@ -577,6 +701,56 @@ QMargins HudCanvas::movedMargins(int index, int dxLogical, int dyLogical) const
     return m;
 }
 
+// v0.14: the sub-window twin of movedMargins(). Reads that window's OWN
+// corner and margins rather than a slot's, so the two index spaces never
+// meet: `index` is a sub-window index, and every number it touches comes
+// from that sub-window's PanelSource.
+//
+// THE CLAMP IS THE SAME ONE, applied per-corner the same way: a TopLeft
+// window is placed by left+top and grows rightward, so a positive delta
+// to right would move it the WRONG way (the anchored edge's margin is
+// what the compositor reads). Getting this per-corner sign wrong is the
+// classic off-by-a-mirror here, and it is why the case list is spelled
+// out rather than derived.
+//
+// The bound is the SCREEN, not the canvas frame: the box must never be
+// dragged somewhere the real surface could not be put, which is the same
+// reason movedMargins() clamps against previewScreenInfo().logical.
+QMargins HudCanvas::movedSubMargins(int index, int dxLogical,
+                                    int dyLogical) const
+{
+    if (index < 0 || index >= subSlots_.size() || !subSlots_[index].src)
+        return {};
+    const Corner corner = subSlots_[index].src->corner();
+    QMargins m = subDragStartMargins_;   // set at drag start
+    const QSize logical = previewScreenInfo().logical;
+    const QSize panel = subSlots_[index].src->contentSize()
+                        * subSlots_[index].src->scale();
+    const int maxX = std::max(0, logical.width() - panel.width());
+    const int maxY = std::max(0, logical.height() - panel.height());
+    auto clampX = [maxX](int v){ return std::clamp(v, 0, maxX); };
+    auto clampY = [maxY](int v){ return std::clamp(v, 0, maxY); };
+    switch (corner) {
+    case Corner::TopLeft:
+        m.setLeft(clampX(m.left() + dxLogical));
+        m.setTop(clampY(m.top() + dyLogical));
+        break;
+    case Corner::TopRight:
+        m.setRight(clampX(m.right() - dxLogical));
+        m.setTop(clampY(m.top() + dyLogical));
+        break;
+    case Corner::BottomLeft:
+        m.setLeft(clampX(m.left() + dxLogical));
+        m.setBottom(clampY(m.bottom() - dyLogical));
+        break;
+    case Corner::BottomRight:
+        m.setRight(clampX(m.right() - dxLogical));
+        m.setBottom(clampY(m.bottom() - dyLogical));
+        break;
+    }
+    return m;
+}
+
 // ─── paint ──────────────────────────────────────────────────────────────
 
 void HudCanvas::paintEvent(QPaintEvent *)
@@ -660,6 +834,20 @@ void HudCanvas::paintEvent(QPaintEvent *)
     }
 
     // --- panels ---
+    //
+    // v0.14: THE WHOLE ARM IS SPLIT-ONLY EXCLUDED. In Split the four
+    // mother panels are not drawn at all — not a lighter box, not a
+    // placeholder, nothing — which is the first half of the user's
+    // 「分块模式下不显示那几个整块」. The screen frame, grid, ruler and
+    // header/footer are untouched, so the sub-windows occupy the whole
+    // frame instead of the 70% that was left over around four big
+    // mother boxes.
+    //
+    // SINGLE MODE IS BYTE-IDENTICAL: `!subSlots_.isEmpty()` is exactly
+    // the same gate the old sub-window arm used, and setLayoutMode(Single)
+    // clears the vector, so a Single-mode paint reaches this loop with
+    // the same condition that was already there. The 10 pixel baselines
+    // in tests/baseline/ are the authority and they do not move.
     const qreal fit = std::min(frame.width()  / logical.width(),
                                frame.height() / logical.height());
     auto logicalToCanvas = [&](const QRect &lr) {
@@ -669,6 +857,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
                       lr.height() * fit);
     };
 
+    if (subSlots_.isEmpty()) {
     for (int i = 0; i < mhw::kPanelCount; ++i) {
         if (!slots_[i].bound || !slots_[i].present) continue;
         const Slot &s = slots_[i];
@@ -721,30 +910,24 @@ void HudCanvas::paintEvent(QPaintEvent *)
 
         slots_[i].lastTarget_ = target;
     }
+    }
 
-    // --- v0.13: the split's sub-windows ---
+    // --- v0.14: the split's sub-windows ---
     //
-    // ENTIRELY ABSENT IN SINGLE MODE. The gate is `subSlots_` being
-    // non-empty, which setLayoutMode(Single) and a never-populated
-    // canvas both guarantee. So the four-slot arm above is the last
-    // thing a single-mode preview paints, and its output is byte-for-byte
-    // what it was before any of this existed.
+    // ENTIRELY ABSENT IN SINGLE MODE, same gate as before and same
+    // reason (setLayoutMode(Single) empties the vector).
     //
-    // Drawn cluster by cluster, grouped by the parent each sub-window
-    // came from, because that is what makes the derivation readable: the
-    // user sees the boxes that left the monster panel stacking beside the
-    // monster panel's own rectangle, in the monster panel's accent
-    // colour. A flat list of 14 boxes would say nothing about which
-    // window owns which block.
+    // Each box is drawn from ITS OWN window's corner + margins + content
+    // size — layoutSubWindows() reads exactly the three numbers the
+    // four-slot arm reads, for the window that owns them — so the box is
+    // where that window's surface will be, at the same fit factor, with
+    // no second geometry path. A window the user dragged lands where
+    // they put it because that IS its margin now.
     if (!subSlots_.isEmpty()) {
-        for (int parent = 0; parent < mhw::kPanelCount; ++parent) {
-            if (!slots_[parent].bound || !slots_[parent].present)
-                continue;   // the parent is not in this preview
-            if (slots_[parent].lastTarget_.isNull())
-                continue;   // it painted nothing, so nothing to stack beside
-            paintSubWindowCluster(slots_[parent].lastTarget_, parent,
-                                  slots_[parent].src->corner(), p);
-        }
+        const QVector<SubWindowPaintInfo> boxes =
+            layoutSubWindows(fit, frame.topLeft(), logical);
+        for (const SubWindowPaintInfo &info : boxes)
+            paintSubWindowBox(info, p);
     }
 
     // --- footer ---
@@ -772,130 +955,38 @@ void HudCanvas::paintEvent(QPaintEvent *)
                    .arg(QString::number(zoom_, 'f', 1)));
 }
 
-// ─── v0.13: the split's sub-windows ────────────────────────────────────
+// ─── v0.14: the split's sub-windows ────────────────────────────────────
 
-// Paint every sub-window that was carved out of one parent panel.
+// One sub-window box: the frame, its title, and — when it is the one
+// under the pointer or the keyboard — a highlight ring plus the title
+// the console's status line shows.
 //
-// GROUPED BY PARENT, in table-row order, because that is what makes the
-// derivation readable: the user sees the boxes that left the monster
-// panel stacked beside the monster panel's own rectangle, in the
-// monster panel's accent colour. A flat list of fourteen boxes would
-// say nothing about which window owns which block.
-//
-// THE PARENT STAYS WHERE IT IS. Its rectangle is the anchor the live
-// overlay will use, and the split does not move it — it only takes
-// blocks out of it. So the cluster is laid out BESIDE the parent on its
-// anchor side (right for a left anchor, left for a right anchor),
-// growing away from the screen edge the parent is pinned to.
-void HudCanvas::paintSubWindowCluster(const QRectF &parentTarget, int parentSlot,
-                                      const Corner parentCorner, QPainter &p) const
-{
-    QVector<SubWindowPaintInfo> boxes;
-    boxes.reserve(static_cast<int>(subSlots_.size()));
-
-    // Where the cluster starts, and which way it grows.
-    const bool growRight = (parentCorner == Corner::TopLeft
-                            || parentCorner == Corner::BottomLeft);
-    qreal edgeX = growRight ? parentTarget.right() + kSubClusterGap
-                            : parentTarget.left() - kSubClusterGap;
-    // Boxes placed in the column currently being filled. Reset when the
-    // column wraps — see the wrap below.
-    int rowsInThisColumn = 0;
-    qreal cursorY = parentTarget.top();
-    // A right-anchored cluster extends leftwards from the same edge, so
-    // `leftX` tracks the next box's left edge as it goes. Both axes are
-    // plain qreals (not const) because the loop advances them per box.
-    qreal leftX = edgeX;
-
-    for (const SubSlot &sub : subSlots_) {
-        if (sub.parentSlot != parentSlot || !sub.src)
-            continue;
-        // THE CONTRACT, READ NOT GUESSED. The box's extent is the
-        // window's own contentWidth()/contentHeight() (Panel's v0.12
-        // layout vocabulary) — the number the live surface reserves the
-        // same way, plus the margin the window reports. Nothing here
-        // re-derives a width, so a window whose content grew
-        // automatically gets a box that grew with it, and the split
-        // preview cannot drift from the window it is previewing.
-        const QSize content = sub.src->contentSize();
-        const int cw = content.width();
-        const int ch = content.height();
-        if (cw <= 0 || ch <= 0)
-            continue;   // nothing reserved, so nothing to represent
-
-        SubWindowPaintInfo info;
-        info.parentSlot = parentSlot;
-        info.title = subWindowLabel(parentSlot, sub.tableRow);
-        const qreal w = qMax<qreal>(1.0, cw * kSubPreviewScale);
-        const qreal h = qMax<qreal>(1.0, ch * kSubPreviewScale);
-
-        if (growRight) {
-            info.rect = QRectF(QPointF(edgeX, cursorY), QSizeF(w, h));
-            edgeX += w + kSubBoxGap;
-        } else {
-            leftX -= w;
-            info.rect = QRectF(QPointF(leftX, cursorY), QSizeF(w, h));
-            leftX -= kSubBoxGap;
-        }
-        // The line starts on the parent's near edge, level with the box.
-        info.anchor = QPointF(growRight ? parentTarget.right()
-                                        : parentTarget.left(),
-                              info.rect.center().y());
-        boxes.append(info);
-
-        // Vertical stacking keeps the cluster clear of the screen's
-        // other corner, which would otherwise collide when two panels
-        // share the top edge — until the column is kSubClusterMaxRows
-        // deep, at which point starting another column further out beats
-        // running off the canvas and drawing nothing.
-        //
-        // The wrap is per column, so the row index resets with it: a new
-        // column always starts level with the parent's top edge.
-        ++rowsInThisColumn;
-        if (rowsInThisColumn >= kSubClusterMaxRows) {
-            rowsInThisColumn = 0;
-            cursorY = parentTarget.top();
-            const qreal step = w + kSubColumnGap;
-            if (growRight)
-                edgeX += step;
-            else
-                leftX -= step;
-            continue;
-        }
-        cursorY += h + kSubBoxGap;
-    }
-
-    if (boxes.isEmpty())
-        return;
-
-    // Drawn nearest-the-parent LAST, so the cluster reads outward in
-    // both directions and the parent's own box is never occluded.
-    for (int i = boxes.size() - 1; i >= 0; --i)
-        paintSubWindowBox(boxes[i], parentTarget, parentCorner, p);
-}
-
-// One sub-window box: the connection line, the frame, the title.
+// NO CONNECTION LINE. The old cluster drew a dashed leader from each box
+// to its mother panel's edge, which made sense when the mother panel
+// was on screen and needed linking to. With the mother panels no longer
+// drawn, a leader points at empty space and reads as a bug, so it is
+// gone. The parent's identity survives in the two places that need it:
+// the accent colour (the same table Panel::accentColor() reads, so a
+// purple box is the player's and an orange one is the monster's) and
+// the title, which is the section the window was carved from.
 void HudCanvas::paintSubWindowBox(const SubWindowPaintInfo &info,
-                                 const QRectF &parentTarget,
-                                 const Corner parentCorner, QPainter &p) const
+                                 QPainter &p) const
 {
-    Q_UNUSED(parentTarget)
-    Q_UNUSED(parentCorner)
-
     // THE PARENT'S OWN COLOUR. The split's whole visual claim is "these
-    // boxes left that panel", and the parent's accent — the same table
-    // the parent's own frame and the live overlay read — is how the
-    // preview says it without a second legend. Dimmer than the parent's
-    // fill, so the main surface still reads as primary.
+    // boxes left that panel", and the parent's accent is how the preview
+    // says it without a second legend.
     QColor accent = mhw::panel_accent::forSlot(info.parentSlot);
 
-    // Connection line first, so the frame's border lands on top of it.
-    accent.setAlpha(80);
-    p.save();
-    p.setPen(QPen(accent, 1, Qt::DashLine));
-    p.drawLine(info.anchor, QPointF(info.rect.center().x(),
-                                    info.rect.center().y()));
-    p.restore();
+    // The box's own rendered pixmap, when the host pushed one. Drawn
+    // first so the frame lands on top of it.
+    if (info.index >= 0 && info.index < subSlots_.size()
+        && !subSlots_[info.index].pixmap.isNull()
+        && subSlots_[info.index].enabled) {
+        p.save();
+        p.drawPixmap(info.rect, subSlots_[info.index].pixmap,
+                     subSlots_[info.index].pixmap.rect());
+        p.restore();
+    }
 
     accent.setAlpha(150);
     p.save();
@@ -916,6 +1007,32 @@ void HudCanvas::paintSubWindowBox(const SubWindowPaintInfo &info,
                    Qt::AlignHCenter | Qt::AlignVCenter, info.title);
         p.restore();
     }
+
+    // The drag / keyboard highlight: a solid ring in the accent colour,
+    // plus the row's section name beside the box so the user can read
+    // WHAT they are dragging without guessing from the picture. The
+    // ring is deliberately the only solid line on the canvas — every
+    // other edge is dashed — so "the one I am moving" is unambiguous.
+    if (info.selected) {
+        p.save();
+        p.setPen(QPen(accent, 1.6));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(info.rect.adjusted(-2, -2, 2, 2));
+        p.restore();
+
+        p.save();
+        p.setFont(QFont(QStringLiteral("Chakra Petch"), 8, QFont::Medium));
+        p.setPen(accent);
+        const QFontMetrics fm(p.font());
+        const QString tag = info.title.isEmpty()
+            ? mhw::panel_accent::forSlot(info.parentSlot).name()
+            : info.title;
+        const int tagW = fm.horizontalAdvance(tag) + 12;
+        QRectF tagBox(info.rect.left() - 2, info.rect.bottom() + 4, tagW, 14);
+        p.fillRect(tagBox, QColor(0, 0, 0, 190));
+        p.drawText(tagBox, Qt::AlignCenter, tag);
+        p.restore();
+    }
 }
 
 // ─── interaction ────────────────────────────────────────────────────────
@@ -923,6 +1040,32 @@ void HudCanvas::paintSubWindowBox(const SubWindowPaintInfo &info,
 void HudCanvas::mousePressEvent(QMouseEvent *e)
 {
     if (e->button() != Qt::LeftButton) return;
+    // v0.14: IN SPLIT MODE THE SUB-WINDOWS ARE THE ONLY HIT TARGETS.
+    // The four mother panels are not drawn, so their boxes must not be
+    // hit-testable either — a click that landed on empty space and moved
+    // the monster panel by accident is exactly the "several whole blocks
+    // in the way" complaint one layer down. So the sub-window arm runs
+    // first and returns; the slot arm below is reached only when the
+    // canvas is in Single mode (where subSlots_ is empty by contract).
+    if (!subSlots_.isEmpty()) {
+        for (int i = subSlots_.size() - 1; i >= 0; --i) {
+            if (i < subRects_.size() && subRects_[i].contains(e->position())) {
+                const bool changed = (subSelected_ != i);
+                subSelected_ = i;
+                subDragging_ = true;
+                subDragIndex_ = i;
+                subDragStartMouse_ = e->position().toPoint();
+                subDragStartMargins_ = subSlots_[i].src->margins();
+                setCursor(Qt::ClosedHandCursor);
+                if (changed)
+                    emit subWindowSelected(i);
+                update();
+                return;
+            }
+        }
+        return;   // a click on empty space selects nothing, as before
+    }
+
     for (int i = mhw::kPanelCount - 1; i >= 0; --i) {
         if (slots_[i].lastTarget_.contains(e->position())) {
             if (i != selected_) {
@@ -941,19 +1084,55 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
     }
 }
 
-void HudCanvas::mouseMoveEvent(QMouseEvent *e)
+// The one fit factor every drag and every paint share. Factored out of
+// paintEvent because mouseMoveEvent needs the same mapping in the other
+// direction (canvas px → logical px) and two copies of this arithmetic
+// is two chances to make a drag disagree with the box it drags.
+//
+// Also the single spelling of how the screen frame is fitted into the
+// canvas's usable area — the reason paintEvent's frame and
+// mouseMoveEvent's conversion cannot drift apart.
+void HudCanvas::screenFrame(QRectF &frame, qreal &fit, QSize &logical) const
 {
-    if (!dragging_ || dragIndex_ < 0) return;
     const auto &si = previewScreenInfo();
-    const QSize logical = si.logical;
+    logical = si.logical;
     const QRectF avail = QRectF(rect()).adjusted(22, 46, -22, -kFooter);
     const QSize phys = si.physical;
     const qreal physAR = phys.height() / qreal(phys.width());
     QSizeF screen(avail.width(), avail.width() * physAR);
     if (screen.height() > avail.height())
         screen = QSizeF(avail.height() / physAR, avail.height());
-    const qreal fit = std::min(screen.width()  / logical.width(),
-                               screen.height() / logical.height());
+    frame = QRectF(QPointF(avail.center().x() - screen.width() / 2,
+                           avail.center().y() - screen.height() / 2),
+                   screen);
+    fit = ((logical.width() <= 0 || logical.height() <= 0))
+        ? 0.0
+        : std::min(frame.width() / logical.width(),
+                   frame.height() / logical.height());
+}
+
+void HudCanvas::mouseMoveEvent(QMouseEvent *e)
+{
+    if (subDragging_ && subDragIndex_ >= 0) {
+        QRectF frame;
+        qreal fit = 0.0;
+        QSize logical;
+        screenFrame(frame, fit, logical);
+        if (fit <= 0.0) return;
+
+        const QPoint delta = e->position().toPoint() - subDragStartMouse_;
+        const int dxLogical = qRound(delta.x() / fit);
+        const int dyLogical = qRound(delta.y() / fit);
+
+        emit subWindowMoved(subDragIndex_,
+                            movedSubMargins(subDragIndex_, dxLogical, dyLogical));
+        return;
+    }
+    if (!dragging_ || dragIndex_ < 0) return;
+    QRectF frame;
+    qreal fit = 0.0;
+    QSize logical;
+    screenFrame(frame, fit, logical);
     if (fit <= 0.0) return;
 
     const QPoint delta = e->position().toPoint() - dragStartMouse_;
@@ -965,7 +1144,13 @@ void HudCanvas::mouseMoveEvent(QMouseEvent *e)
 
 void HudCanvas::mouseReleaseEvent(QMouseEvent *e)
 {
-    if (e->button() == Qt::LeftButton && dragging_) {
+    if (e->button() != Qt::LeftButton) return;
+    if (subDragging_) {
+        subDragging_ = false;
+        subDragIndex_ = -1;
+        setCursor(Qt::ArrowCursor);
+    }
+    if (dragging_) {
         dragging_ = false;
         dragIndex_ = -1;
         setCursor(Qt::ArrowCursor);
@@ -974,6 +1159,10 @@ void HudCanvas::mouseReleaseEvent(QMouseEvent *e)
 
 void HudCanvas::keyPressEvent(QKeyEvent *e)
 {
+    // v0.14: the arrow keys move whichever window is selected, in that
+    // window's own mode. A sub-window selected in Split nudges by
+    // subWindowMoved(); a base panel selected in Single nudges by
+    // panelMoved() exactly as before. Two index spaces, one key.
     const int step = (e->modifiers() & Qt::ShiftModifier) ? kArrowBigStep : kArrowStep;
     int dx = 0, dy = 0;
     switch (e->key()) {
@@ -983,6 +1172,13 @@ void HudCanvas::keyPressEvent(QKeyEvent *e)
     case Qt::Key_Down:  dy =  step; break;
     default:
         return QWidget::keyPressEvent(e);
+    }
+    if (!subSlots_.isEmpty() && subSelected_ >= 0
+        && subSelected_ < subSlots_.size() && subSlots_[subSelected_].src) {
+        subDragStartMargins_ = subSlots_[subSelected_].src->margins();
+        emit subWindowMoved(subSelected_,
+                            movedSubMargins(subSelected_, dx, dy));
+        return;
     }
     if (!slots_[selected_].bound) return;
     dragStartMargins_ = slots_[selected_].src->margins();

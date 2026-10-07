@@ -44,35 +44,44 @@ QSettings &settings()
     return s;
 }
 
-// ─── the game-scoped settings namespace (v0.13) ──────────────────────
+// ─── the game-scoped settings namespace (v0.14) ──────────────────────
 //
 // Panels used to all live in ONE flat namespace. One `[player-status]`
-// section, one `[player-wirebug]` section, and no way to say which game
-// they were tuned for. The user found the result immediately: a single
-// preview showed 衣装 (World-only) and 翔虫 (Rise-only) at the same
-// time, because both games' data landed in the same section and both
-// split windows read it.
+// section, one `[player-wirebug]` section, and no way to say which
+// game they were tuned for. The user found the result immediately: a
+// single preview showed 衣装 (World-only) and 翔虫 (Rise-only) at the
+// same time, because both games' data landed in the same section and
+// both split windows read it.
 //
-// So every section is now per-game: `[world/player-status]` under World,
+// So every section became per-game: `[world/player-status]` under World,
 // `[rise/player-status]` under Rise, in the SAME file. Why group
 // prefixing rather than a file per game, and why the game is injected
 // rather than asked of Panel — panel_settings_game.h argues both.
 //
-// The game this process is persisting into is a launch-time fact (main()
-// resolves it from --game / process detection and calls
-// mhw::setPanelSettingsGame before the first Panel exists). The overlay
-// builds all ten windows in one burst before the event loop starts, so
-// one-shot injection is sufficient and there is no "game changed under
-// a live panel" case: the reader is immutable for the process lifetime
-// and switching games restarts the process.
+// v0.14 added the SECOND axis. Per-game fixed the games from each other
+// but left one game's single-mode and split-mode geometry in the same
+// section, and the user found that immediately too: 「双方布局会互相
+// 影响」. So the namespace is now GAME × MODE —
+// `[world/single/player-status]`, `[world/split/player-status]`,
+// `[rise/single/player-status]`, `[rise/split/player-status]` — and
+// both axes are launch-time facts (main() resolves the game from --game
+// / process detection and the mode from --layout, then calls
+// mhw::setPanelSettingsGame / setPanelSettingsLayout before the first
+// Panel exists).
 //
-// The un-prefixed spelling a pre-v0.13 file uses is migrated ONCE, on
-// the first panel to read it — mhw::migrateLegacyPanelSection, called
-// from Panel::loadConfig below. Its guarantees and the test that pins
-// them are in panel_settings_game.h.
+// The un-prefixed spelling a pre-v0.13 file uses, and the two-domain
+// spelling a pre-v0.14 file uses, are both migrated ONCE, on the first
+// panel to read them — mhw::migrateLegacyPanelSection, called from
+// Panel::loadConfig below. Both land in SINGLE, because single is the
+// only topology that existed when they were written. The migration's
+// guarantees and the test that pins them are in
+// panel_settings_game.h.
 QString scopedKey(const QString &key)
 {
-    return mhw::panelSettingsGroupFor(mhw::panelSettingsGame(), key);
+    // v0.14: the group is now GAME × MODE. The two globals are read
+    // here, at the one place the concatenation is spelled, so a
+    // Panel cannot resolve its key against a stale half of the pair.
+    return mhw::panelSettingsScopeGroup(key);
 }
 
 
@@ -330,15 +339,22 @@ void Panel::applyGeometry()
     layer->setDesiredSize(size());
 }
 
+
 QString Panel::settingsGroup() const
 {
     // The one place a scoped group name is derived from a panel's own
-    // key. panel.cpp's scopedKey() above is the same function for the
-    // base class's own three accesses; the subclasses that open their
-    // own QSettings handle (the three column-dial windows) call this so
-    // the prefix is spelled exactly once per access path rather than
-    // four times.
-    return mhw::panelSettingsGroupFor(mhw::panelSettingsGame(), key_);
+    // key. panel.cpp's scopedKey() above is the same function for
+    // the base class's own three accesses; the subclasses that open
+    // their own QSettings handle (the three column-dial windows) call
+    // this so the prefix is spelled exactly once per access path rather
+    // than four times.
+    //
+    // v0.14: TWO globals, not one. The game selects [world|rise] and the
+    // layout mode selects [single|split]; see panel_settings_game.h for
+    // why the mode is part of a window's address at all (the split and
+    // the single are different windows whose positions used to
+    // overwrite each other).
+    return mhw::panelSettingsScopeGroup(key_);
 }
 
 void Panel::loadConfig()
@@ -350,15 +366,24 @@ void Panel::loadConfig()
     const QMargins def = (subWindowIndex_ > 0)
         ? defaultMarginsForSubWindow(corner_, subWindowIndex_)
         : defaultMarginsFor(corner_);
-    // v0.13: migrate a pre-v0.13 un-prefixed section into this game's
+    // v0.14: migrate a legacy section into this (game, mode) scope's
     // namespace BEFORE reading it, so a user's existing layout is not
     // silently abandoned (its keys would otherwise read as "absent").
-    // Idempotent and one-shot: see panel_settings_game.h for the four
+    // Idempotent and one-shot: see panel_settings_game.h for the
     // guarantees and why the handle is passed rather than opened here.
-    if (mhw::migrateLegacyPanelSection(settings(), mhw::panelSettingsGame(),
-                                       key_)) {
-        qInfo("panels.ini: migrated the un-prefixed [%s] section into [%s]; "
-              "the other game's sections are untouched",
+    //
+    // Both legacy spellings are handled by this one call, in the order
+    // the file was written in: a pre-v0.13 flat `[player]` folds into
+    // `[<game>/single/player]` (the two-domain pre-v0.13 spelling
+    // folded first, and a fully flat spelling then folds into the same
+    // target), and a pre-v0.14 `[<game>/<key>]` folds into
+    // `[<game>/single/<key>]` — SINGLE because that is the only topology
+    // that existed when it was written.
+    const mhw::PanelSettingsScope scope{mhw::panelSettingsGame(),
+                                        mhw::panelSettingsLayout()};
+    if (mhw::migrateLegacyPanelSection(settings(), scope, key_)) {
+        qInfo("panels.ini: migrated the legacy section for '%s' into [%s]; "
+              "the other games' and the other mode's sections are untouched",
               qPrintable(key_), qPrintable(scopedKey(key_)));
     }
     settings().beginGroup(scopedKey(key_));

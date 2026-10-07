@@ -116,7 +116,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 119
+      "symbols": 109
     },
     "src/main_control.cpp": {
       "class": "ZERO",
@@ -310,7 +310,7 @@
         "monster-control-l2-smoke",
         "monster-control-rise-rf-smoke"
       ],
-      "symbols": 132
+      "symbols": 133
     },
     "src/ui/control_panel_styles.cpp": {
       "class": "ZERO",
@@ -337,7 +337,7 @@
         "monster-control-p0-test",
         "monster-control-rise-rf-smoke"
       ],
-      "symbols": 56
+      "symbols": 68
     },
     "src/ui/icon.cpp": {
       "class": "ZERO",
@@ -356,6 +356,7 @@
         "monster-parts-window-tests",
         "monster-split-grouping-tests",
         "panel-capabilities-tests",
+        "panel-settings-scope-tests",
         "snapshot-regression-tests",
         "split-default-placement-tests",
         "split-layout-consistency-tests",
@@ -370,6 +371,7 @@
         "damage-split-parity-tests",
         "monster-control-p0-test",
         "panel-capabilities-tests",
+        "panel-settings-scope-tests",
         "snapshot-regression-tests"
       ],
       "symbols": 48
@@ -400,6 +402,7 @@
         "hud-canvas-split-tests",
         "monster-control-p0-test",
         "panel-capabilities-tests",
+        "panel-settings-scope-tests",
         "snapshot-regression-tests"
       ],
       "symbols": 34
@@ -478,6 +481,7 @@
         "hud-canvas-split-tests",
         "monster-control-p0-test",
         "panel-capabilities-tests",
+        "panel-settings-scope-tests",
         "snapshot-regression-tests"
       ],
       "symbols": 39
@@ -569,9 +573,10 @@
       "compiled_by": [],
       "refs": [
         "console-split-sync-tests",
-        "panel-settings-game-scoping-tests"
+        "panel-settings-game-scoping-tests",
+        "panel-settings-scope-tests"
       ],
-      "symbols": 10
+      "symbols": 18
     },
     "src/ui/panel_source.cpp": {
       "class": "INDIRECT",

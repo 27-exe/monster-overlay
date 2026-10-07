@@ -573,12 +573,15 @@ int main(int argc, char **argv)
     QApplication::setApplicationDisplayName(
         QStringLiteral("Monster Overlay · %1").arg(mhw::gameDisplayName(gameId)));
 
-    // v0.13: the panels' layout namespace is per game. Every panel's
-    // settings section is now `[<game>/<key>]` inside panels.ini, so the
-    // two games' window geometry, scale, floors, margins and columns
-    // dials cannot overwrite each other. Why prefixing rather than a
-    // file per game, and why the game is injected here rather than
-    // asked of Panel — panel_settings_game.h argues both.
+    // v0.14: the panels' layout namespace is per game AND per layout
+    // mode. Every panel's settings section is now
+    // `[<game>/<mode>/<key>]` inside panels.ini, so the two games'
+    // window geometry, scale, floors, margins and columns dials cannot
+    // overwrite each other, and neither can one game's single-mode
+    // layout overwrite its split-mode one. Why prefixing rather than a
+    // file per game, why the mode is a segment rather than a second
+    // file, and why both axes are injected here rather than asked of
+    // Panel — panel_settings_game.h argues all three.
     //
     // This MUST run before the first Panel is constructed. LoadConfig()
     // is called from the Panel ctor, so a panel built before this line
@@ -588,6 +591,30 @@ int main(int argc, char **argv)
     // there is no mid-session game change to guard against: the reader
     // is immutable for this process and switching games restarts it.
     mhw::setPanelSettingsGame(gameId);
+
+    // AND THE MODE, for the same reason and in the same breath.
+    //
+    // THE MODE IS PART OF A WINDOW'S ADDRESS, not a detail. The split's
+    // sub-windows (player-status, player-bars, monster-identity, …) do
+    // not exist in single mode, and the four mother panels hold a
+    // different mask and therefore a different size in each. Storing
+    // both under one section is what made the two topologies fight:
+    // the user's `[rise/monster] mt=212 mr=1130` was a single-mode
+    // position sitting next to `[rise/player-bars] ml=2260`, and
+    // reading the game alone could not tell which was which. Their
+    // verdict: 「双方布局会互相影响，分开」.
+    //
+    // Resolved ABOVE, from the same --layout host that decides the
+    // topology, so the namespace and the windows that read it cannot
+    // disagree: `--layout=split` both splits the panel AND points it at
+    // [world/split/...]. Deriving it here from a second flag would be
+    // how the two drift.
+    //
+    // One-shot, like the game: `--layout` is read once at startup and
+    // nothing in a running overlay changes it. A mid-flight change would
+    // retarget the namespace underneath live windows, which is the
+    // failure the v0.13 rail-switch bug taught.
+    mhw::setPanelSettingsLayout(playerSplitLayoutMode);
 
     PlayerPanel playerPanel;
     MonsterPanel monsterPanel;
@@ -733,9 +760,65 @@ int main(int argc, char **argv)
     // layer-shell surface at all — independent of the section mask
     // above. setVisible() in the live loop will be a no-op for the
     // disabled panel.
-    playerPanel.setPanelEnabled(!parser.isSet(noPlayerOption));
-    monsterPanel.setPanelEnabled(!parser.isSet(noMonsterOption));
-    damagePanel.setPanelEnabled(!parser.isSet(noDamageOption));
+    //
+    // v0.14: AND THE SPLIT'S OWN GATE, because a mother panel whose
+    // every block has left for a window has nothing to mount. The user
+    // found the leftover: 「分块模式下有一个纯空的只显示player的面板」.
+    //
+    // The one place the four are decided, each with its own reasoning:
+    //
+    //   PLAYER — playerPanelMaskFor(Split, mask) is empty BY
+    //     CONSTRUCTION: every PlayerSection bit is claimed by a row of
+    //     kPlayerSplitTargets (panel_sections.h records that table's
+    //     exhaustiveness), so the panel's derived mask is 0 and it
+    //     would paint a bare chrome frame with a PLAYER title. Gate it
+    //     entirely — there is no block for it to hold.
+    //
+    //   MONSTER — the ONE that must NOT be gated wholesale, and this is
+    //     the asymmetry worth reading. MonsterSection::Tenderize is
+    //     deliberately NOT a row of kMonsterSplitTargets (the table
+    //     names its omission in a comment): since v0.7.4 PR C the
+    //     勾爪软化 countdown is a strip INSIDE each .pc card, drawn and
+    //     height-reserved by pcHasTenderize(), so it cannot be
+    //     re-parented without drawing it twice. monsterPanelMaskFor()
+    //     therefore KEEPS that bit, and MonsterPanel still has real
+    //     content to draw in split mode — for a monster whose parts are
+    //     being tenderized. Gate it unconditionally and the user loses
+    //     the one thing the split did not move; never gate it and they
+    //     get an empty frame for the other 99% of the hunt. So it is
+    //     gated on the mask, which is exactly "does this panel still
+    //     own a block".
+    //
+    //   DAMAGE — same asymmetry as MONSTER, one row out of four.
+    //     kDamageSplitTargets claims Share and Chart, so Rows (the
+    //     player rows) and OtherMembers (the party rows) stay in the
+    //     panel; the derived mask is non-zero whenever either is on.
+    //     Gated on the mask for the same reason as MONSTER.
+    //
+    //   PETS — untouched, and NOT because it is an oversight.
+    //     PetDamageSection has no split table at all (its whole bit
+    //     space stays in the panel whatever the mode), so the mask is
+    //     identical in both modes and the gate below is a no-op for it.
+    //     Adding a pets split later is adding a row to a table plus one
+    //     line there, not a special case here.
+    //
+    // WHY THE MASTER GATE AND NOT A VISIBILITY CALL. panelEnabled_ is
+    // the axis that removes the layer-shell surface
+    // (panel.cpp's setVisible returns early for a disabled panel), so
+    // this is the switch that stops an empty frame from existing at
+    // all rather than hiding it after it has been created and shown.
+    playerPanel.setPanelEnabled(!parser.isSet(noPlayerOption)
+                                && (playerSplitLayoutMode
+                                        != mhw::PlayerSection::PlayerLayoutMode::Split
+                                    || maskPlayerForPanel != 0));
+    monsterPanel.setPanelEnabled(!parser.isSet(noMonsterOption)
+                                 && (playerSplitLayoutMode
+                                         != mhw::PlayerSection::PlayerLayoutMode::Split
+                                     || maskMonsterForPanel != 0));
+    damagePanel.setPanelEnabled(!parser.isSet(noDamageOption)
+                                && (playerSplitLayoutMode
+                                        != mhw::PlayerSection::PlayerLayoutMode::Split
+                                    || maskDamageForPanel != 0));
     // v0.10.1: the pet damage surface is Rise-only. World never mounts it,
     // regardless of --mask-pets / --no-pets; the console hides the matching
     // controls in World mode for the same reason.
@@ -878,6 +961,22 @@ int main(int argc, char **argv)
     monsterIdentityStripPanel.setGameForDemo(gameId);
     monsterConditionsStripPanel.setGameForDemo(gameId);
 
+    // v0.14: THE SHOW HALF OF THE SAME GATE. setPanelEnabled(false)
+    // above is what makes the panel refuse to mount, but the REFUSAL
+    // is inside Panel::setVisible() — and show() on a QWidget goes
+    // through setVisible(), so it is already covered. The probe that
+    // settles it (tests/panel_settings_scope_tests.cpp asserts both):
+    // a disabled Panel whose show() was called reports isVisible() ==
+    // false and mounts no layer-shell surface, because
+    // qt_widget_private->show_helper() calls setVisible(true), which
+    // hits Panel's override and returns at panel.cpp's guard.
+    //
+    // Left as show() rather than rewritten as a conditional, on
+    // purpose: the four base panels' first-show path is byte-identical
+    // to what every single-mode baseline was painted against, and a
+    // `if (playerPanel.panelEnabled())` here would be a second spelling
+    // of a decision setPanelEnabled() already made. One gate, one
+    // place.
     playerPanel.show();
     monsterPanel.show();
     damagePanel.show();
@@ -1219,7 +1318,18 @@ int main(int argc, char **argv)
         }
         monsterPanel.setMultiplayer(snap.isMultiplayer);
         if (!snap.monsters.isEmpty() || showAll) {
-            monsterPanel.setVisible(true);
+            // v0.14: panelEnabled(), not a bare true. The monster panel
+            // is the one mother panel that keeps a block in split mode
+            // (MonsterSection::Tenderize, which cannot be re-parented
+            // out of the .pc card), so it is a live surface in split —
+            // but only when it has something to draw, and the master
+            // gate above is what decides that. A bare `true` here would
+            // ask it to mount regardless, which is how an empty frame
+            // gets shown after the gate already said no. Set through
+            // Panel::setVisible()'s existing "disabled panels never
+            // mount" guard rather than a second condition, so the
+            // decision stays in one place.
+            monsterPanel.setVisible(monsterPanel.panelEnabled());
             if (skipUpdate(monsterPanel)) {
                 monsterPanel.triggerUpdate();
             } else if (!snap.monsters.isEmpty()) {
