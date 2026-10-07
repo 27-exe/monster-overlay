@@ -228,6 +228,21 @@ add_library(mhw-ui STATIC
     src/ui/panel_damage_split_share.h
     src/ui/panel_damage_split_chart.cpp
     src/ui/panel_damage_split_chart.h
+    # v0.14: the DPS panel's ROWS block as its own window - the per-player
+    # name / damage / DPS list. It was the one block the split had no home
+    # for: Rows and OtherMembers are what DamagePanel keeps in Split mode,
+    # so the user's "the per-player part is missing" was the preview
+    # showing the sub-windows only, with the rows living in a mother panel
+    # the split canvas does not draw.
+    #
+    # It deliberately has NO row in kDamageSplitTargets. That table's
+    # subscripts are the split-window index space (hud_canvas and its test
+    # both index it directly), so a third row would shift what the existing
+    # two mean. This window is preview-only for now; wiring it into the
+    # live overlay needs a decision about whether DamagePanel should stop
+    # drawing Rows, which is a mask change and not a rename.
+    src/ui/panel_damage_split_rows.cpp
+    src/ui/panel_damage_split_rows.h
     src/ui/viewmodel/damage_view_model.cpp
     src/ui/viewmodel/damage_view_model.h
     src/ui/viewmodel/monster_view_model.cpp
@@ -1419,6 +1434,60 @@ add_executable(world-severable-scan-tests
     target_include_directories(console-split-sync-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(console-split-sync-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME console-split-sync-tests COMMAND console-split-sync-tests)
+
+    # v0.14: the DPS rows window, and the dispatch that decides which game a
+    # sub-window seeds itself for. The second half is the load-bearing one:
+    # twelve syncGameForDemo() overloads were dead code, because the host
+    # holds a Panel* and an exact Panel* match always beats a Derived*
+    # conversion at compile time. Every split window therefore kept its
+    # member-initialised game - World for mantles, Rise for wirebugs - which
+    # is why the preview showed 衣装 under Rise and 翔虫 under World, and why
+    # the same symptom had been "fixed" twice already.
+    #
+    # §1 of this file is disabled on purpose (see the note there); §1b drives
+    # the dispatch through a real console instead.
+    add_executable(damage-rows-window-tests
+        tests/damage_rows_window_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(damage-rows-window-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(damage-rows-window-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(damage-rows-window-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME damage-rows-window-tests COMMAND damage-rows-window-tests)
+    # v0.14.1: the game SEED's own dispatch, observed through content
+    # rather than through pixels.
+    #
+    # The console-side suites compare a Rise canvas with a World canvas,
+    # which catches the namespace half of «Rise 显示衣装 / World 显示翔虫»
+    # but not the seed half: two canvases differ because every window
+    # re-reads [game/mode/key] and lands somewhere new, whether or not any
+    # window's game_ moved. Empirical proof — gutting
+    # PlayerMantlesStripPanel::setDemoGame() (making it precisely the no-op
+    # the twelve dead overloads always were) left both suites green.
+    #
+    # Mantles are a World system and Rise wears wirebugs, so hasContent() is
+    # a direct read of the window's game_, in both directions.
+    add_executable(split-game-seed-dispatch-tests
+        tests/split_game_seed_dispatch_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(split-game-seed-dispatch-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(split-game-seed-dispatch-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(split-game-seed-dispatch-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME split-game-seed-dispatch-tests
+             COMMAND split-game-seed-dispatch-tests)
+    set_tests_properties(split-game-seed-dispatch-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
+
+    set_tests_properties(damage-rows-window-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
+
     set_tests_properties(console-split-sync-tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         RESOURCE_LOCK "panels-ini")

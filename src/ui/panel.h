@@ -13,6 +13,13 @@
 
 namespace mhw {
 struct GameSnapshot;
+// Forward-declared with the default underlying type spelled out,
+// because an enum-class declaration without one fixes its underlying
+// type to `int` and a forward declaration that disagrees with the
+// later definition is an ODR violation. GameId's real home is
+// monster/monster_types.h (an enum class with no explicit type, so
+// int); Panel must not include a monster header to name it.
+enum class GameId : int;
 }
 
 // Which screen corner a panel is anchored to. Wayland layer-shell
@@ -260,6 +267,37 @@ public:
     void markDemoPrimed() { demoPrimed_ = true; }
     void resetDemoPrimed() { demoPrimed_ = false; }
 
+    // ─── which game this window's DEMO DATA represents ─────────────────
+    //
+    // A virtual with a no-op base, and NOT a per-class overload set that
+    // a caller dispatches on. The split preview host holds its windows
+    // through std::unique_ptr<Panel> and has to retarget them in a loop
+    // (SplitWindowPreviewHostImpl::syncAll), and a `Panel*` argument
+    // matches an exact `syncGameForDemo(Panel*, GameId)` overload
+    // BETTER than any Derived* one — overload resolution on a base
+    // pointer has NO runtime dispatch, so every Derived* overload in
+    // the set lost to the base one and was dead code from the day it
+    // was written. The proof is a two-type probe: both entries printed
+    // "NO-OP (Panel*) chosen". That is the root cause of the user's
+    // 「Rise 预览显示衣装、World 预览显示翔虫」: not one of the twelve
+    // Derived overloads ever ran, so every window's `game_` member sat
+    // on its own initialiser — mantles' World, wirebug's Rise — and a
+    // Rise preview painted mantles while a World one painted bugs.
+    //
+    // A virtual makes the dispatch the call site's problem the RIGHT
+    // way: the base answers nothing (a panel whose demo is
+    // game-agnostic), and a window whose setupDemoData() branches on
+    // the game overrides this to store the member and drop the
+    // one-shot seed via resetDemoPrimed() so the next paint re-runs
+    // its own setupDemoData(). Live data is unaffected: update(snap)
+    // overwrites the whole model.
+    //
+    // The same twelve windows keep their own non-virtual
+    // setGameForDemo() for main.cpp, which calls them on concrete
+    // stack objects. Overriding the virtual is the ONE thing that
+    // makes the constructor-free path work.
+    virtual void setDemoGame(mhw::GameId) {}
+
     // i18n — runtime locale switch entry point. Called by the overlay's
     // conf-watch loop (src/main.cpp) right after StringTable::load()
     // swapped the locale: strings re-read at the draw site in paintPanel()
@@ -278,6 +316,12 @@ public:
     // user's zoom. Keeping these as getters (not setters) means the
     // canvas is always a passive view, never a driver of state.
     [[nodiscard]] Corner corner() const { return corner_; }
+
+    // The settings key this window persists under, e.g. "player-mantles".
+    // Stable where a table index is not: the split table's row order is free
+    // to change, and anything that hardcodes an index would silently start
+    // reading a different window the day it does.
+    [[nodiscard]] const QString &settingsKey() const { return key_; }
 
     [[nodiscard]] QMargins margins() const { return margins_; }
     [[nodiscard]] double scale() const { return scale_; }

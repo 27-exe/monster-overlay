@@ -190,6 +190,11 @@ public:
     // abnormalities).
     void setGameForDemo(mhw::GameId game);
 
+    // v0.15: the virtual dispatch path — see panel_player_split_mantles.h
+    // for why a Panel* call site (the Console's split preview host) needs
+    // an override rather than another non-virtual overload.
+    void setDemoGame(mhw::GameId game) override;
+
     // i18n: re-query the cached window title and re-seed the demo
     // labels (they come from tr() at seed time). Called by the overlay's
     // locale-watch loop after StringTable::load() swapped the locale.

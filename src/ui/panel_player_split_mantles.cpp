@@ -531,6 +531,20 @@ void PlayerMantlesStripPanel::setGameForDemo(mhw::GameId game)
     triggerUpdate();
 }
 
+void PlayerMantlesStripPanel::setDemoGame(mhw::GameId game)
+{
+    // Delegate to the non-virtual the live overlay calls. The two names
+    // exist because the two call sites need two different dispatch
+    // mechanisms: main.cpp constructs this window as a concrete stack
+    // object and calls setGameForDemo() directly; the Console's split
+    // preview host holds one as std::unique_ptr<Panel> and can only
+    // reach it virtually. Both land in the same body, so the preview and
+    // the live overlay cannot disagree about which game the demo
+    // represents — the disagreement the user reported as
+    // 「Rise 预览显示衣装、World 预览显示翔虫」.
+    setGameForDemo(game);
+}
+
 void PlayerMantlesStripPanel::setupDemoData()
 {
     // Edit-mode preview: both slots equipped, one running and one cooling,

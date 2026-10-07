@@ -160,12 +160,31 @@ struct ConsoleLayoutConfRow {
 // --layout=single would outrank a future conf row and silently discard
 // it — the exact failure mode "conf > cli-explicit > default" is shaped
 // to prevent. So: Split is spelled out, Single is silence.
+//
+// THE DOUBLE DASH IS THE WHOLE POINT, and it was missing. The conf-row
+// key is `layout=split` because that is what the CONFIG FILE spells;
+// the flag the child parses is `--layout=split` because that is what a
+// QCommandLineOption looks like. Handing the conf spelling to argv put
+// `layout=split` in front of QCommandLineParser::parse() as a
+// POSITIONAL argument — the parser never saw an option named `layout`
+// set, so main.cpp's resolveStartupLayoutMode() resolved the CLI arm to
+// "not given" and the child booted in Single no matter what the combo
+// said. Verified offscreen with the console's real argv fed through the
+// same option set main.cpp builds:
+//
+//     raw        : --mask-player=1ff --edit --game=rise layout=split
+//     --layout given : NO       --layout value : ''    positional : layout=split
+//     resolved topology : single
+//
+// A spelling that cannot be parsed is not a spelling of Split. It is a
+// spelling of nothing, and "nothing" resolves to Single.
 [[nodiscard]] inline QStringList consoleLayoutArgv(
     PlayerSection::PlayerLayoutMode mode) noexcept
 {
     QStringList args;
     if (mode == PlayerSection::PlayerLayoutMode::Split)
-        args << QString::fromLatin1(kConsoleLayoutRowKey)
+        args << QStringLiteral("--")
+             + QString::fromLatin1(kConsoleLayoutRowKey)
              + QStringLiteral("=split");
     return args;
 }

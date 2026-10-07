@@ -292,6 +292,47 @@ private:
     void updateStageToggleText();
     void updateZoomLabel();
 
+    // v0.14: destroy and rebuild the four mother panels against the panel
+    // settings scope in force RIGHT NOW.
+    //
+    // WHY THIS EXISTS. A Panel reads its QSettings namespace exactly once,
+    // inside its constructor — Panel::loadConfig() -> settingsGroup(),
+    // which resolves to `[<game>/<mode>/<key>]`. Construct-then-repoint
+    // is therefore a no-op for every number the namespace decides
+    // (margins, scale, opacity, floors, lock, the columns dial): by the
+    // time the constructor returns they are members of a live widget, and
+    // setGameForDemo() only changes WHAT the panel paints.
+    //
+    // The split preview already knew this (syncSplitPreviewToCanvas()
+    // destroys and rebuilds its host on a game change for exactly this
+    // reason, see its comment). The four mother panels did not: they were
+    // constructed once in the ctor and switchGame() retargeted only their
+    // demo seed. So the user got a Rise preview showing World's geometry
+    // — «整块模式下 Rise 预览不同步» — which is the same bug one layer
+    // down, and the same fix.
+    //
+    // Caller contract: the panel-settings game and mode must already be
+    // in force (this method does not set them) and the caller must
+    // rebuildAndRender() afterwards. Rebound sources are refreshed here
+    // because the canvas holds raw pointers for the whole session.
+    // v0.14.1: the ctor calls these two, in this order, with the four
+    // buildInspector() calls BETWEEN them. A rail click calls
+    // rebuildMotherPanels(), which is all three at once.
+    //
+    // They are separate because each needs something the other produces:
+    // buildInspector() reads the panels, rebuildMotherPanels() adopts the
+    // PanelCtl the inspector fills. See the ctor's note for the full
+    // argument and for the null-deref that ordering mistake produced.
+    void constructMotherPanels();
+    void adoptMotherPanels();
+    void rebuildMotherPanels();
+
+    // Repoint the HudCanvas's four bindings after the panels they describe
+    // were destroyed. The canvas stores a non-owning const PanelSource*, so
+    // replacing the panels leaves it holding freed pointers — the same
+    // refresh the split-preview host performs on a rebuild.
+    void rebindMotherPanels();
+
 
     // Source of the four pre-paint masks and the master toggles.
     PlayerPanel *player_ = nullptr;
@@ -412,7 +453,34 @@ private:
     // sentinel is World, which is both the namespace default and the game
     // a fresh console starts on when nothing has been built yet.
     mhw::GameId splitPreviewHostGame_{mhw::GameId::World};
+    // The host is created, destroyed and re-created with the rail: a
+    // sub-window reads its game-scoped QSettings group inside its
+    // constructor, so re-pointing the namespace cannot reach a window that
+    // already exists. The only thing that does get asked about it from
+    // outside is the test that asserts a rebuilt host actually re-seeds
+    // its windows — the whole "switch the rail and the preview follows"
+    // contract, which nothing else covers (see the note in
+    // split_game_seed_dispatch_tests.cpp). It goes through the public
+    // accessor below rather than reaching in here.
     std::unique_ptr<SplitWindowPreviewHost> splitPreview_;
+
+public:
+    // A split-preview window by settings key, or nullptr. Non-owning.
+    //
+    // WHY THIS EXISTS. SplitWindowPreviewHostImpl is private to
+    // control_panel.cpp, so the `Panel` it builds cannot be named from
+    // outside — and the one observable that proves the rail's contract,
+    // whether a window's DEMO SEED followed the switch, is not visible in
+    // pixels: two canvases differ from the geometry rebuild alone, which is
+    // exactly how that dispatch shipped dead for two releases while both
+    // console suites stayed green (see split_game_seed_dispatch_tests.cpp).
+    // A mantles window is empty under Rise and full under World, so this
+    // hands back an object whose hasVisibleContent() reads the seed.
+    //
+    // Keyed rather than indexed: the split table's row order is free to
+    // change, and a caller holding an index would start reading a different
+    // window the day it does.
+    [[nodiscard]] Panel *splitPreviewWindow(const QString &key) const;
 
     // v0.6 Phase 5: most recent successful /proc scan (persisted under the
     // "detectedGame" QSettings key). Refreshed every 5s by the live badge.

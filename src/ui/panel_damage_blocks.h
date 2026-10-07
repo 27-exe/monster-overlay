@@ -72,12 +72,21 @@
 #include "ui/viewmodel/damage_view_model.h"
 
 #include "core/string_table.h"
+// The weapon icon renderer and the number formatters. Neither is a
+// widget header — Icon is QPixmap-only and formatters is QString-only —
+// so including them here keeps this header as includable from a
+// QtCore-only test as it was. They are needed because the rows block
+// (v0.15) draws the weapon icon and the grouped damage, which are the
+// two things the share bar and the chart never had to reach for.
+#include "ui/formatters.h"
+#include "ui/icon.h"
 
 #include <QColor>
 #include <QFont>
 #include <QFontMetrics>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPixmap>
 #include <QRectF>
 #include <QString>
 #include <QVector>
@@ -136,6 +145,20 @@ constexpr int kChartH = 140;    // HTML: .chart height:140px
 constexpr int kChartLeft = 36;  // widened from 28 so 3-char "184k"
                                 // labels at 8px don't clip
 constexpr int kShareBarH = 10;  // clean single-line bar (was 16)
+
+// The player rows' two layout tokens — panel_damage.cpp:39-40. Needed
+// by the rows window's height reservation (v0.15) and exported for the
+// same reason kChartH is: the draw side and the reservation side must
+// read one spelling, or a window reserves one height and paints
+// another.
+constexpr int kRowH   = 29;      // HTML: .drow height:29px
+constexpr int kRowGap = 5;       // HTML: .drow margin-bottom:5px
+
+// The source panel's own width (panel_damage.cpp:45). The rows window
+// starts its width from it for the same reason the share window does:
+// "what the block used to be" is one number in one place instead of a
+// literal in the window's source.
+constexpr int kRowsPanelW = 380;
 
 // The share bar's DRAWN height. The panel draws `kShareBarH - 2` (an
 // 8px bar inside the 10px block); the window reserves the split margin
@@ -537,6 +560,364 @@ inline void drawDamageChart(QPainter &p, const QRectF &chartRect,
     // No elapsed-time label here: the previous '+1s' demo marker was
     // neither a real x-axis nor useful gameplay information, and it
     // collided with the top y-axis value on transparent backgrounds.
+}
+
+// ---- Player rows -------------------------------------------------------
+//
+// v0.15: the DPS panel's per-player identity rows (name / weapon icon /
+// MR / total damage / DPS), finally having a window of their own.
+//
+// WHY A WINDOW AT ALL, when panel_sections.h's own design note argued
+// the other way
+// ----------------------------------------------------------------
+// kDamageSplitTargets shipped with two rows on the recorded grounds
+// that "Rows is the DPS panel's SUBSTANCE — splitting it would leave a
+// panel that mounts as an empty title row". That argument holds for a
+// split which moves the two width-hungry blocks out and leaves ONE
+// panel holding the rows. It does not survive the user actually running
+// it: with Share and Chart carved out, the parent damage panel mounts
+// in Split mode still drawing Rows, and the Console's preview — which
+// draws ONLY the split's sub-windows — shows the user a console with
+// two boxes and no rows. The user's report was exactly that: "dps 部分
+// 缺少一个面板，我们按玩家统计的那部分不见了". The design note is
+// right about what the OVERLAY does and blind to what the CONSOLE
+// previews, and the fix is to give Rows its own window so both
+// surfaces describe the same three blocks.
+//
+// WHAT THIS DOES NOT DO: it does not move Rows out of DamagePanel.
+// damagePanelMaskFor() is untouched, so in Split mode the panel keeps
+// drawing Rows exactly as it always has and the ten single-mode
+// baselines cannot move. The new window is a THIRD surface that draws
+// the same block from the same model, which is the same relationship
+// DamageShareStripPanel already has with the share bar (panel_sections
+// .h:damagePanelMaskFor's comment records it as "the panel only ever
+// loses blocks that moved out" — nothing moved out here).
+//
+// The one consequence worth naming: in a real `--layout=split` overlay
+// launch, the rows now appear TWICE — once in the panel and once in the
+// new window. That is the split's existing honesty problem (the user
+// was already told the panel keeps its substance), and it is the
+// parent session's call whether main.cpp should wire this window at
+// all or leave it to the Console. Everything below is written so both
+// answers compile.
+
+// One row of the identity table: everything the painter needs that is
+// a RESOLUTION rather than a stroke.
+struct DamageRow {
+    QString name;
+    int     masterRank{0};
+    int     weaponId{-1};
+    int     damage{0};
+    int     dps{0};
+    int     slot{0};
+    bool    isSelf{false};
+    // This row's contribution fraction of the party total, already
+    // normalised. The panel divides per row inside its loop
+    // (panel_damage.cpp:260-266 pre-computes partyDamage once, then
+    // dmg/partyDamage per row); the model folds that so the draw side
+    // has no arithmetic of its own.
+    float   share{0.0F};
+};
+
+// The rows block's content model: one DamageRow per player, plus the
+// two derived counts the layout needs.
+struct DamageRowsModel {
+    QVector<DamageRow> rows;
+
+    [[nodiscard]] int rowCount() const noexcept { return rows.size(); }
+
+    // "No data, no window", the split's shared rule. A party of four
+    // who have all hit 0 damage is still four rows on screen — the
+    // names and the weapon icons are the answer to "who is here" — so
+    // this answers false for an EMPTY roster only, never for a roster
+    // with zero damage. (DamageShareModel::isEmpty() has the opposite
+    // rule on purpose: a bar with nothing to divide is a bare grey
+    // track, while a row list with nothing to name is nothing at all.)
+    [[nodiscard]] bool isEmpty() const noexcept { return rows.isEmpty(); }
+
+    // The block's own height: n rows and (n-1) inter-row gaps. The
+    // panel's rowsAreaH expression (panel_damage.cpp:216) verbatim,
+    // minus the panel's own leading/trailing margins which belong to
+    // the panel's layout and not to the block.
+    [[nodiscard]] int blockHeight() const noexcept
+    {
+        const int n = rows.size();
+        return n * damage_block::kRowH
+               + (n > 0 ? (n - 1) * damage_block::kRowGap : 0);
+    }
+};
+
+// THE CORE. The rows resolved from plain data: the last sample's damage
+// vector, the per-row identity, the master ranks, the weapon ids, the
+// names and the DPS each row draws.
+//
+// Overloaded on plain data as well as on the ViewModel, for the reason
+// the share and chart builders are: the "last sample shorter than the
+// roster" state (which the panel tolerated with `i < last.damage.size()
+// `) is a real state and no poll loop can be driven into it, so a test
+// must be able to hand that history in directly.
+[[nodiscard]] inline DamageRowsModel buildDamageRowsModel(
+    const QVector<int> &lastSampleDamage,
+    const QVector<DamageRowIdentity> &ident,
+    const QVector<QString> &names,
+    const QVector<int> &masterRanks,
+    const QVector<int> &weaponIds,
+    const QVector<int> &dps)
+{
+    DamageRowsModel model;
+    const int n = ident.size();
+    if (n == 0)
+        return model;
+
+    // The party total, the panel's own guard included: a zero total is
+    // replaced by 1 so every share divides to 0 rather than inf
+    // (panel_damage.cpp:260-266).
+    qint64 partyDamage = 0;
+    for (int i = 0; i < n && i < lastSampleDamage.size(); ++i)
+        partyDamage += lastSampleDamage[i];
+    if (partyDamage == 0)
+        partyDamage = 1;
+
+    model.rows.resize(n);
+    for (int i = 0; i < n; ++i) {
+        DamageRow &r = model.rows[i];
+        r.name       = names.value(i);
+        r.masterRank = masterRanks.value(i, 0);
+        r.weaponId   = weaponIds.value(i, -1);
+        r.damage     = (i < lastSampleDamage.size()) ? lastSampleDamage[i] : 0;
+        r.dps        = dps.value(i, 0);
+        r.slot       = ident[i].slot;
+        r.isSelf     = ident[i].isSelf;
+        r.share      = static_cast<float>(r.damage)
+                       / static_cast<float>(partyDamage);
+    }
+    return model;
+}
+
+// The production entry point, delegating to the core above so the
+// panel, the window and the test all get one arithmetic.
+[[nodiscard]] inline DamageRowsModel buildDamageRowsModel(
+    const mhw::DamageViewModel &vm)
+{
+    const auto &history = vm.history();
+    const QVector<int> lastSample =
+        history.isEmpty() ? QVector<int>() : history.last().damage;
+
+    QVector<DamageRowIdentity> ident;
+    ident.resize(vm.rowCount());
+    for (int i = 0; i < vm.rowCount(); ++i)
+        ident[i] = {vm.partySlots().value(i, i),
+                    vm.locals().value(i, false)};
+
+    QVector<int> dps;
+    dps.resize(vm.rowCount());
+    for (int i = 0; i < vm.rowCount(); ++i)
+        dps[i] = vm.computeDps(i);
+
+    return mhw::buildDamageRowsModel(lastSample, ident, vm.names(),
+                                     vm.masterRanks(), vm.weaponIds(), dps);
+}
+
+// panel_damage.cpp:275-409, moved: one row per player. The body is the
+// panel's own, with two spellings made explicit rather than inlined:
+// the demo DPS override (the panel's kDemoDps[4] at :288-290, gated on
+// editMode() && history ≤ 8) is the VIEWMODEL's business and arrives
+// here already resolved in `dps`; and the six columns are positioned
+// against `rect.right()` rather than against the panel's kPanelW, so
+// one body serves a 380px panel and a 300px window without either
+// re-deriving the other's geometry.
+inline void drawDamageRows(QPainter &p, const QRectF &rect,
+                           const DamageRowsModel &model)
+{
+    const int n = model.rows.size();
+    if (n == 0)
+        return;
+
+    // Column widths — panel_damage.cpp:38-44, verbatim. Sized to the
+    // max real-world value each column can hold, so a 6-digit damage
+    // and a 3-digit DPS never push their neighbours. The two vertical
+    // tokens (kRowH / kRowGap) come from damage_block:: rather than
+    // being spelled here, so the reservation and the draw cannot
+    // disagree about how tall a row is.
+    constexpr int kIconSize = 24;   // HTML: .drow .wslot 24×24
+    constexpr int kNameMaxW = 150;  // widened to fit longer CJK names;
+                                    // old value 100 was clipping 队友B_长昵称…
+    constexpr int kMrW      = 48;   // "MR 247"
+    constexpr int kDmgW     = 68;   // "999,999"
+    constexpr int kDpsLblW  = 24;   // "DPS"
+    constexpr int kDpsValW  = 36;   // "999"
+    constexpr int kColGap   = 6;    // HTML: .drow gap:7px (rounded)
+
+    const int kRowH   = damage_block::kRowH;
+    const int kRowGap = damage_block::kRowGap;
+
+    qreal y = rect.top();
+    for (int i = 0; i < n; ++i) {
+        const DamageRow &row = model.rows[i];
+        const QRectF r(rect.left(), y, rect.width(), kRowH);
+
+        // Cell background (HTML: --cell #1d2022) + border (--line).
+        p.setPen(QPen(QColor(42, 45, 47), 1));
+        p.setBrush(QColor(29, 32, 34));
+        p.drawRoundedRect(r, 3, 3);
+
+        const QColor dc = damage_block::colorForRow(row.slot, row.isSelf);
+
+        // Contribution gradient bar behind everything else. The bar's
+        // own body is panel_damage.cpp:100-143's drawContribBar, which
+        // is a private member of that file's anonymous namespace and
+        // therefore unreachable — so the rows block carries its own
+        // copy, written once and named against its source line the way
+        // every other copied block in this split names its mirror.
+        {
+            const float clamped = std::clamp(row.share, 0.0F, 1.0F);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(9, 11, 13, 185));      // deep row track
+            p.drawRoundedRect(r, 3.0, 3.0);
+            if (clamped > 0.0F) {
+                const QRectF fill(r.left(), r.top(),
+                                  r.width() * clamped, r.height());
+                const double filledWidth = fill.width();
+                const double fadeWidth = std::min(28.0,
+                    std::max(0.0, double(r.width()) - filledWidth));
+                const QRectF colourExtent(r.left(), r.top(),
+                                          filledWidth + fadeWidth, r.height());
+                QLinearGradient gradient(colourExtent.topLeft(),
+                                         colourExtent.topRight());
+                QColor left = dc;
+                left.setAlpha(125);
+                QColor atProgress = dc;
+                atProgress.setAlpha(fadeWidth > 0.0 ? 70 : 35);
+                const double progressStop = colourExtent.width() > 0.0
+                    ? filledWidth / colourExtent.width() : 1.0;
+                gradient.setColorAt(0.0, left);
+                gradient.setColorAt(progressStop, atProgress);
+                if (fadeWidth > 0.0) {
+                    QColor tail = dc;
+                    tail.setAlpha(0);
+                    gradient.setColorAt(1.0, tail);
+                }
+                p.setBrush(gradient);
+                p.drawRoundedRect(colourExtent, 3.0, 3.0);
+            }
+        }
+
+        // Weapon icon slot. An unresolved weaponId (<0 or >13) gets the
+        // explicit unknown-weapon placeholder, the same rule the panel
+        // applies at :315-320 — a blank slot is indistinguishable from
+        // "the icon failed to load".
+        QPixmap wp;
+        if (row.weaponId >= 0 && row.weaponId <= 13)
+            wp = mhw::Icon::render(mhw::Icon::weaponPath(row.weaponId, 1),
+                                   kIconSize);
+        else
+            wp = mhw::Icon::renderUnknownWeapon(kIconSize);
+
+        // The icon slot's plate (HTML: 24×24 .wslot with --cell-hi
+        // background + --line-hi border, 18×18 icon centred inside).
+        // panel_damage.cpp:88-95's drawIconSlot, copied for the same
+        // reachability reason as drawContribBar above.
+        {
+            constexpr int slotSz = kIconSize + 2;
+            const int iconX = static_cast<int>(r.left()) + 4;
+            const int iconY = static_cast<int>(r.top()) + 3;
+            const QRectF slot(iconX, iconY, slotSz, slotSz);
+            p.setPen(QPen(QColor(58, 61, 63), 1));
+            p.setBrush(QColor(31, 34, 37));
+            p.drawRoundedRect(slot, 3, 3);
+            if (!wp.isNull())
+                p.drawPixmap(iconX + 1, iconY + 1, wp);
+        }
+
+        // --- Column layout (left-to-right, matches HTML flex order) ---
+        // icon | name | mr | dmg | dpsLbl | dpsVal
+        // All columns are right-anchored from r.right() so they stay
+        // aligned no matter how wide the player names get — the same
+        // rule the panel states at :324-336.
+        const int rLeft   = static_cast<int>(r.left());
+        const int rRight  = static_cast<int>(r.right());
+        const int iconX   = rLeft + 4;
+        const int nameX   = iconX + kIconSize + kColGap;
+        const int dpsValR = rRight - 4;
+        const int dpsLblR = dpsValR - kDpsValW - 2;
+        const int dmgR    = dpsLblR - kDpsLblW - kColGap;
+        const int mrR     = dmgR - kDmgW - kColGap;
+        const int nameW   = mrR - kColGap - nameX;
+        const int nameClipW = std::min(nameW, kNameMaxW);
+        const int nameDrawX = std::min(nameX, mrR - kColGap - nameClipW);
+
+        // Name (HTML: .drow .nm 11px Medium, --dc). Medium weight, not
+        // Bold, for the reason the panel gives at :347-351: Qt 6 on
+        // Linux falls back to the next-heavier face when the requested
+        // weight isn't installed, which reads as "too chunky".
+        p.setPen(dc);
+        QFont nmFont(QStringLiteral("Chakra Petch"), 11, QFont::DemiBold);
+        nmFont.setStyleStrategy(QFont::PreferAntialias);
+        nmFont.setLetterSpacing(QFont::AbsoluteSpacing, 0);
+        p.setFont(nmFont);
+        const QFontMetrics nmFm(nmFont);
+        const QString nameShown = nmFm.elidedText(row.name, Qt::ElideRight,
+                                                  nameClipW);
+        p.drawText(QRectF(nameDrawX, r.top(), nameClipW, r.height()),
+                   Qt::AlignLeft | Qt::AlignVCenter, nameShown);
+
+        // MR (HTML: .mr 9px --t3), right-aligned within its column.
+        p.setPen(QColor(90, 93, 95));
+        QFont mrFont(QStringLiteral("Chakra Petch"), 9);
+        mrFont.setStyleStrategy(QFont::PreferAntialias);
+        p.setFont(mrFont);
+        const QString mrStr = QStringLiteral("MR %1").arg(row.masterRank);
+        const QFontMetrics mrFm(mrFont);
+        const int mrW = std::min(mrFm.horizontalAdvance(mrStr), kMrW);
+        p.drawText(QRectF(mrR - mrW, r.top(), mrW, r.height()),
+                   Qt::AlignRight | Qt::AlignVCenter, mrStr);
+
+        // Total damage (HTML: .drow .dmg 11px Medium, --t1).
+        const QString dmgStr = mhw::groupNumber(row.damage);
+        p.setPen(QColor(245, 246, 247));
+        QFont dmgFont(QStringLiteral("Chakra Petch"), 11, QFont::DemiBold);
+        dmgFont.setStyleStrategy(QFont::PreferAntialias);
+        p.setFont(dmgFont);
+        const QFontMetrics dmgFm(dmgFont);
+        const int dmgW = std::min(dmgFm.horizontalAdvance(dmgStr), kDmgW);
+        p.drawText(QRectF(dmgR - dmgW, r.top(), dmgW, r.height()),
+                   Qt::AlignRight | Qt::AlignVCenter, dmgStr);
+
+        // DPS value (HTML: .drow .dps b --t1, 11px Medium).
+        p.setPen(QColor(245, 246, 247));
+        p.setFont(dmgFont);
+        const QFontMetrics dpsFm(dmgFont);
+        const QString dpsStr = QString::number(row.dps);
+        const int dpsValW = std::min(dpsFm.horizontalAdvance(dpsStr),
+                                     kDpsValW);
+        p.drawText(QRectF(dpsValR - dpsValW, r.top(), dpsValW, r.height()),
+                   Qt::AlignLeft | Qt::AlignVCenter, dpsStr);
+
+        // DPS label (HTML: .drow .dps 9px --t3), LEFT of the value.
+        p.setPen(QColor(90, 93, 95));
+        QFont dpsFont(QStringLiteral("Chakra Petch"), 9);
+        dpsFont.setStyleStrategy(QFont::PreferAntialias);
+        p.setFont(dpsFont);
+        const QFontMetrics lblFm(dpsFont);
+        const int lblW = std::min(lblFm.horizontalAdvance(
+                                      QStringLiteral("DPS")), kDpsLblW);
+        p.drawText(QRectF(dpsLblR - lblW, r.top(), lblW, r.height()),
+                   Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("DPS"));
+
+        // Self row: purple inset border + glow. panel_damage.cpp:78-92's
+        // drawSelfFrame, copied for the same reason as the other two.
+        if (row.isSelf) {
+            p.setPen(QPen(dc, 1));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
+            QColor glow = dc;
+            glow.setAlphaF(0.30);
+            p.setPen(QPen(glow, 1));
+            p.drawRoundedRect(r.adjusted(2.0, 2.0, -2.0, -2.0), 2, 2);
+        }
+
+        y += kRowH + kRowGap;
+    }
 }
 
 } // namespace mhw

@@ -31,6 +31,12 @@
 #include "ui/panel_monster_split_parts.h"
 #include "ui/panel_damage_split_share.h"
 #include "ui/panel_damage_split_chart.h"
+// v0.15: the rows window. The third damage split surface, and the one
+// whose absence the user reported ("dps 部分缺少一个面板，我们按玩家
+// 统计的那部分不见了"): with Share and Chart carved out of DamagePanel
+// and the Console previewing only the split's sub-windows, a Split
+// preview showed two boxes and no player rows at all.
+#include "ui/panel_damage_split_rows.h"
 #include "ui/panel_monster_split_identity.h"
 #include "ui/panel_monster_split_conditions.h"
 #include "ui/toggle_chip.h"
@@ -170,7 +176,41 @@ const SplitWindowRow kSplitWindowRows[] = {
     // ---- kDamageSplitTargets, 2 rows ----
     {2, 0, "damage-share"},       // Share -> DamageShareStripPanel
     {2, 1, "damage-chart"},       // Chart -> DamageChartStripPanel
+    // ---- v0.15: the rows window, which is NOT a kDamageSplitTargets
+    // row and is deliberately not counted as one ----------------------
+    //
+    // WHY IT IS SEPARATE. Every row above claims a section bit out of
+    // the table its index is a subscript of, and damagePanelMaskFor()
+    // then takes that bit away from DamagePanel so a block is drawn by
+    // exactly one surface. Rows is the one block that must NOT move
+    // out: panel_sections.h records the original reasoning ("Rows is
+    // the DPS panel's SUBSTANCE — splitting it would leave a panel that
+    // mounts as an empty title row") and that reasoning still holds for
+    // the overlay.
+    //
+    // What it did not anticipate is the CONSOLE. The console's Split
+    // preview draws ONLY the split's sub-windows, so with Share and
+    // Chart carved out the user saw two boxes and no rows:
+    // 「dps 部分缺少一个面板，我们按玩家统计的那部分不见了」. The
+    // preview needs a third window; the overlay's mask arithmetic must
+    // not move. Those are different requirements, and the honest answer
+    // is a window that exists beside the table rather than inside it.
+    //
+    // THE INDEX. kSplitDamageRowsRow is 2 — one past the last
+    // kDamageSplitTargets subscript — so the row is unambiguously "not
+    // a table row". Anything that reads kDamageSplitTargets[row]
+    // unchanged (hud_canvas.cpp's subWindowLabel) therefore never sees
+    // it: it bounds-checks against DamageSplitSlot::kCount first and
+    // answers an empty label, which this file corrects below by
+    // re-deriving the label for the rows window from the console's own
+    // section vocabulary. No caller's mask arithmetic is touched.
+    {2, 2, "damage-rows"},        // Rows -> DamageRowsStripPanel
 };
+
+// The rows window's row index. One past the last kDamageSplitTargets
+// subscript, and NOT DamageSplitSlot::Rows — that enum value would imply
+// a bit claim this row does not make. See the note above.
+constexpr int kSplitDamageRowsRow = 2;
 
 constexpr int kSplitWindowRowCount =
     static_cast<int>(sizeof(kSplitWindowRows) / sizeof(kSplitWindowRows[0]));
@@ -191,11 +231,20 @@ static_assert(mhw::DamageSplitSlot::kCount == 2,
 // regrouping (five rows to two) could not leave a `13` behind: a literal
 // there is a fourth place the same number is written, and it was the one
 // that did not change.
+//
+// v0.15: the "+ 1" is the rows window, which is deliberately NOT one of
+// the three tables' rows (it claims no bit, so it cannot be). The count
+// still has to be exact: a table that grows without a line below, or a
+// line below without a table that grew, must both fail to build. The
+// one extra window is accounted for in one place, with the reason next
+// to it, rather than being the number this file forgets to update.
 static_assert(kSplitWindowRowCount
                   == mhw::PlayerSection::kPlayerSplitTargetCount
                          + mhw::kMonsterSplitTargetCount
-                         + mhw::DamageSplitSlot::kCount,
-              "the build table must have one line per split-table row");
+                         + mhw::DamageSplitSlot::kCount
+                         + 1,
+              "the build table must have one line per split-table row, "
+              "plus the rows window that claims no bit of its own");
 
 // Construct the window for one row. A switch, not a table of factory
 // lambdas, because each type is a distinct class with a distinct
@@ -242,6 +291,12 @@ std::unique_ptr<Panel> makeSplitWindow(const SplitWindowRow &row)
         return std::make_unique<DamageShareStripPanel>();
     case 2 * 100 + 1:
         return std::make_unique<DamageChartStripPanel>();
+    // v0.15: the rows window. Its row index is kSplitDamageRowsRow, which
+    // is one past the last kDamageSplitTargets subscript — see the note
+    // beside the build table for why it is not a table row and why that
+    // is the right shape rather than an omission.
+    case 2 * 100 + kSplitDamageRowsRow:
+        return std::make_unique<DamageRowsStripPanel>();
     default:
         break;
     }
@@ -469,11 +524,18 @@ public:
             default:
                 break;
             }
-            // setGameForDemo exists on the windows whose demo seed is
-            // game-specific. The rest seed their own fixed flavour,
-            // which is the same fact main.cpp's wiring documents — see
-            // the "the other windows need NO call here" note there.
-            // A window without the call simply keeps its own seed.
+            // setDemoGame() is a virtual on Panel with a no-op base
+            // body, so this ONE call reaches every window whose demo
+            // varies by game and is inert for the ones whose does not.
+            // A window that overrides it stores the member and drops
+            // the one-shot seed, so its next paint re-runs
+            // setupDemoData() in the new game's arm.
+            //
+            // It used to be an overload set resolved statically against
+            // a Panel*, which always chose the no-op base overload and
+            // never called a single window. See the note beside the
+            // definition below — that dead dispatch is the whole of the
+            // 「Rise 预览显示衣装、World 预览显示翔虫」report.
             syncGameForDemo(e.window.get(), game);
         }
     }
@@ -505,6 +567,25 @@ public:
     // wall has already been applied to the previous game's grid.
     void setGame(mhw::GameId g) { game_ = g; }
 
+    // Window accessors, for the test that asserts a rebuilt host re-seeds
+    // its windows. See the facade's windowAt()/windowForKey() for why pixels
+    // cannot serve as the observable.
+    Panel *windowAt(int index) const
+    {
+        if (index < 0 || index >= static_cast<int>(entries_.size()))
+            return nullptr;
+        return entries_[static_cast<size_t>(index)].window.get();
+    }
+
+    Panel *windowForKey(const QString &key) const
+    {
+        for (const EntryImpl &e : entries_) {
+            if (e.window && e.window->settingsKey() == key)
+                return e.window.get();
+        }
+        return nullptr;
+    }
+
 private:
     struct EntryImpl {
         std::unique_ptr<Panel> window;
@@ -526,53 +607,36 @@ private:
     // preview ended up painting exactly like a World one.
     mhw::GameId game_{mhw::GameId::World};
 
-    // The per-window demo retarget, spelled as an overload set so a
-    // window without setGameForDemo() compiles to a no-op rather than
-    // forcing the whole file to know which windows have it.
-    static void syncGameForDemo(Panel *, mhw::GameId) {}
-    static void syncGameForDemo(PlayerStatusStripPanel *w, mhw::GameId g)
+    // The per-window demo retarget.
+    //
+    // v0.15: IT USED TO BE AN OVERLOAD SET, AND THE OVERLOAD SET NEVER
+    // RAN. The entries hold their windows as std::unique_ptr<Panel>, so
+    // the call below passed a Panel* — and an exact match on
+    // `syncGameForDemo(Panel*, GameId)` beats every Derived* overload in
+    // overload resolution, with NO virtual dispatch to rescue it. Twelve
+    // Derived overloads were dead code from the day they were written.
+    // A two-type probe settles it: both entries printed
+    // "NO-OP (Panel*) chosen".
+    //
+    // That is the root cause of the user's
+    // 「Rise 预览显示衣装、World 预览显示翔虫」. Not one Derived overload
+    // ran, so no window's `game_` member was ever moved off its own
+    // initialiser — mantles' World, wirebug's Rise — and the preview
+    // painted whichever game that member defaulted to, while the base
+    // panel beside it (which switchGame() DOES retarget, via
+    // player_->setGameForDemo(game)) painted the other. Two surfaces,
+    // two games, one screen.
+    //
+    // The fix is the base class's virtual setDemoGame(), which each
+    // window overrides to its own body. A virtual IS runtime dispatch on
+    // the pointer's dynamic type, which is what a base-pointer call site
+    // needs and an overload set structurally cannot provide. The
+    // no-op base covers the windows whose demo is game-agnostic: they
+    // simply inherit it, and the compiler rejects nothing because the
+    // signature is one name, not twelve.
+    static void syncGameForDemo(Panel *w, mhw::GameId g)
     {
-        w->setGameForDemo(g);
-    }
-    static void syncGameForDemo(PlayerBarsStripPanel *w, mhw::GameId g)
-    {
-        w->setGameForDemo(g);
-    }
-    static void syncGameForDemo(PlayerMantlesStripPanel *w, mhw::GameId g)
-    {
-        w->setGameForDemo(g);
-    }
-    static void syncGameForDemo(PlayerWeaponStripPanel *w, mhw::GameId g)
-    {
-        w->setGameForDemo(g);
-    }
-    static void syncGameForDemo(PlayerWirebugStripPanel *w, mhw::GameId g)
-    {
-        w->setGameForDemo(g);
-    }
-    static void syncGameForDemo(PlayerInfoStripPanel *w, mhw::GameId g)
-    {
-        w->setGameForDemo(g);
-    }
-    static void syncGameForDemo(MonsterHpStripPanel *w, mhw::GameId g)
-    {
-        w->setGameForDemo(g);
-    }
-    static void syncGameForDemo(MonsterStaminaStripPanel *w, mhw::GameId g)
-    {
-        w->setGameForDemo(g);
-    }
-    static void syncGameForDemo(MonsterEnrageStripPanel *w, mhw::GameId g)
-    {
-        w->setGameForDemo(g);
-    }
-    static void syncGameForDemo(MonsterAilStripPanel *w, mhw::GameId g)
-    {
-        w->setGameForDemo(g);
-    }
-    static void syncGameForDemo(MonsterPartsStripPanel *w, mhw::GameId g)
-    {
-        w->setGameForDemo(g);
+        w->setDemoGame(g);
     }
 
     // std::vector, not QVector: see the ctor's note on COW vs the
@@ -640,6 +704,27 @@ public:
     [[nodiscard]] bool setWindowMargins(int index, const QMargins &m)
     {
         return impl_ ? impl_->setWindowMargins(index, m) : false;
+    }
+    // The window at an index, or nullptr. Non-owning; the host owns it.
+    //
+    // WHY THIS EXISTS. The rail's contract is that a rebuild re-seeds every
+    // window for the new game, and the only observable for that is the
+    // window itself: a mantles window is empty under Rise and full under
+    // World, so hasVisibleContent() reads the seed directly. Pixels cannot
+    // show it — two canvases differ from the geometry rebuild alone, which
+    // is exactly how this dispatch shipped dead for two releases while both
+    // console suites stayed green.
+    [[nodiscard]] Panel *windowAt(int index) const
+    {
+        return impl_ ? impl_->windowAt(index) : nullptr;
+    }
+    // The first window whose settings key is `key`, or nullptr. A key is
+    // stable where an index is not: the split table's row order is free to
+    // change, and a test that hardcodes an index would start reading a
+    // different window the day it does.
+    [[nodiscard]] Panel *windowForKey(const QString &key) const
+    {
+        return impl_ ? impl_->windowForKey(key) : nullptr;
     }
 
 private:
@@ -774,6 +859,187 @@ Panel *ControlPanel::panelAt(int idx) const
     return mhw::isPanelIndex(idx) ? ctl_[idx].panel : nullptr;
 }
 
+// ─── v0.14: the four mother panels, (re)built to the scope in force ────
+//
+// Construct (or reconstruct) the four off-screen panels and push every
+// bit of state the console owns into them, so the inspector, the canvas
+// and the preview tiles all keep working after a rebuild.
+//
+// WHAT THESE FOUR PANELS ARE. The console renders them off-screen only
+// (WA_DontShowOnScreen) to show the user what the overlay will draw.
+// Their settings namespace is per (game, mode) — `[world/single/player]`
+// etc — and the ONLY thing that can read it is the Panel constructor.
+static Panel *makeMotherPanel(int idx)
+{
+    switch (idx) {
+    case 0:  return new PlayerPanel();
+    case 1:  return new MonsterPanel();
+    case 2:  return new DamagePanel();
+    default: return new PetDamagePanel();
+    }
+}
+
+void ControlPanel::rebuildMotherPanels()
+{
+    // THE SCOPE FIRST. loadConfig() runs inside the Panel constructor and
+    // resolves its group from the two globals, so they must already say
+    // which (game, mode) this host is for. The caller sets them.
+    //
+    // THIS IS THE WHOLE FIX FOR «Rise 预览不同步». Before v0.14.1 the
+    // ctor ran these four `new`s once, under whatever scope the process
+    // happened to start in, and switchGame(Rise) only retargeted the demo
+    // seed. The result was a Rise preview carrying World's margins,
+    // scale, opacity, floors and lock — the numbers the panel's geometry
+    // is made of — while painting Rise's pills. Both halves were "Rise"
+    // on screen and only one of them was.
+    //
+    // Observed offscreen, against a fixture that stores distinct geometry
+    // in all four domains (world/single=111, rise/single=222,
+    // world/split=333, rise/split=444):
+    //
+    //     as built (scope=world/split) : 333,333,333,333
+    //     after switchGame(Rise)       : 333,333,333,333   <-- still World
+    //     (rise/split actually holds    : 444,444,444,444)
+    //
+    // A Panel caches everything its namespace decides for it and reads it
+    // once. Re-running the ctor is the only reader that exists, which is
+    // why this is a rebuild and not a re-push.
+
+    // --- destroy the old set -------------------------------------------------
+    //
+    // setVisible(false) first: the four are TOP-level QMainWindows, and
+    // ~ControlPanel has needed the same courtesy since v0.5 so Qt's
+    // quitOnLastWindowClosed sees zero visible windows on exit. Doing it
+    // here too keeps a mid-session rebuild from flapping the console's own
+    // last-window logic.
+    //
+    // The canvas holds non-owning raw PanelSource* pointers into this set
+    // for the whole session, so the caller must run rebindMotherPanels()
+    // straight after this function returns — with the new adapters in
+    // place before anything paints. Nothing between here and there reads
+    // the canvas (no paint, no event delivery), which is what makes the
+    // brief window safe.
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
+        Panel *p = panelAt(i);
+        if (!p)
+            continue;
+        p->setVisible(false);
+        delete p;
+        ctl_[i].panel = nullptr;
+    }
+
+    constructMotherPanels();
+    adoptMotherPanels();
+}
+
+void ControlPanel::constructMotherPanels()
+{
+    // A fresh Panel ctor per slot: this is the call that reads the scope's
+    // group, and there is no other reader.
+    //
+    // Deliberately does NOT touch ctl_[i].master or ctl_[i].subs. At ctor
+    // time those widgets do not exist yet, and on a rail click
+    // rebuildMotherPanels() wants them honoured — which is exactly why
+    // adopting them is the caller's explicit second step rather than
+    // something folded in here, where it would crash on a half-built
+    // inspector.
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
+        Panel *p = makeMotherPanel(i);
+        ctl_[i].panel = p;
+        p->setAttribute(Qt::WA_DontShowOnScreen);
+        p->setEditMode(true);   // seeds setupDemoData() on first paint
+        // WA_DontShowOnScreen + show() is the supported combo for
+        // off-screen rendering (comment at the ctor's original call site).
+        p->show();
+    }
+
+    // Keep the four typed member pointers in step with the generic ctl_
+    // entries the rest of the file uses. Two names for the same object has
+    // bitten this file before; one assignment per object per rebuild is
+    // what keeps that honest — and the split-preview host needed the same
+    // discipline for its own typed handles.
+    player_  = static_cast<PlayerPanel *>(ctl_[0].panel);
+    monster_ = static_cast<MonsterPanel *>(ctl_[1].panel);
+    damage_  = static_cast<DamagePanel *>(ctl_[2].panel);
+    pets_    = static_cast<PetDamagePanel *>(ctl_[3].panel);
+}
+
+void ControlPanel::adoptMotherPanels()
+{
+    // Preserve the live widget state a rebuild would otherwise lose. The
+    // inspector rows, the master chips and the canvas keep their own state
+    // across the swap, but everything the PANEL carries has to be re-pushed
+    // or the user's toggles would reset on a rail click.
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
+        Panel *p = panelAt(i);
+        if (!p)
+            continue;
+        // Section mask, from the same source loadMaskFromDisk() used. The
+        // inspector's checkboxes are untouched by the swap, so this is the
+        // authoritative current value rather than a cached one.
+        p->setSectionMask(ControlPanel::maskFor(ctl_[i]));
+        // Master visibility: the inspector chip, which is the only thing
+        // that says whether the surface mounts at all.
+        p->setPanelEnabled(ctl_[i].master && ctl_[i].master->isChecked());
+    }
+
+    // THE DEMO SEED, which is NOT persisted and therefore NOT readable by
+    // the constructor. A PlayerPanel defaults its game_ member to World
+    // (panel_player.h's member initialiser) and only setGameForDemo() moves
+    // it. Without this line a Rise rail click would rebuild the panel at
+    // the right geometry and repaint it with the wrong game's demo pills —
+    // the geometry half of the report fixed and the content half still
+    // wrong, which is worse than before because it looks intentional.
+    //
+    // resetDemoPrimed() inside setGameForDemo() is what makes it take:
+    // the panel has not painted yet (the ctor's setEditMode(true) only
+    // ARMS the seed), so the next paint runs setupDemoData() with the
+    // right game_ either way. Calling it is what makes that game_ right.
+    if (player_)
+        player_->setGameForDemo(currentGame());
+
+    // NO selectPanel() HERE. The inspector page, the canvas selection and
+    // the rail highlight survive a rebuild untouched (they are owned by
+    // widgets, not by the panels being replaced), so there is nothing to
+    // re-apply — and calling selectPanel() would re-run syncAppearance()
+    // and updatePosLabel() against sliders that may not exist yet at
+    // construction time. The ctor's own selectPanel(0) and the rail
+    // buttons' selectPanel(i) remain the only places selection moves.
+}
+
+Panel *ControlPanel::splitPreviewWindow(const QString &key) const
+{
+    // The host owns the window and outlives this call, so a raw pointer is
+    // the right shape: this is a read for tests, not a transfer of
+    // ownership, and lifetimes here are "as long as the console is showing
+    // this game in split mode".
+    return splitPreview_ ? splitPreview_->windowForKey(key) : nullptr;
+}
+
+void ControlPanel::rebindMotherPanels()
+{
+    // The canvas stores a NON-OWNING const PanelSource* per slot (its
+    // documented contract — see ui/hud_canvas.h bindPanel). Replacing the
+    // panels therefore leaves it pointing at freed memory, so the
+    // adapters must be rebuilt and re-bound before anything paints.
+    //
+    // Ownership is the caller's — boundSources_ is this console's member
+    // array, destroyed after the panels, which is the ordering the
+    // original v0.11.4 comment requires.
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
+        Panel *p = panelAt(i);
+        if (!p) {
+            boundSources_[i].reset();
+            if (canvas_)
+                canvas_->bindPanel(i, nullptr);
+            continue;
+        }
+        boundSources_[i] = std::make_unique<PanelSourceAdapter>(p);
+        if (canvas_)
+            canvas_->bindPanel(i, boundSources_[i].get());
+    }
+}
+
 // ─── v0.12 sub-window registration (REMOVED) ───────────────────────
 //
 // ControlPanel::registerSubWindow / unregisterSubWindows and the
@@ -842,32 +1108,15 @@ ControlPanel::ControlPanel(QWidget *parent)
     // setContentSize geometry) WITHOUT mapping a window — so no layer-shell
     // surface, no focus steal, no taskbar entry. This is the whole reason
     // the console is safe to run on-screen while the live overlay runs too.
-    player_  = new PlayerPanel();
-    monster_ = new MonsterPanel();
-    damage_  = new DamagePanel();
-    pets_    = new PetDamagePanel();
-    const std::array<Panel *, mhw::kPanelCount> panels = {
-        static_cast<Panel *>(player_),
-        static_cast<Panel *>(monster_),
-        static_cast<Panel *>(damage_),
-        static_cast<Panel *>(pets_),
-    };
-    static_assert(panels.size() == mhw::kPanelCount);
-    for (int i = 0; i < mhw::kPanelCount; ++i) {
-        Panel *p = panels[i];
-        ctl_[i].panel = p;
-        p->setAttribute(Qt::WA_DontShowOnScreen);
-        p->setEditMode(true);   // seeds setupDemoData() on first paint
-        // WA_DontShowOnScreen + show() is the supported combo for off-screen
-        // rendering: the widget becomes isVisible() (so paintEvent runs and
-        // the backing store takes its real height) WITHOUT being mapped to
-        // the window system — no focus steal, no taskbar entry, no extra
-        // layer-shell surface. show() alone would map it; the attribute
-        // alone (without show) leaves isVisible()==false and the backing
-        // store stuck at the 320×120 safety-net size, which truncates the
-        // preview.
-        p->show();
-    }
+    //
+    // v0.14.1: NOT built here. The four used to be `new`ed at this point,
+    // once, under whatever scope the process happened to start in — and
+    // switchGame(Rise) then retargeted only their demo seed, leaving them
+    // carrying World's margins/scale/opacity while painting Rise's pills.
+    // The user's symptom was «整块模式下 Rise 预览不同步». They are now
+    // built by rebuildMotherPanels(), from its own call site AFTER
+    // buildInspector() has filled ctl_[i].master / ctl_[i].subs (the
+    // re-push of mask + master toggle reads those out of PanelCtl).
     // Wire the canvas to each panel's real geometry so the preview shows
     // the position the live overlay will sit at on the user's screen.
     // This is done after the canvas is constructed (below) — see the
@@ -1118,6 +1367,34 @@ ControlPanel::ControlPanel(QWidget *parent)
     inspectorLayout->setContentsMargins(0, 0, 0, 0);
     inspectorStack_ = new QStackedWidget();
     inspectorStack_->setObjectName("inspectorStack");
+    // v0.14.1: BUILD THE FOUR PANELS BEFORE THE INSPECTORS THAT READ THEM.
+    //
+    // Chasing the construction order was the wrong instinct here: the two
+    // steps genuinely need each other. buildInspector() reads
+    // panelAt(idx)->scale()/opacity()/bgAlpha() to initialise its sliders,
+    // while rebuildMotherPanels() re-pushes the mask and master toggle out
+    // of the PanelCtl the inspector fills. Whichever runs first starves
+    // the other, and starved is fatal — buildInspector() dereferences
+    // panelAt() without a null check, which is exactly the SIGSEGV the
+    // console tests were dying of at panel.h:321 (`scale()`), with gdb
+    // reporting p = 0x0.
+    //
+    // So the ctor is split in two, and only the two halves swap order:
+    //
+    //   1. constructMotherPanels()  — new Panel per slot under the scope in
+    //      force. No inspector state touched, so nothing to be starved of.
+    //      This must be the FIRST reader of the scope: loadConfig() runs
+    //      inside the Panel ctor and resolves its group from the two
+    //      globals, and by this point they are final.
+    //   2. the four buildInspector() calls  — now safe, because the panels
+    //      they read already exist.
+    //
+    // rebuildMotherPanels() keeps its full meaning (destroy + construct +
+    // adopt) and remains what switchGame() calls on a rail click. The ctor
+    // no longer calls it, because at ctor time there is nothing to destroy
+    // and nothing to adopt yet.
+    constructMotherPanels();
+
     inspectorStack_->addWidget(buildInspector(QStringLiteral("console.nav.player"),
                                                QStringLiteral("console.inspector.sub.player"),
                                                mhw::PlayerSection::displayNames(), 0));
@@ -1132,6 +1409,22 @@ ControlPanel::ControlPanel(QWidget *parent)
                                                mhw::PetDamageSection::displayNames(), 3));
     inspectorLayout->addWidget(inspectorStack_);
     topRow->addWidget(inspectorHost);
+
+    // ---- the four mother panels ------------------------------------------------
+    //
+    // Built HERE, after the inspectors, because rebuildMotherPanels()
+    // re-pushes each panel's section mask and master toggle out of
+    // PanelCtl — and a PanelCtl is not filled until buildInspector() has
+    // run for that slot. Built before, it would re-push nothing and the
+    // user's saved mask would sit unread.
+    //
+    // The inspectors now exist and their PanelCtl entries are filled, so
+    // the masks and master toggles they represent can be pushed into the
+    // panels that step 1 constructed. This is the "adopt" half of what
+    // rebuildMotherPanels() does in full, separated only because the ctor
+    // needs it AFTER the inspectors while a rail click needs the whole
+    // thing (destroy + construct + adopt) at once.
+    adoptMotherPanels();
 
     auto *stage = new QFrame();
     stage->setObjectName("stage");
@@ -1603,10 +1896,18 @@ ControlPanel::~ControlPanel()
     // setQuitOnLastWindowClosed has nothing to quit on. Hiding them
     // first also gives the wayland layer a clean unmap, so the
     // "顶栏小块" residue doesn't linger.
-    if (player_)  { player_->setVisible(false);  delete player_;  player_  = nullptr; }
-    if (monster_) { monster_->setVisible(false); delete monster_; monster_ = nullptr; }
-    if (damage_)  { damage_->setVisible(false);  delete damage_;  damage_  = nullptr; }
-    if (pets_)    { pets_->setVisible(false);    delete pets_;    pets_    = nullptr; }
+    // The four mother panels are rebuilt on a rail switch (see
+    // rebuildMotherPanels), so this cannot be a delete-by-member: it must
+    // walk ctl_, or a panel replaced mid-session would be leaked and the
+    // ones still listed would be double-freed by the typed members below.
+    // Both bridges point at the same objects, so clearing them here is
+    // what keeps the ctl_ walk authoritative.
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
+        Panel *p = panelAt(i);
+        if (p) { p->setVisible(false); delete p; }
+        ctl_[i].panel = nullptr;
+    }
+    player_ = nullptr; monster_ = nullptr; damage_ = nullptr; pets_ = nullptr;
 
     // The adapters were owned by boundSources_, which is destroyed by
     // the member destructors AFTER this body runs (members are declared
@@ -2508,7 +2809,18 @@ void ControlPanel::switchGame(mhw::GameId game)
     // was stuck on whatever setupDemoData() first seeded (Rise-only
     // wirebug row, no mantles) regardless of which game the rail
     // picked.
-    if (player_) player_->setGameForDemo(game);
+    //
+    // v0.14.1: MOTHERS ARE NO LONGER RETARGETED, THEY ARE REBUILT. The
+    // setGameForDemo() call that used to sit here is now subsumed by
+    // rebuildMotherPanels() below, which constructs a fresh PlayerPanel
+    // whose paint path seeds the new game's demo data anyway (the ctor's
+    // setEditMode(true) + first paint runs setupDemoData() against the
+    // panel's own game member, which its own ctor set from the seed).
+    // Leaving the call in place would have been harmless but misleading:
+    // it operated on objects that are about to be deleted.
+    // (The demo member is only consulted BEFORE the first paint; a
+    // window that has already painted caches its seed, which is why the
+    // rebuild is what actually moves it — see the note below.)
     // v0.13: the split windows' demo seeds are game-specific (衣装 seeds
     // a World player, 翔虫 a Rise one), so the same retarget the base
     // panel gets. The windows that have no seed variance need nothing.
@@ -2544,6 +2856,41 @@ void ControlPanel::switchGame(mhw::GameId game)
     // in force is private state and the canvas's bindings must not be
     // dependent on any caller getting that ordering right.
     syncSplitPreviewToCanvas();
+
+    // ---- v0.14.1: AND THE MOTHER PANELS, THE SAME WAY -----------------
+    //
+    // The block above rebuilds the split's sub-windows on a game change
+    // so their constructors re-read the new namespace. The four MOTHER
+    // panels had exactly the same defect and no equivalent path: they
+    // were constructed once in the ctor and only ever had their demo seed
+    // retargeted. So a Rise selection produced a preview carrying
+    // World's margins, scale, opacity, margins and floors — the
+    // numbers that decide where a panel sits and how big it is — while
+    // painting Rise's pills. That is «整块模式下 Rise 预览不同步», and
+    // it is the sub-window bug one layer up rather than a second bug.
+    //
+    // THE SAME ARGUMENT, and the remedy is the same: only a constructor
+    // reads a Panel's namespace.
+    //
+    // THE SCOPE, AND WHY IT IS SET HERE RATHER THAN INHERITED. Only the
+    // SPLIT arm of syncSplitPreviewToCanvas() sets the panel-settings
+    // game; the Single arm returns before it, precisely because a Single
+    // preview builds no windows and had nothing to scope. The mother
+    // panels ARE the Single preview, so a rail click in Single must set
+    // both axes itself. Leaving it to syncSplitPreviewToCanvas() would
+    // mean a Single-mode rail click rebuilt the mothers under the OLD
+    // game's namespace — same symptom, different line.
+    //
+    // The mode is set second because setPanelSettingsGame() reads it:
+    // the group name is `<game>/<mode>/<key>`, so a stale mode silently
+    // sends the rebuild to the other topology's domain.
+    mhw::setPanelSettingsGame(currentGame());
+    mhw::setPanelSettingsLayout(layoutModeInForce());
+    // The scope is now fully stated; the rebuild is the only reader.
+    rebuildMotherPanels();
+    // ...and the canvas's raw pointers must follow the panels before
+    // anything paints.
+    rebindMotherPanels();
     // Toggle visibility of the World-only / Rise-only section rows in
     // place. The rows were created once at construction; show/hide them
     // as the rail selection flips. Rebuilt-then-deleteLater turned out

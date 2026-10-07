@@ -89,6 +89,7 @@
       "refs": [
         "console-split-sync-tests",
         "console-text-helpers-tests",
+        "damage-rows-window-tests",
         "damage-split-parity-tests",
         "game-world-direct-tests",
         "monster-control",
@@ -116,7 +117,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 109
+      "symbols": 121
     },
     "src/main_control.cpp": {
       "class": "ZERO",
@@ -306,11 +307,12 @@
       "compiled_by": [],
       "refs": [
         "console-split-sync-tests",
+        "damage-rows-window-tests",
         "monster-control",
         "monster-control-l2-smoke",
         "monster-control-rise-rf-smoke"
       ],
-      "symbols": 133
+      "symbols": 138
     },
     "src/ui/control_panel_styles.cpp": {
       "class": "ZERO",
@@ -349,6 +351,7 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "damage-rows-window-tests",
         "damage-split-parity-tests",
         "damage-split-windows-tests",
         "hud-canvas-split-tests",
@@ -385,6 +388,14 @@
       ],
       "symbols": 46
     },
+    "src/ui/panel_damage_split_rows.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [],
+      "refs": [
+        "damage-rows-window-tests"
+      ],
+      "symbols": 43
+    },
     "src/ui/panel_damage_split_share.cpp": {
       "class": "INDIRECT",
       "compiled_by": [],
@@ -413,7 +424,7 @@
       "refs": [
         "monster-split-models-tests"
       ],
-      "symbols": 40
+      "symbols": 41
     },
     "src/ui/panel_monster_split_conditions.cpp": {
       "class": "INDIRECT",
@@ -421,7 +432,7 @@
       "refs": [
         "monster-split-grouping-tests"
       ],
-      "symbols": 60
+      "symbols": 61
     },
     "src/ui/panel_monster_split_enrage.cpp": {
       "class": "INDIRECT",
@@ -429,7 +440,7 @@
       "refs": [
         "monster-split-models-tests"
       ],
-      "symbols": 21
+      "symbols": 22
     },
     "src/ui/panel_monster_split_hp.cpp": {
       "class": "INDIRECT",
@@ -438,7 +449,7 @@
         "hud-canvas-split-tests",
         "monster-split-models-tests"
       ],
-      "symbols": 23
+      "symbols": 24
     },
     "src/ui/panel_monster_split_identity.cpp": {
       "class": "INDIRECT",
@@ -446,7 +457,7 @@
       "refs": [
         "monster-split-grouping-tests"
       ],
-      "symbols": 35
+      "symbols": 36
     },
     "src/ui/panel_monster_split_parts.cpp": {
       "class": "INDIRECT",
@@ -454,7 +465,7 @@
       "refs": [
         "monster-parts-window-tests"
       ],
-      "symbols": 42
+      "symbols": 43
     },
     "src/ui/panel_monster_split_stamina.cpp": {
       "class": "INDIRECT",
@@ -462,7 +473,7 @@
       "refs": [
         "monster-split-models-tests"
       ],
-      "symbols": 23
+      "symbols": 24
     },
     "src/ui/panel_pet_damage.cpp": {
       "class": "INDIRECT",
@@ -509,7 +520,7 @@
         "split-layout-consistency-tests",
         "split-no-empty-window-tests"
       ],
-      "symbols": 34
+      "symbols": 35
     },
     "src/ui/panel_player_split_bars.cpp": {
       "class": "INDIRECT",
@@ -520,7 +531,7 @@
         "split-layout-consistency-tests",
         "split-no-empty-window-tests"
       ],
-      "symbols": 26
+      "symbols": 27
     },
     "src/ui/panel_player_split_info.cpp": {
       "class": "INDIRECT",
@@ -531,7 +542,7 @@
         "split-layout-consistency-tests",
         "split-no-empty-window-tests"
       ],
-      "symbols": 31
+      "symbols": 32
     },
     "src/ui/panel_player_split_mantles.cpp": {
       "class": "INDIRECT",
@@ -543,7 +554,7 @@
         "split-layout-consistency-tests",
         "split-no-empty-window-tests"
       ],
-      "symbols": 36
+      "symbols": 37
     },
     "src/ui/panel_player_split_weapon.cpp": {
       "class": "INDIRECT",
@@ -555,7 +566,7 @@
         "split-layout-consistency-tests",
         "split-no-empty-window-tests"
       ],
-      "symbols": 27
+      "symbols": 28
     },
     "src/ui/panel_player_split_wirebug.cpp": {
       "class": "INDIRECT",
@@ -566,13 +577,14 @@
         "split-layout-consistency-tests",
         "split-no-empty-window-tests"
       ],
-      "symbols": 36
+      "symbols": 37
     },
     "src/ui/panel_settings_game.cpp": {
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
         "console-split-sync-tests",
+        "damage-rows-window-tests",
         "panel-settings-game-scoping-tests",
         "panel-settings-scope-tests"
       ],

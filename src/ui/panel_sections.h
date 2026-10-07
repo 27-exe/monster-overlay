@@ -1022,6 +1022,22 @@ enum : int {
     Chart = 1,   // 折线图      -> DamageChartStripPanel
 };
 // The row count of kDamageSplitTargets, cross-checked by static_assert.
+//
+// v0.15: this is DELIBERATELY still 2, and the rows window does NOT get
+// an entry here. The reason is that this count is the index space of
+// kDamageSplitTargets — damageSubWindowMask() bounds-checks against it
+// and then reads the table with it — so growing it without growing the
+// table would give every caller an out-of-range read.
+//
+// The rows window (DamageRowsStripPanel) lives BESIDE this table rather
+// than in it, because it claims no bit: damagePanelMaskFor() leaves
+// DamageSection::Rows with the panel, so adding a `{DamageSection::Rows}`
+// row here would take the rows away from DamagePanel and change what a
+// real `--layout=split` launch draws. That is a main.cpp decision, not a
+// console-preview one.
+//
+// See kSplitDamageRowsRow in control_panel.cpp for the row index the
+// preview uses for it, and for the full argument.
 constexpr int kCount = 2;
 } // namespace DamageSplitSlot
 

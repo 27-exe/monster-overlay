@@ -56,6 +56,8 @@
 
 #include "ui/viewmodel/console_layout_mode_codec.h"
 
+#include <QCommandLineOption>
+#include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QString>
 #include <QStringList>
@@ -417,21 +419,79 @@ void test_flagAndRoundTrip()
 {
     std::printf("D. --layout only in split; the conf round trip\n");
 
-    // The flag is present only in split.
+    // The flag is present only in split, and it is spelled WITH the two
+    // leading dashes.
+    //
+    // v0.14: this suite used to assert `layout=split` — the CONFIG
+    // spelling — and it was therefore asserting the bug. The conf row and
+    // the argv flag are different surfaces: `layout=split` is what goes in
+    // monster-overlay.conf, `--layout=split` is what QCommandLineParser
+    // recognises. Feeding the conf spelling into argv put it in front of
+    // the parser as a POSITIONAL argument, so --layout was never set, and
+    // resolveStartupLayoutMode() concluded the CLI arm was "not given" and
+    // handed the child Single — no matter what the console's combo said.
+    //
+    // The check below is the round trip that would have caught it: the
+    // helper's own output, re-read by the parser main.cpp uses.
     const QStringList splitArgv = mhw::consoleLayoutArgv(Mode::Split);
-    check(hasFlag(splitArgv, QStringLiteral("layout=split")),
+    check(hasFlag(splitArgv, QStringLiteral("--layout=split")),
           "split mode passes --layout=split");
     check(splitArgv.size() == 1,
           "and it is the ONLY flag this helper adds");
 
     const QStringList singleArgv = mhw::consoleLayoutArgv(Mode::Single);
-    check(!hasFlag(singleArgv, QStringLiteral("layout=split")),
+    check(!hasFlag(singleArgv, QStringLiteral("--layout=split")),
           "single mode passes NO --layout flag");
-    check(!hasFlag(singleArgv, QStringLiteral("layout=single")),
+    check(!hasFlag(singleArgv, QStringLiteral("--layout=single")),
           "in particular it passes no explicit --layout=single (which "
-          "would outrank the user's own CLI override)");
+          "would outrank the user's own CLI override)")
+    ;
+    check(!singleArgv.contains(QStringLiteral("layout=single")),
+          "and it does not smuggle the conf spelling out either, because "
+          "that is what let the bug through — the spelling arrived at the "
+          "child looking like a flag while parsing as an argument")
+    ;
     check(singleArgv.isEmpty(),
           "single mode contributes nothing to argv at all");
+
+    // v0.14: THE ROUND TRIP. Everything above inspects the STRING; this
+    // feeds it to the parser that will actually read it, which is the only
+    // check that could have caught the bug. QCommandLineParser does not
+    // recognise `layout=split` as an option — it records it as a
+    // positional argument and --layout stays unset — so a string-only
+    // assertion passes while the child boots in Single.
+    //
+    // The option set below is the same one main.cpp builds; if the two ever
+    // drift, this fails here rather than in front of the user.
+    QCommandLineParser parser;
+    QCommandLineOption layoutOption(
+        QStringLiteral("layout"),
+        QStringLiteral("Startup layout mode."),
+        QStringLiteral("mode"));
+    parser.addOption(layoutOption);
+    parser.addOption(QCommandLineOption(
+        QStringLiteral("edit"), QStringLiteral("Open in edit mode.")));
+    parser.addOption(QCommandLineOption(
+        QStringLiteral("game"), QStringLiteral("Game."),
+        QStringLiteral("id")));
+
+    const QStringList childArgv = QStringList()
+        << QStringLiteral("--mask-player=1ff")
+        << QStringLiteral("--edit")
+        << QStringLiteral("--game=rise")
+        << mhw::consoleLayoutArgv(Mode::Split);
+    if (parser.parse(childArgv)) {
+        check(parser.isSet(layoutOption),
+              "the child's parser SEES a --layout option, rather than "
+              "filing the whole thing as a positional argument");
+        check(parser.value(layoutOption) == QStringLiteral("split"),
+              "and it reads back as split — the mode the console is showing");
+        check(parser.isSet(QCommandLineOption(QStringLiteral("edit"))),
+              "the options around it survive, so the fix did not simply "
+              "crowd out the rest of the argv");
+    } else {
+        check(false, "the child's parser accepts the console's argv");
+    }
 
     // The write side: split writes the row, single does not.
     const QByteArray splitRow = mhw::serializeConsoleLayoutRow(Mode::Split);
@@ -459,11 +519,23 @@ void test_flagAndRoundTrip()
               "the mode written is the mode read back");
 
         // And the flag the console would pass describes the same mode.
+        //
+        // v0.14: spelled WITH the dashes. The old `layout=split` here was
+        // the bug, asserted as if it were the contract — a conf spelling
+        // handed to QCommandLineParser, which files it as a positional
+        // argument and leaves --layout unset, so the child booted Single
+        // regardless of what the console's selector said.
         const QStringList argv = mhw::consoleLayoutArgv(written);
         const bool flagSaysSplit =
-            hasFlag(argv, QStringLiteral("layout=split"));
+            hasFlag(argv, QStringLiteral("--layout=split"));
         check(flagSaysSplit == (written == Mode::Split),
               "the flag and the conf row agree on the mode");
+        // And the conf spelling does NOT sneak into argv, which is the
+        // other half of the same mistake. A test that checks one and not
+        // the other would pass on a helper that emits both.
+        check(!hasFlag(argv, QStringLiteral("layout=split")),
+              "and the bare conf spelling is not emitted alongside it, "
+              "which is what previously made this look correct");
     }
 
     // A conf that has the row AND a stale duplicate converges, because

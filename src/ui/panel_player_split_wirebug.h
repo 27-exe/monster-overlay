@@ -250,6 +250,11 @@ public:
     // Same shape and same caller as PlayerStatusStripPanel::setGameForDemo.
     void setGameForDemo(mhw::GameId game);
 
+    // v0.15: the virtual dispatch path — see panel_player_split_mantles.h
+    // for why a Panel* call site needs an override rather than another
+    // non-virtual overload.
+    void setDemoGame(mhw::GameId game) override;
+
 protected:
     void paintPanel(QPainter &p) override;
     void setupDemoData() override;

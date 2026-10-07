@@ -196,6 +196,17 @@ public:
     // Same shape and same caller as PlayerStatusStripPanel::setGameForDemo.
     void setGameForDemo(mhw::GameId game);
 
+    // v0.15: the virtual dispatch path. setGameForDemo() above is a
+    // plain member the live overlay calls on a concrete stack object;
+    // this override is what makes the Console's preview host able to
+    // retarget the window through a Panel*. The host holds its windows
+    // as std::unique_ptr<Panel>, and a non-virtual call through that
+    // pointer has no runtime dispatch — which is exactly how every
+    // Derived* overload in SplitWindowPreviewHostImpl::syncGameForDemo
+    // lost to the Panel* one and never ran. See the note on
+    // Panel::setDemoGame for the full argument and the probe output.
+    void setDemoGame(mhw::GameId game) override;
+
 protected:
 
     // The row-layout vocabulary, same contract as the wirebug row's.
