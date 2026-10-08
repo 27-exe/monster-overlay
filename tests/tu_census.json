@@ -308,13 +308,15 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "console-output-persistence-tests",
         "console-split-sync-tests",
         "damage-rows-window-tests",
         "monster-control",
         "monster-control-l2-smoke",
         "monster-control-rise-rf-smoke",
         "split-console-layout-persistence-tests",
-        "split-game-seed-dispatch-tests"
+        "split-game-seed-dispatch-tests",
+        "split-midline-drag-tests"
       ],
       "symbols": 140
     },
@@ -370,7 +372,7 @@
         "split-layout-consistency-tests",
         "split-no-empty-window-tests"
       ],
-      "symbols": 66
+      "symbols": 68
     },
     "src/ui/panel_damage.cpp": {
       "class": "INDIRECT",
@@ -588,12 +590,14 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "console-output-persistence-tests",
         "console-split-sync-tests",
         "damage-rows-window-tests",
         "panel-settings-game-scoping-tests",
         "panel-settings-scope-tests",
         "split-console-layout-persistence-tests",
-        "split-game-seed-dispatch-tests"
+        "split-game-seed-dispatch-tests",
+        "split-midline-drag-tests"
       ],
       "symbols": 18
     },

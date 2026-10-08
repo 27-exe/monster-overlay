@@ -1686,28 +1686,29 @@ int main(int argc, char **argv)
     // The report was 「使用 overlay 的命令启动,现在完全无法使用,键盘输入被
     // 转译成 ^[[1;2B…」 with the arrow keys in the escape sequences. The
     // arrow-key handler was never the problem - Panel::keyPressEvent has
-    // dispatched Left/Right/Up/Down since v0.5. The problem is that the
-    // event never arrived: layer-shell surfaces are created with
-    // KeyboardInteractivityNone, setEditMode() raises them to OnDemand
-    // (eligible, not focused), and the only request for activation has
-    // always been inside mousePressEvent. WA_ShowWithoutActivating is set
-    // on every panel so the live HUD never raises itself over the game -
-    // right for the HUD, and exactly wrong for an editor the user asked
-    // for. So the first key press went to the terminal, which is also why
-    // Esc - handled in the same function, one branch up - could not quit.
+    // dispatched Left/Right/Up/Down since v0.5 - the events never arrived.
+    // The surface was eligible (KeyboardInteractivityOnDemand via
+    // setEditMode) but never focused, and the only requestActivate() in the
+    // codebase was inside mousePressEvent: click a panel first, or your keys
+    // go to the terminal. WA_ShowWithoutActivating, which the live HUD
+    // needs so it never raises itself over the game, guarantees show() alone
+    // will not do it either. Esc failed the same way, invisibly.
     //
-    // ONE window, not fifteen. Fifteen simultaneous requestActivate() calls
-    // are a focus fight the compositor has no reason to resolve in the
-    // user's favour, and the loser is whichever window they were trying to
-    // move. The base player panel is chosen because it is the first thing
-    // shown, is present in every game, and is the panel the arrow keys
-    // most plausibly mean. Any panel can still take focus the moment it is
-    // clicked - mousePressEvent() is unchanged - so this picks a starting
-    // point rather than pinning the keyboard to one window.
+    // This call is the FIRST ask and it is deliberately not the only one.
+    // Measured on the live session: requestActivate() before app.exec() is a
+    // no-op, because the layer-shell surface is not exposed yet - exposed=0,
+    // hasFocus=0. Deferring it into the event loop is better but was not
+    // reliable either, twice on one session with opposite results and
+    // isExposed() flipping between runs. So the actual request lives in
+    // Panel::showEvent (requestEditFocusOnShow), which is the one moment the
+    // mapping is guaranteed done.
     //
-    // Placed after every show() and after the poll timer starts, because a
-    // surface that has not been mapped cannot be activated: requesting
-    // earlier is a no-op that looks like it worked.
+    // ONE window, not fifteen: fifteen simultaneous activation requests are
+    // a contest the compositor has no reason to resolve in the user's
+    // favour, and the loser is whichever window was being moved. Every panel
+    // still runs its own showEvent, so each asks for itself when it appears;
+    // this line only makes the FIRST one ask before the loop starts, which
+    // matters for a panel that was already visible from a previous mode.
     if (editMode) {
         Panel *focusCandidates[] = {&playerPanel, &monsterPanel,
                                     &damagePanel, &petDamagePanel};

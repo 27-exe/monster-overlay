@@ -1858,6 +1858,48 @@ ControlPanel::ControlPanel(QWidget *parent)
         if (editBtn_)  editBtn_->setEnabled(true);
         if (statusBadge_)
             statusBadge_->setText(mh::tr(QStringLiteral("console.status.plain_ready")));
+        // v0.15: RE-READ THE FILE THE OVERLAY JUST WROTE.
+        //
+        // The report was 「我在世界的控制台点击 layout,启动后移动,esc 退出,
+        // 这时控制台没有同步;但是换到崛起启动再退出,回到世界,控制台就同步
+        // 了」 - a delay of exactly one World<->Rise round trip, which is
+        // what makes it look like a timing bug rather than a missing one.
+        //
+        // It is neither a refresh nor a sync problem. A Panel reads its
+        // panels.ini group EXACTLY ONCE, inside its constructor, and caches
+        // ml/mt/mr/mb/scale/opacity/outputName as members - there is no
+        // setter that re-reads. The overlay's Esc handler writes the file
+        // through its own saveConfig(), so on exit the console's windows
+        // hold values that are already stale, and nothing in this lambda
+        // rebuilt them. The preview kept showing what the console had in
+        // memory until a rail click: switchGame() calls rebuildMotherPanels()
+        // unconditionally and rebuilds the split host whenever
+        // hostGame != currentGame(), and THAT rebuild is what finally
+        // constructed Panels against the new file. So the delay was a whole
+        // game round trip, and the refresh was never going to happen on its
+        // own.
+        //
+        // Rebuilding is the only correct response - there is deliberately no
+        // lighter one. refreshSplitWindowPreviews() and friends redraw from
+        // the members that are already stale, which is why "syncAll" never
+        // fixed this across two rounds.
+        //
+        // ORDER MATTERS. saveBeforeLaunch() persists the console's own
+        // preview on the way OUT, so a rebuild that had not yet happened
+        // would write the stale layout back over the overlay's real one.
+        // Rebuild first, then the user sees the truth; the next launch then
+        // saves the truth rather than the fossil.
+        rebuildMotherPanels();
+        rebindMotherPanels();
+        // Force the split host to rebuild even when the game did not
+        // change. syncSplitPreviewToCanvas() guards on
+        // `!splitPreview_ || hostGame != currentGame()`, which is the right
+        // guard for a game switch and the wrong one here: same game, new
+        // file. Forcing the game memo to a sentinel would be a lie about
+        // what is current, so the host is dropped and let the next
+        // syncSplitPreviewToCanvas() rebuild it from the file.
+        splitPreview_.reset();
+        syncSplitPreviewToCanvas();
         show();
         raise();
         activateWindow();

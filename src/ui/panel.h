@@ -166,6 +166,25 @@ public:
     // main.cpp for why fifteen simultaneous requests is worse than none.
     void requestEditFocus();
 
+    // Re-ask for focus once the surface is actually on screen.
+    //
+    // WHY requestActivate() ALONE WAS NOT ENOUGH. v0.15 called it from
+    // main.cpp before app.exec() and it did nothing: on a live Hyprland
+    // session the layer-shell surface is not exposed at that point, so
+    // there is no window to activate. Deferring the same call into the
+    // event loop is better but still unreliable - measured twice on the
+    // same session, once granting and once not, with isExposed() flipping
+    // between runs. A layer-shell surface with KeyboardInteractivityOnDemand
+    // has no title, no taskbar entry and no window the user can click, so
+    // the compositor has no reason to hand it focus on request alone.
+    //
+    // What does work is asking again at the moment the surface appears -
+    // showEvent is the first place the mapping is guaranteed done - and
+    // letting Qt's own activation path run, which retries until the window
+    // can take it. Clicking still works and still wins, so this picks a
+    // starting point rather than pinning the keyboard to one window.
+    void requestEditFocusOnShow();
+
     bool editMode() const { return editMode_; }
 
     // Section visibility: per-panel bitmask of independently toggleable

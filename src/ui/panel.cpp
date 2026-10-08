@@ -562,6 +562,14 @@ void Panel::showEvent(QShowEvent *e)
     // KWin 6.7 auto-blurs all semi-transparent windows; there is no
     // client-side opt-out (org_kde_kwin_blur protocol was removed,
     // replaced by ext_background_effect_v1 which Qt/KDE dont bind yet).
+    //
+    // v0.15: and the editor's first chance at keyboard focus. Everywhere
+    // else this window is deliberately kept out of the focus chain - see
+    // WA_ShowWithoutActivating in the constructor - so a show event is the
+    // one moment in the whole startup sequence where the surface is known
+    // to be mapped. main.cpp's earlier request, made before app.exec(),
+    // measured as a no-op for exactly that reason (exposed=0).
+    requestEditFocusOnShow();
 }
 
 void Panel::setCompositingEnabled(bool)
@@ -810,6 +818,22 @@ void Panel::requestEditFocus()
     // answers, and doing it in this order matches mousePressEvent() so both
     // paths are the same two calls rather than two subtly different ones.
     setLayerKeyboardInteractivity(true);
+    if (QWindow *w = windowHandle())
+        w->requestActivate();
+    setFocus();
+}
+
+void Panel::requestEditFocusOnShow()
+{
+    if (!editMode_)
+        return;
+    // The surface is mapped by the time a show event arrives, which is the
+    // one moment in the whole startup sequence where requestActivate() has
+    // something to act on. Activation is best-effort by nature on
+    // Wayland: the compositor may decline, and then the user's click still
+    // works - mousePressEvent() is unchanged and still asks.
+    setLayerKeyboardInteractivity(true);
+    activateWindow();
     if (QWindow *w = windowHandle())
         w->requestActivate();
     setFocus();

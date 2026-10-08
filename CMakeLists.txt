@@ -1541,6 +1541,24 @@ add_executable(world-severable-scan-tests
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         RESOURCE_LOCK "panels-ini")
 
+    # A DIAGNOSTIC probe, not an assertion: the v0.15 edit-mode focus fix
+    # calls requestActivate() before app.exec(), and a review measured that
+    # as a no-op on a live Hyprland session while the same calls deferred
+    # into the event loop worked. This reproduces panel.cpp's layer-shell
+    # assembly verbatim so the question can be settled on the compositor the
+    # user is actually on - a plain QMainWindow goes through the WM policy
+    # path instead and answers a different question entirely.
+    #
+    # Excluded from ctest on purpose. It opens two real surfaces on the
+    # user's desktop and asserts nothing; it exists to be run by hand and
+    # read. It is not a gate.
+    add_executable(focus-request-timing-probe
+        tests/focus_request_timing_probe.cpp
+    )
+    target_link_libraries(focus-request-timing-probe PRIVATE mhw-ui)
+    target_include_directories(focus-request-timing-probe PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
     set_tests_properties(sub-window-wall-tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
