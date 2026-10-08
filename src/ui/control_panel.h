@@ -238,7 +238,14 @@ private:
     // The one write that makes a console drag durable, shared by both
     // exits (saveBeforeLaunch() and closeEvent()). See the comment on the
     // definition for why there is one loop instead of two.
+public:
+    // Exposed so a test can perform the SAME write the console does on its
+    // two exits. closeEvent() is not reachable offscreen — a window that was
+    // never mapped does not close — so a test that waits for it would hang
+    // on a green build and prove nothing.
     void saveAllSplitAndBaseWindows();
+
+private:
 
     void saveBeforeLaunch();
     [[nodiscard]] QStringList buildOverlayArgv(bool editMode) const;

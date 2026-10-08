@@ -1521,6 +1521,26 @@ add_executable(world-severable-scan-tests
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         RESOURCE_LOCK "panels-ini")
 
+    # v0.15: the console's per-panel screen picker persists. The picker is
+    # v0.11, loadConfig()'s read of `output` is v0.8, and the write side was
+    # never there — every caller passed persist=false, so the choice died
+    # with the console.
+    add_executable(console-output-persistence-tests
+        tests/console_output_persistence_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(console-output-persistence-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(console-output-persistence-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-output-persistence-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-output-persistence-tests
+             COMMAND console-output-persistence-tests)
+    set_tests_properties(console-output-persistence-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
+
     set_tests_properties(sub-window-wall-tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 

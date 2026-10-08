@@ -501,6 +501,7 @@ void Panel::saveConfig()
         settings().setValue(QStringLiteral("lockH"), lockH_);
     settings().setValue(QStringLiteral("opacity"), opacity_);
     settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
+
     // A `visible` key used to be written here. It was removed because
     // nothing ever read it back, and the value it wrote was actively
     // misleading: it stored isVisible(), which is the *runtime* answer
