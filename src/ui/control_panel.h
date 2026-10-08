@@ -482,6 +482,21 @@ public:
     // window the day it does.
     [[nodiscard]] Panel *splitPreviewWindow(const QString &key) const;
 
+    // The game a split-preview window's DEMO is currently seeded for, or
+    // nil when no such window exists.
+    //
+    // This is the observable the canvas cannot supply. Two canvases built
+    // for different games differ because every window re-reads
+    // [game/mode/key] and lands somewhere new - the GEOMETRY rebuild - not
+    // because any window's game_ moved. So a canvas comparison passes
+    // whether or not the seed dispatch works, which is how twelve dead
+    // overloads shipped in v0.13 and v0.14 with both console suites green.
+    // Asking the window itself, and re-asking after every rail click
+    // because the host is destroyed and rebuilt, reads the cause rather
+    // than a symptom.
+    [[nodiscard]] mhw::GameId splitPreviewDemoGame(const QString &key,
+                                                   bool *found) const;
+
     // v0.6 Phase 5: most recent successful /proc scan (persisted under the
     // "detectedGame" QSettings key). Refreshed every 5s by the live badge.
     mhw::GameId  lastDetectedGame_ = mhw::GameId::World;

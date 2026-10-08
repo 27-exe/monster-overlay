@@ -109,7 +109,8 @@
         "rise-reframework-manager-tests",
         "rise-reframework-status-tests",
         "rise-zone-mapping-tests",
-        "snapshot-regression-tests"
+        "snapshot-regression-tests",
+        "split-game-seed-dispatch-tests"
       ],
       "symbols": 17
     },
@@ -310,9 +311,10 @@
         "damage-rows-window-tests",
         "monster-control",
         "monster-control-l2-smoke",
-        "monster-control-rise-rf-smoke"
+        "monster-control-rise-rf-smoke",
+        "split-game-seed-dispatch-tests"
       ],
-      "symbols": 138
+      "symbols": 139
     },
     "src/ui/control_panel_styles.cpp": {
       "class": "ZERO",
@@ -366,7 +368,7 @@
         "split-layout-consistency-tests",
         "split-no-empty-window-tests"
       ],
-      "symbols": 64
+      "symbols": 65
     },
     "src/ui/panel_damage.cpp": {
       "class": "INDIRECT",
@@ -587,7 +589,8 @@
         "console-split-sync-tests",
         "damage-rows-window-tests",
         "panel-settings-game-scoping-tests",
-        "panel-settings-scope-tests"
+        "panel-settings-scope-tests",
+        "split-game-seed-dispatch-tests"
       ],
       "symbols": 18
     },

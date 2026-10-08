@@ -340,6 +340,13 @@ void Panel::applyGeometry()
 }
 
 
+mhw::GameId Panel::demoGame() const
+{
+    // The namespace default, named through the complete type - panel.h
+    // cannot write it inline because it only forward-declares GameId.
+    return mhw::GameId::World;
+}
+
 QString Panel::settingsGroup() const
 {
     // The one place a scoped group name is derived from a panel's own

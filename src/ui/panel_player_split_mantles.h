@@ -206,6 +206,10 @@ public:
     // lost to the Panel* one and never ran. See the note on
     // Panel::setDemoGame for the full argument and the probe output.
     void setDemoGame(mhw::GameId game) override;
+    // The other half of the same pair: a setter with no reader is a
+    // change that cannot be observed, and the seed bug this round
+    // fixed was a dispatch that could not be observed.
+    [[nodiscard]] mhw::GameId demoGame() const override { return game_; }
 
 protected:
 

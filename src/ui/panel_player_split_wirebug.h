@@ -254,6 +254,10 @@ public:
     // for why a Panel* call site needs an override rather than another
     // non-virtual overload.
     void setDemoGame(mhw::GameId game) override;
+    // The other half of the same pair: a setter with no reader is a
+    // change that cannot be observed, and the seed bug this round
+    // fixed was a dispatch that could not be observed.
+    [[nodiscard]] mhw::GameId demoGame() const override { return game_; }
 
 protected:
     void paintPanel(QPainter &p) override;

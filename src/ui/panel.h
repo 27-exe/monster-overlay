@@ -298,6 +298,32 @@ public:
     // makes the constructor-free path work.
     virtual void setDemoGame(mhw::GameId) {}
 
+    // The game this window's DEMO is currently seeded for.
+    //
+    // WHY THIS EXISTS ALONGSIDE setDemoGame(). setDemoGame() takes an
+    // argument, so reading back what it did needs a second virtual — and
+    // the alternative, which this round tried first, is reading it through
+    // hasVisibleContent(). That does not work: a rail switch destroys the
+    // preview host and builds a new one, so any window handle taken before
+    // the switch is dangling, and re-fetching one afterwards reaches Qt
+    // state the new window has not realised yet. gdb caught a test doing
+    // exactly that, inside QTabBar::sizeHint() under
+    // Panel::hasVisibleContent().
+    //
+    // The seed is the CAUSE and the content is a SYMPTOM, so the cause is
+    // what a test should read.
+    //
+    // DEFINED IN THE .cpp, and that placement is forced rather than
+    // stylistic: mhw::GameId is only forward-declared here (Panel must not
+    // include a monster header to name it), so an inline body could not
+    // even name an enumerator - `mhw::GameId::World` is "not a member"
+    // against an incomplete type, for every TU that includes panel.h
+    // without the monster header. The value it returns is the namespace
+    // default, which is also what setGameForDemo()'s no-op base starts
+    // from: a window that never moved and a window that was told World
+    // read identically, and a test must not depend on telling them apart.
+    [[nodiscard]] virtual mhw::GameId demoGame() const;
+
     // i18n — runtime locale switch entry point. Called by the overlay's
     // conf-watch loop (src/main.cpp) right after StringTable::load()
     // swapped the locale: strings re-read at the draw site in paintPanel()

@@ -1059,6 +1059,25 @@ Panel *ControlPanel::splitPreviewWindow(const QString &key) const
     return splitPreview_ ? splitPreview_->windowForKey(key) : nullptr;
 }
 
+mhw::GameId ControlPanel::splitPreviewDemoGame(const QString &key,
+                                              bool *found) const
+{
+    if (found) {
+        *found = false;
+    }
+    if (!splitPreview_) {
+        return mhw::GameId::World;
+    }
+    const Panel *w = splitPreview_->windowForKey(key);
+    if (!w) {
+        return mhw::GameId::World;
+    }
+    if (found) {
+        *found = true;
+    }
+    return w->demoGame();
+}
+
 void ControlPanel::rebindMotherPanels()
 {
     // The canvas stores a NON-OWNING const PanelSource* per slot (its
