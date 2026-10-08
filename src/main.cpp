@@ -53,6 +53,7 @@
 #include "ui/panel_monster_split_conditions.h"
 #include "ui/panel_damage_split_share.h"
 #include "ui/panel_damage_split_chart.h"
+#include "ui/panel_damage_split_rows.h"
 #include "ui/panel_player_split_info.h"
 #include "ui/panel_sections.h"
 // The four conf mask rows are parsed with the console's own codec, so
@@ -551,9 +552,21 @@ int main(int argc, char **argv)
         mhw::damagePanelMaskFor(playerSplitLayoutMode, maskDamage);
     if (playerSplitLayoutMode == mhw::PlayerSection::PlayerLayoutMode::Split) {
         qInfo("v0.12 split: layout=split; %d player sub-window(s); player "
-              "mask %08x -> %08x",
+              "mask %08x -> %08x; %d damage sub-window(s); damage mask "
+              "%08x -> %08x",
               mhw::PlayerSection::kPlayerSplitTargetCount, maskPlayer,
-              maskPlayerForPanel);
+              maskPlayerForPanel,
+              mhw::DamageSplitSlot::kCount, maskDamage,
+              mhw::damagePanelMaskFor(mhw::PlayerSection::PlayerLayoutMode::Split,
+                                      maskDamage));
+        // v0.15: the damage half of that line is not decoration. The
+        // per-player roster used to be a console-preview window while
+        // DamagePanel kept drawing the rows itself, so the console and the
+        // overlay disagreed and the user saw a window one of them never
+        // mounted. Printing BOTH masks makes the handoff visible on a real
+        // run: if `damage mask` keeps a bit that no window claims, the same
+        // disagreement is back and the log will say so before a pixel is
+        // painted.
     } else {
         qInfo("v0.12 split: layout=single (default); player mask %08x", maskPlayer);
     }
@@ -694,6 +707,15 @@ int main(int argc, char **argv)
         nullptr, mhw::DamageSplitSlot::Share);
     DamageChartStripPanel damageChartStripPanel(
         nullptr, mhw::DamageSplitSlot::Chart);
+    // v0.15: the per-player roster as its own window. This is the piece
+    // that made the console and the overlay disagree: the preview built
+    // it, the live overlay did not, and DamagePanel kept drawing the rows
+    // itself — so the user saw a window the console promised and the
+    // overlay never mounted. Now it is in kDamageSplitTargets, so
+    // damagePanelMaskFor() hands Rows to this window in Split mode and the
+    // panel draws only what stayed.
+    DamageRowsStripPanel damageRowsStripPanel(
+        nullptr, mhw::DamageSplitSlot::Rows);
     PlayerInfoStripPanel playerInfoStripPanel(
         nullptr, mhw::PlayerSection::PlayerSplitSlot::Info);
 
@@ -710,6 +732,7 @@ int main(int argc, char **argv)
     monsterConditionsStripPanel.setEditMode(editMode);
     damageShareStripPanel.setEditMode(editMode);
     damageChartStripPanel.setEditMode(editMode);
+    damageRowsStripPanel.setEditMode(editMode);
     playerInfoStripPanel.setEditMode(editMode);
 
     // L1: apply section masks BEFORE show() so the first paint reflects
@@ -769,6 +792,7 @@ int main(int argc, char **argv)
     monsterConditionsStripPanel.setSectionMask(maskMonster);
     damageShareStripPanel.setSectionMask(maskDamage);
     damageChartStripPanel.setSectionMask(maskDamage);
+    damageRowsStripPanel.setSectionMask(maskDamage);
     playerInfoStripPanel.setSectionMask(maskPlayer);
     damagePanel.setRiseDisplayOptions(riseDamageDisplayOptions);
     petDamagePanel.setDisplayOptions(riseDamageDisplayOptions);
@@ -911,6 +935,7 @@ int main(int argc, char **argv)
     monsterConditionsStripPanel.setPanelEnabled(monsterSplitOn);
     damageShareStripPanel.setPanelEnabled(damageSplitOn);
     damageChartStripPanel.setPanelEnabled(damageSplitOn);
+    damageRowsStripPanel.setPanelEnabled(damageSplitOn);
     playerInfoStripPanel.setPanelEnabled(playerSplitOn);
 
 
@@ -960,6 +985,7 @@ int main(int argc, char **argv)
                  (Panel *)&monsterConditionsStripPanel,
                  (Panel *)&damageShareStripPanel,
                  (Panel *)&damageChartStripPanel,
+                 (Panel *)&damageRowsStripPanel,
              }) {
             sub->setOutputName(out, false);
         }

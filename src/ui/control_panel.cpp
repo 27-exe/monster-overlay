@@ -224,7 +224,7 @@ static_assert(mhw::PlayerSection::kPlayerSplitTargetCount == 6,
 static_assert(mhw::kMonsterSplitTargetCount == 2,
               "kMonsterSplitTargets row count changed: add a line to "
               "kSplitWindowRows AND a case in makeSplitWindow()");
-static_assert(mhw::DamageSplitSlot::kCount == 2,
+static_assert(mhw::DamageSplitSlot::kCount == 3,
               "kDamageSplitTargets row count changed: add a line to "
               "kSplitWindowRows AND a case in makeSplitWindow()");
 // Spelled from the three counts rather than a literal sum, so the monster
@@ -238,13 +238,17 @@ static_assert(mhw::DamageSplitSlot::kCount == 2,
 // line below without a table that grew, must both fail to build. The
 // one extra window is accounted for in one place, with the reason next
 // to it, rather than being the number this file forgets to update.
+// v0.15: no longer "+ 1". The rows window used to sit BESIDE the split
+// table — it claimed no bit, so the table's row count could not describe
+// it and this sum needed a fudge. It is in the table now
+// (DamageSection::Rows), so the three counts describe every window and the
+// fudge is gone. A literal here is a fourth place the same number is
+// written, and it is the one that does not change.
 static_assert(kSplitWindowRowCount
                   == mhw::PlayerSection::kPlayerSplitTargetCount
                          + mhw::kMonsterSplitTargetCount
-                         + mhw::DamageSplitSlot::kCount
-                         + 1,
-              "the build table must have one line per split-table row, "
-              "plus the rows window that claims no bit of its own");
+                         + mhw::DamageSplitSlot::kCount,
+              "the build table must have one line per split-table row");
 
 // Construct the window for one row. A switch, not a table of factory
 // lambdas, because each type is a distinct class with a distinct

@@ -126,12 +126,20 @@ void testTableDerivation()
     // plan belongs together. Fewer windows, each with more in it.
     check(mhw::kMonsterSplitTargetCount == 2,
           "kMonsterSplitTargets has 2 rows (one per monster sub-window)");
-    check(mhw::DamageSplitSlot::kCount == 2,
-          "kDamageSplitTargets has 2 rows (one per damage sub-window)");
+    // v0.15: 3, not 2. The per-player roster became a damage sub-window so
+    // the live overlay and the console preview would stop disagreeing —
+    // the preview had been building a rows window the overlay never
+    // mounted, and the overlay was drawing those rows inside DamagePanel.
+    //
+    // Spelled from the three constants rather than as a literal total, so
+    // the same number is not written in two places that can drift.
+    check(mhw::DamageSplitSlot::kCount == 3,
+          "kDamageSplitTargets has 3 rows (share, chart, and the per-player "
+          "roster)");
     check(mhw::PlayerSection::kPlayerSplitTargetCount
               + mhw::kMonsterSplitTargetCount
-              + mhw::DamageSplitSlot::kCount == 10,
-          "the three tables' rows sum to 10 sub-windows");
+              + mhw::DamageSplitSlot::kCount == 11,
+          "the three tables' rows sum to 11 sub-windows");
 
     // Every row must claim at least one bit. A row that claims nothing
     // would produce a preview box for a window that draws nothing, and
@@ -265,10 +273,13 @@ void testSubWindowCountMatchesTableRows()
 
     canvas.setLayoutMode(mhw::PlayerSection::PlayerLayoutMode::Split);
     canvas.setSubWindowBindings(bindings);
+    // The count is the three tables' sizes, never a literal: a literal in a
+    // test like this one does not move when a table grows, and a test that
+    // quietly checks the old number is worse than no test.
     check(canvas.subWindowCount() == kPlayerRows + kMonsterRows + kDamageRows,
-          "one sub-window per split-table row (13 for the three tables)");
-    check(canvas.subWindowCount() == 10,
-          "the bound is 10 = 6 player + 2 monster + 2 damage");
+          "one sub-window per split-table row, counted from the tables");
+    check(canvas.subWindowCount() == 11,
+          "the bound is 11 = 6 player + 2 monster + 3 damage");
 
     // A null source in the list is a row whose window did not resolve.
     // It must not become a box: a null dereference in the paint path is
@@ -279,7 +290,11 @@ void testSubWindowCountMatchesTableRows()
     nullRow.tableRow = 3;
     bindings.append(nullRow);
     canvas.setSubWindowBindings(bindings);
-    check(canvas.subWindowCount() == 10,
+    // 11 live bindings + 1 null -> still 11. The count before the null was
+    // appended is the number to compare against, so it is computed rather
+    // than written: a literal here is how this assertion went stale when
+    // DamageSplitSlot::kCount moved from 2 to 3.
+    check(canvas.subWindowCount() == kPlayerRows + kMonsterRows + kDamageRows,
           "a binding with a null source is skipped, not counted");
 
     // A re-set replaces rather than appends: the caller re-derives the

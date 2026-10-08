@@ -1020,25 +1020,23 @@ namespace DamageSplitSlot {
 enum : int {
     Share = 0,   // 横向占比条 -> DamageShareStripPanel
     Chart = 1,   // 折线图      -> DamageChartStripPanel
+    // The per-player roster: name, damage, DPS. v0.15: this one WAS
+    // deliberately outside the table, because adding it takes Rows away
+    // from DamagePanel and that is a main.cpp decision rather than a
+    // console one — and because leaving it out meant the live overlay
+    // and the console preview disagreed, which is the whole class of bug
+    // this round was about. It is in now, so a real `--layout=split`
+    // launch draws the roster in its own window and the panel draws the
+    // blocks that stayed.
+    Rows = 2,    // 玩家名单    -> DamageRowsStripPanel
 };
 // The row count of kDamageSplitTargets, cross-checked by static_assert.
 //
-// v0.15: this is DELIBERATELY still 2, and the rows window does NOT get
-// an entry here. The reason is that this count is the index space of
-// kDamageSplitTargets — damageSubWindowMask() bounds-checks against it
-// and then reads the table with it — so growing it without growing the
-// table would give every caller an out-of-range read.
-//
-// The rows window (DamageRowsStripPanel) lives BESIDE this table rather
-// than in it, because it claims no bit: damagePanelMaskFor() leaves
-// DamageSection::Rows with the panel, so adding a `{DamageSection::Rows}`
-// row here would take the rows away from DamagePanel and change what a
-// real `--layout=split` launch draws. That is a main.cpp decision, not a
-// console-preview one.
-//
-// See kSplitDamageRowsRow in control_panel.cpp for the row index the
-// preview uses for it, and for the full argument.
-constexpr int kCount = 2;
+// This is the index space of kDamageSplitTargets — damageSubWindowMask()
+// bounds-checks against it and then reads the table with it — so it must
+// move with the table, never ahead of it. The static_asserts below say so
+// twice, once against the slot count and once against the bit count.
+constexpr int kCount = 3;
 } // namespace DamageSplitSlot
 
 // One split window's claim on DamageSection bits: "these blocks leave
@@ -1070,6 +1068,16 @@ constexpr DamageSplitTarget kDamageSplitTargets[] = {
     // does the most for: the y-axis label column is a fixed 36px, so
     // every extra pixel of window width is a pixel of plot area.
     {DamageSection::Chart},
+    // The roster. Claimed here so DamagePanel stops drawing it in Split
+    // mode and the window owns those pixels instead — which is what makes
+    // a real `--layout=split` launch agree with the console preview, the
+    // disagreement the user reported as "the per-player part is gone".
+    //
+    // OtherMembers is deliberately NOT claimed. It is the roster FILTER,
+    // not a block: its per-row rendering belongs to Rows, so a window
+    // claiming it would draw the same pixels, and the pairwise-disjoint
+    // assert below would fail the build.
+    {DamageSection::Rows},
 };
 
 // How many bits the table's rows claim in total, counted per row. Unlike
@@ -1154,7 +1162,7 @@ static_assert(damageSplitTargetsAreValid(),
               "kDamageSplitTargets rows must be non-empty, inside "
               "DamageSection::kAll and pairwise disjoint — two windows "
               "claiming one DamageSection bit would draw it twice");
-static_assert(DamageSplitSlot::kCount == 2,
+static_assert(DamageSplitSlot::kCount == 3,
               "DamageSplitSlot::kCount must match the kDamageSplitTargets "
               "row count");
 static_assert(damageSplitBitCount(damageSplitRemovedBits())
@@ -1175,13 +1183,24 @@ static_assert((damagePanelMaskFor(PlayerSection::PlayerLayoutMode::Split, 0xFFFF
                & damageSplitRemovedBits())
                   == 0,
               "in Split mode DamagePanel must hold none of the removed bits");
-// The two rows claim exactly the two bits they name, and no third bit
-// leaves the panel — so Rows and OtherMembers stay put with the panel.
+// The three rows claim exactly the three bits they name, and no fourth bit
+// leaves the panel — so OtherMembers stays with the panel. It is the roster
+// FILTER, not a block: its per-row rendering belongs to Rows, so a window
+// claiming it would draw the same pixels the rows window draws.
+//
+// v0.15: this used to be Share|Chart only, with Rows deliberately left
+// on the panel so the console preview's rows window could not change what
+// a real `--layout=split` launch drew. That was the wrong call: it made the
+// console promise a window the overlay never mounted, which is the
+// disagreement the user reported. The console and the overlay must be
+// reading the same table, or the preview is a picture of something else.
 static_assert(damageSplitRemovedBits()
                   == (DamageSection::Share
-                      | DamageSection::Chart),
-              "the damage split owns exactly Share|Chart; Rows stays the "
-              "panel's substance and OtherMembers is a filter over Rows");
+                      | DamageSection::Chart
+                      | DamageSection::Rows),
+              "the damage split owns exactly Share|Chart|Rows; "
+              "OtherMembers is a filter over Rows, not a block of its "
+              "own, and stays with the panel");
 
 // ----- Pet damage panel sections ------------------------------------------
 namespace PetDamageSection {

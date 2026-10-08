@@ -719,14 +719,21 @@ int main(int argc, char **argv)
               QStringLiteral("mask=%1 want=%2")
                   .arg(monsterMaskInSplit)
                   .arg(static_cast<uint64_t>(mhw::MonsterSection::Tenderize)));
-        check(damageMaskInSplit == (mhw::DamageSection::Rows
-                                    | mhw::DamageSection::OtherMembers),
-              "in split, DamagePanel keeps Rows+OtherMembers — Share and "
-              "Chart left",
+        // v0.15: OtherMembers alone. Rows joined the split table when the
+        // roster became a window of its own — the console had been
+        // building that window while the live overlay kept drawing the
+        // rows inside DamagePanel, so the two disagreed and the user saw
+        // "the per-player part is gone" from one side and a duplicate from
+        // the other.
+        //
+        // OtherMembers is deliberately NOT claimed by any window: it is the
+        // roster FILTER, and its per-row rendering belongs to Rows.
+        check(damageMaskInSplit == mhw::DamageSection::OtherMembers,
+              "in split, DamagePanel keeps only OtherMembers — Share, Chart "
+              "and Rows all left for their own windows",
               QStringLiteral("mask=%1 want=%2")
                   .arg(damageMaskInSplit)
-                  .arg(static_cast<uint64_t>(mhw::DamageSection::Rows
-                                             | mhw::DamageSection::OtherMembers)));
+                  .arg(static_cast<uint64_t>(mhw::DamageSection::OtherMembers)));
 
         // THE GATE ITSELF, reproduced as the expression main.cpp applies
         // (mode => require a non-zero derived mask) so the panels' own
