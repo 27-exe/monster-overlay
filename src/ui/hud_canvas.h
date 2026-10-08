@@ -455,6 +455,27 @@ private:
     // compositor subprocess detect() may run.
     const screen_query::Result &primaryScreenInfo() const;
 
+    // v0.15: the same resolution previewScreenInfo() performs, spelled
+    // once and parameterised by output name, so a per-window drag clamp
+    // can ask about a DIFFERENT screen than the one the canvas is
+    // drawing. Extracted verbatim rather than reimplemented: two copies
+    // of this order-of-resolution is exactly how the canvas and the
+    // panel end up disagreeing about which screen a window lives on.
+    //   ""                       -> primaryScreenInfo()
+    //   a live output name       -> its cached QScreen geometry
+    //   a name that is not live  -> rebuild once, retry, else primary
+    const screen_query::Result &screenInfoForOutput(
+            const QString &outputName) const;
+
+    // v0.15: the output a BOUND window is measured against, resolved by
+    // the same rule Panel::marginLimits() uses: the window's own
+    // outputName when it names one, else its preview-only fallback
+    // (what the console pushes into every split sub-window), else the
+    // primary. Null source, or an interface that cannot answer, yields
+    // previewOutputName_ — the behaviour this file had before the
+    // accessors existed, so nothing changes until they land.
+    [[nodiscard]] QString boundOutputName(const PanelSource *src) const;
+
     // v0.11.4: rebuild the per-output preview cache from the CURRENT
     // QGuiApplication::screens() list. Declared const because the
     // cache is per-widget state, not observable state: calling it is

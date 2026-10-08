@@ -188,7 +188,60 @@ int clampMargin(int v, int limit)
     return std::clamp(v, 0, std::max(limit, 0));
 }
 
+// Look up one output name in today's QGuiApplication::screens().
+// Returns nullptr when the name is empty or names an output that is
+// not attached — "cannot measure this", never "guess a different one".
+// The one spelling of the walk; see Panel::resolveOutputScreen().
+QScreen *screenByName(const QString &name)
+{
+    if (name.isEmpty())
+        return nullptr;
+    for (QScreen *s : QGuiApplication::screens()) {
+        if (s && s->name() == name)
+            return s;
+    }
+    return nullptr;
+}
+
 } // namespace
+
+QScreen *Panel::resolveOutputScreen(const QString &fallbackName) const
+{
+    // ONE resolution for the whole class. The doc block lives in
+    // panel.h beside the declaration; the short version is
+    //   1. outputName_      — the panel's own screen choice
+    //   2. fallbackName     — only when outputName_ is empty
+    //   3. primaryScreen()
+    //
+    // Why step 2 exists rather than a second outputName: a split
+    // sub-window never names a screen of its own (panels.ini has no
+    // outputName key for any of them), so without it every sub-window
+    // resolved straight to primaryScreen() and got clamped against
+    // whatever output Qt calls primary — a portrait HDMI-A-1 measuring
+    // a window the console previews on a landscape DP-1. Measured:
+    // asked left=2538, got left=1058, short by 1480 px. See
+    // setPreviewFallbackOutput().
+    //
+    // Deliberately NOT applied by applyGeometry()/onOutputsChanged():
+    // those two push the screen to the real layer-shell surface, and a
+    // preview screen must never decide where a live overlay lands. The
+    // fallback is a measurement-only concern, so only the geometry
+    // question (marginLimits) reads it. Passing the default empty name
+    // reproduces the old behaviour of every one of those call sites
+    // exactly.
+    //
+    // 1. The panel's OWN choice wins: a window the user pointed at an
+    //    output is measured against that output, whatever the preview
+    //    happens to be showing.
+    if (QScreen *own = screenByName(outputName_))
+        return own;
+    // 2. No own choice (or it names an output that is gone): the
+    //    caller-supplied preview screen.
+    if (QScreen *preview = screenByName(fallbackName))
+        return preview;
+    // 3. Nothing named resolved: primary, as it has always been.
+    return QGuiApplication::primaryScreen();
+}
 
 Panel::Panel(const QString &settingsKey, Corner corner, QWidget *parent,
              int subWindowIndex)
@@ -273,15 +326,12 @@ void Panel::applyGeometry()
     // no later hook to redirect it. setCloseOnDismissed(false) keeps
     // the surface alive if the chosen output briefly disconnects, so a
     // dock undock / monitor sleep doesn't kill the overlay.
-    QScreen *targetScreen = nullptr;
-    if (!outputName_.isEmpty()) {
-        const auto screens = QGuiApplication::screens();
-        for (QScreen *s : screens) {
-            if (s && s->name() == outputName_) { targetScreen = s; break; }
-        }
-    }
-    if (!targetScreen)
-        targetScreen = QGuiApplication::primaryScreen();
+    //
+    // No preview fallback here, on purpose: this screen is pushed to a
+    // REAL layer-shell surface, and the screen a console happens to be
+    // previewing must never decide where a live overlay lands. The
+    // fallback only feeds marginLimits() — see resolveOutputScreen().
+    QScreen *targetScreen = resolveOutputScreen();
     if (targetScreen) {
         if (native->screen() != targetScreen)
             native->setScreen(targetScreen);
@@ -985,15 +1035,24 @@ QMargins Panel::marginLimits() const
 {
     // Same resolution order as applyGeometry(): the panel's own output
     // when it names a screen we can actually see, else the primary.
-    const QScreen *screen = nullptr;
-    if (!outputName_.isEmpty()) {
-        const auto screens = QGuiApplication::screens();
-        for (QScreen *s : screens) {
-            if (s && s->name() == outputName_) { screen = s; break; }
-        }
-    }
-    if (!screen)
-        screen = QGuiApplication::primaryScreen();
+    //
+    // ...with the one addition this fix is about. A split sub-window has
+    // no outputName_ of its own, so the empty-name branch used to land
+    // on primaryScreen() unconditionally — which on the reporter's
+    // machine is a PORTRAIT HDMI-A-1 (1080 wide) while the console
+    // previews a landscape DP-1 (2560 wide). The drag clamp therefore
+    // measured the window against the wrong screen and a drag that
+    // asked for left=2538 came back as left=1058, 1480 px short: the
+    // window could not be dragged past the middle of the screen it was
+    // being drawn on, because it was clamped by the middle of a
+    // DIFFERENT one. Handing resolveOutputScreen() the preview screen
+    // makes the bound match the screen the preview actually shows.
+    //
+    // This does not change the four base panels' behaviour: each of
+    // them either names an output (its own choice wins over the
+    // fallback) or has no preview fallback set, and an empty fallback
+    // name resolves exactly as before.
+    const QScreen *screen = resolveOutputScreen(previewFallbackOutput_);
 
     // The panel points at an output that is not attached right now (the
     // 4K monitor is unplugged), or we genuinely have no screen
@@ -1056,15 +1115,9 @@ void Panel::onOutputsChanged()
     // was created with and a panel that reads its stored 4K margin
     // against a 1080p primary stays lost.
     if (QWindow *native = windowHandle()) {
-        QScreen *targetScreen = nullptr;
-        if (!outputName_.isEmpty()) {
-            const auto screens = QGuiApplication::screens();
-            for (QScreen *s : screens) {
-                if (s && s->name() == outputName_) { targetScreen = s; break; }
-            }
-        }
-        if (!targetScreen)
-            targetScreen = QGuiApplication::primaryScreen();
+        // Same reasoning as applyGeometry(): no preview fallback. This
+        // screen is pushed at a real layer-shell surface.
+        QScreen *targetScreen = resolveOutputScreen();
         if (targetScreen && native->screen() != targetScreen)
             native->setScreen(targetScreen);
         if (LayerShellQt::Window *layer = LayerShellQt::Window::get(native)) {
@@ -1163,12 +1216,9 @@ void Panel::setOutputName(QString name, bool persist)
     if (name == outputName_)
         return;
     if (!name.isEmpty()) {
-        const auto screens = QGuiApplication::screens();
-        bool ok = false;
-        for (QScreen *s : screens) {
-            if (s && s->name() == name) { ok = true; break; }
-        }
-        if (!ok) {
+        // Same lookup the resolution path uses, so "is this a real
+        // output?" and "which screen is this?" cannot disagree.
+        if (!screenByName(name)) {
             qWarning("Panel::setOutputName: '%s' is not a known output; "
                      "available: %s. Reverting to primary.",
                      qPrintable(name),
@@ -1185,6 +1235,26 @@ void Panel::setOutputName(QString name, bool persist)
     applyGeometry();
     if (persist)
         saveAppearance();
+}
+
+void Panel::setPreviewFallbackOutput(const QString &name)
+{
+    // Deliberately no validation, no applyGeometry(), no persistence.
+    //
+    // No validation: the preview screen is whatever the console is
+    // currently drawing, and it can be a name that is not attached
+    // (a just-unplugged output). resolveOutputScreen() already treats
+    // an unresolvable fallback as "not there" and carries on to
+    // primary, which is the correct degradation for a measurement.
+    //
+    // No applyGeometry(): this is not the panel's own screen choice and
+    // must never move a layer-shell surface. Only marginLimits() reads
+    // it — see the declaration in panel.h.
+    //
+    // No persistence: it is preview state that the console re-pushes on
+    // every rebuild, so writing it to panels.ini would put a key on
+    // every split window that loadConfig() then has to ignore.
+    previewFallbackOutput_ = name;
 }
 
 void Panel::paintMinimized(QPainter &p)

@@ -19,6 +19,7 @@
 #include <QtGlobal>
 #include <algorithm>
 #include <cmath>
+#include <concepts>
 
 #include "panel.h"
 #include "panel_accent.h"
@@ -231,6 +232,25 @@ HudCanvas::HudCanvas(QWidget *parent) : QWidget(parent)
             this, [this] { rebuildScreenCache(); updateGeometry(); update(); });
     connect(static_cast<QGuiApplication *>(QCoreApplication::instance()),
             &QGuiApplication::screenRemoved,
+            this, [this] { rebuildScreenCache(); updateGeometry(); update(); });
+    // v0.15: the PRIMARY can also change with no screen coming or going
+    // — a compositor setting, a kscreen re-arrangement, a headless
+    // session handing primary to a different output. screenAdded /
+    // screenRemoved do not fire for that, and the cache is not the only
+    // thing that goes stale: Panel::marginLimits() reads
+    // primaryScreen() LIVE on every call, while our tables are a
+    // snapshot. Left unconnected, the two resolve different answers for
+    // every panel and every sub-window that follows primary, which is
+    // the same "canvas and panel disagree about which screen a window
+    // lives on" divergence this file already has a measured case of —
+    // just triggered by a settings change instead of a cable.
+    //
+    // rebuildScreenCache() is the whole response: it clears
+    // screenCacheByName_ AND sets screenFallbackValid_ = false, so the
+    // next primaryScreenInfo() re-runs detect() against the new primary
+    // instead of serving the one cached for the old one.
+    connect(static_cast<QGuiApplication *>(QCoreApplication::instance()),
+            &QGuiApplication::primaryScreenChanged,
             this, [this] { rebuildScreenCache(); updateGeometry(); update(); });
 }
 
@@ -609,12 +629,18 @@ QString HudCanvas::screenLabel() const
                                             .arg(suffix);
 }
 
-// v0.8: pick the screen_query::Result that drives every "screen frame"
-// decision in this widget — preview rectangle, drag clamps, ruler ticks.
-// Resolution order:
-//   1. previewOutputName_ matched against QGuiApplication::screens()
-//   2. QGuiApplication::primaryScreen() (matches the v0.7.x behaviour
-//      where the preview always showed the primary output)
+// v0.15: the screen-resolution rule, spelled ONCE and parameterised by
+// output name. previewScreenInfo() is now the one-liner that passes
+// previewOutputName_; movedSubMargins() passes whatever screen the
+// window being dragged is bound to. Two copies of this resolution order
+// is precisely how the canvas and the panel end up measuring the same
+// window against two different screens — see the note on
+// movedSubMargins().
+//
+// Resolution order, unchanged from the v0.8 spelling:
+//   1. `outputName` matched against QGuiApplication::screens()
+//   2. QGuiApplication::primaryScreen() (the v0.7.x behaviour where the
+//      preview always showed the primary output)
 //
 // We do NOT call screen_query::detect() per-paint: that path can shell
 // out to kscreen-doctor / wlr-randr with a 2 s budget, and it would
@@ -631,28 +657,29 @@ QString HudCanvas::screenLabel() const
 // acceptable-worst-case claim — was never true: nothing rebuilt those
 // statics. They are now per-widget mutable members invalidated by
 // rebuildScreenCache(); see hud_canvas.h.
-const screen_query::Result &HudCanvas::previewScreenInfo() const
+const screen_query::Result &HudCanvas::screenInfoForOutput(
+        const QString &outputName) const
 {
     // Both paths read CURRENT data: any cache miss triggers a rebuild,
     // so a newly plugged output is found and a removed one is gone.
     if (!screenCacheValid_)
         rebuildScreenCache();
 
-    // Unchanged semantics: empty previewOutputName_ (the default)
-    // follows the primary screen.
-    if (previewOutputName_.isEmpty())
+    // Unchanged semantics: an empty name (the default) follows the
+    // primary screen.
+    if (outputName.isEmpty())
         return primaryScreenInfo();
 
-    const auto it = screenCacheByName_.constFind(previewOutputName_);
+    const auto it = screenCacheByName_.constFind(outputName);
     if (it != screenCacheByName_.cend())
         return *it;
-    // previewOutputName_ no longer resolves to a live output — the
-    // monitor was unplugged, or Qt has not announced a hot-plugged one
-    // yet. Rebuild once in case the screen list moved since the last
-    // build, then re-check, so a just-plugged-in output is picked up on
-    // this very call instead of on the next one.
+    // The name no longer resolves to a live output — the monitor was
+    // unplugged, or Qt has not announced a hot-plugged one yet. Rebuild
+    // once in case the screen list moved since the last build, then
+    // re-check, so a just-plugged-in output is picked up on this very
+    // call instead of on the next one.
     rebuildScreenCache();
-    const auto retry = screenCacheByName_.constFind(previewOutputName_);
+    const auto retry = screenCacheByName_.constFind(outputName);
     if (retry != screenCacheByName_.cend())
         return *retry;
     // Still nothing: the output is genuinely gone. Same destination as
@@ -660,6 +687,11 @@ const screen_query::Result &HudCanvas::previewScreenInfo() const
     // the topology, so primaryScreenInfo() re-resolves it rather than
     // reusing a stale answer.
     return primaryScreenInfo();
+}
+
+const screen_query::Result &HudCanvas::previewScreenInfo() const
+{
+    return screenInfoForOutput(previewOutputName_);
 }
 
 // Resolve (at most once per topology change) the detect()-based answer
@@ -713,6 +745,105 @@ QString HudCanvas::cornerLabel(int index) const
     return cornerName(slots_[index].src->corner());
 }
 
+// v0.15: the output a BOUND window is measured against.
+//
+// WHY THIS EXISTS AT ALL, with the measured numbers. The drag clamp has
+// to measure the window against the screen it is DRAWN ON, and "the
+// screen the canvas is drawing" and "the screen this window is bound
+// to" are two different questions that this file used to answer with
+// one variable. previewOutputName_ is the CANVAS's screen — the frame
+// it paints and the ruler it draws. It is not the dragged window's.
+//
+// In the reporter's Rise split console they disagreed by a whole
+// monitor:
+//
+//     HDMI-A-1  1080x1920   <- primaryScreen(), portrait
+//     DP-1      2560x1440   <- previewOutputName_, what was drawn
+//
+// The 11 split sub-windows have no outputName of their own, so the
+// window-side answer fell through to primaryScreen() while the
+// canvas-side answer was DP-1. A drag that asked for left=2538 came
+// back clamped to left=1058 — 1480 px short — and the window could not
+// be dragged past the middle of the screen because the middle it was
+// being measured against was the middle of the OTHER one. That is the
+// whole 「悬浮窗无法越过中线拖动」 report.
+//
+// The resolution rule is Panel::marginLimits()'s, so the preview clamp
+// and the surface clamp are derived from the same answer:
+//   1. the window's own outputName, when it names one
+//   2. the console's preview fallback for a split window (it has no
+//      outputName of its own; the console pushes the preview screen in)
+//   3. the canvas's preview screen — today's behaviour, kept as the
+//      last word so this file cannot regress if the interface below
+//      ever loses an accessor.
+//
+// THE ACCESSOR DOES NOT EXIST ON PanelSource YET, and this file is not
+// where it gets added (panel_source.h belongs to the other half of this
+// fix; see the report for the exact signature). The concepts below make
+// that a COMPILE-TIME fact rather than a silent guess: while
+// PanelSource exposes only geometry, both `if constexpr` arms are
+// discarded and this returns previewOutputName_ — byte-for-byte the
+// pre-fix behaviour, so nothing regresses while the interface lands.
+// The moment PanelSource grows outputName() / previewFallbackOutput(),
+// the same source compiles into the real answer with no edit here.
+namespace detail {
+
+// "this source can name the screen it lives on" — Panel::outputName()
+template <typename T>
+concept HasOutputName = requires(const T &t) {
+    { t.outputName() } -> std::convertible_to<QString>;
+};
+
+// "this source carries the console's preview-only fallback" —
+// Panel::previewFallbackOutput(), the split sub-window case.
+template <typename T>
+concept HasPreviewFallback = requires(const T &t) {
+    { t.previewFallbackOutput() } -> std::convertible_to<QString>;
+};
+
+// Resolve one binding's screen, by the rule in the comment above.
+//
+// A TEMPLATE, not a plain function, and that is load-bearing: `if
+// constexpr` only discards a branch inside a template, so this is what
+// lets the same source compile both today (PanelSource exposes only
+// geometry, both arms are discarded) and after the interface lands
+// (both arms compile). Written as an ordinary function it would have
+// to name members that do not exist yet and would simply not build.
+//
+// Deduced as PanelSource from every call site — the canvas only ever
+// holds a base pointer — so the capability is probed on the INTERFACE,
+// which is exactly what has to be true for the split sub-window path
+// to start working the day panel_source.h grows the accessors.
+template <typename T>
+QString resolveBoundOutput(const T *src, const QString &canvasScreen)
+{
+    if (!src)
+        return canvasScreen;
+
+    QString name;
+    if constexpr (HasOutputName<T>)
+        name = src->outputName();
+    if constexpr (HasPreviewFallback<T>) {
+        // A RUNTIME guard, deliberately: the fallback only applies when
+        // the window names no screen of its own, and `name` is a runtime
+        // QString — `if constexpr (name.isEmpty() && …)` would try to
+        // read a QString in a constant expression and fail to compile.
+        if (name.isEmpty())
+            name = src->previewFallbackOutput();
+    }
+    // Step 3. `name` is empty exactly when the source has no screen of
+    // its own to name — which is the pre-fix condition, so the fallback
+    // is the canvas's screen and nothing moves.
+    return name.isEmpty() ? canvasScreen : name;
+}
+
+} // namespace detail
+
+QString HudCanvas::boundOutputName(const PanelSource *src) const
+{
+    return detail::resolveBoundOutput(src, previewOutputName_);
+}
+
 // ─── geometry helpers ───────────────────────────────────────────────────
 
 QMargins HudCanvas::movedMargins(int index, int dxLogical, int dyLogical) const
@@ -720,7 +851,17 @@ QMargins HudCanvas::movedMargins(int index, int dxLogical, int dyLogical) const
     if (!mhw::isPanelIndex(index) || !slots_[index].bound) return {};
     const Corner corner = slots_[index].src->corner();
     QMargins m = dragStartMargins_;   // set at drag/key start
-    const QSize logical = previewScreenInfo().logical;
+    // v0.15: the dragged panel's OWN screen, not the canvas's. For the
+    // four base panels the two coincide today — selectPanel() and the
+    // SCREEN dropdown both push the selected panel's outputName into
+    // previewOutputName_ — but that is a property of the console's
+    // wiring, not of this function, and the split path above is the
+    // proof of what happens when it stops holding. Deriving it from the
+    // panel removes the coincidence; while PanelSource has no screen
+    // accessor, boundOutputName() answers previewOutputName_ and this
+    // line is the same expression it has always been.
+    const QSize logical = screenInfoForOutput(
+            boundOutputName(slots_[index].src)).logical;
     const QSize panel = slots_[index].src->contentSize() * slots_[index].src->scale();
     const int maxX = std::max(0, logical.width() - panel.width());
     const int maxY = std::max(0, logical.height() - panel.height());
@@ -762,6 +903,22 @@ QMargins HudCanvas::movedMargins(int index, int dxLogical, int dyLogical) const
 // The bound is the SCREEN, not the canvas frame: the box must never be
 // dragged somewhere the real surface could not be put, which is the same
 // reason movedMargins() clamps against previewScreenInfo().logical.
+//
+// v0.15: WHICH screen, though, is not the canvas's — it is the dragged
+// window's own. previewOutputName_ is the frame the canvas paints; a
+// split sub-window is bound to whatever screen its Panel resolves, and
+// on the reporter's machine those two are different monitors:
+//
+//     canvas previewOutputName_ = DP-1        2560 wide
+//     sub-window, empty name    = primary     1080 wide
+//
+// so the clamp used to be 1080-panel while the box was drawn on a
+// 2560-panel canvas. A drag that asked for left=2538 got back
+// left=1058 — 1480 px short — which is exactly 「悬浮窗无法越过中线
+// 拖动」: the window stopped at the middle of the screen it was being
+// measured against, not the middle of the one it was drawn on. Asking
+// the window (boundOutputName, i.e. Panel::marginLimits()'s own rule)
+// makes the two agree by construction.
 QMargins HudCanvas::movedSubMargins(int index, int dxLogical,
                                     int dyLogical) const
 {
@@ -769,7 +926,10 @@ QMargins HudCanvas::movedSubMargins(int index, int dxLogical,
         return {};
     const Corner corner = subSlots_[index].src->corner();
     QMargins m = subDragStartMargins_;   // set at drag start
-    const QSize logical = previewScreenInfo().logical;
+    // v0.15: THIS window's screen, resolved the way its own
+    // Panel::marginLimits() resolves it — not previewOutputName_.
+    const QSize logical = screenInfoForOutput(
+            boundOutputName(subSlots_[index].src)).logical;
     const QSize panel = subSlots_[index].src->contentSize()
                         * subSlots_[index].src->scale();
     const int maxX = std::max(0, logical.width() - panel.width());

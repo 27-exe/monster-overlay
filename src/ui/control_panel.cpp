@@ -809,6 +809,45 @@ private:
     std::unique_ptr<SplitWindowPreviewHostImpl> impl_;
 };
 
+// v0.15: re-push the canvas's current preview screen into every split
+// sub-window.
+//
+// WHY THIS IS A FREE FUNCTION AND NOT A CONTROL PANEL MEMBER. The push is
+// three lines over SplitWindowPreviewHost's public face (count() /
+// windowAt() / Panel::setPreviewFallbackOutput()). A file-local static
+// keeps the whole edit inside control_panel.cpp — which is where the
+// console's screen knowledge already lives — and the two call sites below
+// are ControlPanel members, so they can hand it the private `splitPreview_`
+// without the header gaining an accessor for it.
+//
+// WHY IT HAS TO BE CALLED FROM MORE THAN ONE PLACE. The push at host
+// build time (syncSplitPreviewToCanvas) covers the rail switch, because
+// that path rebuilds the host. But the canvas's preview screen moves on
+// two paths that do NOT rebuild the host:
+//
+//   * selectPanel()            — switching the inspector tab follows the
+//                                 newly selected base panel's output
+//   * the SCREEN dropdown      — picking a different output for a panel
+//
+// Both call canvas_->setPreviewScreen() and nothing else. Without this
+// re-push, a user who picks DP-1 in the dropdown and then drags a split
+// sub-window would still be clamped against whatever the host was built
+// under — the reported bug in a different shirt: the frame moves to DP-1
+// and the clamp stays on the primary.
+//
+// A no-op when either argument is null (Single mode has no host), so the
+// call sites need no guard of their own.
+static void pushPreviewScreenToSplitWindows(HudCanvas *canvas,
+                                            SplitWindowPreviewHost *host)
+{
+    if (!canvas || !host)
+        return;
+    const QString preview = canvas->previewScreen();
+    for (int i = 0; i < host->count(); ++i)
+        if (Panel *sub = host->windowAt(i))
+            sub->setPreviewFallbackOutput(preview);
+}
+
 // v0.11: the console stage-pane default height lives as the named
 // constant mhw::kConsoleStageHeightDefault (ConsoleLayoutStore) so tests
 // and the panel read one source of truth instead of a re-typed literal.
@@ -2378,6 +2417,11 @@ void ControlPanel::selectPanel(int idx)
     if (canvas_) {
         Panel *p = panelAt(idx);
         canvas_->setPreviewScreen(p ? p->outputName() : QString());
+        // v0.15: the split sub-windows follow the frame. The host is not
+        // rebuilt by a tab switch, so the windows would otherwise keep
+        // whatever screen they were built under — the clamp disagreeing
+        // with the rectangle the user is now looking at.
+        pushPreviewScreenToSplitWindows(canvas_, splitPreview_.get());
     }
     for (int i = 0; i < mhw::kPanelCount; ++i) {
         if (!ctl_[i].navButton) continue;
@@ -2714,6 +2758,12 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
             // panel.
             if (canvas_)
                 canvas_->setPreviewScreen(name);
+            // v0.15: and the split sub-windows follow it, for the same
+            // reason selectPanel() does. Picking DP-1 in this dropdown
+            // moves the frame the user is looking at; the drag clamp has
+            // to move with it or a sub-window stops at the middle of the
+            // monitor it was built under.
+            pushPreviewScreenToSplitWindows(canvas_, splitPreview_.get());
         });
         screenRow->addWidget(screenLab);
         screenRow->addWidget(combo, 1);
@@ -3648,6 +3698,45 @@ void ControlPanel::syncSplitPreviewToCanvas()
         splitPreview_ = std::make_unique<SplitWindowPreviewHost>();
         splitPreview_->ensureBuilt(currentGame());
         splitPreviewHostGame_ = currentGame();
+        // v0.15: PUSH THE PREVIEW SCREEN INTO EVERY SPLIT SUB-WINDOW.
+        //
+        // THE BUG THIS CLOSES. A split sub-window has no outputName of
+        // its own — panels.ini carries no `outputName` key for any of
+        // them — so Panel::marginLimits() resolved an empty name to
+        // QGuiApplication::primaryScreen(). The canvas, meanwhile, draws
+        // against the output the user picked in the SCREEN dropdown
+        // (HudCanvas::previewScreen(), set by selectPanel() and by that
+        // dropdown's handler). On a machine where the primary is a
+        // different monitor from the one being previewed, the drag clamp
+        // measured the WRONG SCREEN:
+        //
+        //     canvas previewScreen() = DP-1      2560 wide
+        //     sub-window, no name    = primary    1080 wide
+        //
+        // asked left=2538, got left=1058 — 1480 px short, so the window
+        // could not be dragged past the middle of the screen it was being
+        // measured against. That is 「悬浮窗无法越过中线拖动」.
+        //
+        // WHY HERE AND NOT IN THE HOST. The host is private to this
+        // translation unit and builds its windows in its constructor,
+        // which runs BEFORE any caller can say which screen the preview
+        // is drawing — the same ordering constraint that moved the wall
+        // into ensureBuilt(game). The screen is the console's to know, so
+        // the console pushes it, immediately after the windows exist.
+        //
+        // WHY setPreviewFallbackOutput() AND NOT setOutputName(). The
+        // fallback is preview-only: it is never persisted, never read by
+        // loadConfig(), and never applied by applyGeometry() — so it can
+        // never move a real layer-shell surface. A window that names its
+        // own output still wins (resolveOutputScreen() tries outputName_
+        // first), so a future per-sub-window picker keeps working.
+        //
+        // THE MOTHER PANELS ARE DELIBERATELY NOT PUSHED. They already
+        // carry their own outputName_ from their own SCREEN dropdown, and
+        // an outputName always outranks the fallback — pushing here
+        // would be a no-op for them at best and a wrong-screen
+        // measurement at worst.
+        pushPreviewScreenToSplitWindows(canvas_, splitPreview_.get());
         canvas_->setSubWindowBindings(splitPreview_->bindings());
         // The first paint needs pixmaps; a later mask change goes
         // through refreshSplitWindowPreviews() instead.

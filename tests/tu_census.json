@@ -316,7 +316,7 @@
         "monster-control-rise-rf-smoke",
         "split-console-layout-persistence-tests",
         "split-game-seed-dispatch-tests",
-        "split-midline-drag-tests"
+        "split-output-clamp-tests"
       ],
       "symbols": 140
     },
@@ -346,7 +346,7 @@
         "monster-control-rise-rf-smoke",
         "sub-window-wall-tests"
       ],
-      "symbols": 68
+      "symbols": 73
     },
     "src/ui/icon.cpp": {
       "class": "ZERO",
@@ -372,7 +372,7 @@
         "split-layout-consistency-tests",
         "split-no-empty-window-tests"
       ],
-      "symbols": 68
+      "symbols": 70
     },
     "src/ui/panel_damage.cpp": {
       "class": "INDIRECT",
@@ -597,7 +597,7 @@
         "panel-settings-scope-tests",
         "split-console-layout-persistence-tests",
         "split-game-seed-dispatch-tests",
-        "split-midline-drag-tests"
+        "split-output-clamp-tests"
       ],
       "symbols": 18
     },
@@ -608,7 +608,7 @@
         "hud-canvas-split-tests",
         "monster-control-p0-test"
       ],
-      "symbols": 18
+      "symbols": 20
     },
     "src/ui/rise_reframework_bridge.cpp": {
       "class": "INDIRECT",

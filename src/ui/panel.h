@@ -10,6 +10,8 @@
 #include <QWidget>
 #include <cstdint>
 
+class QScreen;
+
 
 namespace mhw {
 struct GameSnapshot;
@@ -447,6 +449,39 @@ public:
     void setOutputName(QString name, bool persist = true);
     [[nodiscard]] QString outputName() const { return outputName_; }
 
+    // ─── preview-only screen fallback (the split sub-windows) ─────────
+    //
+    // THE BUG THIS EXISTS FOR, WITH THE MEASURED NUMBERS. A split
+    // sub-window has no outputName of its own: the split table's rows
+    // are content, not windows the user ever pointed at a screen, so
+    // panels.ini carries no outputName key for any of them and
+    // loadConfig() never sets one. marginLimits() therefore resolved
+    // an empty name to QGuiApplication::primaryScreen().
+    //
+    // On the reporter's machine the primary is a PORTRAIT output while
+    // the console previews a landscape one:
+    //
+    //     HDMI-A-1  5313,0   1080x1920   <- primaryScreen()
+    //     DP-1      6393,297 2560x1440   <- the screen being previewed
+    //
+    // The preview canvas drew the Rise split against DP-1 (2560 wide)
+    // while the drag clamp measured the window against HDMI-A-1 (1080
+    // wide), so a drag asked for left=2538 and got back left=1058 —
+    // 1480 px short of where the user pointed. The window could not be
+    // dragged past the middle of the screen, because the middle of the
+    // screen it was being measured against was the middle of the OTHER
+    // one. That is the whole 「悬浮窗无法越过中线拖动」 report.
+    //
+    // This is NOT a second outputName. It applies only when outputName_
+    // is empty (a window that names its own screen always wins), it is
+    // never persisted, and loadConfig() never reads it — it is preview
+    // state, exactly like HudCanvas::previewOutputName_. The console
+    // pushes the canvas's current preview screen into every split
+    // window it builds, which is what makes the clamp measure the
+    // screen the preview is drawing.
+    void setPreviewFallbackOutput(const QString &name);
+    [[nodiscard]] QString previewFallbackOutput() const { return previewFallbackOutput_; }
+
     // ─── margins, bounds, and what the compositor actually sees ────────
     //
     // Public read-only geometry accessors the control console needs to
@@ -750,6 +785,32 @@ private:
     void applyGeometry();
     void setLayerKeyboardInteractivity(bool interactive);
 
+    // ─── the ONE outputName → QScreen resolution ──────────────────────
+    //
+    // Four call sites spelled this same four-line walk out by hand
+    // (applyGeometry, marginLimits, onOutputsChanged and — in the
+    // console — updatePosLabel). Fixing the resolution in one place
+    // and not the others is how a window ends up painted against one
+    // screen's rectangle and clamped against another's, which is
+    // exactly the failure this split. There is now one rule.
+    //
+    // Resolution order:
+    //   1. outputName_ (set by setOutputName() / CLI --output-*)
+    //   2. `fallbackName` when outputName_ is empty and that name still
+    //      resolves to a live output — the preview screen for a split
+    //      sub-window, see setPreviewFallbackOutput()
+    //   3. QGuiApplication::primaryScreen()
+    //
+    // Returns nullptr when nothing resolves (the named output is not
+    // attached, or there is no screen at all — offscreen platform).
+    // Every caller already had a nullptr branch; they keep it, and it
+    // keeps meaning "we cannot measure the target".
+    //
+    // `fallbackName` defaults to empty so the no-argument call is the
+    // historical behaviour verbatim: a panel that names no screen
+    // follows the primary.
+    [[nodiscard]] QScreen *resolveOutputScreen(const QString &fallbackName = QString()) const;
+
     void nudgeMargins(int dx, int dy);
     void paintMinimized(QPainter &p);
     // max() against the floors, then lockedWidth/Height() against the
@@ -830,6 +891,13 @@ private:
     // [panels.ini <key>]/outputName. Matched against QScreen::name()
     // in applyGeometry() — on Niri that string IS the wlr-output name.
     QString outputName_;
+    // Preview-only screen fallback, used when outputName_ is empty.
+    // Never persisted and never read by loadConfig()/saveConfig() —
+    // see setPreviewFallbackOutput() in the public block. It exists so
+    // a split sub-window (which has no outputName of its own) can be
+    // clamped against the screen the console is actually previewing
+    // instead of whichever output Qt happens to call primary.
+    QString previewFallbackOutput_;
     bool editMode_{false};
     bool minimized_{false};
     QSize normalSize_;   // remembered full-layout size

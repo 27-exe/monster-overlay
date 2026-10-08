@@ -1559,6 +1559,35 @@ add_executable(world-severable-scan-tests
     target_include_directories(focus-request-timing-probe PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+    # 「分块的仍然无法越过竖中线」, measured rather than reasoned about.
+    #
+    # The canvas framed against DP-1 (2560 wide) while every split
+    # sub-window clamped against primaryScreen() — HDMI-A-1, 1080 wide,
+    # PORTRAIT. asked left=2538 came back as left=1058, which sits left of
+    # 1280 and reads as "it stops at the middle". Two independent screen
+    # selectors, agreeing only when every window names the same output as
+    # the canvas; the eleven sub-windows all carried an EMPTY outputName
+    # and empty means primary.
+    #
+    # The assertions are about AGREEMENT between the two selectors, not
+    # about any absolute number — a machine with one screen has nothing to
+    # disagree about, and the test skips the drag half there rather than
+    # failing on the hardware.
+    add_executable(split-output-clamp-tests
+        tests/split_output_clamp_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(split-output-clamp-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(split-output-clamp-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(split-output-clamp-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME split-output-clamp-tests COMMAND split-output-clamp-tests)
+    set_tests_properties(split-output-clamp-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
+
     set_tests_properties(sub-window-wall-tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 

@@ -121,6 +121,47 @@ public:
     // (a debuff / buff / mantle / wirebug strip). Base panels report
     // false — the default, so no existing adapter changes behaviour.
     virtual bool isSubWindow() const { return false; }
+
+    // ─── v0.15: which screen this window is measured against ───────────
+    //
+    // WHY AN ACCESSOR HERE AND NOT A WIDER BIND SURFACE. The file's own
+    // rule (see the header comment) is "prefer adding accessors here
+    // rather than widening the bind surface", and these two are exactly
+    // that: the interface already carries every geometry number a window
+    // needs, and the screen a window is measured against is the one
+    // remaining fact the drag clamp cannot derive from those numbers.
+    //
+    // THE BUG, WITH THE MEASURED NUMBERS. HudCanvas::movedSubMargins()
+    // clamps a drag against the screen it resolves for the dragged
+    // window. Before v0.15 it resolved the CANVAS's screen
+    // (previewOutputName_) for every window, and a split sub-window's
+    // own Panel::marginLimits() resolved primaryScreen() — two different
+    // monitors on the reporter's machine:
+    //
+    //     canvas previewOutputName_ = DP-1        2560 wide
+    //     sub-window, empty name    = primary     1080 wide
+    //
+    // so a drag asked for left=2538 and got back left=1058, 1480 px short.
+    // The window could not be dragged past the middle of the screen it
+    // was being MEASURED against, which was the other monitor's middle.
+    //
+    // THE TWO ANSWERS, AND WHY BOTH ARE NEEDED. outputName() is the
+    // window's OWN screen choice (the four base panels have one; a split
+    // sub-window never does). previewFallbackOutput() is the console's
+    // preview-only fallback that the console pushes into every split
+    // sub-window, so the clamp measures the screen the preview is
+    // drawing. The resolution order — own name, then fallback, then
+    // primary — is Panel::resolveOutputScreen()'s, spelled once there and
+    // mirrored by HudCanvas::boundOutputName() so the two cannot disagree
+    // about which screen a window lives on.
+    //
+    // BOTH DEFAULT TO EMPTY, and that is what makes them safe to add:
+    // an adapter that does not override them reports "I name no screen",
+    // which is the pre-v0.15 condition, so no existing adapter changes
+    // behaviour and no other translation unit has to be touched. They
+    // are NOT pure virtual for the same reason isSubWindow() is not.
+    [[nodiscard]] virtual QString outputName() const { return {}; }
+    [[nodiscard]] virtual QString previewFallbackOutput() const { return {}; }
 };
 
 // Default adapter for a live mhw::Panel instance. Constructed with a
@@ -138,6 +179,12 @@ public:
     double opacity() const override;
     int bgAlpha() const override;
     bool isSubWindow() const override;
+    // v0.15: the Panel's own two answers, forwarded verbatim. These are
+    // the accessors that make HudCanvas::boundOutputName() resolve the
+    // screen a bound window is actually measured against, instead of the
+    // canvas's screen for every window.
+    [[nodiscard]] QString outputName() const override;
+    [[nodiscard]] QString previewFallbackOutput() const override;
 private:
     const Panel *p_;
 };
