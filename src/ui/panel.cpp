@@ -36,11 +36,68 @@ constexpr int kBorderWidth = 2;
 // of a fragment drifts out of roundness with the panel it came from.
 constexpr double kChromeRadius = 2.0;
 
+// ─── the panels.ini handle ────────────────────────────────────────────
+//
+// THIS USED TO BE A FUNCTION-LOCAL STATIC. It was not, and the reason it
+// was not is measured, not theorised. A two-process probe (one process
+// writes 100, a second writes 777, the first reads again) printed:
+//
+//     PARENT before child : shared=100 fresh=777
+//     PARENT after  child : shared=100 fresh=777
+//     file on disk        : ml=777
+//     VERDICT: the static handle is STALE, a fresh handle is not
+//
+// A `static QSettings` snapshots the file ONCE, at construction. It only
+// re-reads on sync() — and sync() is not called on the read path, so
+// after any other process touches panels.ini this object answers from
+// its own snapshot for the rest of its life. That is precisely the
+// console/overlay split this project has: the console and the overlay
+// are separate processes writing the same file, so the static guarantee
+// was "cheap object reuse" traded against "every value I read may be a
+// lie", and the file on disk was never wrong.
+//
+// The failure was not merely cosmetic. The console's
+// saveAllSplitAndBaseWindows() wrote its stale members back over the
+// overlay's real layout on exit, so the overlay's positions were
+// destroyed rather than ignored.
+//
+// THE FIX: this returns a QSettings& that is re-synced from disk on every
+// call. Two properties matter:
+//
+//   1. Reference return, so `settings().beginGroup(g); ... settings().endGroup()`
+//      keeps working. beginGroup() and endGroup() must land on the SAME
+//      object or the group state is lost, and that pattern is spelled
+//      this way in four places in this file. A value-returning
+//      `QSettings settings()` would have made every one of them a bug.
+//   2. The object is not rebuilt per call: QSettings' destructor flushes,
+//      and rebuilding per call would make a destructor's flush a write
+//      path. So the object lives across calls (thread_local, matching
+//      the fact that panels are constructed on the GUI thread) and is
+//      REFRESHED by an explicit sync() at each access.
+//
+// The sync() cost is one INI re-read per access, which is why this is
+// only called from the configuration paths (hasStoredPosition,
+// loadConfig, saveConfig, saveAppearance) and never from paintEvent or
+// any other repaint path — see the hot-path note in Panel::paintEvent.
+//
+// Cost of the static was one object construction per process. Cost of
+// the re-sync is one file read per access. Both are irrelevant next to
+// a configuration read that must be TRUE.
 QSettings &settings()
 {
-    static QSettings s(QSettings::IniFormat, QSettings::UserScope,
-                       QStringLiteral("monster-overlay"),
-                       QStringLiteral("panels"));
+    // thread_local, not static: the file is the same, but a future
+    // non-GUI reader (a worker thread doing a config load) must not
+    // share group state with the GUI thread. Qt's own QSettings is not
+    // thread-safe for concurrent use of one instance.
+    thread_local QSettings s(QSettings::IniFormat, QSettings::UserScope,
+                             QStringLiteral("monster-overlay"),
+                             QStringLiteral("panels"));
+    // The whole fix. QSettings caches the file contents in memory and
+    // only re-reads on sync(); a plain `return s;` is exactly the stale
+    // static that just cost the user their layout. This re-read makes
+    // the next value()/contains() see whatever another process has
+    // written since we last looked.
+    s.sync();
     return s;
 }
 
@@ -397,10 +454,16 @@ bool Panel::hasStoredPosition() const
     // beginGroup/endGroup rather than a scoped copy because QSettings has
     // no group-scoped contains(): contains() answers for the CURRENT
     // group, and the current group is whatever the last caller left.
-    settings().beginGroup(scopedKey(key_));
-    const bool stored = settings().contains(QStringLiteral("ml"))
-                        || settings().contains(QStringLiteral("mt"));
-    settings().endGroup();
+    //
+    // One reference across the three accesses, for the same reason
+    // saveConfig() binds one: each settings() call re-syncs from disk,
+    // and a beginGroup()/endGroup() pair split across two of them would
+    // leave the group state in an object that was re-read in between.
+    QSettings &s = settings();
+    s.beginGroup(scopedKey(key_));
+    const bool stored = s.contains(QStringLiteral("ml"))
+                        || s.contains(QStringLiteral("mt"));
+    s.endGroup();
     return stored;
 }
 
@@ -430,6 +493,13 @@ QString Panel::settingsGroup() const
 
 void Panel::loadConfig()
 {
+    // Reading the file is not the panel forming an opinion: after a reload
+    // the members hold the disk's values, so the window has been given
+    // nothing new here and must be eligible for a reload again. Without
+    // this, one drag would pin the window's value forever and the console
+    // would stop seeing the overlay's writes for exactly that window.
+    configTouched_ = false;
+
     // A sub-window's first run is a CASCADE from its parent, not the same
     // corner default as everyone else — see defaultMarginsForSubWindow()
     // for why eleven TopLeft windows on one pixel was the previous
@@ -452,12 +522,19 @@ void Panel::loadConfig()
     // that existed when it was written.
     const mhw::PanelSettingsScope scope{mhw::panelSettingsGame(),
                                         mhw::panelSettingsLayout()};
-    if (mhw::migrateLegacyPanelSection(settings(), scope, key_)) {
+    // ONE handle for the whole load: the migration writes (setValue +
+    // remove + its own sync) and the ~20 reads below must all see the
+    // same snapshot of the file, and must all be inside one beginGroup /
+    // endGroup pair. Calling settings() per access would re-read the
+    // file between the migration and the read that depends on it, and
+    // would re-read between two keys of the same section.
+    QSettings &s = settings();
+    if (mhw::migrateLegacyPanelSection(s, scope, key_)) {
         qInfo("panels.ini: migrated the legacy section for '%s' into [%s]; "
               "the other games' and the other mode's sections are untouched",
               qPrintable(key_), qPrintable(scopedKey(key_)));
     }
-    settings().beginGroup(scopedKey(key_));
+    s.beginGroup(scopedKey(key_));
     // Read the stored value verbatim — NO clampMargin here. Clamping at
     // read time is what made a 4K position unrecoverable: the console
     // opens with fewer screens attached and the mere act of reading
@@ -466,10 +543,10 @@ void Panel::loadConfig()
     // (pushMargins) instead, so the stored intent survives a monitor
     // unplug and is re-applied the moment that output returns.
     // .toInt() on a corrupt value yields 0, which is a safe default.
-    margins_.setLeft(settings().value(QStringLiteral("ml"), def.left()).toInt());
-    margins_.setTop(settings().value(QStringLiteral("mt"), def.top()).toInt());
-    margins_.setRight(settings().value(QStringLiteral("mr"), def.right()).toInt());
-    margins_.setBottom(settings().value(QStringLiteral("mb"), def.bottom()).toInt());
+    margins_.setLeft(s.value(QStringLiteral("ml"), def.left()).toInt());
+    margins_.setTop(s.value(QStringLiteral("mt"), def.top()).toInt());
+    margins_.setRight(s.value(QStringLiteral("mr"), def.right()).toInt());
+    margins_.setBottom(s.value(QStringLiteral("mb"), def.bottom()).toInt());
     // The single source of truth for "what scale does a panel start at".
     // It lives in panel.h as an inline constexpr so EVERY read of it — this
     // line, the member initialiser, resetToDefaults() — resolves to the
@@ -483,7 +560,7 @@ void Panel::loadConfig()
     // section the v0.12 split created has scale=2 written into it: the
     // sub-window is ~91px wide, so x2 made 7pt text 14pt inside a 182px
     // window and the strip was unusable. Reported by the user.)
-    scale_ = settings().value(QStringLiteral("scale"), kDefaultScale).toDouble();
+    scale_ = s.value(QStringLiteral("scale"), kDefaultScale).toDouble();
     // Minimum size floors, read verbatim like the margins above and
     // clamped only to a sane range. NO clamp against the screen: a
     // floor wider than the attached display is still the user's
@@ -491,9 +568,9 @@ void Panel::loadConfig()
     // made a 4K margin unrecoverable. A corrupt value yields 0 from
     // .toInt(), which reads as "no floor" — the same fallback every
     // other key here relies on.
-    minW_ = std::clamp(settings().value(QStringLiteral("minW"), 0).toInt(),
+    minW_ = std::clamp(s.value(QStringLiteral("minW"), 0).toInt(),
                        0, kMaxMinSize);
-    minH_ = std::clamp(settings().value(QStringLiteral("minH"), 0).toInt(),
+    minH_ = std::clamp(s.value(QStringLiteral("minH"), 0).toInt(),
                        0, kMaxMinSize);
     // The SET size, same read-verbatim / clamp-to-sane-range rule. Its
     // key names are the same ones with a `lock` prefix so an existing
@@ -502,19 +579,19 @@ void Panel::loadConfig()
     // geometry is decided by its content and its floor exactly as
     // before. Not sharing the key with minW/minH is deliberate — two
     // quantities, two keys, no reinterpretation on upgrade.
-    lockW_ = std::clamp(settings().value(QStringLiteral("lockW"), 0).toInt(),
+    lockW_ = std::clamp(s.value(QStringLiteral("lockW"), 0).toInt(),
                         0, kMaxMinSize);
-    lockH_ = std::clamp(settings().value(QStringLiteral("lockH"), 0).toInt(),
+    lockH_ = std::clamp(s.value(QStringLiteral("lockH"), 0).toInt(),
                         0, kMaxMinSize);
-    opacity_ = settings().value(QStringLiteral("opacity"), 1.0).toDouble();
-    bgAlpha_ = std::clamp(settings().value(QStringLiteral("bgAlpha"), 170).toInt(), 0, 255);
+    opacity_ = s.value(QStringLiteral("opacity"), 1.0).toDouble();
+    bgAlpha_ = std::clamp(s.value(QStringLiteral("bgAlpha"), 170).toInt(), 0, 255);
     // v0.8: per-panel screen selection. Empty = use whatever the OS calls
     // primary. A non-empty value matches QScreen::name() in
     // QGuiApplication::screens() — on Niri that string is exactly the
     // output name (eDP-1 / DP-1 / HDMI-A-1 …), so the value is also
     // what wlr-randr / kscreen-doctor would print.
-    outputName_ = settings().value(QStringLiteral("outputName")).toString();
-    settings().endGroup();
+    outputName_ = s.value(QStringLiteral("outputName")).toString();
+    s.endGroup();
 
     scale_ = std::clamp(scale_, kMinScale, kMaxScale);
     opacity_ = std::clamp(opacity_, 0.1, 1.0);
@@ -532,25 +609,33 @@ void Panel::loadConfig()
 
 void Panel::saveConfig()
 {
-    settings().beginGroup(scopedKey(key_));
-    settings().setValue(QStringLiteral("ml"), margins_.left());
-    settings().setValue(QStringLiteral("mt"), margins_.top());
-    settings().setValue(QStringLiteral("mr"), margins_.right());
-    settings().setValue(QStringLiteral("mb"), margins_.bottom());
-    settings().setValue(QStringLiteral("scale"), scale_);
-    settings().setValue(QStringLiteral("minW"), minW_);
-    settings().setValue(QStringLiteral("minH"), minH_);
+    // ONE reference for the whole write, not settings() per setValue.
+    // settings() syncs on every access, so calling it between two
+    // setValue()s flushes the first to disk before the second exists —
+    // a crash (or a reader) in that window sees half a position. Binding
+    // the handle once makes this one buffered write, flushed by the one
+    // sync() at the end, which is the shape the file was always written
+    // in before settings() learned to re-read.
+    QSettings &s = settings();
+    s.beginGroup(scopedKey(key_));
+    s.setValue(QStringLiteral("ml"), margins_.left());
+    s.setValue(QStringLiteral("mt"), margins_.top());
+    s.setValue(QStringLiteral("mr"), margins_.right());
+    s.setValue(QStringLiteral("mb"), margins_.bottom());
+    s.setValue(QStringLiteral("scale"), scale_);
+    s.setValue(QStringLiteral("minW"), minW_);
+    s.setValue(QStringLiteral("minH"), minH_);
     // The SET size, written next to the floor it sits beside. Only
     // written when non-zero: a key absent from the ini is exactly the
     // state a pre-lock section is in, and emitting `lockW=0` for every
     // panel would rewrite every user's file on first exit for no
     // information.
     if (lockW_ != 0)
-        settings().setValue(QStringLiteral("lockW"), lockW_);
+        s.setValue(QStringLiteral("lockW"), lockW_);
     if (lockH_ != 0)
-        settings().setValue(QStringLiteral("lockH"), lockH_);
-    settings().setValue(QStringLiteral("opacity"), opacity_);
-    settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
+        s.setValue(QStringLiteral("lockH"), lockH_);
+    s.setValue(QStringLiteral("opacity"), opacity_);
+    s.setValue(QStringLiteral("bgAlpha"), bgAlpha_);
 
     // A `visible` key used to be written here. It was removed because
     // nothing ever read it back, and the value it wrote was actively
@@ -570,23 +655,26 @@ void Panel::saveConfig()
     // key keeps panels.ini to values that have exactly one meaning, one
     // writer and one reader. Stale `visible=false` lines in existing
     // configs are now simply ignored, which is the harmless outcome.
-    settings().endGroup();
-    settings().sync();
+    s.endGroup();
+    s.sync();
 }
 
 void Panel::saveAppearance()
 {
-    settings().beginGroup(scopedKey(key_));
-    settings().setValue(QStringLiteral("scale"), scale_);
-    settings().setValue(QStringLiteral("minW"), minW_);
-    settings().setValue(QStringLiteral("minH"), minH_);
+    // Same one-reference rule as saveConfig(): this writes ~10 keys, and
+    // settings() per setValue would flush them one at a time.
+    QSettings &s = settings();
+    s.beginGroup(scopedKey(key_));
+    s.setValue(QStringLiteral("scale"), scale_);
+    s.setValue(QStringLiteral("minW"), minW_);
+    s.setValue(QStringLiteral("minH"), minH_);
     // SET size, same non-zero-only rule as saveConfig().
     if (lockW_ != 0)
-        settings().setValue(QStringLiteral("lockW"), lockW_);
+        s.setValue(QStringLiteral("lockW"), lockW_);
     if (lockH_ != 0)
-        settings().setValue(QStringLiteral("lockH"), lockH_);
-    settings().setValue(QStringLiteral("opacity"), opacity_);
-    settings().setValue(QStringLiteral("bgAlpha"), bgAlpha_);
+        s.setValue(QStringLiteral("lockH"), lockH_);
+    s.setValue(QStringLiteral("opacity"), opacity_);
+    s.setValue(QStringLiteral("bgAlpha"), bgAlpha_);
     // v0.5: also persist margins so the overlay's loadConfig() picks up
     // the position the user set in the console. Same
     // read-verbatim rule as loadConfig(): the console's preview panels are
@@ -594,16 +682,16 @@ void Panel::saveAppearance()
     // (unclamped) margins_ here preserves a position chosen on an output
     // that happens to be unplugged at the moment the console is open.
     // The screen-relative clamp is applied at push time, not at rest.
-    settings().setValue(QStringLiteral("ml"), margins_.left());
-    settings().setValue(QStringLiteral("mt"), margins_.top());
-    settings().setValue(QStringLiteral("mr"), margins_.right());
-    settings().setValue(QStringLiteral("mb"), margins_.bottom());
+    s.setValue(QStringLiteral("ml"), margins_.left());
+    s.setValue(QStringLiteral("mt"), margins_.top());
+    s.setValue(QStringLiteral("mr"), margins_.right());
+    s.setValue(QStringLiteral("mb"), margins_.bottom());
     // v0.8: persist per-panel screen selection. The control console
     // writes this from setOutputName(); loadConfig() reads it back
     // on the overlay's next start.
-    settings().setValue(QStringLiteral("outputName"), outputName_);
-    settings().endGroup();
-    settings().sync();
+    s.setValue(QStringLiteral("outputName"), outputName_);
+    s.endGroup();
+    s.sync();
 }
 
 void Panel::showEvent(QShowEvent *e)
@@ -749,6 +837,14 @@ void Panel::paintPanelChrome(QPainter &p, Accent accent) const
 
 void Panel::paintEvent(QPaintEvent *)
 {
+    // HOT-PATH NOTE: this function and every update()/repaint path it
+    // feeds must NOT call settings(). The panels.ini handle now re-syncs
+    // from disk on each access (see settings() above), which is correct
+    // for a configuration read and would be a per-frame file read here.
+    // Everything this paints is read from MEMBER state (scale_, opacity_,
+    // bgAlpha_, margins_, chromeVisible_, editMode_) that loadConfig()
+    // filled once at construction — no repaint reaches for the file, and
+    // that invariant is what keeps a 60fps overlay a 60fps overlay.
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
@@ -1193,6 +1289,12 @@ void Panel::nudgeMargins(int dx, int dy)
 
 void Panel::setMargins(QMargins m, bool persist)
 {
+    // The single point where a NEW value arrives — keyboard nudge, wheel,
+    // a drag routed in from HudCanvas, resetToDefaults. Stamping here
+    // rather than at each call site is what makes "has this window been
+    // given a new value since it was built" a fact about the window
+    // instead of an assumption made by whoever is about to save it.
+    configTouched_ = true;
     // Screen-relative clamp, not the absolute 8000 — see marginLimits().
     if (!commitMargins(m))
         return;
@@ -1278,6 +1380,7 @@ void Panel::paintMinimized(QPainter &p)
 
 void Panel::wheelEvent(QWheelEvent *e)
 {
+    configTouched_ = true;   // a new value arrived here
     if (!editMode_)
         return;
     const double delta = (e->angleDelta().y() > 0) ? kScaleStep : -kScaleStep;
@@ -1403,6 +1506,7 @@ void Panel::drawBarV03(QPainter &p, const QRectF &rect, float pct,
 
 void Panel::setScale(qreal s, bool persist)
 {
+    configTouched_ = true;   // a new value arrived here
     const qreal clamped = std::clamp(s, kMinScale, kMaxScale);
     if (qFuzzyCompare(clamped + 1.0, scale_ + 1.0))
         return;                                // no-op
@@ -1416,6 +1520,7 @@ void Panel::setScale(qreal s, bool persist)
 
 void Panel::setOpacity(qreal a, bool persist)
 {
+    configTouched_ = true;   // a new value arrived here
     const qreal clamped = std::clamp(a, 0.1, 1.0);
     if (qFuzzyCompare(clamped, opacity_))
         return;
@@ -1427,6 +1532,7 @@ void Panel::setOpacity(qreal a, bool persist)
 
 void Panel::setBgAlpha(int a, bool persist)
 {
+    configTouched_ = true;   // a new value arrived here
     const int clamped = std::clamp(a, 0, 255);
     if (clamped == bgAlpha_)
         return;
@@ -1438,6 +1544,7 @@ void Panel::setBgAlpha(int a, bool persist)
 
 void Panel::resetToDefaults()
 {
+    configTouched_ = true;   // a new value arrived here
     sectionMask_  = 0xFFFFFFFFu;
     scale_        = kDefaultScale;
     opacity_      = 0.85;
@@ -1479,6 +1586,7 @@ void Panel::applyMinSizeFloor(int &w, int &h) const
 
 void Panel::nudgeMinWidth(int delta)
 {
+    configTouched_ = true;   // a new value arrived here
     const int next = std::clamp(minW_ + delta, 0, kMaxMinSize);
     if (next == minW_)
         return;
@@ -1491,6 +1599,7 @@ void Panel::nudgeMinWidth(int delta)
 
 void Panel::nudgeMinHeight(int delta)
 {
+    configTouched_ = true;   // a new value arrived here
     const int next = std::clamp(minH_ + delta, 0, kMaxMinSize);
     if (next == minH_)
         return;
@@ -1500,6 +1609,7 @@ void Panel::nudgeMinHeight(int delta)
 
 void Panel::nudgeLockWidth(int delta)
 {
+    configTouched_ = true;   // a new value arrived here
     // THE FIRST PRESS STARTS FROM THE WINDOW AS IT IS NOW, not from 0.
     //
     // This is the difference between the lock dial being usable and being
@@ -1527,6 +1637,7 @@ void Panel::nudgeLockWidth(int delta)
 
 void Panel::nudgeLockHeight(int delta)
 {
+    configTouched_ = true;   // a new value arrived here
     const int from = (lockH_ != 0) ? lockH_ : logicalSize_.height();
     const int next = std::clamp(from + delta, 0, kMaxMinSize);
     if (next == lockH_)
@@ -1537,6 +1648,7 @@ void Panel::nudgeLockHeight(int delta)
 
 void Panel::setLockWidth(int w)
 {
+    configTouched_ = true;   // a new value arrived here
     const int next = std::clamp(w, 0, kMaxMinSize);
     if (next == lockW_)
         return;
@@ -1546,6 +1658,7 @@ void Panel::setLockWidth(int w)
 
 void Panel::setLockHeight(int h)
 {
+    configTouched_ = true;   // a new value arrived here
     const int next = std::clamp(h, 0, kMaxMinSize);
     if (next == lockH_)
         return;

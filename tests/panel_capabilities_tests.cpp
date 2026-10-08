@@ -80,6 +80,8 @@
 #include "ui/panel_player_split_wirebug.h"
 
 #include <QApplication>
+#include <QDir>
+#include <QTemporaryDir>
 #include <QKeyEvent>
 #include <QWidget>
 
@@ -214,6 +216,26 @@ void checkDocsMatrix()
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
+    // v0.16: ISOLATE THE CONFIG, LIKE EVERY OTHER PANEL TEST.
+    //
+    // This file constructs fourteen Panels and redirects nothing, so it
+    // read and wrote the developer's real ~/.config/monster-overlay/
+    // panels.ini — and it does so WHILE HOLDING RESOURCE_LOCK "panels-ini",
+    // which is the lock the other panel tests take to serialise themselves.
+    // Panel::settings() now syncs on every access, so that made this file
+    // and its neighbours race through a real shared file: the full ctest
+    // run failed split-console-layout-persistence-tests while running this
+    // one, and passed when run alone. The lock was never the problem. The
+    // shared FILE was, and the lock only decided who went first.
+    //
+    // A scratch home is the fix, and it is also what makes a red here
+    // mean "the code is wrong" instead of "the developer had a layout".
+    static QTemporaryDir scratchHome;
+    if (scratchHome.isValid()) {
+        qputenv("HOME", scratchHome.path().toUtf8());
+        qputenv("XDG_CONFIG_HOME", scratchHome.path().toUtf8());
+        QDir().mkpath(scratchHome.filePath(QStringLiteral("monster-overlay")));
+    }
 
     // =====================================================================
     // 1. Every window: the six base capabilities are all true.

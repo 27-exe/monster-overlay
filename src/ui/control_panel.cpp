@@ -3172,7 +3172,60 @@ void ControlPanel::finishRiseReframeworkOperation(bool ok, const QString &detail
 // either exit. One call, one loop, no third place to forget.
 void ControlPanel::saveAllSplitAndBaseWindows()
 {
-    // The base panels, exactly as before.
+    // v0.16: RE-READ BEFORE WRITING, OR THE WRITE IS DATA LOSS.
+    //
+    // saveAppearance() writes each window's `margins_` MEMBER, and that
+    // member was snapshotted when the Panel was constructed. The overlay
+    // runs in its own process and has been moving windows since; its Esc
+    // handler wrote the real geometry. So at console-exit time every member
+    // here is STALE, and this function - which is what runs on both exits -
+    // wrote it straight back over the overlay's layout. Measured on this
+    // machine with the new refreshable handle:
+    //
+    //     console closes, writes member ml=100 -> on disk ml=100
+    //     the overlay had written ml=777       -> DESTROYED
+    //
+    // That is not "the console is a moment behind". That is the user's
+    // arrangement gone with no way to recover it, which is the 整个逻辑都有问题
+    // report in one line.
+    //
+    // Panel::loadConfig() now re-reads through a handle that syncs, so
+    // calling it first pulls the file's current values into the members
+    // before they are written back. Read-then-write, in that order: the
+    // other order would preserve the staleness perfectly.
+    // ONLY for a window this console has not been given new values for.
+    //
+    // "Reload unconditionally" is wrong and this is where it shows: the
+    // console IS where the user drags a window, so its in-memory margins
+    // are the freshest values there are, and reloading throws them away.
+    // Measured on this machine: drag a sub-window to (700, 210), close the
+    // console, and the file comes back with the pre-drag cell - the
+    // console undid the user's own drag, on the way out, by itself.
+    //
+    // "Never reload" is what the stale-static problem looked like: the
+    // console has no idea the overlay moved things, and writes its
+    // construction-time snapshot back.
+    //
+    // The distinction is per window and it is the only honest one, so the
+    // window itself records it: Panel::setMargins() is the single place a
+    // value becomes new, and it stamps configTouched_ there. A window the
+    // user dragged here is stamped; a window nobody touched still holds
+    // whatever was on disk when it was built, and the overlay may have
+    // moved it since.
+    for (int i = 0; i < mhw::kPanelCount; ++i)
+        if (Panel *panel = panelAt(i)) {
+            if (!panel->configTouchedSinceBuild())
+                panel->loadConfig();
+        }
+    if (splitPreview_) {
+        for (int i = 0; i < splitPreview_->count(); ++i)
+            if (Panel *sub = splitPreview_->windowAt(i)) {
+                if (!sub->configTouchedSinceBuild())
+                    sub->loadConfig();
+            }
+    }
+
+    // The base panels.
     for (int i = 0; i < mhw::kPanelCount; ++i)
         if (Panel *panel = panelAt(i))
             panel->saveAppearance();

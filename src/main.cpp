@@ -977,6 +977,113 @@ int main(int argc, char **argv)
     if (parser.isSet(outputPetsOption))
         petDamagePanel.setOutputName(parser.value(outputPetsOption), false);
 
+    // ─── the split sub-windows inherit their parent's screen ───────────
+    //
+    // THE GAP THIS FILLS. Panel::applyGeometry() resolves
+    // outputName_ -> primaryScreen() and NOTHING else. A split
+    // sub-window's `outputName` is loaded from panels.ini by
+    // Panel::loadConfig() inside its own constructor, exactly like a base
+    // panel's — but on the reporter's machine every one of the eleven
+    // keys is EMPTY, so all eleven resolved to primaryScreen():
+    //
+    //     ~/.config/monster-overlay/panels.ini
+    //     [world/split/player]        outputName=DP-1     <- the parent
+    //     [world/split/player-status] outputName=          <- empty
+    //     ... 10 more, all empty
+    //
+    // and their primary is a PORTRAIT HDMI-A-1 while the console is set
+    // to a landscape DP-1. So the console drew every sub-window against
+    // DP-1 (its preview fallback, pushed by
+    // ControlPanel::pushPreviewScreenToSplitWindows) while the live
+    // overlay mounted all eleven on HDMI-A-1. The console's push is a
+    // MEASUREMENT — Panel::marginLimits() reads it so the drag clamp
+    // measures the screen the preview draws — and a measurement is not a
+    // placement: Panel::applyGeometry() deliberately ignores it, because
+    // a preview screen must never decide where a live overlay lands.
+    // This block is the placement that measurement was standing in for.
+    //
+    // WHY INHERIT THE PARENT AND NOT A "SESSION SCREEN". Three answers
+    // were available for a sub-window whose own key is empty:
+    //
+    //   a) inherit the parent panel's screen            <- CHOSEN
+    //   b) inherit one "screen this session selected"
+    //   c) leave it on primaryScreen()
+    //
+    // (b) is rejected because the overlay has no such selection. The
+    // console has one (which SCREEN dropdown is in focus) and pushes it
+    // into its previews; the overlay is a different process with no
+    // dropdown, no focus and no IPC carrying that fact. Inventing one
+    // from the parent is (a); inventing one from nothing is a guess.
+    //
+    // (c) is the status quo and is the bug: it puts eleven windows on an
+    // output the user never chose for them, on surfaces a layer-shell
+    // compositor gives no move gesture to.
+    //
+    // (a) is right because the parent panel is the only screen choice
+    // the user actually made that a sub-window can be derived from. The
+    // split table already says which parent each row was carved out of
+    // (kSplitWindowRows' parentSlot), so "this block came out of that
+    // panel" is an existing fact, not a new one — the same derivation
+    // playerSubWindowMask() already uses for the mask.
+    //
+    // The sub-window's OWN key still wins. loadConfig() ran in the
+    // constructor and already filled outputName_, and already applied it
+    // via applyGeometry() there; an empty key here means either "no key"
+    // or "key written empty", and since the console has no per-sub-window
+    // SCREEN picker at all, neither spelling can be a user's deliberate
+    // choice of primary. A future per-sub-window picker would populate
+    // the key, and the `if (sub->outputName().isEmpty())` guard below
+    // would then leave it alone — which is why that guard is the check
+    // and not a comment.
+    //
+    // The parent's name is validated against the attached screens before
+    // it is handed over. Panel::setOutputName() warns and reverts to
+    // primary for an unknown output, which is the right outcome and the
+    // wrong log: a parent whose stored output is unplugged would emit one
+    // warning PER SUB-WINDOW (eleven lines) for a condition the parent
+    // itself already degrades through silently. One check here keeps the
+    // unplugged case exactly as quiet as it was.
+    //
+    // persist=false throughout: nothing in the launch path writes the
+    // user's config. The console's saveAllSplitAndBaseWindows() is what
+    // commits a screen choice to disk, and a derived value is not a
+    // choice.
+    auto inheritParentOutput = [](Panel *sub, const Panel *parent) {
+        if (!sub || !parent)
+            return;
+        // The sub-window's own stored answer wins, if it has one.
+        if (!sub->outputName().isEmpty())
+            return;
+        const QString out = parent->outputName();
+        if (out.isEmpty())
+            return;                     // parent follows primary too
+        for (QScreen *s : QGuiApplication::screens()) {
+            if (s && s->name() == out) {
+                sub->setOutputName(out, false);
+                return;
+            }
+        }
+    };
+
+    // Gated on the switch, the same way the windows' own construction
+    // effects are: in Single mode the eleven objects exist but nothing
+    // mounts, and setOutputName() calls applyGeometry() — which would
+    // spend eleven layer-shell property pushes on windows that will
+    // never be shown.
+    if (playerSplitOn) {
+        inheritParentOutput(&playerStatusStripPanel, &playerPanel);
+        inheritParentOutput(&playerBarsStripPanel, &playerPanel);
+        inheritParentOutput(&playerMantlesStripPanel, &playerPanel);
+        inheritParentOutput(&playerWirebugStripPanel, &playerPanel);
+        inheritParentOutput(&playerWeaponStripPanel, &playerPanel);
+        inheritParentOutput(&playerInfoStripPanel, &playerPanel);
+        inheritParentOutput(&monsterIdentityStripPanel, &monsterPanel);
+        inheritParentOutput(&monsterConditionsStripPanel, &monsterPanel);
+        inheritParentOutput(&damageShareStripPanel, &damagePanel);
+        inheritParentOutput(&damageChartStripPanel, &damagePanel);
+        inheritParentOutput(&damageRowsStripPanel, &damagePanel);
+    }
+
     // v0.15: --output-all, applied AFTER the four per-panel options, and it
     // therefore WINS over them. That is the opposite of what this comment
     // used to say, and the old text was wrong about its own code: a later

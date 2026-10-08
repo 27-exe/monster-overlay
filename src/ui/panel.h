@@ -144,6 +144,34 @@ public:
     void triggerUpdate() { update(); }
 
     void loadConfig();
+
+    // Whether a value this panel saves has been set SINCE it was built.
+    //
+    // WHY THIS EXISTS, and why the obvious alternative is wrong in both
+    // directions. On exit the console writes each window's margins back to
+    // panels.ini. Which value is the truth depends on something the window
+    // knows and nobody else does:
+    //
+    //   - The console is where the user drags windows. A window dragged
+    //     here holds the freshest value there is. Reloading before saving
+    //     discards the user's own drag: measured, dragging a sub-window to
+    //     (700, 210) and closing the console put the pre-drag cell back on
+    //     disk — the console undid the drag itself, on the way out.
+    //   - The overlay is a separate process and has been moving windows
+    //     since. A window nobody touched here still holds whatever was on
+    //     disk when it was BUILT, and the overlay may have moved it since.
+    //     Not reloading writes that stale snapshot back and destroys the
+    //     overlay's layout outright.
+    //
+    // So the rule is per window: reload only the ones that were never
+    // given a new value here. The flag is stamped in setMargins(), which
+    // is the single point where a new value arrives — keyboard nudge, wheel
+    // scale, a drag routed in from HudCanvas, a reset. loadConfig() does
+    // NOT stamp it: reading the file is not the panel having an opinion.
+    [[nodiscard]] bool configTouchedSinceBuild() const
+    {
+        return configTouched_;
+    }
     void saveConfig();
     void setEditMode(bool on);
 
@@ -381,9 +409,9 @@ public:
     //
     // Read-only, and deliberately not a setter: a caller able to mark a
     // window as moved would be the caller deciding the user's intent.
-    // Declared here and defined in panel.cpp because settings() is a
-    // TU-local handle, the same constraint that forces demoGame() out of
-    // line.
+    // Declared here and defined in panel.cpp because the panels.ini
+    // handle (settings(), a TU-local free function in panel.cpp) is not
+    // a member, the same constraint that forces demoGame() out of line.
     [[nodiscard]] bool hasStoredPosition() const;
 
     [[nodiscard]] virtual mhw::GameId demoGame() const;
@@ -899,6 +927,8 @@ private:
     // instead of whichever output Qt happens to call primary.
     QString previewFallbackOutput_;
     bool editMode_{false};
+    // Stamped by setMargins(); cleared by loadConfig().
+    bool configTouched_{false};
     bool minimized_{false};
     QSize normalSize_;   // remembered full-layout size
 };
