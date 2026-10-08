@@ -1500,6 +1500,27 @@ add_executable(world-severable-scan-tests
     target_include_directories(sub-window-wall-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(sub-window-wall-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME sub-window-wall-tests COMMAND sub-window-wall-tests)
+    # v0.15: the split layout a user builds in the console is saved and then
+    # kept. The two halves moved together because neither had a coverage,
+    # and each is invisible on its own: the write walks the BASE panels only
+    # (a construct predating the split), and the wall lays its cell over every
+    # window while a comment on it promises the opposite.
+    add_executable(split-console-layout-persistence-tests
+        tests/split_console_layout_persistence_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(split-console-layout-persistence-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(split-console-layout-persistence-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(split-console-layout-persistence-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME split-console-layout-persistence-tests
+             COMMAND split-console-layout-persistence-tests)
+    set_tests_properties(split-console-layout-persistence-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
+
     set_tests_properties(sub-window-wall-tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 

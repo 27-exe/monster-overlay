@@ -322,6 +322,27 @@ public:
     // default, which is also what setGameForDemo()'s no-op base starts
     // from: a window that never moved and a window that was told World
     // read identically, and a test must not depend on telling them apart.
+    // Whether this window's position was ever SAVED, as opposed to being
+    // whatever the first-run default happens to be.
+    //
+    // The wall in control_panel.cpp asks this before it lays a cell, so a
+    // user who dragged a sub-window in the console keeps that position
+    // instead of being handed the grid on the next rail switch.
+    //
+    // "Is this the default" is NOT a question the stored NUMBERS can
+    // answer: the first-run default is itself a real coordinate (the
+    // subWindowIndex cascade in defaultMarginsForSubWindow), so `ml == 20`
+    // is indistinguishable from "never moved" and "moved to 20" — the
+    // cascade was deliberately given the same numbers the wall would have
+    // used. Only the FILE knows, and this asks it.
+    //
+    // Read-only, and deliberately not a setter: a caller able to mark a
+    // window as moved would be the caller deciding the user's intent.
+    // Declared here and defined in panel.cpp because settings() is a
+    // TU-local handle, the same constraint that forces demoGame() out of
+    // line.
+    [[nodiscard]] bool hasStoredPosition() const;
+
     [[nodiscard]] virtual mhw::GameId demoGame() const;
 
     // i18n — runtime locale switch entry point. Called by the overlay's

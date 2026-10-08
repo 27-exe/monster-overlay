@@ -482,6 +482,31 @@ public:
                 if (!entry.window) continue;
                 Panel *p = entry.window.get();
                 if (p->corner() != corner) continue;
+                // A WINDOW THE USER PLACED KEEPS ITS POSITION.
+                //
+                // This is what the comment above this loop has been
+                // promising since the wall was written - "it disappears the
+                // moment a window is dragged, because a dragged window has
+                // a stored position and the wall skips it entirely" - and
+                // it was not implemented. The wall laid its cell over
+                // every window unconditionally, so a rail switch (which
+                // destroys the host and builds a new one, and a new host
+                // applies its own wall) handed the user back the grid and
+                // silently discarded their arrangement.
+                //
+                // The test is the FILE, not the numbers: a first-run
+                // default is a real coordinate, so `ml == 20` cannot mean
+                // "never moved" - only "no such key" can. See
+                // Panel::hasStoredPosition.
+                if (p->hasStoredPosition()) {
+                    // Still consume the cell. The assignment is then a
+                    // function of a window's OWN row, not of which other
+                    // windows happen to be placed — otherwise dragging one
+                    // sub-window reshuffles every window after it, and a
+                    // user tidying one corner loses the rest.
+                    ++ordinal;
+                    continue;
+                }
                 // The cell is THIS window's size, not a constant. A
                 // 260x128 cell cannot hold a 560x183 window, so consecutive
                 // cells claimed rectangles their neighbours' bodies already
@@ -2173,15 +2198,17 @@ void ControlPanel::closeEvent(QCloseEvent *e)
         if (Panel *panel = panelAt(i))
             panel->setVisible(false);
 
-    // v0.5 UI-link: persist scale/opacity that the APPEARANCE sliders
-    // changed (with persist=false). saveAppearance() writes ONLY scale
-    // and opacity — NOT margins or visible — so it can't clobber the
-    // live overlay's geometry or accidentally hide a panel (the console
-    // panels are WA_DontShowOnScreen + hidden; isVisible()==false would
-    // write visible=false and break the overlay's next launch).
-    for (int i = 0; i < mhw::kPanelCount; ++i)
-        if (Panel *panel = panelAt(i))
-            panel->saveAppearance();
+    // v0.15: persist scale / opacity / margins — the last one added in
+    // v0.5 so a position dragged here survives into the overlay's
+    // loadConfig(). This comment used to say saveAppearance() writes
+    // "ONLY scale and opacity, NOT margins", which stopped being true the
+    // same day the margins write was added, and it mattered: reading it as
+    // current is what let the split sub-windows go unsaved from BOTH
+    // exits.
+    //
+    // It shares the loop with saveBeforeLaunch() so there is one list of
+    // windows rather than two, and a window is added to one place.
+    saveAllSplitAndBaseWindows();
 
     saveMaskToDisk();
     {
@@ -3041,6 +3068,38 @@ void ControlPanel::finishRiseReframeworkOperation(bool ok, const QString &detail
 // The spawn/poll/hot-swap half of the original launchOverlay() moved out
 // in v0.11 to mhw::OverlayProcessController::launch(); what is left here
 // is the View's contribution (persist → build → hand off).
+// Every window the console owns, sorted by how it is reached, persisted
+// through Panel::saveAppearance().
+//
+// WHY ONE PLACE. This is the write that makes a console drag durable, and
+// there are two ways out of the console — launch the overlay, or close the
+// window — and both must do it. The loop used to be spelled twice, over
+// `panelAt(i)`, which was the complete set when either was written: the
+// four base panels. The split made eleven more sub-windows and neither
+// loop grew, so a sub-window dragged in the console was saved nowhere, from
+// either exit. One call, one loop, no third place to forget.
+void ControlPanel::saveAllSplitAndBaseWindows()
+{
+    // The base panels, exactly as before.
+    for (int i = 0; i < mhw::kPanelCount; ++i)
+        if (Panel *panel = panelAt(i))
+            panel->saveAppearance();
+
+    // v0.15: the split sub-windows. saveAppearance() rather than
+    // saveConfig() on purpose: it writes scale / minW / minH / lock /
+    // opacity / bgAlpha / margins WITHOUT emitting `lockW=0` for every
+    // window, so a user who only dragged does not get an ini full of zero
+    // rows. That is the same reason the base panels use it here.
+    //
+    // Reachable only in Split mode — the host is destroyed when the console
+    // leaves it — so this is where the split's persistence lives.
+    if (splitPreview_) {
+        for (int i = 0; i < splitPreview_->count(); ++i)
+            if (Panel *sub = splitPreview_->windowAt(i))
+                sub->saveAppearance();
+    }
+}
+
 void ControlPanel::saveBeforeLaunch()
 {
     saveMaskToDisk();
@@ -3048,9 +3107,7 @@ void ControlPanel::saveBeforeLaunch()
     // loadConfig() reads the values the user set in the console.
     // Without this, the overlay always starts with the last
     // edit-mode save (or factory defaults).
-    for (int i = 0; i < mhw::kPanelCount; ++i)
-        if (Panel *panel = panelAt(i))
-            panel->saveAppearance();
+    saveAllSplitAndBaseWindows();
 }
 
 QStringList ControlPanel::buildOverlayArgv(bool editMode) const

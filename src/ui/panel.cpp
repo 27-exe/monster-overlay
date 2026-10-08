@@ -340,6 +340,20 @@ void Panel::applyGeometry()
 }
 
 
+bool Panel::hasStoredPosition() const
+{
+    // settings() is a TU-local handle onto the same file every Panel opens,
+    // so the group has to be spelled HERE rather than at the call site.
+    // beginGroup/endGroup rather than a scoped copy because QSettings has
+    // no group-scoped contains(): contains() answers for the CURRENT
+    // group, and the current group is whatever the last caller left.
+    settings().beginGroup(scopedKey(key_));
+    const bool stored = settings().contains(QStringLiteral("ml"))
+                        || settings().contains(QStringLiteral("mt"));
+    settings().endGroup();
+    return stored;
+}
+
 mhw::GameId Panel::demoGame() const
 {
     // The namespace default, named through the complete type - panel.h

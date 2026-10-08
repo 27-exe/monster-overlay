@@ -235,6 +235,11 @@ private:
     // launching path at all; the argv half is the const builder
     // buildOverlayArgv(). launchOverlayChild() itself is what remains —
     // the running check plus the delegation.
+    // The one write that makes a console drag durable, shared by both
+    // exits (saveBeforeLaunch() and closeEvent()). See the comment on the
+    // definition for why there is one loop instead of two.
+    void saveAllSplitAndBaseWindows();
+
     void saveBeforeLaunch();
     [[nodiscard]] QStringList buildOverlayArgv(bool editMode) const;
     void launchOverlayChild(bool editMode);
