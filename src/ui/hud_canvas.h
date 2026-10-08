@@ -94,7 +94,10 @@ public:
     };
 
     // The geometry sources for the split's sub-windows, one per row that
-    // resolved a live window (7 player + 5 monster + 2 damage = 14 max).
+    // resolved a live window: 6 player + 2 monster + 3 damage = 11. Spelled
+    // as arithmetic rather than a total, because a total here did not move
+    // when the monster regrouping took five rows to two and the DPS roster
+    // became a third damage row.
     //
     // REPLACES, never appends: the caller re-derives the whole set from
     // the three tables on every mask change, so a replace is the only

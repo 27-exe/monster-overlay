@@ -977,8 +977,21 @@ int main(int argc, char **argv)
     if (parser.isSet(outputPetsOption))
         petDamagePanel.setOutputName(parser.value(outputPetsOption), false);
 
-    // v0.14: --output-all, applied AFTER the four above so a specific
-    // --output-monster still wins over the blanket value.
+    // v0.15: --output-all, applied AFTER the four per-panel options, and it
+    // therefore WINS over them. That is the opposite of what this comment
+    // used to say, and the old text was wrong about its own code: a later
+    // setOutputName() overwrites an earlier one, so "read after" is the
+    // reason the blanket wins, not the reason the specific loses. The
+    // v0.14 review caught it with a probe:
+    //
+    //     --output-monster=DP-2 --output-all=eDP-1  ->  monster is eDP-1
+    //
+    // The blanket winning is the behaviour worth keeping. --output-all
+    // answers "put everything on this screen" for one invocation, and a
+    // per-panel flag left over from another command should not silently
+    // carve one window out of it — that is the "the overlay is on my
+    // secondary screen and I cannot move it" case this option exists to
+    // end. To target one panel, do not pass --output-all.
     //
     // It reaches the sub-windows too, which is the whole point: the four
     // per-panel options were written in v0.8 when "a panel" meant "one of
@@ -993,11 +1006,18 @@ int main(int argc, char **argv)
         monsterPanel.setOutputName(out, false);
         damagePanel.setOutputName(out, false);
         petDamagePanel.setOutputName(out, false);
-        // Every split sub-window, in one pass. A helper rather than
-        // thirteen lines so a future window cannot be missed: the list
-        // below is checked against kSplitWindowRows by a static_assert in
-        // control_panel.cpp, but nothing checks THIS list, so it is spelled
-        // once and referenced once.
+        // Every split sub-window, in one pass.
+        //
+        // Nothing checks this list. An earlier version of this comment
+        // claimed a static_assert in control_panel.cpp verifies it against
+        // kSplitWindowRows; none does, and none could - the split table
+        // lives in control_panel.cpp's anonymous namespace, so main.cpp
+        // cannot see it and its asserts cannot reach a list in another
+        // translation unit. The asserts there constrain kSplitWindowRows'
+        // own length against the three split tables, which is a real check
+        // and not this one. So the honest consequence: a window added to
+        // the split table without a line here silently misses
+        // --output-all, and no build will say so.
         for (Panel *sub : {
                  (Panel *)&playerStatusStripPanel,
                  (Panel *)&playerBarsStripPanel,
@@ -1136,6 +1156,7 @@ int main(int argc, char **argv)
     if (damageSplitOn) {
         damageShareStripPanel.setVisible(editMode);
         damageChartStripPanel.setVisible(editMode);
+        damageRowsStripPanel.setVisible(editMode);
     }
 
     // Reader factory: both readers emit the same GameSnapshot, so the UI
@@ -1270,6 +1291,7 @@ int main(int argc, char **argv)
         monsterConditionsStripPanel.retranslateUi();
         damageShareStripPanel.retranslateUi();
         damageChartStripPanel.retranslateUi();
+        damageRowsStripPanel.retranslateUi();
         playerInfoStripPanel.retranslateUi();
     };
 
@@ -1641,6 +1663,19 @@ int main(int argc, char **argv)
             damageChartStripPanel.setVisible(
                 damageChartStripPanel.panelEnabled()
                 && damageChartStripPanel.hasVisibleContent());
+
+            // v0.15: the roster window's drive. Without this it is
+            // constructed, masked, and never shown - and because
+            // damagePanelMaskFor() has already taken Rows AWAY from
+            // DamagePanel, "never shown" is not "the panel still draws
+            // it": in Split mode the per-player roster was simply gone
+            // from the screen. Constructing a window is not driving one.
+            const bool keepRowsDemo = skipUpdate(damageRowsStripPanel);
+            if (!keepRowsDemo)
+                damageRowsStripPanel.update(damageSnap);
+            damageRowsStripPanel.setVisible(
+                damageRowsStripPanel.panelEnabled()
+                && damageRowsStripPanel.hasVisibleContent());
         }
         }
     });
@@ -1678,6 +1713,7 @@ int main(int argc, char **argv)
             monsterIdentityStripPanel.saveConfig();
             monsterConditionsStripPanel.saveConfig();
             damageShareStripPanel.saveConfig();
+            damageRowsStripPanel.saveConfig();
             damageChartStripPanel.saveConfig();
         }
     }

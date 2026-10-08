@@ -191,26 +191,25 @@ const SplitWindowRow kSplitWindowRows[] = {
     // What it did not anticipate is the CONSOLE. The console's Split
     // preview draws ONLY the split's sub-windows, so with Share and
     // Chart carved out the user saw two boxes and no rows:
-    // 「dps 部分缺少一个面板，我们按玩家统计的那部分不见了」. The
-    // preview needs a third window; the overlay's mask arithmetic must
-    // not move. Those are different requirements, and the honest answer
-    // is a window that exists beside the table rather than inside it.
+    // 「dps 部分缺少一个面板，我们按玩家统计的那部分不见了」.
     //
-    // THE INDEX. kSplitDamageRowsRow is 2 — one past the last
-    // kDamageSplitTargets subscript — so the row is unambiguously "not
-    // a table row". Anything that reads kDamageSplitTargets[row]
-    // unchanged (hud_canvas.cpp's subWindowLabel) therefore never sees
-    // it: it bounds-checks against DamageSplitSlot::kCount first and
-    // answers an empty label, which this file corrects below by
-    // re-deriving the label for the rows window from the console's own
-    // section vocabulary. No caller's mask arithmetic is touched.
-    {2, 2, "damage-rows"},        // Rows -> DamageRowsStripPanel
+    // v0.15: Rows IS a table row now — kDamageSplitTargets[2] is
+    // {DamageSection::Rows} and DamageSplitSlot::Rows is 2. The v0.14
+    // reasoning was that the preview needs a third window while the
+    // OVERLAY's mask arithmetic must not move, and the answer chosen then
+    // was a window beside the table. That was wrong, and it produced a
+    // worse bug than the one it avoided: the console built the window and
+    // the live overlay never mounted it, so the console promised a window
+    // the overlay did not have — the same console/overlay disagreement
+    // this round is about, one layer down. Moving Rows into the table
+    // makes both read the same fact.
+    {2, static_cast<int>(mhw::DamageSplitSlot::Rows), "damage-rows"},
 };
 
-// The rows window's row index. One past the last kDamageSplitTargets
-// subscript, and NOT DamageSplitSlot::Rows — that enum value would imply
-// a bit claim this row does not make. See the note above.
-constexpr int kSplitDamageRowsRow = 2;
+// The rows window's row index, which v0.15 made an ALIAS rather than a
+// bare 2 — the row now claims DamageSection::Rows like every other, so a
+// literal here was a second place to forget that.
+constexpr int kSplitDamageRowsRow = mhw::DamageSplitSlot::Rows;
 
 constexpr int kSplitWindowRowCount =
     static_cast<int>(sizeof(kSplitWindowRows) / sizeof(kSplitWindowRows[0]));
@@ -420,14 +419,25 @@ public:
         // corner — see the note at the column walk below for why a
         // per-corner pitch leaves the two sides of the screen overlapping
         // in the middle.
+        // Scaled, because the cells this drives are in the same logical
+        // space as HudCanvas::subWindowWall()'s — and that one multiplies
+        // by scale. Sizing one in content pixels and the other in logical
+        // pixels is the same lattice computed twice in two units, and it
+        // breaks on the one axis the user controls: a `scale=2` in
+        // panels.ini doubles the canvas's cells and leaves these ones
+        // where they were, and the wall overlaps again. Measured with the
+        // shipped arithmetic: scale 0.5/1.0/1.5 -> 0 overlapping pairs,
+        // 2.0 -> 2, 3.0 -> 3.
         QSize lattice;
         for (const EntryImpl &probe2 : entries_) {
             if (!probe2.window)
                 continue;
-            const QSize want(probe2.window->contentSize().width(),
-                             probe2.window->contentSize().height());
-            lattice.setWidth(qMax(lattice.width(), want.width()));
-            lattice.setHeight(qMax(lattice.height(), want.height()));
+            const int w = qRound(probe2.window->contentSize().width()
+                                 * probe2.window->scale());
+            const int h = qRound(probe2.window->contentSize().height()
+                                 * probe2.window->scale());
+            lattice.setWidth(qMax(lattice.width(), w));
+            lattice.setHeight(qMax(lattice.height(), h));
         }
 
         for (Corner corner : kCornerOrder) {
