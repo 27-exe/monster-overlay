@@ -22,6 +22,7 @@
 #include "ui/panel_player.h"
 #include "ui/panel_player_split.h"
 #include "ui/panel_settings_game.h"
+#include "ui/viewmodel/console_layout_mode_codec.h"
 // v0.12: the split's other three windows — HP/ST bars, mantles and
 // wirebug. Same includes shape as the pilot strip above them, and the
 // same reason for all four: the windows are declared in the header
@@ -525,11 +526,34 @@ int main(int argc, char **argv)
     // v0.11.4 painted. That is the pixel-identical guarantee, and its
     // gate is playerPanelMaskFor()'s Single arm.
     const mhw::PlayerLayoutResolution playerSplitLayout =
+        // v0.15: READ THE CONF ROW. It was hard-coded to Default here, so
+        // the overlay ignored `layout=split` in monster-overlay.conf
+        // entirely and always booted Single unless the console passed
+        // --layout. Measured before this line:
+        //
+        //     $ printf 'layout=split\n...' > monster-overlay.conf
+        //     $ monster-overlay --edit --game world
+        //     [INFO] v0.12 split: layout=single (default)
+        //
+        // which is half of the user's report "I started edit from the
+        // console in split mode and got the big panels": the console half
+        // was fixed in v0.14 (consoleLayoutArgv now spells --layout=split
+        // with its dashes), but anything that started the overlay by hand
+        // — a launcher, a script, a muscle-memory command line — was still
+        // ignored. The console is not the only way this program is run.
+        //
+        // The conf text is the one already read for the masks, so the row
+        // is parsed out of the same bytes rather than a second read of a
+        // file that could have changed in between.
         mhw::resolveStartupLayoutMode(
             mhw::PlayerLayoutCliRequest{
                 parser.isSet(layoutOption), parser.value(layoutOption),
                 mhw::splitPlayerStripFlagSense(parser.isSet(splitPlayerStripOption))},
-            mhw::PlayerLayoutConfRow{mhw::PlayerLayoutSource::Default});
+            // PlayerLayoutConfRow is an alias for PlayerLayoutSource (see
+            // panel_sections.h), and parseConsoleLayoutRow returns the
+            // console's own row wrapper — so the source is what crosses
+            // over, not the struct.
+            mhw::parseConsoleLayoutRow(confMaskText).source);
     // Single is the default and the pixel-identity guarantee: it resolves
     // maskPlayerForPanel to exactly maskPlayer, so every pre-v0.12 user gets
     // one big window and the baselines stay byte-identical.
