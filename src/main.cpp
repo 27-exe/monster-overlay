@@ -1681,6 +1681,44 @@ int main(int argc, char **argv)
     });
     timer.start(pollMs);  // consistent poll rate regardless of mode
 
+    // v0.15: EDIT MODE TAKES KEYBOARD FOCUS, ONCE.
+    //
+    // The report was 「使用 overlay 的命令启动,现在完全无法使用,键盘输入被
+    // 转译成 ^[[1;2B…」 with the arrow keys in the escape sequences. The
+    // arrow-key handler was never the problem - Panel::keyPressEvent has
+    // dispatched Left/Right/Up/Down since v0.5. The problem is that the
+    // event never arrived: layer-shell surfaces are created with
+    // KeyboardInteractivityNone, setEditMode() raises them to OnDemand
+    // (eligible, not focused), and the only request for activation has
+    // always been inside mousePressEvent. WA_ShowWithoutActivating is set
+    // on every panel so the live HUD never raises itself over the game -
+    // right for the HUD, and exactly wrong for an editor the user asked
+    // for. So the first key press went to the terminal, which is also why
+    // Esc - handled in the same function, one branch up - could not quit.
+    //
+    // ONE window, not fifteen. Fifteen simultaneous requestActivate() calls
+    // are a focus fight the compositor has no reason to resolve in the
+    // user's favour, and the loser is whichever window they were trying to
+    // move. The base player panel is chosen because it is the first thing
+    // shown, is present in every game, and is the panel the arrow keys
+    // most plausibly mean. Any panel can still take focus the moment it is
+    // clicked - mousePressEvent() is unchanged - so this picks a starting
+    // point rather than pinning the keyboard to one window.
+    //
+    // Placed after every show() and after the poll timer starts, because a
+    // surface that has not been mapped cannot be activated: requesting
+    // earlier is a no-op that looks like it worked.
+    if (editMode) {
+        Panel *focusCandidates[] = {&playerPanel, &monsterPanel,
+                                    &damagePanel, &petDamagePanel};
+        for (Panel *p : focusCandidates) {
+            if (p->isVisible()) {
+                p->requestEditFocus();
+                break;
+            }
+        }
+    }
+
     const int code = app.exec();
 
     if (editMode) {

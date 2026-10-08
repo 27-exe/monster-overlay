@@ -801,6 +801,20 @@ void Panel::focusOutEvent(QFocusEvent *e)
         setLayerKeyboardInteractivity(false);
 }
 
+void Panel::requestEditFocus()
+{
+    if (!editMode_ || !isVisible())
+        return;
+    // Enter the focus chain first, then ask. Setting OnDemand alone only
+    // makes the surface eligible; requestActivate() is what the compositor
+    // answers, and doing it in this order matches mousePressEvent() so both
+    // paths are the same two calls rather than two subtly different ones.
+    setLayerKeyboardInteractivity(true);
+    if (QWindow *w = windowHandle())
+        w->requestActivate();
+    setFocus();
+}
+
 void Panel::setLayerKeyboardInteractivity(bool interactive)
 {
     QWindow *native = windowHandle();

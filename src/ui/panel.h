@@ -144,6 +144,28 @@ public:
     void loadConfig();
     void saveConfig();
     void setEditMode(bool on);
+
+    // Ask the compositor for keyboard focus, without a click.
+    //
+    // WHY THIS EXISTS. In edit mode every panel's layer-shell surface is
+    // put into KeyboardInteractivityOnDemand (setEditMode), which makes
+    // it ELIGIBLE for focus rather than focused. Eligibility is not focus:
+    // the compositor grants it when the surface is clicked, and
+    // mousePressEvent() is where that request has always been made. So a
+    // user who launches `--edit` and presses an arrow key before touching
+    // anything sends that key to the TERMINAL, which prints ^[[1;2B and
+    // the window does not move — and Esc, which quits, fails the same way.
+    //
+    // It has to be a call rather than a constructor-side effect, because
+    // WA_ShowWithoutActivating (panel.cpp) is deliberately on: the overlay
+    // must not raise itself over a running game. That attribute is right
+    // for the live HUD and wrong for the editor, where the user ASKED for
+    // a tool that responds to the keyboard.
+    //
+    // Called for ONE window at startup, not all of them — see
+    // main.cpp for why fifteen simultaneous requests is worse than none.
+    void requestEditFocus();
+
     bool editMode() const { return editMode_; }
 
     // Section visibility: per-panel bitmask of independently toggleable
@@ -708,6 +730,7 @@ protected:
 private:
     void applyGeometry();
     void setLayerKeyboardInteractivity(bool interactive);
+
     void nudgeMargins(int dx, int dy);
     void paintMinimized(QPainter &p);
     // max() against the floors, then lockedWidth/Height() against the
