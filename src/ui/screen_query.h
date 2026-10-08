@@ -21,7 +21,9 @@ enum class Source {
     QPlatformScreen, // QPlatformScreen::geometry() via QScreen::handle()
                      // (Qt private API). Bypasses the X11
                      // fractional-scaling remap in some setups.
-    XRandr,          // Shell-out: xrandr --current, parsed.
+    XRandr,          // Shell-out: xrandr --current, parsed. X11 sessions
+                     // ONLY — see the note in detect() about why this is
+                     // never trusted on a Wayland session.
     KScreen,         // Shell-out: kscreen-doctor -j (KDE Wayland).
     WlrRandr,        // Shell-out: wlr-randr (Sway / Hyprland).
     DrmSysfs,        // /sys/class/drm/card*-eDP-*/modes. Last-resort
@@ -30,12 +32,72 @@ enum class Source {
     Fallback,        // Could not determine. Hard-coded 1920×1080.
 };
 
+// ---------------------------------------------------------------------------
+// Coordinate systems — read this before touching any field below
+// ---------------------------------------------------------------------------
+// There are TWO size spaces in play and they are NOT interchangeable:
+//
+//   * the PANEL/mode space: what the display's video mode says, i.e. the
+//     framebuffer the GPU programs the CRTC with. 1920×1080 for a 1080p
+//     monitor, regardless of how it is mounted.
+//   * the LOGICAL/DIP space: what QScreen::geometry() reports and what
+//     every Qt widget coordinate is expressed in. When the compositor
+//     applies a transform (wl_output.transform), Qt folds the rotation
+//     into this number, so a 90°-rotated 1920×1080 monitor reports
+//     1080×1920 here.
+//
+// A rotated monitor therefore has geometry().width() < geometry().height()
+// even though its panel is 1920×1080. That is the whole trap: anything
+// that reads the panel/mode size (xrandr's mode list, /sys/class/drm
+// .../modes, wlr-randr's mode list, kscreen-doctor's "size") gets the
+// UNROTATED numbers, and mixing that with Qt's rotated geometry() is what
+// produced a devicePixelRatio of 1.778 on a plain 1.0 screen.
+//
+// Every field of Result is in the LOGICAL space, i.e. the same space as
+// QScreen::geometry(). physical is logical × dpr, NOT the panel mode.
 struct Result {
-    QSize physical;   // what the user sees in the OS display settings
-    QSize logical;    // what Qt uses for widget coordinates (DIPs)
-    qreal dpr = 1.0;  // physical.width() / max(logical.width(), 1)
+    QSize physical;   // logical × dpr, in the ROTATED frame (see above).
+                      // This is what the user sees in the OS display
+                      // settings for a transformed output.
+    QSize logical;    // what Qt uses for widget coordinates (DIPs) —
+                      // exactly QScreen::geometry().size() whenever a
+                      // QScreen is available.
+    qreal dpr = 1.0;  // physical.width() / max(logical.width(), 1). Must
+                      // always be one of kLegalDpr below.
     Source source = Source::Fallback;
 };
+
+// The only device-pixel ratios the code accepts as "clean". Anything
+// outside this set (with a small tolerance) is treated as a bug signal,
+// not as a DPR — see detect() for the 1.778 story.
+inline constexpr qreal kLegalDpr[] = {1.0, 1.25, 1.5, 2.0, 2.5, 3.0};
+
+// Tolerance for matching kLegalDpr. A real DPR is exact (1.0, 2.0, …) or
+// one of a handful of well-known fractional values; 0.02 is far wider
+// than any rounding error and far narrower than the gap between any two
+// legal values.
+inline constexpr qreal kDprTolerance = 0.02;
+
+// True when `dpr` is one of the six legal ratios. A rotated screen on a
+// real DPR of 1.0 yields 1920/1080 = 1.778, which is NOT in the set —
+// that is the whole point of testing membership instead of a range.
+
+// Whether a candidate PHYSICAL size describes the same screen shape as
+// the LOGICAL size Qt reports. Cross-multiplied, so integer widths cannot
+// lose precision on the ratio.
+//
+// Exported rather than left file-local because it is half of the contract
+// detect() relies on, and a test that re-implements it proves nothing about
+// the code that runs: 1920x1080 against a 1080x1920 logical is the case
+// this exists to reject, and the only way to assert it is to call it.
+[[nodiscard]] bool sameShapeAsLogical(const QSize &candidate,
+                                      const QSize &logical);
+inline constexpr bool isLegalDpr(qreal dpr)
+{
+    for (qreal v : kLegalDpr)
+        if (dpr > v - kDprTolerance && dpr < v + kDprTolerance) return true;
+    return false;
+}
 
 // v0.8: per-screen snapshot for the control console's "pick a screen"
 // dropdown. `name` is QScreen::name() — on Niri that string is exactly
@@ -54,10 +116,12 @@ struct OutputInfo {
 
 // Pick the best answer from the available signals. Tries QPlatformScreen
 // first (private API, but the most reliable in X11 fractional-DPI), then
-// QScreen, then shells out to xrandr / kscreen-doctor / wlr-randr in
-// order, then falls back. Safe to call from the GUI thread; the shell-out
-// branch is bounded by a hard 800 ms timeout via QProcess::execute so
-// a slow compositor tool never freezes the canvas.
+// QScreen, then shells out to kscreen-doctor / wlr-randr on a Wayland
+// session (xrandr deliberately EXCLUDED there — XWayland's xrandr reports
+// the panel mode, not the rotated geometry, and would manufacture a fake
+// DPR), then falls back. Safe to call from the GUI thread; the shell-out
+// branch is bounded by a hard 2 s timeout via QProcess so a slow
+// compositor tool never freezes the canvas.
 Result detect(const QScreen *screen = nullptr);
 
 // Short human label for the source, e.g. "QScreen", "XRandr".

@@ -47,6 +47,13 @@ QSize parseXrandrOutput(const QString &stdout)
     //   "   2560x1600     59.99*+  60.00 ..."
     // The * marks the current mode. Some compositors also emit a
     // header line ending in "connected ..." — skip those.
+    //
+    // COORDINATE SPACE: the value this returns is the MODE SIZE, i.e.
+    // the framebuffer the CRTC is programmed with. It is NOT rotated.
+    // A 90°-rotated 1080p panel still lists 1920x1080 here, while Qt
+    // reports 1080x1920. Only ever compare this against an X11
+    // QScreen::geometry() — never against a Wayland one. See
+    // usableAlongsideWaylandGeometry().
     QSize fallback;
     for (const QString &line : stdout.split('\n')) {
         if (line.contains("disconnected") || line.contains("connected") ) {
@@ -65,6 +72,9 @@ QSize parseWlrRandr(const QString &stdout)
 {
     // wlr-randr output (no JSON flag in older versions):
     //   "Output 'eDP-1' ... modes: 1920x1080, 2560x1600, ..."
+    //
+    // COORDINATE SPACE: same caveat as parseXrandrOutput() — these are
+    // mode sizes, not rotated geometry.
     for (const QString &line : stdout.split('\n')) {
         const QSize s = parseModeLine(line);
         if (!s.isEmpty()) return s;
@@ -82,6 +92,9 @@ QSize parseKscreenJson(const QString &stdout)
     // "geometry" when it's set (KDE ≥ 5.27 sometimes emits logical
     // coords there, sometimes physical — ambiguous, so we only
     // trust it when "size" is missing).
+    //
+    // COORDINATE SPACE: "size" is the MODE size, unrotated, exactly
+    // like the xrandr/wlr-randr parsers.
     QJsonParseError err{};
     const QJsonDocument doc = QJsonDocument::fromJson(stdout.toUtf8(), &err);
     if (err.error != QJsonParseError::NoError || !doc.isObject()) return {};
@@ -148,6 +161,11 @@ QSize runCommand(const QString &program, const QStringList &args,
 // readable, which they usually are for the active user. We only
 // take this as a last-resort signal because parsing EDID is heavy
 // and the mode-list format varies between drivers.
+//
+// COORDINATE SPACE: unrotated mode size, same caveat as above.
+// Additionally this is a GLOBAL answer — it has no idea which
+// QScreen we were asked about — so it must never be allowed to
+// contradict the geometry of the screen we are actually reporting.
 QSize tryDrmSysfsImpl()
 {
     QDir drm(QStringLiteral("/sys/class/drm"));
@@ -190,6 +208,76 @@ QSize tryKscreen()     { return runCommand("kscreen-doctor", {"-j"}, parseKscree
 QSize tryWlrRandr()    { return runCommand("wlr-randr", {}, parseWlrRandr); }
 QSize tryDrmSysfs()    { return tryDrmSysfsImpl(); }
 
+// ---------------------------------------------------------------------------
+// Cross-checking a mode-sized candidate against Qt's rotated geometry
+// ---------------------------------------------------------------------------
+// A "physical" candidate from xrandr / wlr-randr / kscreen-doctor /
+// /sys/class/drm is a MODE size: the framebuffer the CRTC is programmed
+// with. Qt's QScreen::geometry() is a LOGICAL size with the compositor
+// transform already folded in. On a rotated output those two disagree in
+// SHAPE, and dividing one by the other manufactures a devicePixelRatio
+// out of nothing:
+//
+//   real 1080p monitor, transform 90°, real DPR 1.0:
+//     mode / panel space : 1920x1080   (what xrandr lists)
+//     logical / Qt space : 1080x1920   (what geometry() reports)
+//     dpr as computed    : 1920/1080 = 1.778   <-- FABRICATED
+//
+// Measured on this machine's own Hyprland session (see the audit
+// probes): xrandr under XWayland printed "1920x1080 59.96*+" for
+// HDMI-A-1 while Qt's wayland plugin reported geometry() 1080x1920,
+// and detect() duly reported dpr=1.7778 source=XRandr for a screen
+// whose real devicePixelRatio() is exactly 1.0.
+//
+// The check below is the only thing standing between that measurement
+// and the canvas: the candidate must have the SAME aspect ratio as the
+// screen it is being attributed to. A rotated candidate is transposed
+// relative to Qt's answer, so the ratio differs and the candidate is
+// discarded. Note that this is deliberately NOT a rotation detector —
+// Qt's own orientation API turned out to be inert on Wayland (see
+// nativeRotationDegrees()).
+} // namespace
+
+bool sameShapeAsLogical(const QSize &candidate, const QSize &logical)
+{
+    if (candidate.isEmpty() || logical.isEmpty()) return false;
+    // Cross-multiply so integer widths can't lose precision.
+    return candidate.height() * logical.width()
+        == logical.height() * candidate.width();
+}
+
+namespace {
+
+// ---------------------------------------------------------------------------
+// Rotation, and why there is no in-process source for it
+// ---------------------------------------------------------------------------
+// Every plausible API was measured against the live Hyprland session
+// with hyprctl reporting transform 1 (90°) for HDMI-A-1:
+//
+//   QScreen::orientation()          -> Portrait   (correct-looking)
+//   QScreen::nativeOrientation()    -> Primary
+//   QScreen::angleBetween(n, o)     -> 0 degrees  (WRONG: claims no rotation)
+//   QScreen::mapBetween(n, o, r)    -> identity   (WRONG: claims no rotation)
+//   QScreen::transformBetween(n,o,r)-> identity   (WRONG: claims no rotation)
+//   QPlatformScreen::orientation()  -> 1
+//   QPlatformScreen::nativeOrientation() -> 0
+//   QPlatformScreen::geometry()     -> 1080x1920  (already rotated, right)
+//
+// The first two look right only because Qt derives "Portrait" from the
+// shape of geometry() itself, not from the compositor's transform.
+// angleBetween/mapBetween/transformBetween are driven by
+// QGuiApplication::setScreenOrientation(), which nothing calls in a
+// desktop session, so they report the identity rotation for a screen
+// that is genuinely rotated 90°.
+//
+// There is therefore NO trustworthy in-process rotation signal. What Qt
+// DOES give us is the rotated geometry() itself, which is all the canvas
+// needs (it draws in logical space and clamps in logical space). So no
+// rotation field is added to Result: any number we put there would be
+// either a duplicate of geometry()'s shape or a value we cannot compute.
+// This comment is the record of that decision — there is deliberately
+// no function here to call, because there is nothing to call it with.
+
 Result makeResult(QSize physical, QSize logical, Source src)
 {
     Result r;
@@ -231,6 +319,11 @@ Result detect(const QScreen *screen)
     // lie here; we just take Qt's value at face value and let the
     // header's physical-vs-logical comparison surface the
     // disagreement to the user.
+    //
+    // COORDINATE SPACE: this is the ROTATED logical size — exactly the
+    // space the Result contract in screen_query.h describes. A
+    // rotated 1920×1080 output yields 1080×1920 here and that is the
+    // correct answer, not a bug to be corrected.
     QSize logical;
     if (screen) logical = screen->geometry().size();
     if (logical.width() < 800 || logical.height() < 600) {
@@ -240,11 +333,6 @@ Result detect(const QScreen *screen)
         logical = QSize();
     }
 
-    // Pick the platform-appropriate compositor tool first, because
-    // these report the *physical* pixel mode the user actually sees
-    // in the OS display settings, and they don't lie about DPI.
-    // The order follows session type so we don't waste 800ms on
-    // tools that won't be there.
     const bool isWayland = qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
     const bool isX11     = qEnvironmentVariableIsSet("DISPLAY");
     QSize shell;
@@ -258,11 +346,29 @@ Result detect(const QScreen *screen)
     // First successful probe wins: `||` keeps the original evaluation order
     // and short-circuits exactly like the if/else-if chain did; `shell` and
     // `shellSource` (set inside takeShell) carry the result.
+    //
+    // On a Wayland session xrandr is deliberately NOT probed. The comment
+    // that used to live here ("X11 tools often also work via XWayland as a
+    // last resort") was checked against the live session and is false in
+    // the only way that matters:
+    //
+    //   * xrandr does run — XWayland answers it — and it prints
+    //     "WARNING: running xrandr against an Xwayland server".
+    //   * What it prints is the XWayland X screen's own mode list, which
+    //     is the UNROTATED panel mode, not the real output's rotated
+    //     geometry. On this machine it said 1920x1080 while Qt's wayland
+    //     plugin said 1080x1920.
+    //   * So the tool "works" as a subprocess and still describes a
+    //     different screen than the one detect() is reporting.
+    //
+    // Kscreen-doctor and wlr-randr stay in the Wayland branch because
+    // they speak the compositor's own protocol and report the same
+    // output Qt sees. Their mode sizes are still cross-checked against
+    // Qt's geometry below, so a rotated output is not turned into a fake
+    // DPR even on a compositor that does provide one of these tools.
     if (isWayland) {
         static_cast<void>(takeShell(Source::KScreen, tryKscreen())
-                          || takeShell(Source::WlrRandr, tryWlrRandr())
-                          // X11 tools often also work via XWayland as a last resort.
-                          || takeShell(Source::XRandr, tryXrandr()));
+                          || takeShell(Source::WlrRandr, tryWlrRandr()));
     } else if (isX11) {
         static_cast<void>(takeShell(Source::XRandr, tryXrandr())
                           // KDE users on X11 still benefit from KScreen if installed.
@@ -270,7 +376,9 @@ Result detect(const QScreen *screen)
                           || takeShell(Source::WlrRandr, tryWlrRandr()));
     } else {
         // No session env (tty / offscreen / CI). Try everything in
-        // order of likelihood.
+        // order of likelihood. xrandr is included here because with
+        // neither WAYLAND_DISPLAY nor DISPLAY set there is no
+        // compositor answer to contradict.
         static_cast<void>(takeShell(Source::XRandr, tryXrandr())
                           || takeShell(Source::KScreen, tryKscreen())
                           || takeShell(Source::WlrRandr, tryWlrRandr()));
@@ -280,25 +388,50 @@ Result detect(const QScreen *screen)
     // DRM-capable GPU, even when no compositor tool is installed and
     // Qt's `geometry()` is broken. /sys/class/drm/card*-eDP-*/modes
     // lists the active mode first, so we always know which one is
-    // "the screen".
+    // "the screen". Same coordinate-space caveat as the other shell
+    // tools: it is a mode size, and it is global rather than
+    // per-output, so the cross-check below has to approve it too.
     if (shell.isEmpty())
         takeShell(Source::DrmSysfs, tryDrmSysfs());
 
     if (!shell.isEmpty()) {
-        // Shell tool gave us the truth about physical. Decide
-        // logical:
-        //   - if Qt's logical is a clean fraction of the physical
-        //     (DPR is a clean 1.0/1.25/1.5/2.0/2.5/3.0), use Qt's
-        //   - otherwise treat the shell result as a 1:1 screen
-        //     (no fractional scaling)
-        QSize chosenLogical = logical;
+        // A shell tool gave us a MODE-sized candidate. Decide whether
+        // it may be used as `physical` alongside Qt's rotated
+        // `logical`:
+        //
+        //   1. sameShapeAsLogical() — the candidate must have the same
+        //      aspect ratio as the screen it describes. This is what
+        //      rejects a rotated mode (1920x1080 against a 1080x1920
+        //      screen) and what rejects a global sysfs answer that
+        //      happens to belong to a different, unrotated output.
+        //   2. the implied DPR must be a DISCRETE legal value. The old
+        //      test was a range (`dpr > 0.95 && dpr < 3.05`), which
+        //      1.778 sails straight through: it is a perfectly
+        //      plausible-looking number that is not a DPR at all.
+        //      Membership in {1.0, 1.25, 1.5, 2.0, 2.5, 3.0} is the
+        //      property the code has always claimed to want, so test
+        //      that property instead of a superset of it.
+        //
+        // A candidate that fails either check is DISCARDED, not
+        // "reinterpreted as a 1:1 screen". The mode size lives in the
+        // unrotated panel frame; pairing it with a rotated logical (or
+        // with itself, as the old code did) just relocates the
+        // contradiction instead of removing it. Dropping it lets the
+        // Qt-based answers below speak, and those are already in the
+        // rotated frame — which is the whole coordinate-system
+        // contract in screen_query.h.
+        bool usable = true;
         if (!logical.isEmpty()) {
             const qreal dpr = qreal(shell.width()) / qreal(logical.width());
-            const bool clean = dpr > 0.95 && dpr < 3.05;
-            if (!clean) chosenLogical = QSize();
+            usable = sameShapeAsLogical(shell, logical) && isLegalDpr(dpr);
         }
-        if (chosenLogical.isEmpty()) chosenLogical = shell;
-        return makeResult(shell, chosenLogical, shellSource);
+        if (usable)
+            return makeResult(shell, logical.isEmpty() ? shell : logical,
+                              shellSource);
+        // Keep `shellSource` out of the picture but remember why it was
+        // dropped, so the fall-through below is auditable.
+        shell = QSize();
+        shellSource = Source::Fallback;
     }
 
     // No shell tool worked. Fall back to Qt's answers.
@@ -311,8 +444,19 @@ Result detect(const QScreen *screen)
                 nativePhys = ng.size();
         }
     }
-    if (!nativePhys.isEmpty() && !logical.isEmpty())
+    if (!nativePhys.isEmpty() && !logical.isEmpty()) {
+        // QPlatformScreen::geometry() is in the SAME rotated logical
+        // space as QScreen::geometry() (verified on this machine: both
+        // reported 1080x1920 for the 90°-rotated HDMI-A-1), so the
+        // product below is a genuine physical size and the quotient
+        // is a genuine DPR — no rotation arithmetic required.
+        const qreal dpr = screen ? screen->devicePixelRatio() : 1.0;
+        const QSize phys(qRound(nativePhys.width()  * dpr),
+                         qRound(nativePhys.height() * dpr));
+        if (phys.width() >= 640 && phys.height() >= 480)
+            return makeResult(phys, logical, Source::QPlatformScreen);
         return makeResult(nativePhys, logical, Source::QPlatformScreen);
+    }
 
     // 2. QScreen × devicePixelRatio. Unreliable on X11 fractional
     //    DPI but still our only signal here.

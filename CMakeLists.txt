@@ -1588,6 +1588,39 @@ add_executable(world-severable-scan-tests
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         RESOURCE_LOCK "panels-ini")
 
+    # screen_query's ARITHMETIC, and the two rules the defect violated.
+    #
+    # A rotated output reports a 1920x1080 panel mode and a 1080x1920
+    # geometry; detect() divided one by the other and called the result a
+    # device pixel ratio (1.7778). It survived because the check was a
+    # RANGE - `dpr > 0.95 && dpr < 3.05` - and 1.7778 is a reasonable-looking
+    # number. The rule the code should have used is a MEMBERSHIP test over
+    # six discrete values, and the rule for pairing a probe's answer with
+    # Qt's is that they must describe the same screen shape.
+    #
+    # This target exists for the census gate as much as for the assertions:
+    # screen_query.cpp had no owner and only survived by being referenced
+    # from a TU that was itself unreferenced. Both rules are pure functions,
+    # so they are testable without a compositor - the subprocess probes need
+    # a live session, and the DEFECT was in what the code did with the
+    # number after the probe returned.
+    #
+    # MUTATION: replace isLegalDpr()'s membership test with the old range
+    # test and check 2 turns red.
+    add_executable(screen-query-tests
+        tests/screen_query_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(screen-query-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(screen-query-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(screen-query-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME screen-query-tests COMMAND screen-query-tests)
+    set_tests_properties(screen-query-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     set_tests_properties(sub-window-wall-tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 

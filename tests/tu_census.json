@@ -119,7 +119,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 128
+      "symbols": 133
     },
     "src/main_control.cpp": {
       "class": "ZERO",
@@ -628,9 +628,10 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
-        "monster-control"
+        "monster-control",
+        "screen-query-tests"
       ],
-      "symbols": 27
+      "symbols": 28
     },
     "src/ui/section_count_bar.cpp": {
       "class": "ZERO",
