@@ -253,24 +253,53 @@ public:
     // somewhere other than where the surface lands — the exact lie a
     // preview exists to prevent. So there is one rule and both callers
     // reach it.
+    // v0.14: `cell` is the EXTENT this cell must hold, and the caller
+    // supplies it from the window actually going there. A cell is not the
+    // box — the box is drawn at the window's own content size — it is the
+    // lattice a box is assigned to, so it must be at least as large as the
+    // box. Passing one constant for every window is what made the wall
+    // overlap: 11 windows, 12 overlapping pairs, and every overlapped
+    // window unreachable by a click (sub_window_wall_tests.cpp).
+    //
+    // A zero or negative extent falls back to kSubWallCellW/H, so a caller
+    // that has not measured yet still gets a sane cell rather than a
+    // degenerate one that would stack every box on the origin.
     static QRectF subWindowGridRect(Corner corner, int ordinal,
-                                    const QSize &logical);
+                                    const QSize &logical,
+                                    const QSize &cell);
 
     // Every bound sub-window's cell, by the index its binding was passed
     // at, in LOGICAL pixels. This is what the test asserts against: the
     // pairwise-disjoint property of THIS vector is the placement
     // contract, and the canvas pixels painted are its consequence.
     QVector<QRectF> subWindowWall(const QSize &logical) const;
-    // The per-corner grid pitch, in LOGICAL px. The cell is not the box
-    // — a box is drawn at the window's own content size — it is the
-    // lattice the boxes are assigned to, so a cell must be at least as
-    // large as the largest box the corner can hold. The widest split
-    // window is the weapon strip (~560 logical at scale 1), so a 2:3
-    // aspect keeps one 560-wide window inside one cell at kSplitMargin
-    // while still fitting three columns of cells across a 1920 screen.
+    // The fallback grid pitch, in LOGICAL px, used only when a caller
+    // supplies no measured extent. The real pitch is the window's own size
+    // (see subWindowGridRect's cell argument); these constants are the
+    // seed so the first window of a corner still has somewhere to go.
     static constexpr int kSubWallColumns = 3;
+    // v0.14: THE FALLBACK CELL, not the cell.
+    //
+    // These used to BE the cell, and that was the defect behind "the
+    // sub-windows cannot be dragged past the midline": a 260x128 cell
+    // cannot hold a 560x183 window, so consecutive cells claimed
+    // rectangles their neighbours' window bodies already occupied —
+    // twelve overlapping pairs out of eleven windows, measured in
+    // sub_window_wall_tests.cpp. mousePressEvent walks the boxes in
+    // REVERSE, so a press in a shared area selected the last box and the
+    // window underneath could not be clicked at all. It was not a clamp
+    // and it was not the midline; the window was never being clicked.
+    //
+    // A cell must now be SIZED for the window it holds, which means the
+    // extent is an argument. These constants remain only as the seed for
+    // the first window in a corner, so a group whose windows report no
+    // size yet still lays out somewhere sane instead of dividing by zero.
     static constexpr int kSubWallCellW = 260;
     static constexpr int kSubWallCellH = 128;
+    // The gap the wall leaves between two cells, in logical px. Scaled
+    // with the cell rather than fixed, so a wide window does not end up
+    // flush against its neighbour's cell.
+    static constexpr int kSubWallGap = 8;
     // The gap between a corner's default margin and its wall's first
     // cell, in LOGICAL px. Non-zero so the wall never sits on top of
     // where the mother panel's own box WOULD be.

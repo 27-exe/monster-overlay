@@ -337,7 +337,8 @@
       "refs": [
         "hud-canvas-split-tests",
         "monster-control-p0-test",
-        "monster-control-rise-rf-smoke"
+        "monster-control-rise-rf-smoke",
+        "sub-window-wall-tests"
       ],
       "symbols": 68
     },

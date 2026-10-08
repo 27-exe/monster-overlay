@@ -374,10 +374,19 @@ void HudCanvas::setSubWindowPixmap(int index, const QPixmap &pixmap, bool enable
 // demands of a default placement ("needs no screen size, no output
 // enumeration, and no per-window magic").
 QRectF HudCanvas::subWindowGridRect(Corner corner, int ordinal,
-                                    const QSize &logical)
+                                    const QSize &logical, const QSize &cell)
 {
     const int w = qMax(1, logical.width());
     const int h = qMax(1, logical.height());
+
+    // The cell is sized by the window that goes into it, not by a
+    // constant. The gap rides along with the extent so a wide window does
+    // not end up flush against the next cell's window — which is the same
+    // defect one notch apart from the one the constant caused.
+    const int cw = cell.width() > 0 ? cell.width() + kSubWallGap
+                                    : kSubWallCellW;
+    const int ch = cell.height() > 0 ? cell.height() + kSubWallGap
+                                     : kSubWallCellH;
 
     const int row = ordinal % kSubWallColumns;
     const int col = ordinal / kSubWallColumns;
@@ -395,24 +404,24 @@ QRectF HudCanvas::subWindowGridRect(Corner corner, int ordinal,
     int y = 0;
     switch (corner) {
     case Corner::TopLeft:
-        x = kSubWallOrigin + kSubWallOffset + col * kSubWallCellW;
-        y = kSubWallOrigin + kSubWallOffset + row * kSubWallCellH;
+        x = kSubWallOrigin + kSubWallOffset + col * cw;
+        y = kSubWallOrigin + kSubWallOffset + row * ch;
         break;
     case Corner::TopRight:
-        x = w - inward - kSubWallCellW - col * kSubWallCellW;
-        y = kSubWallOrigin + kSubWallOffset + row * kSubWallCellH;
+        x = w - inward - cw - col * cw;
+        y = kSubWallOrigin + kSubWallOffset + row * ch;
         break;
     case Corner::BottomLeft:
-        x = kSubWallOrigin + kSubWallOffset + col * kSubWallCellW;
-        y = h - inward - kSubWallCellH - row * kSubWallCellH;
+        x = kSubWallOrigin + kSubWallOffset + col * cw;
+        y = h - inward - ch - row * ch;
         break;
     case Corner::BottomRight:
-        x = w - inward - kSubWallCellW - col * kSubWallCellW;
-        y = h - inward - kSubWallCellH - row * kSubWallCellH;
+        x = w - inward - cw - col * cw;
+        y = h - inward - ch - row * ch;
         break;
     }
     Q_UNUSED(inward)
-    return QRectF(x, y, kSubWallCellW, kSubWallCellH);
+    return QRectF(x, y, cw, ch);
 }
 
 // The wall for the sub-windows currently bound, in LOGICAL screen
@@ -433,6 +442,43 @@ QVector<QRectF> HudCanvas::subWindowWall(const QSize &logical) const
         return out;
     out.resize(subSlots_.size());
 
+    // ONE LATTICE FOR THE WHOLE WALL, not one per corner.
+    //
+    // The cell is sized by the largest window anywhere in the split, and
+    // the same lattice is used by every corner. Two things force that, and
+    // both were measured as overlapping pairs before they were fixed:
+    //
+    // 1. PER-WINDOW SIZING IS NOT ENOUGH, because of the lattice itself. A
+    //    cell's position depends on the cells before it, so if each cell
+    //    were sized by its own window, a column's x would advance by a
+    //    different width on every step while every box in that column is
+    //    drawn at that same x. Twelve overlapping pairs became ten.
+    //
+    // 2. PER-CORNER SIZING IS NOT ENOUGH, because the two sides of the
+    //    screen are one screen. A TopLeft cluster walks rightwards from the
+    //    left edge and a TopRight one leftwards from the right edge; with
+    //    independent pitches they are not complements of each other, and
+    //    they meet and overlap in the middle. That is what the last two
+    //    pairs were: a TopLeft window in column 2 at x=1296 and a TopRight
+    //    one in its own column 0 at x=1536, sharing 120px. Ten became two.
+    //
+    // A shared pitch makes the left walk and the right walk mirror images
+    // of the same lattice, so a column counted from the left edge and a
+    // column counted from the right edge can only meet if they are the same
+    // column — which is still the same cell, and the corner's own column
+    // count is what keeps them from being.
+    int maxW = 0;
+    int maxH = 0;
+    for (const SubSlot &sub : subSlots_) {
+        if (!sub.src)
+            continue;
+        maxW = qMax(maxW, qRound(sub.src->contentSize().width()
+                                 * sub.src->scale()));
+        maxH = qMax(maxH, qRound(sub.src->contentSize().height()
+                                 * sub.src->scale()));
+    }
+    const QSize lattice(maxW, maxH);
+
     // per-corner ordinal counter
     QHash<int, int> ordinal;
     for (int i = 0; i < subSlots_.size(); ++i) {
@@ -442,7 +488,7 @@ QVector<QRectF> HudCanvas::subWindowWall(const QSize &logical) const
         const Corner corner = sub.src->corner();
         const int c = static_cast<int>(corner);
         const int n = ordinal.value(c, 0);
-        out[i] = subWindowGridRect(corner, n, logical);
+        out[i] = subWindowGridRect(corner, n, logical, lattice);
         ordinal.insert(c, n + 1);
     }
     return out;

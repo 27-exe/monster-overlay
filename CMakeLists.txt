@@ -1480,6 +1480,29 @@ add_executable(world-severable-scan-tests
         -Wall -Wextra -Wpedantic)
     add_test(NAME split-game-seed-dispatch-tests
              COMMAND split-game-seed-dispatch-tests)
+    # v0.14: the overlap-free wall, measured against the REAL sizes of the
+    # windows it lays out rather than against its own cell constants.
+    #
+    # The wall's grid is a pure function of (corner, ordinal) so that its
+    # answer is resolution-independent and "why is this window here" has an
+    # answer. What a pure function of corners and ordinals cannot know is
+    # how big the windows are -- and the cells were 260x128 while the real
+    # split windows measure up to 560x183, so cells claimed rectangles other
+    # windows already occupied. mousePressEvent walks the boxes in reverse,
+    # so the window underneath was simply not clickable, which is the whole
+    # of "I cannot drag the sub-windows past the midline".
+    add_executable(sub-window-wall-tests
+        tests/sub_window_wall_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(sub-window-wall-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets mhw-ui)
+    target_include_directories(sub-window-wall-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(sub-window-wall-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME sub-window-wall-tests COMMAND sub-window-wall-tests)
+    set_tests_properties(sub-window-wall-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     set_tests_properties(split-game-seed-dispatch-tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         RESOURCE_LOCK "panels-ini")

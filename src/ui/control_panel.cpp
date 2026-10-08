@@ -412,6 +412,20 @@ public:
         // HudCanvas::subWindowGridRect.
         const QSize probe(3840, 2160);
 
+        // The largest window anywhere in this wall. One lattice for every
+        // corner — see the note at the column walk below for why a
+        // per-corner pitch leaves the two sides of the screen overlapping
+        // in the middle.
+        QSize lattice;
+        for (const EntryImpl &probe2 : entries_) {
+            if (!probe2.window)
+                continue;
+            const QSize want(probe2.window->contentSize().width(),
+                             probe2.window->contentSize().height());
+            lattice.setWidth(qMax(lattice.width(), want.width()));
+            lattice.setHeight(qMax(lattice.height(), want.height()));
+        }
+
         for (Corner corner : kCornerOrder) {
             // Same walk, different starting cell per game.
             //
@@ -432,14 +446,39 @@ public:
             //
             // The offset is derived from the game the host was built for,
             // so it cannot drift from the windows it is placing.
+            // ONE LATTICE FOR THE WHOLE WALL, sized by the largest window
+            // anywhere in it.
+            //
+            // Per-window sizing is not enough (a column advances by a
+            // different width each step while its boxes share one x: twelve
+            // overlapping pairs became ten). Per-corner sizing is not
+            // enough either, because the two sides of the screen are one
+            // screen: a TopLeft cluster walks rightwards from the left
+            // edge, a TopRight one leftwards from the right, and with
+            // independent pitches they meet and overlap in the middle.
+            // That was the last two pairs — a TopLeft window in column 2 at
+            // x=1296 against a TopRight one in its column 0 at x=1536,
+            // sharing 120px.
+            //
+            // The pitch is therefore computed ONCE, outside the corner
+            // loop, and every corner walks the same lattice.
             int ordinal = (game_ == mhw::GameId::Rise) ? kRiseWallColumnShift
                                                        : 0;
             for (EntryImpl &entry : entries_) {
                 if (!entry.window) continue;
                 Panel *p = entry.window.get();
                 if (p->corner() != corner) continue;
-                const QRectF cell =
-                    HudCanvas::subWindowGridRect(corner, ordinal, probe);
+                // The cell is THIS window's size, not a constant. A
+                // 260x128 cell cannot hold a 560x183 window, so consecutive
+                // cells claimed rectangles their neighbours' bodies already
+                // occupied: twelve overlapping pairs out of eleven windows.
+                // mousePressEvent walks the boxes in reverse, so the window
+                // underneath was never clickable — which is what the user
+                // reported as "the sub-windows cannot be dragged past the
+                // midline". The clamp was fine; the window was not being
+                // clicked at all.
+                const QRectF cell = HudCanvas::subWindowGridRect(
+                    corner, ordinal, probe, lattice);
                 ++ordinal;
                 // Only the two components the corner READS are written;
                 // the other two are dead arithmetic that would save into
