@@ -189,9 +189,18 @@ int main(int argc, char **argv)
               "chart: declares itself a sub-window (Panel::isSubWindow)");
         check(w.contentMargin() == kSplitMargin,
               "chart: contentMargin() is the shared kSplitMargin");
-        check(w.contentHeight() == 2 * kSplitMargin + 140,
-              "chart: contentHeight() is margin*2 + the panel's own 140 "
-              "(HTML .chart height), not a different number");
+        // v0.16: the chart window now carries the quest timer the mother
+        // panel used to draw alone, so its reserve is margin*2 + the timer
+        // strip + the chart. Spelled with the panel's own constants rather
+        // than a literal, so the next height change is a one-line edit here
+        // instead of a mysterious red suite — the number was hard-coded
+        // before, which is how adding 14px of title row went unnoticed.
+        check(w.contentHeight()
+                  == 2 * kSplitMargin
+                     + DamageChartStripPanel::kTimerStripH
+                     + mhw::damage_block::kChartH,
+              "chart: contentHeight() is margin*2 + the timer strip it "
+              "reserves + the chart block, not a different number");
         check(w.contentWidth() == 358,
               "chart: contentWidth() is the panel's own chart slot "
               "(380 - 2*11) - the width the chart always had in the panel");
@@ -208,7 +217,10 @@ int main(int argc, char **argv)
               "chart: the demo seed makes hasVisibleContent() answer true");
         check(paintsAnything(w),
               "chart: the primed window actually PAINTS pixels");
-        check(w.height() == 2 * kSplitMargin + 140,
+        check(w.height()
+                  == 2 * kSplitMargin
+                     + DamageChartStripPanel::kTimerStripH
+                     + mhw::damage_block::kChartH,
               "chart: the reserved HEIGHT is the painted height");
         check(w.width() >= w.contentWidth(),
               "chart: the reserved WIDTH is at least the content width "

@@ -73,6 +73,23 @@
 // (the P1 note at panel_player.cpp:582-585, which is why it survives a
 // missing quest instead of collapsing with it).
 //
+// THE THREE STATES (restored)
+// ---------------------------
+// The split left this window with a BINARY conn line: connected ?
+// 已连接 · PID · BASE : ○ 未连接. PlayerPanel had THREE
+// (panel_player.cpp:586-623) — offline, attached-but-nothing-resolved,
+// and live — and the middle one is the one the CachyOS reports were
+// unreadable without, because it carried the reader's own reason on its
+// own row ("cannot open the address map" / "waiting for
+// MonsterHunterWorld.exe" / "read denied (EPERM)" all painted the same
+// unexplained empty panel before v0.9.1 P1).
+//
+// So the model now carries `hasData` and `readerStatus` next to the
+// attach flag `connected` already holds, and the window draws the
+// reader's reason as its own line whenever the state is not live. The
+// three are distinguishable at a glance, and the diagnostic is never
+// swallowed by a "Connected · PID --" that is not true.
+//
 // The four quest painters below are this file's own copies of the ones
 // panel_player.cpp:866-939 runs, written out in full on purpose: those
 // live in that file's anonymous namespace and are unreachable from here,
@@ -108,16 +125,50 @@ struct InfoRow {
     // weaponId (player_view_model.cpp:30-37), which are the weapon
     // window's business. An empty party is the honest "not in a session"
     // answer, which is what this row reports for a lone hunter.
+    //
+    // `connected` is the ATTACH state (snap.attached) — whether a process
+    // was found and its memory opened. It is NOT "the overlay has
+    // something to show", which is the conflation that lost PlayerPanel's
+    // middle state in the split: a snapshot with no game running still
+    // answered attached=true on the first tick after a reader reload.
+    // `hasData` is the data state (snap.player.valid) and `readerStatus`
+    // is the reader's own reason for the state it is in (snap.status) —
+    // the two inputs panel_player.cpp:545-548 read together, restored
+    // here so the diagnostic line can be drawn again.
     qint64          pid{-1};
     quint64         imageBase{0};
     int             partyCount{0};
     bool            connected{false};   // attach state, for the dot's colour
+    bool            hasData{false};     // player.valid — anything resolved at all
+    QString         readerStatus;       // snap.status — the reader's own reason
     bool            hasQuest{false};    // quest.active && id > 0 — the "#id" suffix
     int             questId{0};
 
     [[nodiscard]] bool isEmpty() const noexcept
     {
         return !hasQuest && !connected;
+    }
+
+    // The three states of the conn stream, in the order PlayerPanel
+    // distinguished them (panel_player.cpp:586-587):
+    //
+    //   Offline   — nothing attached; no game process was found.
+    //   NoData    — attached, but not a single field resolved. The state
+    //               the CachyOS reports were filed under, because a
+    //               denied read, a missing address map and a waiting
+    //               process all painted the same unexplained empty panel
+    //               until v0.9.1 P1 made each one print its own reason.
+    //   Live      — attached and the player struct resolved.
+    //
+    // A predicate, not an enum field, so the model cannot carry a state
+    // that disagrees with the two booleans that produce it.
+    enum class State { Offline, NoData, Live };
+
+    [[nodiscard]] State state() const noexcept
+    {
+        if (!connected)
+            return State::Offline;
+        return hasData ? State::Live : State::NoData;
     }
 };
 

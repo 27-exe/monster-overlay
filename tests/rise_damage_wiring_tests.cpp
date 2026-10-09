@@ -204,10 +204,25 @@ int main()
                   "petDamagePanel.setVisible(petDamagePanel.panelEnabled()"
                   "&&petDamagePanel.hasVisibleContent());",
                   "Rise mounts the pets surface only when it has rows to draw");
+    // The needle below used to be the whole call, which made this test a
+    // spelling check: adding a THIRD condition to the gate (v0.16 added
+    // damagePanelHasBlocks(), so a Split launch with every content block
+    // stripped stops mounting the shell that used to sit on HDMI) broke
+    // the assertion even though the semantics it guards — "never
+    // force-show the panel without data" — still held.
+    //
+    // What is actually being protected is the HEAD of the gate, not its
+    // tail. So assert the prefix, and separately assert the new condition
+    // is present, which is a stronger statement than the old one: the
+    // panel is now gated on content AND on having something left to draw.
     checkContains(mainSource,
                   "damagePanel.setVisible(damagePanel.panelEnabled()"
-                  "&&damagePanel.hasVisibleContent());",
+                  "&&damagePanel.hasVisibleContent()",
                   "Rise damage panel hides itself without data, like World");
+    checkContains(mainSource,
+                  "damagePanelHasBlocks(",
+                  "and the damage panel also stops mounting once the split "
+                  "mask leaves it no content block to draw (v0.16)");
     checkNotContains(mainSource,
                      "damagePanel.setVisible(true);",
                      "no branch force-shows the damage panel without data");

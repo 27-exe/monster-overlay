@@ -80,6 +80,12 @@ constexpr int kLabelPt      = mhw::split_layout::kSplitFontLabel;   // qFontL
 constexpr int kValuePt      = mhw::split_layout::kSplitFontValue;   // qFontL10
 constexpr int kTimerPt      = mhw::split_layout::kSplitFontAccent;  // qFontL12
 constexpr int kMetaFontSize = mhw::split_layout::kSplitFontLabel;   // panel's conn row is 8pt
+// The reader-diagnostic line. panel_player.cpp:614 drew it at 8pt, one
+// step below its own qrow scale; the split window has no 8pt role (its
+// stack is 9/10/12 and every other line reads from it), so the
+// diagnostic takes the label size rather than inventing a fourth one
+// that nothing else shares.
+constexpr int kStatusPt     = mhw::split_layout::kSplitFontLabel;
 
 // ---- Colour palette (the four the Quest rows use) -----------------------
 constexpr int kLabelR  = 146; constexpr int kLabelG  = 148; constexpr int kLabelB  = 149;  // --t3
@@ -88,10 +94,16 @@ constexpr int kQuestR  = 255; constexpr int kQuestG  = 214; constexpr int kQuest
 constexpr int kTimerR  = 80;  constexpr int kTimerG  = 197; constexpr int kTimerB  = 183;  // #50c5b7
 constexpr int kCartR   = 255; constexpr int kCartG   = 118; constexpr int kCartB   = 118;  // #ff7676
 constexpr int kMetaR   = 120; constexpr int kMetaG   = 122; constexpr int kMetaB   = 124;  // panel:860
+// The reader-diagnostic line's grey — panel_player.cpp:617 verbatim.
+constexpr int kStatusR = 150; constexpr int kStatusG = 150; constexpr int kStatusB = 150;
 // Conn dot: the panel's kConnGreen for a live attach and kConnRed for a
 // dead one (panel_player.cpp:82-83, which only ever drew the green arm).
 constexpr int kConnGreenR = 76;  constexpr int kConnGreenG = 175; constexpr int kConnGreenB = 80;
 constexpr int kConnRedR   = 244; constexpr int kConnRedG   = 67;  constexpr int kConnRedB   = 54;
+// The panel's third colour: "attached, but nothing resolved yet" —
+// distinct from the hard-red disconnected label so a denied read is not
+// mistaken for a missing game process (panel_player.cpp:84-87).
+constexpr int kConnAmberR = 232; constexpr int kConnAmberG = 176; constexpr int kConnAmberB = 80;
 
 // A Chakra Petch font at `px`, antialiased — the same construction
 // panel_player.cpp:794-807 uses for every qrow font. Measuring or drawing
@@ -245,21 +257,25 @@ QString composeCartValue(const mhw::InfoRow &row)
 // of four, and the meta stream still its own line at the foot — it is
 // provenance, and moving it to the head would put PID above the timer.
 
-// Which of the three lines a stream occupies, in stacking order.
+// Which of the four lines a stream occupies, in stacking order.
+// Meta MUST stay last — see the note on streamHeight() about why the
+// stacking order is load-bearing.
 enum class InfoLine : int {
-    ZoneQuest = 0,   // 「区域」 left cell, 「任务」 right cell
-    TimeCarts = 1,   // 「剩余」 left cell, 「猫车」 right cell
-    Meta      = 2,   // dot + 已连接 · PID · BASE   party · #id
+    ZoneQuest  = 0,   // 「区域」 left cell, 「任务」 right cell
+    TimeCarts  = 1,   // 「剩余」 left cell, 「猫车」 right cell
+    ReaderStatus = 2, // the reader's own reason, grey, only when not live
+    Meta       = 3,   // dot + 已连接 · PID · BASE   party · #id
 };
 
-constexpr int kInfoLines = 3;
+constexpr int kInfoLines = 4;
 
 // The pitch every line must reserve, measured at the fonts the paint
 // actually sets, via rowPitch() above:
-//   ZoneQuest  — max(9pt label, 10pt value)          -> ceil(16.89) = 17
-//   TimeCarts  — max(12pt timer, 10pt value)         -> ceil(20.78) = 21
-//   Meta       — max(9pt left,  9pt medium right)    -> ceil(15.58) = 16
-// A function of the fonts rather than three integer constants, so editing
+//   ZoneQuest    — max(9pt label, 10pt value)          -> ceil(16.89) = 17
+//   TimeCarts    — max(12pt timer, 10pt value)         -> ceil(20.78) = 21
+//   ReaderStatus — 9pt                                -> ceil(15.58) = 16
+//   Meta         — max(9pt left,  9pt medium right)    -> ceil(15.58) = 16
+// A function of the fonts rather than four integer constants, so editing
 // a font size cannot desync the height the way kMetaRowH = 11 did.
 [[nodiscard]] int infoLinePitch(InfoLine line)
 {
@@ -268,6 +284,8 @@ constexpr int kInfoLines = 3;
         return std::max(rowPitch(makeFont(kLabelPt)), rowPitch(makeFont(kValuePt)));
     case InfoLine::TimeCarts:
         return std::max(rowPitch(makeFont(kTimerPt)), rowPitch(makeFont(kValuePt)));
+    case InfoLine::ReaderStatus:
+        return rowPitch(makeFont(kStatusPt));
     case InfoLine::Meta:
         return std::max(rowPitch(makeFont(kMetaFontSize)),
                        rowPitch(makeFont(kMetaFontSize, QFont::Medium)));
@@ -275,22 +293,81 @@ constexpr int kInfoLines = 3;
     return 0;   // unreachable: the switch above covers every enumerator
 }
 
+// Whether a line is drawn at all, for one resolved row. The quest stream
+// owns the two table lines; the conn stream owns the meta line and — when
+// the state is not live — the reader-diagnostic line above it.
+//
+// This is the second place the three states are read (the first is
+// composeMetaLeft), and it is deliberately a function of the ROW rather
+// than of a live bool: streamHeight() walks every line in stacking order
+// and asks this, so a line that is drawn but not counted here would clip
+// and a line counted here but not drawn would leave a dangling gap.
+[[nodiscard]] bool lineIsDrawn(InfoLine line, const mhw::InfoRow &row)
+{
+    switch (line) {
+    case InfoLine::ZoneQuest:
+    case InfoLine::TimeCarts:
+        return row.hasQuest;
+    case InfoLine::ReaderStatus:
+        // Drawn in exactly the two states the panel drew it in: offline
+        // (nothing found) and attached-but-nothing-resolved. In the live
+        // state the reader's status is "MHW 已连接 · PID …", which is
+        // already the meta line below it — printing both would be a
+        // duplicate row, and the panel did not draw it either
+        // (panel_player.cpp:586-587 returned early before it).
+        //
+        // AND only when the reader actually said something. The panel
+        // collapsed the row in that case (panel_player.cpp:588,
+        // `rows = status_.isEmpty() ? 1 : 2`), and a window that reserves
+        // a line it does not draw is a dangling gap the user reads as a
+        // layout defect — the mirror image of the clipped-row defect the
+        // pitch functions exist to prevent. Both this predicate and the
+        // paint ask the same question, so they cannot disagree.
+        if (row.state() == mhw::InfoRow::State::Live)
+            return false;
+        return !row.readerStatus.isEmpty();
+    case InfoLine::Meta:
+        return true;
+    }
+    return false;
+}
+
 // The meta line's left half: the connection word plus the process
-// identity while attached, and the plain offline label when not. The
-// panel only ever reached its Conn row on the has-data path, so it always
-// printed the connected wording; this window is mounted without a game
-// running, and claiming 已连接 over PID -- would be the lie the row exists
-// to prevent.
+// identity while live, and the state label when not. The panel only ever
+// reached its Conn row on the has-data path, so it always printed the
+// connected wording; this window is mounted without a game running, and
+// claiming 已连接 over PID -- would be the lie the row exists to prevent.
+//
+// Three states, the panel's own wording (panel_player.cpp:608-609):
+// offline -> ○ 未连接, attached-but-empty -> ○ 无数据, live -> 已连接.
+// The panel reached the offline label through its title row's right edge;
+// this window has no title row, so the label sits on the meta line where
+// the reader's eye already is.
 QString composeMetaLeft(const mhw::InfoRow &row)
 {
-    if (!row.connected)
+    switch (row.state()) {
+    case mhw::InfoRow::State::Offline:
         return mh::tr("ui.player_status_offline");
+    case mhw::InfoRow::State::NoData:
+        return mh::tr("ui.player_status_no_data");
+    case mhw::InfoRow::State::Live:
+        break;
+    }
     const QString mem = QStringLiteral("PID %1 · BASE 0x%2")
         .arg(row.pid > 0 ? QString::number(row.pid) : QStringLiteral("--"))
         .arg(row.imageBase != 0
                  ? QString::number(static_cast<qulonglong>(row.imageBase), 16)
                  : QStringLiteral("--"));
     return mh::tr("ui.player_connected").arg(mem);
+}
+
+// The reader-diagnostic line: the reader's own reason, verbatim and
+// elided, in the grey the panel used (panel_player.cpp:611-620). Empty
+// when the reader had nothing to say — the panel collapsed the line in
+// that case rather than drawing a blank row, and so does this.
+QString composeReaderStatus(const mhw::InfoRow &row)
+{
+    return row.readerStatus;
 }
 
 // The meta line's right half: party size plus the quest id, panel_player
@@ -306,15 +383,17 @@ QString composeMetaRight(const mhw::InfoRow &row)
 }
 
 // A line is drawn when it belongs to an enabled stream. The Quest stream
-// owns the two table lines; the Conn stream owns the meta line. The
-// stacking order never changes — a stream going off collapses its own
-// lines out of the middle, it never reorders the ones that remain.
+// owns the two table lines; the Conn stream owns the meta line and the
+// reader-diagnostic line above it. The stacking order never changes — a
+// stream going off collapses its own lines out of the middle, it never
+// reorders the ones that remain.
 [[nodiscard]] bool lineBelongsToStream(InfoLine line, bool quest, bool conn)
 {
     switch (line) {
     case InfoLine::ZoneQuest:
     case InfoLine::TimeCarts:
         return quest;
+    case InfoLine::ReaderStatus:
     case InfoLine::Meta:
         return conn;
     }
@@ -335,6 +414,40 @@ QString composeMetaRight(const mhw::InfoRow &row)
 // because drawText into a QRectF clips by default. The pitch now comes
 // from QFontMetrics.height(), so the reservation and the draw agree by
 // construction.
+//
+// THE STACKING ORDER IS LOAD-BEARING, which is why Meta is the LAST
+// enumerator. The panel drew the reader's reason ABOVE the state label
+// (status line, then the label row at the title's right edge), and a
+// hunter reading top to bottom must meet the reason before the verdict.
+// Reordering the enum would silently reorder the paint — nothing else in
+// this file references the enumerator values, but streamHeight() and
+// paintPanel() both walk the enum in order, so a swap changes the window.
+//
+// Four combinations of (quest, conn), measured from the same pitch table
+// the paint uses — the test file pins these numbers independently. The
+// pitches below are what THIS HOST's font stack resolves (measured, see
+// the note after the table):
+//   ZoneQuest    — max(9pt, 10pt medium) = max(16, 17) = 17
+//   TimeCarts    — max(12pt bold, 10pt medium) = max(21, 17) = 21
+//   ReaderStatus — 9pt = 16
+//   Meta         — max(9pt, 9pt medium) = 16
+//   kGapLine     — kSplitGapWithin = 7
+//
+//   quest + conn, not live:  22 + 17 + 7 + 21 + 7 + 16 + 7 + 16 = 113
+//   quest + conn, live:      22 + 17 + 7 + 21 + 7 + 16            =  90
+//   quest only:              22 + 17 + 7 + 21                    =  67
+//   conn only, not live:     22 + 16 + 7 + 16                    =  61
+//   conn only, live:         22 + 16                             =  38
+//   conn only, no reason:    22 + 16                             =  38
+//
+// THE NUMBERS ABOVE ARE WHAT THIS HOST'S FONT STACK RESOLVES, not
+// constants to type. They were measured (a probe printing every pitch in
+// this table), and they differ by 1px from what the same fonts resolve
+// to in the shipped build — which is exactly
+// why the pitch is a function of QFontMetrics.height() rather than a
+// number anyone would otherwise write down. A window whose reservation
+// drifts from its draw is the v0.10.3 defect (clipped rows, no warning
+// from Qt), so nothing here may be replaced by an integer.
 [[nodiscard]] int streamHeight(bool quest, bool conn)
 {
     int h = 2 * kMargin;
@@ -342,6 +455,35 @@ QString composeMetaRight(const mhw::InfoRow &row)
     for (int i = 0; i < kInfoLines; ++i) {
         const auto line = static_cast<InfoLine>(i);
         if (!lineBelongsToStream(line, quest, conn))
+            continue;
+        if (previous)
+            h += kGapLine;
+        h += infoLinePitch(line);
+        previous = true;
+    }
+    return h;
+}
+
+// The same arithmetic, for a resolved row: every line lineIsDrawn()
+// answers true for, one pitch each, one gap between consecutive drawn
+// lines, margins on both ends. This is what contentHeight() calls — the
+// two-bool overload above is the shape the tests mirror.
+//
+// It exists as a separate function rather than a third parameter on
+// streamHeight() because the diagnostic line is NOT a stream toggle: it
+// is per-snapshot, and a user who turns the Conn bit off still has the
+// Quest lines. Collapsing the two into one signature would make
+// "the reader had nothing to say" indistinguishable from "the Conn
+// section is off", and those two need different behaviour everywhere.
+[[nodiscard]] int streamHeight(const mhw::InfoRow &row, bool quest, bool conn)
+{
+    int h = 2 * kMargin;
+    bool previous = false;
+    for (int i = 0; i < kInfoLines; ++i) {
+        const auto line = static_cast<InfoLine>(i);
+        if (!lineBelongsToStream(line, quest, conn))
+            continue;
+        if (!lineIsDrawn(line, row))
             continue;
         if (previous)
             h += kGapLine;
@@ -399,6 +541,20 @@ InfoRow buildInfoModel(const mhw::GameSnapshot &snap)
     row.imageBase = static_cast<quint64>(snap.imageBase);
     row.partyCount = snap.party.size();
     row.connected = snap.attached;
+    // The two inputs the panel read together (panel_player.cpp:545-548)
+    // and this window lost in the split. `attached` alone is NOT the
+    // data state: it answers "a process was found and its memory opened",
+    // which is true on the tick before the first player struct resolves
+    // — and the binary conn line then claimed 已连接 over PID --.
+    //
+    // `player.valid` is the data state. `status` is the reader's own
+    // reason for the state it is in, carried verbatim: it is already a
+    // localized sentence (world_reader.cpp:59/67/100, mhr_reader.cpp:
+    // 265/277/307), so re-resolving it here would need the key rather
+    // than the string, and the reader composes it with arguments this
+    // window does not have.
+    row.hasData     = snap.player.valid;
+    row.readerStatus = snap.status;
 
     return row;
 }
@@ -470,6 +626,13 @@ void PlayerInfoStripPanel::retranslateUi()
             row_.questName  = mh::tr("ui.player_quest_idle");
             row_.questState = QString();
         }
+        // readerStatus is NOT re-resolved here, and that is deliberate:
+        // it arrives from the reader already translated in the CURRENT
+        // locale (world_reader.cpp:59/67/100 trMessage() at write time),
+        // so there is no key to re-look-up — re-resolving would need the
+        // key plus the two arguments the reader composed it with. It goes
+        // stale for at most one poll tick after a locale switch, which is
+        // the same latency the zone label had before it was cached.
     }
     triggerUpdate();
 }
@@ -521,11 +684,20 @@ int PlayerInfoStripPanel::contentHeight() const
     // a row is never shorter than the glyphs it draws — the property
     // kMetaRowH = 11 for an 11pt font did not have.
     //
-    // Both streams on:  11 + 17 + 3 + 21 + 3 + 16 + 11 = 82
-    //                     (was 101 with the same streams on)
-    // Quest only:       11 + 17 + 3 + 21 + 11 = 63
-    // Conn only:        11 + 16 + 11 = 38
-    return streamHeight(questEnabled(), connEnabled());
+    // Both streams on, live:        11 + 17 + 7 + 21 + 7 + 16 + 11 = 90
+    // Both streams on, not live:    11 + 17 + 7 + 21 + 7 + 16 + 7 + 16 = 113
+    //                                 (the reader's reason earns its own
+    //                                  line, exactly as the panel's
+    //                                  status row did)
+    // Quest only:                   11 + 17 + 7 + 21 + 11 = 67
+    // Conn only, live:              11 + 16 + 11 = 38
+    // Conn only, not live:          11 + 16 + 7 + 16 = 61
+    // Conn only, no reason:         11 + 16 + 11 = 38
+    //
+    // The row overload, not the two-bool one: the reader-diagnostic line
+    // is per-snapshot, and only the row knows whether there is a reason
+    // to draw. The two-bool overload stays for the tests' mirror.
+    return streamHeight(row_, questEnabled(), connEnabled());
 }
 
 int PlayerInfoStripPanel::contentWidth() const
@@ -543,6 +715,7 @@ int PlayerInfoStripPanel::contentWidth() const
     const QFont fTimer  = makeFont(kTimerPt, QFont::Bold);
     const QFont fMeta   = makeFont(kMetaFontSize);
     const QFont fMetaR  = makeFont(kMetaFontSize, QFont::Medium);
+    const QFont fStatus = makeFont(kStatusPt);
 
     int widest = 0;
     auto need = [&widest](int w) { widest = std::max(widest, w); };
@@ -584,6 +757,20 @@ int PlayerInfoStripPanel::contentWidth() const
                  + kLabelGap
                  + QFontMetricsF(fMetaR).horizontalAdvance(
                        composeMetaRight(row_)))));
+
+        // The reader's reason, when there is one to draw. Measured here
+        // rather than left to the elision in paintPanel: a line whose
+        // width is not reserved is a line that gets clipped, and the
+        // whole reason the reason exists is to be readable. The ptrace
+        // sentence is long, so this is the term that sets the window's
+        // width in the offline/no-data states — which is correct, because
+        // that is the only thing on screen worth reading then.
+        if (lineIsDrawn(InfoLine::ReaderStatus, row_)) {
+            const QString status = composeReaderStatus(row_);
+            if (!status.isEmpty())
+                need(static_cast<int>(std::ceil(
+                         QFontMetricsF(fStatus).horizontalAdvance(status))));
+        }
     }
 
     if (widest == 0)
@@ -636,6 +823,15 @@ void PlayerInfoStripPanel::setupDemoData()
     snap.pid      = 12345;
     snap.imageBase = 0x7FFE00000000ULL;
     snap.party.resize(4);   // panel_player.cpp:1294, partyCount_ = 4
+    // The two fields the three-state conn line reads, seeded the way the
+    // panel's own demo seeds them (panel_player.cpp:1336-1353, :1544):
+    // attached AND hasData AND a reader status. Without `player.valid`
+    // this preview would answer NoData and render 「○ 无数据」 over a demo
+    // that is supposed to look live — the demo is the one place the
+    // middle state must not appear. The status string is the panel's
+    // own demo label, carried for the same reason the panel carries it.
+    snap.player.valid = true;
+    snap.status       = mh::tr("data.demo.status");
     if (game_ == mhw::GameId::Rise) {
         snap.zone = mhw::ZoneRef{mhw::GameId::Rise, 0};   // Jungle
     } else {
@@ -812,6 +1008,45 @@ void PlayerInfoStripPanel::paintPanel(QPainter &p)
         advance(InfoLine::TimeCarts);
     }
 
+    // ---- Line 2.5: the reader's reason, grey, above the verdict ---------
+    //
+    // The line the split lost. panel_player.cpp:611-620 drew the reader's
+    // own status string on its own row in 8pt grey, elided into the panel
+    // width, and the reason it exists is a defect with a name: three
+    // different failures (「cannot open the address map」, 「waiting for
+    // MonsterHunterWorld.exe」, 「read denied (EPERM)」) all rendered as
+    // the same unexplained empty panel, which is what made the CachyOS
+    // reports unreadable. v0.9.1 P1 fixed it there; the v0.12 split
+    // dropped it here.
+    //
+    // It sits ABOVE the meta line, not below: the meta line is the verdict
+    // (○ 未连接 / ○ 无数据 / 已连接) and a reason under its verdict reads
+    // as an afterthought. The panel had the same order.
+    //
+    // Drawn only in the two non-live states, and only when the reader
+    // actually said something — an empty string draws nothing and
+    // reserves nothing, which is why contentHeight() asks the same
+    // question rather than assuming the line.
+    if (conn && lineIsDrawn(InfoLine::ReaderStatus, row_)) {
+        const QString status = composeReaderStatus(row_);
+        if (!status.isEmpty()) {
+            const int pitch = infoLinePitch(InfoLine::ReaderStatus);
+            const QRectF rect(innerLeft, y, innerW, pitch);
+            const QFont fStatus = makeFont(kStatusPt);
+            p.setFont(fStatus);
+            p.setPen(QColor(kStatusR, kStatusG, kStatusB));
+            // Elided, never wrapped: the ptrace sentence is longer than
+            // the window and the panel elided it too. The window's width
+            // reserves the full advance (contentWidth measures the same
+            // string in the same font), so in practice this only bites
+            // once the user's minWidth floor squeezes the window.
+            p.drawText(rect, Qt::AlignLeft | Qt::AlignVCenter,
+                       QFontMetricsF(fStatus)
+                           .elidedText(status, Qt::ElideRight, innerW));
+            advance(InfoLine::ReaderStatus);
+        }
+    }
+
     // ---- Line 3: the Conn stream's meta line, at the foot ---------------
     if (conn) {
         const int pitch = infoLinePitch(InfoLine::Meta);
@@ -819,12 +1054,18 @@ void PlayerInfoStripPanel::paintPanel(QPainter &p)
         const QColor metaCol(kMetaR, kMetaG, kMetaB);
 
         // The dot, in the panel's colour pair: green for a live attach,
-        // red for a dead one. Drawn only when attached, because the
-        // offline label already carries its own 「○」. Its centre is the
-        // pitch's centre, not a hard-coded 11/2.
+        // red for a dead one, AMBER for the third state the panel had
+        // (panel_player.cpp:605-606) — attached but nothing resolved, so
+        // a denied read is not mistaken for a missing game process.
+        // Drawn only when attached, because the offline label already
+        // carries its own 「○」. Its centre is the pitch's centre, not a
+        // hard-coded 11/2.
         if (row_.connected) {
             p.setPen(Qt::NoPen);
-            p.setBrush(QColor(kConnGreenR, kConnGreenG, kConnGreenB));
+            if (row_.hasData)
+                p.setBrush(QColor(kConnGreenR, kConnGreenG, kConnGreenB));
+            else
+                p.setBrush(QColor(kConnAmberR, kConnAmberG, kConnAmberB));
             p.drawEllipse(QPointF(innerLeft + 5, y + pitch / 2.0), 2.5, 2.5);
             p.setBrush(Qt::NoBrush);
         }

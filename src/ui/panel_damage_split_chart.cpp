@@ -18,6 +18,11 @@
 #include "ui/panel_sections.h"
 #include "ui/panel_sizing.h"
 
+// std::isfinite on the quest timer. panel_damage.cpp:242 reaches it
+// through its own include set; this file spells it rather than relying
+// on whatever Qt header happens to pull <cmath> in today.
+#include <cmath>
+
 // i18n lookup: the shared header defines damage_blocks::tr — named
 // for the header rather than `mh` because a header that spell `mh::tr`
 // collides with every .cpp that already has its own copy (see the note in
@@ -129,9 +134,11 @@ void DamageChartStripPanel::seedDemoModel()
     demoParty.append({damage_blocks::tr(QStringLiteral("data.demo.party.a")), 1, 500, 1});
     demoParty.append({damage_blocks::tr(QStringLiteral("data.demo.party.b")), 12, 300, 2});
     demoParty.append({damage_blocks::tr(QStringLiteral("data.demo.party.c")), 4, 250, 3});
-    // 6:51, the seeded quest timer — unchanged, and not drawn by this
-    // window, but passed so the ViewModel's seeded state is the same one
-    // the panel would produce from the same call.
+    // 6:51, the seeded quest timer — now drawn by this window's own
+    // timer strip, so the console preview shows the same clock the
+    // panel's title row used to carry. Passed either way so the
+    // ViewModel's seeded state is the one the panel would produce from
+    // the same call.
     m_vm.seedDemoData(demoParty, 411.0F);
     rows_ = mhw::buildDamageChartModel(m_vm);
     demoData_ = true;
@@ -169,7 +176,40 @@ void DamageChartStripPanel::paintPanel(QPainter &p)
     // area is the shape this split exists to remove. The chart's own
     // translucent background (part of drawDamageChart) is the surface.
     const int margin = mhw::split_layout::kSplitMargin;
-    const QRectF chartRect(margin, margin,
+
+    // ── The quest timer strip, v0.16 ────────────────────────────────────
+    //
+    // The right-aligned half of the panel's title row
+    // (panel_damage.cpp:227-252), which the split left orphaned. Drawn
+    // FIRST, at the strip contentHeight() reserves above the chart, so
+    // the reservation and the draw stay each other's inverse.
+    //
+    // The value crosses a reader boundary, so a non-finite float is
+    // possible: `Inf > 0` passes the gate and then casts to int as
+    // platform-defined garbage (typically INT_MIN). One truncation feeds
+    // both digits — the previous code truncated twice (once inside /60,
+    // once before % 60) and could disagree with itself on negatives.
+    // Copied rather than re-derived so the two surfaces cannot drift on
+    // the one value they share.
+    const float elapsedSeconds = m_vm.lastElapsedSeconds();
+    if (std::isfinite(elapsedSeconds) && elapsedSeconds > 0.0F) {
+        const int totalSeconds = static_cast<int>(elapsedSeconds);
+        const int mm = totalSeconds / 60;
+        const int ss = totalSeconds % 60;
+        const QRectF timerRect(margin, margin,
+                               drawnW - 2 * margin, kTimerStripH);
+        p.setFont(QFont(QStringLiteral("Chakra Petch"), 8));
+        p.setPen(QColor(150, 150, 150));
+        p.drawText(timerRect, Qt::AlignRight | Qt::AlignVCenter,
+                   damage_blocks::tr(QStringLiteral("ui.damage_quest_timer"))
+                       .arg(mm, 2, 10, QChar('0'))
+                       .arg(ss, 2, 10, QChar('0')));
+    }
+
+    // The chart sits below the strip, not at the margin: the strip is
+    // part of this window's content now, exactly as the panel's title
+    // row pushed the chart down 14+9 inside the panel.
+    const QRectF chartRect(margin, margin + kTimerStripH,
                            drawnW - 2 * margin,
                            mhw::damage_block::kChartH);
 

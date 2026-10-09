@@ -670,7 +670,19 @@ int main(int argc, char **argv)
     // THE CONTRACT, stated once: in split mode a mother panel mounts iff
     // it still owns a section block. PlayerPanel owns none (every
     // PlayerSection bit is claimed by a row of kPlayerSplitTargets);
-    // MonsterPanel owns Tenderize and DamagePanel owns Rows+OtherMembers.
+    // MonsterPanel is left with Tenderize and DamagePanel with
+    // OtherMembers — and NEITHER IS A BLOCK. Tenderize is a strip inside
+    // each .pc card (pcHasTenderize()), and OtherMembers is the roster
+    // filter, which panel_damage.cpp's gates never read. So all three
+    // mothers end up with nothing to draw, and the predicates that say so
+    // are mhw::playerPanelHasBlocks / monsterPanelHasBlocks /
+    // damagePanelHasBlocks (panel_sections.h).
+    //
+    // v0.16 update: DamagePanel used to be described as owning
+    // "Rows+OtherMembers". Rows is claimed by the damage-rows split
+    // window now, so only OtherMembers is left — and it is a filter, not
+    // a block, which is what makes the damage frame disappear too. The
+    // mask FACT this file asserts is unchanged; only the prose was stale.
     //
     // THE MUTATION FOR THIS SECTION. Delete the split arm of the
     // setPanelEnabled() gate at src/main.cpp and this whole block FAILS:

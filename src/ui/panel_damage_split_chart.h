@@ -29,13 +29,27 @@
 //
 // WHAT IS NOT HERE
 // ----------------
-// No chrome, no title row: a chart is a fragment of the damage panel,
-// not a panel. The constructor calls setChromeVisible(false) and
-// isSubWindow() answers true. The chart's body (the grid, the axis
-// labels, the polylines) is shared with DamagePanel through
-// ui/panel_damage_blocks.h — see that header for the normalization the
-// width change is built on, and for why the code was hoisted rather
-// than duplicated.
+// No chrome, and no title row of its own: a chart is a fragment of the
+// damage panel, not a panel. The constructor calls
+// setChromeVisible(false) and isSubWindow() answers true. The chart's
+// body (the grid, the axis labels, the polylines) is shared with
+// DamagePanel through ui/panel_damage_blocks.h — see that header for
+// the normalization the width change is built on, and for why the code
+// was hoisted rather than duplicated.
+//
+// WHAT IS HERE THAT THE BLOCK NEVER HAD: THE QUEST TIMER
+// -----------------------------------------------------
+// v0.16: the one thing DamagePanel kept for itself across the split was
+// its title row's right-aligned quest timer (panel_damage.cpp:227-252).
+// That left the mother panel in Split mode holding nothing but that
+// title row — it still mounts, still draws "DAMAGE STATS" and the
+// clock, and draws no rows, no bar and no chart, because
+// damagePanelMaskFor() took all three. The console never showed that
+// panel at all (HudCanvas::paintEvent's `if (subSlots_.isEmpty())`
+// excludes the four mother panels entirely in Split mode), so the
+// overlay had an orphan strip the user could not see, select or move
+// from the console. The timer now lives here, above the chart, and the
+// reservation counts it — see kTimerStripH and contentHeight().
 
 #include "panel.h"
 #include "core/game_snapshot.h"
@@ -58,6 +72,17 @@ class DamageChartStripPanel : public Panel {
     Q_OBJECT
 
 public:
+    // The quest-timer strip's reserved height, in logical pixels.
+    //
+    // 14 is the number panel_damage.cpp:217 reserved for the panel's
+    // whole title row, and this window draws the right half of that row
+    // into it (paintPanel's timerRect below). Reading one number in both
+    // places is what makes the reservation and the draw each other's
+    // inverse — the property split_layout_consistency_tests holds every
+    // split window to, and the one a fresh literal would break the first
+    // time either side moved.
+    static constexpr int kTimerStripH = 14;
+
     // `subWindowIndex` is this window’s row in its parent’s split table. It
     // arrives at construction time because the base Panel constructor calls
     // loadConfig(), and the index exists only to pick that call’s first-run
@@ -100,9 +125,16 @@ public:
     // The panel's height hook. The chart's own 140 plus the margin on
     // both sides. The 4px gap the panel put before the chart belongs to
     // the PANEL's layout, not to the block.
+    //
+    // v0.16: plus the quest timer strip. The panel reserved 14 for its
+    // title row (panel_damage.cpp:217) and this window now carries the
+    // right half of that row, so it reserves the same 14 — the
+    // reserve/draw inverse every split window is held to, applied to
+    // the strip that was left behind rather than to the chart.
     [[nodiscard]] int contentHeight() const override
     {
         return 2 * mhw::split_layout::kSplitMargin
+               + kTimerStripH
                + mhw::damage_block::kChartH;
     }
 

@@ -119,7 +119,7 @@
       "class": "ZERO",
       "compiled_by": [],
       "refs": [],
-      "symbols": 132
+      "symbols": 133
     },
     "src/main_control.cpp": {
       "class": "ZERO",
@@ -374,7 +374,7 @@
         "split-layout-consistency-tests",
         "split-no-empty-window-tests"
       ],
-      "symbols": 70
+      "symbols": 71
     },
     "src/ui/panel_damage.cpp": {
       "class": "INDIRECT",

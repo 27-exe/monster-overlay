@@ -4330,11 +4330,65 @@ void ControlPanel::rebuildAndRender(int idx)
         return;
     }
 
+    // v0.16: A PANEL WITH NOTHING TO SAY IS NOT DRAWN AT ALL.
+    //
+    // The user's report, verbatim:
+    //     「隐藏的面板不是真隐藏 是一个这种空面板，不能真的隐藏么？」
+    //
+    // The screenshot showed a bordered box with an accent stripe and a drag
+    // handle, no content. That is not the canvas inventing a frame: it is
+    // Panel::paintPanel() faithfully rendering an 18px chrome-only shell,
+    // because the section mask strips every content block away and only
+    // drawV03Chrome() is left. The canvas had no way to know — every base
+    // panel is bound with present=true and only pets (index 3) was ever told
+    // otherwise (hud_canvas.h, `bool present{true}`).
+    //
+    // NOT hasVisibleContent(). That was the obvious choice and it is wrong:
+    //
+    //     panel_player.h:37   hasContent() -> return true;    // ALWAYS
+    //     panel_monster.h:66  hasContent() -> return hasData_;
+    //     panel_damage.h:70   hasContent() -> return m_vm.hasData();
+    //
+    // The player panel answers true unconditionally, so gating on it would
+    // have left the exact shell the user photographed on screen while
+    // compiling cleanly and looking reasonable.
+    //
+    // The predicate that answers the real question is the same one main.cpp
+    // now gates the live overlay on: does this panel still have a CONTENT
+    // BLOCK, as opposed to a bit that only names a non-block (Tenderize,
+    // OtherMembers)? One rule, two processes — so the preview can no longer
+    // show a window the overlay would refuse to mount.
+    //
+    //
+    // It is NOT setVisible(false). The slot stays bound so selecting it in
+    // the rail still works and the inspector still opens; the window simply
+    // stops being painted, which is what "really hidden" has to mean for a
+    // canvas that also has to keep hit-testing.
+    //
+    // sectionMask() is the user's live checkbox state: the handler this
+    // function belongs to set it three lines above.
+    bool hasBlocks = true;
+    if (idx == 0)
+        hasBlocks = mhw::PlayerSection::playerPanelHasBlocks(mask);
+    else if (idx == 1)
+        hasBlocks = mhw::monsterPanelHasBlocks(mask);
+    else if (idx == 2)
+        // DamageSection::OtherMembers filters actors rather than being a
+        // content block, and damagePanelHasBlocks() knows that.
+        hasBlocks = mhw::damagePanelHasBlocks(mask);
+    // idx == 3 (pets) has no split table and keeps its own master/content
+    // gate, which the disabled arm above already returned on.
+
+    if (canvas_) {
+        canvas_->setPanelPresent(idx, hasBlocks);
+        if (hasBlocks)
+            canvas_->setPanelPixmap(idx, renderPreview(panel), true);
+        else
+            canvas_->setPanelPixmap(idx, QPixmap(), false);
+    }
     const QPixmap pix = renderPreview(panel);
     if (lab)
         lab->setPixmap(pix);
-    if (canvas_)
-        canvas_->setPanelPixmap(idx, pix, true);
     // v0.13: see the note in the disabled arm above — the same section
     // bits gate this panel's split windows.
     refreshSplitWindowPreviews();

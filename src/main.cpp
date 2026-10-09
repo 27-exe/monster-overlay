@@ -875,15 +875,33 @@ int main(int argc, char **argv)
     playerPanel.setPanelEnabled(!parser.isSet(noPlayerOption)
                                 && (playerSplitLayoutMode
                                         != mhw::PlayerSection::PlayerLayoutMode::Split
-                                    || maskPlayerForPanel != 0));
+                                    || mhw::PlayerSection::playerPanelHasBlocks(
+                                           maskPlayerForPanel)));
+    // v0.16: monsterPanelHasBlocks / damagePanelHasBlocks, not `!= 0`.
+    // MonsterPanel's split-mode mask is MonsterSection::Tenderize and
+    // DamagePanel's is DamageSection::OtherMembers — both are live
+    // toggles that draw nothing of their own, so a `!= 0` gate keeps the
+    // panel ENABLED with no block inside it. Panel::setVisible() only
+    // refuses to mount a DISABLED panel, so an enabled-but-empty panel
+    // mounts as chrome: 18px for the monster one (2*kPanelPad) and 45
+    // for the damage one (kMargin + 14 + 9 + kMargin), both with the
+    // accent stripe and border painted. That is the one-line floating
+    // window reported on both games.
+    //
+    // This is the same decision the main loop makes every tick, moved
+    // to startup so the surface is never created rather than hidden
+    // afterwards. The two cannot drift: both call the same predicate on
+    // the same derived mask.
     monsterPanel.setPanelEnabled(!parser.isSet(noMonsterOption)
                                  && (playerSplitLayoutMode
                                          != mhw::PlayerSection::PlayerLayoutMode::Split
-                                     || maskMonsterForPanel != 0));
+                                     || mhw::monsterPanelHasBlocks(
+                                            maskMonsterForPanel)));
     damagePanel.setPanelEnabled(!parser.isSet(noDamageOption)
                                 && (playerSplitLayoutMode
                                         != mhw::PlayerSection::PlayerLayoutMode::Split
-                                    || maskDamageForPanel != 0));
+                                    || mhw::damagePanelHasBlocks(
+                                           maskDamageForPanel)));
     // v0.10.1: the pet damage surface is Rise-only. World never mounts it,
     // regardless of --mask-pets / --no-pets; the console hides the matching
     // controls in World mode for the same reason.
@@ -1586,7 +1604,15 @@ int main(int argc, char **argv)
         // Read from maskPlayerForPanel rather than recomputed: that IS the
         // mask playerPanel was handed at line 568, so "does it own
         // anything" and "what is it allowed to draw" cannot disagree.
-        const bool playerPanelHasBlocks = maskPlayerForPanel != 0;
+        //
+        // v0.16: `!= 0` became playerPanelHasBlocks(). PlayerSection has no
+        // non-block bit, so the value is unchanged here — this panel was
+        // already correct, by the accident of every bit being a block. The
+        // spelling matters anyway: the clamp inside the predicate is what
+        // makes the split's own default (0xFFFFFFFF, bits 9-31 set) answer
+        // false, and a bare `!= 0` would answer true for it.
+        const bool playerPanelHasBlocks = mhw::PlayerSection::playerPanelHasBlocks(
+            maskPlayerForPanel);
 
         if (snap.player.valid || showAll) {
             playerPanel.setVisible(playerPanelHasBlocks);
@@ -1696,7 +1722,34 @@ int main(int argc, char **argv)
             // Panel::setVisible()'s existing "disabled panels never
             // mount" guard rather than a second condition, so the
             // decision stays in one place.
-            monsterPanel.setVisible(monsterPanel.panelEnabled());
+            //
+            // v0.16: AND THAT v0.14 COMMENT IS WRONG. Tenderize is NOT a
+            // block — panel_sections.h says so on the table's own comment
+            // and panel_monster.cpp agrees: its six block gates
+            // (onInfo / onHp / stamDrawn / rageDrawn / onAil / onParts)
+            // all read false for it, because the 软化 countdown is a strip
+            // INSIDE each .pc card and not a section of the panel. So in
+            // Split mode the panel's mask is 0x20, which is non-zero,
+            // which mounted it, and the height table then answered
+            // 2*kPanelPad = 18px for a drawV03Chrome(Accent::Monster)
+            // that paints the background, the accent stripe and the
+            // border anyway. 18 pixels of floating frame is the one-line
+            // window the user reported on both World and Rise:
+            // 「hdmi 都有一个一行的悬浮窗」.
+            //
+            // The console showed nothing because it previews the eleven
+            // sub-windows, not the mother panel — so the frame existed
+            // only in a live run, which is why it was reported as
+            // invisible to the console.
+            //
+            // monsterPanelHasBlocks() is the corrected test: it clamps to
+            // MonsterSection::kAll and then subtracts the bits that
+            // toggle something but draw nothing. The mask itself, the
+            // panel's gates and every baseline are untouched — only the
+            // mount decision changes.
+            monsterPanel.setVisible(monsterPanel.panelEnabled()
+                                    && mhw::monsterPanelHasBlocks(
+                                           maskMonsterForPanel));
             if (skipUpdate(monsterPanel)) {
                 monsterPanel.triggerUpdate();
             } else if (!snap.monsters.isEmpty()) {
@@ -1841,8 +1894,29 @@ int main(int argc, char **argv)
             // `hasContent() == hasData_ || riseMode_` 画一个「等待伤害数据」
             // 占位块。现在占位已删，改由面板自己回答“有没有东西可画”，
             // 主循环只做同一个判断。
+            //
+            // v0.16: AND the block question too, which hasVisibleContent()
+            // cannot answer. In Split mode Rows | Share | Chart have all left
+            // for their own windows (v0.15 moved Rows into
+            // kDamageSplitTargets), so damagePanelMaskFor() hands this panel
+            // 0x08 = OtherMembers — a live toggle that is the roster FILTER,
+            // not a block. panel_damage.cpp never reads it: its gates are
+            // onRows / onShare / onChart (:209-212) and nothing else. The
+            // height table then answers kMargin + 14 + 9 + kMargin = 45 and
+            // paintPanel draws the chrome, the 「伤害统计 DAMAGE」 title and
+            // the quest timer, and nothing else — a frame whose only content
+            // is its own title.
+            //
+            // damagePanelHasBlocks() is the corrected test. What it does NOT
+            // do is switch the filter off: riseDisplayOptions.showOtherMembers
+            // is derived from the USER's mask at :491-492, not from this
+            // derived one, so the three split windows keep honouring the
+            // toggle through the same damageSnap. Only the mount decision
+            // changes; the masks and every baseline are untouched.
             damagePanel.setVisible(damagePanel.panelEnabled()
-                                   && damagePanel.hasVisibleContent());
+                                   && damagePanel.hasVisibleContent()
+                                   && mhw::damagePanelHasBlocks(
+                                          maskDamageForPanel));
             damagePanel.triggerUpdate();
             // Rise 与 World 判据不同是刻意的，不是同一逻辑写了两遍：
             // Rise 由 DamageViewModel 自答 hasData()（它维护 quest 生命周期
@@ -1875,10 +1949,16 @@ int main(int argc, char **argv)
             }();
             if (skipUpdate(damagePanel)) {
                 damagePanel.triggerUpdate();
-                damagePanel.setVisible(!damageSnap.party.isEmpty() || showAll);
+                damagePanel.setVisible(damagePanel.panelEnabled()
+                                       && (!damageSnap.party.isEmpty() || showAll)
+                                       && mhw::damagePanelHasBlocks(
+                                              maskDamageForPanel));
             } else {
                 damagePanel.update(damageSnap);
-                damagePanel.setVisible(!damageSnap.party.isEmpty() || showAll);
+                damagePanel.setVisible(damagePanel.panelEnabled()
+                                       && (!damageSnap.party.isEmpty() || showAll)
+                                       && mhw::damagePanelHasBlocks(
+                                              maskDamageForPanel));
             }
 
         // v0.12 third wave: the damage panel's two width-hungry blocks —

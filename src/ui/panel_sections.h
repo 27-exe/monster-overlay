@@ -499,6 +499,50 @@ inline constexpr int kPlayerSplitTargetCount =
                : mask;
 }
 
+// THE NON-BLOCK BITS of PlayerSection: the bits that are a real switch
+// but paint nothing of their own, so a panel left holding only them
+// still has no block to draw.
+//
+// NONE — and that is a recorded decision, not an empty placeholder.
+// Every PlayerSection bit is a block with pixels of its own, which is
+// why the nine rows of kPlayerSplitTargets claim all nine of them and
+// why playerPanelMaskFor(Split, kAll) == 0: PlayerPanel has no
+// split-mode surface at all. The constant still exists, as a zero, so
+// the predicate below reads the same way the monster and damage ones
+// do and so a future filter bit has an obvious home rather than being
+// discovered by the symptom it produces.
+inline constexpr uint32_t kPlayerNonBlockMask = 0u;
+
+// Does this mask leave its panel with anything to DRAW?
+//
+// THE DEFECT THIS ANSWERS. `mask != 0` was the mount test for every
+// mother panel, and it is wrong the moment a bit is a switch rather
+// than a block. MonsterSection::Tenderize and DamageSection::
+// OtherMembers are both live toggles that paint nothing on their own
+// (Tenderize is a strip inside a .pc card, OtherMembers is the roster
+// filter), so a panel whose only remaining bit is one of them mounts
+// as a chrome-only frame — the one-line floating window the user
+// screenshotted, 「hdmi 都有一个一行的悬浮窗」. A mask test cannot
+// tell that from content; a block test can.
+//
+// TWO subtractions, in this order, for two different reasons:
+//
+//   & kAll        — the schema's own bits. A mask is a 32-bit field the
+//                   user can hand-edit and the startup default is
+//                   0xFFFFFFFF, so bits 9-31 are routinely SET. Without
+//                   this clamp playerPanelHasBlocks(0xFFFFFFFF) is true
+//                   for a panel the split has completely emptied, which
+//                   is the original bug wearing a different hat.
+//   & ~nonBlock   — the bits that toggle something but draw nothing.
+//
+// constexpr and pure — no widget, no QApplication, no compositor — so
+// it can be static_assert'd against the tables it reads and probed
+// from a plain main().
+[[nodiscard]] constexpr bool playerPanelHasBlocks(uint32_t mask) noexcept
+{
+    return (mask & kAll & ~kPlayerNonBlockMask) != 0u;
+}
+
 // The mask split window `slot` must receive: the USER's own toggles
 // intersected with what the table says that window owns. A window
 // therefore only ever draws blocks the user left on, and PlayerPanel
@@ -591,6 +635,25 @@ static_assert((playerPanelMaskFor(PlayerLayoutMode::Split, 0xFFFFFFFFu)
                & playerSplitRemovedBits())
                   == 0,
               "in Split mode PlayerPanel must hold none of the removed bits");
+// THE MOUNT TEST, proved against the mask function it guards. Player-
+// Section has no non-block bit, so the predicate is a pure schema
+// clamp and the split's own emptiness is what makes it answer false:
+// every bit left for a window of its own, so 0xFFFFFFFF — the startup
+// default, bits 9-31 included — must NOT mount. The clamp is not
+// decoration: without it this assert fails.
+static_assert(!playerPanelHasBlocks(playerPanelMaskFor(
+                  PlayerLayoutMode::Split, PlayerSection::kAll)),
+              "in Split mode PlayerPanel holds no bit at all, so it "
+              "must NOT mount");
+static_assert(!playerPanelHasBlocks(playerPanelMaskFor(
+                  PlayerLayoutMode::Split, 0xFFFFFFFFu)),
+              "the clamp is what makes the startup default answer "
+              "false: bits 9-31 are set but paint nothing");
+// And Single mode still answers true, which is the half of the
+// pixel-identity promise the predicate must not disturb.
+static_assert(playerPanelHasBlocks(playerPanelMaskFor(
+                  PlayerLayoutMode::Single, PlayerSection::kAll)),
+              "in Single mode PlayerPanel keeps every block");
 } // namespace PlayerSection
 
 // ----- Startup resolution for the layout mode ---------------------------
@@ -1112,6 +1175,45 @@ constexpr DamageSplitTarget kDamageSplitTargets[] = {
     return mask & ~removed;
 }
 
+// THE ONE NON-BLOCK BIT of DamageSection. OtherMembers (1u << 3) is a
+// live console switch that draws nothing on its own: it is the roster
+// FILTER. panel_damage.cpp never reads it — its paintPanel gates are
+// onRows / onShare / onChart (:209-212) and nothing else — because the
+// bit decides WHICH ROWS the panel and the windows draw, via
+// riseDisplayOptions.showOtherMembers (main.cpp:491-492) and
+// visibleDamageParty() (main.cpp:1873). Its per-row rendering belongs
+// to Rows, which is exactly why no row of kDamageSplitTargets may claim
+// it: a window claiming it would draw the same pixels.
+//
+// So in Split mode DamagePanel is left holding 0x08, and `mask != 0`
+// mounts it. What it then paints is 45px of chrome plus a title row:
+// with onRows / onShare / onChart all false the height table
+// (panel_damage.cpp:216-224) answers kMargin + 14 + 9 + kMargin = 45,
+// and paintPanel draws drawV03Chrome + 「伤害统计 DAMAGE」 + the quest
+// timer and nothing else. A frame whose only content is its own title
+// is the panel-splitting question the player split already answered.
+inline constexpr uint32_t kDamageNonBlockMask =
+    DamageSection::OtherMembers;
+
+// Does this mask leave DamagePanel with a block to draw? See
+// kPlayerNonBlockMask above for why `mask != 0` is not it.
+//
+// WHAT THIS DOES NOT TOUCH, and it is the reason the answer to "can
+// OtherMembers be dropped" is yes: the FILTER is derived from the
+// USER's mask (main.cpp:491-492), not from this derived one, so
+// unmounting the panel does not switch the roster filter off. The bit
+// keeps doing its job on every surface that reads it — the three split
+// windows included, through the same damageSnap the panel would have
+// taken. Only the mount decision changes here; damagePanelMaskFor(),
+// kDamageSplitTargets and every mask value stay exactly as they were.
+//
+// constexpr and pure so it can be static_assert'd against the mask
+// function beside it.
+[[nodiscard]] constexpr bool damagePanelHasBlocks(uint32_t mask) noexcept
+{
+    return (mask & DamageSection::kAll & ~kDamageNonBlockMask) != 0u;
+}
+
 // The mask ONE sub-window draws: its own claim, intersected with what
 // the user left on.
 //
@@ -1201,6 +1303,29 @@ static_assert(damageSplitRemovedBits()
               "the damage split owns exactly Share|Chart|Rows; "
               "OtherMembers is a filter over Rows, not a block of its "
               "own, and stays with the panel");
+// THE MOUNT TEST, proved against the mask function it guards: in Split
+// mode DamagePanel is left holding exactly the one bit no window may
+// claim, and that bit is a filter rather than a block. What the panel
+// would paint for it is 45px of chrome plus its own title row, which
+// is a frame that should not exist.
+static_assert(!damagePanelHasBlocks(damagePanelMaskFor(
+                  PlayerSection::PlayerLayoutMode::Split,
+                  DamageSection::kAll)),
+              "in Split mode DamagePanel holds only OtherMembers, "
+              "which is a roster filter rather than a block, so it "
+              "must NOT mount");
+// The positive control and the Single-mode control, for the same
+// reason as the monster pair above.
+static_assert(damagePanelHasBlocks(
+                  damagePanelMaskFor(
+                      PlayerSection::PlayerLayoutMode::Split,
+                      DamageSection::kAll) | DamageSection::Share),
+              "a mask with a block bit in it must answer true");
+static_assert(damagePanelHasBlocks(
+                  damagePanelMaskFor(
+                      PlayerSection::PlayerLayoutMode::Single,
+                      DamageSection::kAll)),
+              "in Single mode DamagePanel keeps every block");
 
 // ----- Pet damage panel sections ------------------------------------------
 namespace PetDamageSection {
@@ -1452,6 +1577,38 @@ inline constexpr int kMonsterSplitTargetCount = static_cast<int>(
                : mask;
 }
 
+// THE ONE NON-BLOCK BIT of MonsterSection. Tenderize (1u << 5) is a
+// live console switch that draws nothing on its own: since v0.7.4 PR C
+// the 勾爪软化 countdown is a strip INSIDE each .pc card, drawn and
+// height-reserved by the same pcHasTenderize() gate the parts grid
+// uses (panel_monster.cpp). The table above records the decision not
+// to give it a window of its own — a strip defined by the card it sits
+// in cannot be re-parented without being drawn twice — so the bit
+// stays with MonsterPanel and the panel's six block gates
+// (onInfo / onHp / stamDrawn / rageDrawn / onAil / onParts) all read
+// false for it.
+//
+// That is the whole bug in one sentence: a mask of 0x20 is non-zero,
+// so `maskMonsterForPanel != 0` mounts the panel, and the height table
+// (panel_monster.cpp:1072-1082) then answers 2*kPanelPad = 18px for a
+// drawV03Chrome(Accent::Monster) call that paints the dark background,
+// the 4px accent stripe and the 1px border anyway. 18 pixels of
+// floating frame, which is exactly the one-line window in the
+// screenshot.
+inline constexpr uint32_t kMonsterNonBlockMask =
+    MonsterSection::Tenderize;
+
+// Does this mask leave MonsterPanel with a block to draw? The mount
+// test the split actually needs — see kPlayerNonBlockMask above for
+// why `mask != 0` is not it.
+//
+// constexpr and pure so it can be static_assert'd against the mask
+// function beside it.
+[[nodiscard]] constexpr bool monsterPanelHasBlocks(uint32_t mask) noexcept
+{
+    return (mask & MonsterSection::kAll & ~kMonsterNonBlockMask) != 0u;
+}
+
 // The mask split window `slot` must receive: the USER's own toggles
 // intersected with what the table says that window owns. An out-of-range
 // slot answers 0 (draw nothing) rather than reading past the table.
@@ -1532,4 +1689,30 @@ static_assert(monsterSplitBitCount(monsterSplitRemovedBits())
                   == monsterSplitClaimedBitCount(),
               "the removed bits must be exactly the table's rows, with "
               "no bit claimed by two windows");
+// THE MOUNT TEST, proved against the mask function it guards: in Split
+// mode MonsterPanel is left holding exactly the one bit the table
+// cannot claim, and that bit is not a block. A panel whose remaining
+// mask is non-zero but has no block is the 18px chrome frame the user
+// screenshotted, so the predicate has to answer false for it.
+static_assert(!monsterPanelHasBlocks(monsterPanelMaskFor(
+                  PlayerSection::PlayerLayoutMode::Split,
+                  MonsterSection::kAll)),
+              "in Split mode MonsterPanel holds only Tenderize, which "
+              "paints nothing of its own, so it must NOT mount");
+// And the positive control, so the assert above cannot be satisfied by
+// a predicate that answers false for everything: add any block bit and
+// it must answer true.
+static_assert(monsterPanelHasBlocks(
+                  monsterPanelMaskFor(
+                      PlayerSection::PlayerLayoutMode::Split,
+                      MonsterSection::kAll) | MonsterSection::Parts),
+              "a mask with a block bit in it must answer true");
+// Single mode is untouched by the predicate: it is the user's mask
+// verbatim, and a user who switched every block off has a zero mask
+// either way.
+static_assert(monsterPanelHasBlocks(
+                  monsterPanelMaskFor(
+                      PlayerSection::PlayerLayoutMode::Single,
+                      MonsterSection::kAll)),
+              "in Single mode MonsterPanel keeps every block");
 } // namespace mhw

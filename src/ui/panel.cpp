@@ -500,6 +500,24 @@ void Panel::loadConfig()
     // would stop seeing the overlay's writes for exactly that window.
     configTouched_ = false;
 
+    // v0.16: THE COLUMNS DIAL is deliberately NOT read here.
+    //
+    // It was, in the first spelling of this fix, and it could not work: a
+    // virtual call made from a BASE-CLASS CONSTRUCTOR resolves to the base's
+    // implementation, because the derived vtable is not installed yet. This
+    // function is called from Panel's constructor, so a columns() /
+    // nudgeColumns() here answers 0 and no-ops on every row-shaped window.
+    // Measured, a seeded `columns=5` came back:
+    //
+    //     player-status        stored=5  constructed=3   LOST
+    //     player-mantles       stored=5  constructed=2   LOST
+    //     player-wirebug       stored=5  constructed=4   LOST
+    //     monster-conditions   stored=5  constructed=3   LOST
+    //
+    // (tests/readback_probe.cpp.) The read lives in setEditMode() instead —
+    // see the note there for why that is the one moment that is both late
+    // enough for the vtable and early enough to be a construction step.
+
     // A sub-window's first run is a CASCADE from its parent, not the same
     // corner default as everyone else — see defaultMarginsForSubWindow()
     // for why eleven TopLeft windows on one pixel was the previous
@@ -637,6 +655,77 @@ void Panel::saveConfig()
     s.setValue(QStringLiteral("opacity"), opacity_);
     s.setValue(QStringLiteral("bgAlpha"), bgAlpha_);
 
+    // v0.16: THE COLUMNS DIAL, written here by the base class.
+    //
+    // THE REPORT, verbatim:
+    //     「我在 overlay 调整排列方式/长度。使用 -/+ 来调大小现在是正常能
+    //       保存的。但是使用【】来调列数是不被保存的。」
+    //
+    // The asymmetry was structural, not an oversight at one call site. The
+    // floor and the lock live in members the BASE class owns (minW_/lockW_),
+    // so `-`/`+` call nudgeMinWidth() and the value is already inside the
+    // base's own write list — nothing else has to happen. The columns dial
+    // lives in a member the SUBCLASS owns (columns_, on the six row-shaped
+    // windows), so the value is nowhere the base class can reach, and each
+    // subclass had to write it from its own saveConfig() override.
+    //
+    // Three of the six did. Three did not:
+    //
+    //     player-status    saveConfig() override, writes `columns`  ✓
+    //     player-mantles   saveConfig() override, writes `columns`  ✓
+    //     player-wirebug   saveConfig() override, writes `columns`  ✓
+    //     monster-conditions  — no override at all                  ✗
+    //     monster-parts       — no override at all                  ✗
+    //     monster-ail         — no override at all                  ✗
+    //
+    // Measured on this machine, one `]` press per window against a
+    // redirected XDG_CONFIG_HOME (tests/columns_dial_persist_probe.cpp):
+    //
+    //     player-status        3 -> 4   on disk 4
+    //     player-mantles       2 -> 2   on disk 2   (at its 2-column cap)
+    //     player-wirebug       4 -> 4   on disk 4   (at its 4-column cap)
+    //     monster-conditions   3 -> 4   on disk -999 (key absent)
+    //     monster-parts        3 -> 4   on disk -999 (key absent)
+    //     monster-ail          4 -> 5   on disk -999 (key absent)
+    //
+    // So the three monster windows moved their own member, repainted, and
+    // lost the value the moment the process exited — which is exactly what
+    // the reporter described, and the reason it read as "the key does
+    // nothing" rather than "the key works and then forgets".
+    //
+    // WHY WRITE IT HERE RATHER THAN ADD THE THREE MISSING OVERRIDES. The
+    // base class already asks the polymorphic question: columns() answers
+    // the dial position, or 0 for a window with no column axis. So this
+    // write is a no-op for the four base panels and the seven strips that
+    // are not a row (they answer 0 and are skipped), and it makes the
+    // value reachable from EVERY save path at once — Panel::saveConfig()
+    // from Esc, Panel::saveAppearance() from the console's exit loop, and
+    // the three subclass overrides that already call Panel::saveConfig()
+    // first and then wrote the same key a second time. That last part is
+    // not a redundancy to be tidied away: those overrides stay correct
+    // because they write the identical value into the identical group, and
+    // removing them would mean touching files this change is not allowed to
+    // touch.
+    //
+    // The guard is `columns() != 0`, not `supportsColumns()`: the two
+    // answer different questions, and the 0 is the honest one for "there is
+    // no dial here". A window whose dial is legitimately parked at 0 has
+    // none — every clamp in the tree floors at 1 precisely because a 0
+    // column grid divides by zero.
+    //
+    // UNCONDITIONALLY, unlike saveAppearance()'s guarded write. The two
+    // paths answer different questions. This one is the EDIT-MODE save —
+    // Esc, or resetToDefaults — so it runs because the user just pressed a
+    // key, and gating it on the key already existing would break the very
+    // case being fixed: the FIRST `]` press on a fresh file has no stored
+    // key to satisfy a guard, and skipping the write there is the original
+    // defect. saveAppearance() runs on the console's background exit path
+    // for all fifteen windows whether or not anyone touched a dial, which
+    // is where a guard is the right call — see the note there.
+    const int columns = this->columns();
+    if (columns != 0)
+        s.setValue(QStringLiteral("columns"), columns);
+
     // A `visible` key used to be written here. It was removed because
     // nothing ever read it back, and the value it wrote was actively
     // misleading: it stored isVisible(), which is the *runtime* answer
@@ -690,6 +779,50 @@ void Panel::saveAppearance()
     // writes this from setOutputName(); loadConfig() reads it back
     // on the overlay's next start.
     s.setValue(QStringLiteral("outputName"), outputName_);
+    // v0.16: the columns dial, on the console's exit path too. Same
+    // reasoning and same guard as saveConfig()'s — see the long note
+    // there for what the three monster windows were losing and why the
+    // base class is the right place to ask.
+    //
+    // This arm matters independently of that one: saveAllSplitAndBaseWindows()
+    // calls saveAppearance(), NOT saveConfig(), for all fifteen windows. A
+    // fix that only reached saveConfig() would have left the console's exit
+    // path still discarding the dial.
+    //
+    // AND THE GUARD IS A READ, NOT A MEMBER. `columns() != 0` was the first
+    // spelling and it was WRONG in exactly the way the lockW note below
+    // warns about: columns() answers the dial position, and a window whose
+    // section has no `columns` key still answers its CONSTRUCTOR default (3
+    // for the status strip, 4 for the ail grid). So the guard was true on
+    // every row-shaped window in every existing install, and the first
+    // console exit wrote a `columns` key into sections that had never had
+    // one — measured, all four row-shaped windows gaining a spurious key on
+    // a file seeded with none (tests/console_overwrite_probe.cpp):
+    //
+    //     player-status      no key seeded   after exit 3   SPURIOUS
+    //     monster-conditions no key seeded   after exit 3   SPURIOUS
+    //     monster-parts      no key seeded   after exit 3   SPURIOUS
+    //     monster-ail        no key seeded   after exit 4   SPURIOUS
+    //
+    // The read asks the question the write needs answered — "does THIS
+    // window's section actually carry a dial?" — and answers it from the
+    // file rather than from a default. A section with no key writes no key,
+    // which is the same trade saveConfig() already makes for lockW: an ini
+    // full of rows nobody asked for is a cost, not information.
+    //
+    // The section is opened and closed around this one access for the same
+    // reason the rest of the function binds one handle: settings() re-syncs
+    // on every call, so a contains() that split from the write below would
+    // be reading a different snapshot of the file than the one being
+    // written.
+    {
+        const QString group = scopedKey(key_);
+        if (s.contains(group + QStringLiteral("/columns"))) {
+            const int columns = this->columns();
+            if (columns != 0)
+                s.setValue(QStringLiteral("columns"), columns);
+        }
+    }
     s.endGroup();
     s.sync();
 }
@@ -725,6 +858,97 @@ void Panel::setEditMode(bool on)
     applyGeometry();
     setLayerKeyboardInteractivity(on);
     update();
+
+    // v0.16: THE COLUMNS DIAL, read here — the one moment the derived
+    // vtable is live AND the object is fully built.
+    //
+    // This is the read half of the write that saveConfig()/saveAppearance()
+    // now do, and it is what makes the fix a round trip rather than a
+    // one-way push. Writing fixed "the value is lost on exit"; only reading
+    // fixes "the value is lost on the next launch", which is what the user
+    // actually experiences — they press `]`, quit, relaunch, and see the old
+    // arrangement.
+    //
+    // WHY NOT loadConfig(). The obvious place is loadConfig(), and it cannot
+    // work there, for a reason that is a language rule rather than a project
+    // decision: a virtual call made from a BASE-CLASS CONSTRUCTOR resolves
+    // to the BASE's implementation, because the derived vtable is not
+    // installed yet. Panel's constructor calls loadConfig(), so a
+    // columns()/nudgeColumns() reached from there answers 0 and no-ops on
+    // every row-shaped window. Measured, not theorised — with the read
+    // spelled inside loadConfig() before the g_baseCtorRunning guard, a
+    // seeded `columns=5` came back:
+    //
+    //     player-status        stored=5  constructed=3   LOST
+    //     player-mantles       stored=5  constructed=2   LOST
+    //     player-wirebug       stored=5  constructed=4   LOST
+    //     monster-conditions   stored=5  constructed=3   LOST
+    //
+    // (tests/readback_probe.cpp.) The dial never moved at all, which is the
+    // same defect wearing a different hat.
+    //
+    // WHY NOT "setEditMode() calls loadConfig()". That was the second
+    // spelling and it is worse than the defect: loadConfig() clears
+    // configTouched_, which is the flag the console's exit path uses to
+    // decide which windows to re-read before writing them back. Calling it
+    // from setEditMode() would stamp every window "never touched" and make
+    // the console discard a drag the user had just made. It would also
+    // re-run the three derived loadConfig() overrides (which DO exist, on
+    // PlayerStatusStripPanel / PlayerMantlesStripPanel /
+    // PlayerWirebugStripPanel) at a moment their own authors never intended.
+    // So the read is spelled out here, in the base, where it cannot disturb
+    // either.
+    //
+    // setEditMode() is the first thing every construction path calls once
+    // the object is fully built — main.cpp:746 for all fifteen windows,
+    // control_panel.cpp:355 and :1067 for the console's own — so this is
+    // the one place that is both late enough for the vtable and early
+    // enough to be a construction step.
+    //
+    // WHY ONLY ON `on`. Live mode has no keyboard: the `[`/`]` handler sits
+    // behind the `if (!editMode_) return` bail-out, so a dial position read
+    // there is a value nothing can change and nothing needs. It also keeps
+    // this to once per window per process rather than once per mode flip.
+    if (!on)
+        return;
+    if (!supportsColumns())
+        return;
+
+    QSettings &s = settings();
+    s.beginGroup(scopedKey(key_));
+    const int stored = s.value(QStringLiteral("columns"), 0).toInt();
+    s.endGroup();
+
+    // 0 is "this section has no dial key" — the pre-fix file, and every
+    // window whose section was never written. Leave those alone: an
+    // existing install must not have its arrangement reinterpreted on the
+    // first launch after this change.
+    if (stored == 0)
+        return;
+
+    // Stepping rather than setting. nudgeColumns() is a STEP dial, and its
+    // six implementations in the tree do not agree on what a delta means —
+    // two use `columns_ + delta` and four use
+    // `columns_ + kColumnsStep * (delta > 0 ? 1 : -1)` — so the stored
+    // absolute value must not be handed to one as a delta. Stepping by the
+    // base's own named step until the dial lands on the target is the one
+    // operation all six already agree on.
+    //
+    // Bounded at 64 with a no-progress break: every clamp in the tree is at
+    // most [1, 6], so five steps is the worst real case, and a clamp that
+    // says the target is unreachable exits immediately rather than spinning.
+    //
+    // nudgeColumns() does NOT stamp configTouched_ (none of the six
+    // implementations do), which is correct: reading the file is not the
+    // panel having an opinion, and stamping here would make the console
+    // treat every window as user-touched and stop seeing the overlay's
+    // writes.
+    for (int guard = 0; guard < 64 && columns() != stored; ++guard) {
+        const int before = columns();
+        nudgeColumns(stored > columns() ? kColumnsStep : -kColumnsStep);
+        if (columns() == before)
+            break;   // clamped: the stored target is unreachable, keep the clamp
+    }
 }
 
 void Panel::setVisible(bool visible)
