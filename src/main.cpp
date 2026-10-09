@@ -1026,6 +1026,10 @@ int main(int argc, char **argv)
     // panel" is an existing fact, not a new one — the same derivation
     // playerSubWindowMask() already uses for the mask.
     //
+    // AND (a) HAS A SECOND, WIDER TIER, for the case where the parent
+    // named no screen at all. See the comment on inheritLayoutOutput()
+    // below for why that is still (a) and not (b).
+    //
     // The sub-window's OWN key still wins. loadConfig() ran in the
     // constructor and already filled outputName_, and already applied it
     // via applyGeometry() there; an empty key here means either "no key"
@@ -1065,12 +1069,116 @@ int main(int argc, char **argv)
         }
     };
 
+    // ─── the second tier: the layout's screen, not just the parent's ───
+    //
+    // THE REMAINING GAP, WITH THE MEASURED NUMBERS. inheritParentOutput
+    // above leaves a sub-window on primaryScreen() when its OWN parent
+    // names no screen. On the reporter's file that is exactly 2 of 11:
+    //
+    //     [world/split/player]  outputName=DP-1   -> its 6 sub-windows OK
+    //     [world/split/dps]     outputName=DP-1   -> its 3 sub-windows OK
+    //     [world/split/monster] outputName=       -> EMPTY
+    //       monster-identity      -> HDMI-A-1 (primary)   <- the complaint
+    //       monster-conditions    -> HDMI-A-1 (primary)   <- the complaint
+    //
+    // The two windows the user is still seeing on HDMI are carved out of
+    // the one mother panel whose split value is empty, so there is
+    // nothing for the first tier to hand over and both fall through to
+    // primary. The user's 「我全部都设置成 dp1」 is literally true — they
+    // set every mother panel they could reach, and the two windows that
+    // still went wrong are the ones whose mother they could not.
+    //
+    // WHY THIS IS STILL (a) AND NOT (b). The objection to a "session
+    // screen" is that it invents a selection the overlay never made. This
+    // invents nothing: every name it can ever return is a name the user
+    // typed into this SAME panels.ini group, in this SAME layout mode,
+    // for one of the FOUR panels that make up the layout being drawn.
+    // The unit of the fallback is the layout, not the session — the
+    // overlay is drawing one split layout out of one [world/split/*]
+    // namespace, and a mother panel's screen choice inside that
+    // namespace is the user stating where THIS LAYOUT lives. A
+    // sub-window of that layout that names nothing inherits the answer
+    // from the layout it is part of. That is the same derivation
+    // (a) already uses, one level up.
+    //
+    // WHY IT DOES NOT TOUCH "empty = follow primary". That semantic is
+    // about the panel the key BELONGS to, and it is preserved exactly:
+    // monsterPanel itself still resolves its own empty outputName to
+    // primaryScreen() — nothing here calls setOutputName() on a mother
+    // panel, and Panel::applyGeometry() is untouched. The rule being
+    // added is about a sub-window that has no key of its own, which
+    // today falls to primary by DEFAULT rather than by CHOICE: the
+    // console has no per-sub-window SCREEN picker at all (there is no
+    // way to type a value there), so an empty sub-window key can only
+    // mean "not set yet", never "I want primary". With no picker there
+    // is no expression of that wish to override.
+    //
+    // WHY IT DOES NOT MAKE SPLIT AND SINGLE INTERFERE. Both tiers read
+    // only outputName() of the four panels standing right here, and the
+    // mode is fixed at line 671 before any of them is constructed — so
+    // in a split run these are the [<game>/split/*] values and the
+    // [<game>/single/*] values are never read. In a single run the
+    // sub-windows are never mounted (this whole block is gated on
+    // playerSplitOn) and the mode says single, so even a stray call
+    // would read the single group. The user's 「分块和整块应该是分开的，
+    // 不会互相干扰」 is about the two modes writing over each other's
+    // stored values; this writes to neither — persist=false throughout,
+    // and panels.ini is byte-identical afterwards.
+    //
+    // THE NEGATIVE CONTROL. When all four mother panels name no screen
+    // there is nothing to inherit, and the fallback returns empty, which
+    // leaves every sub-window on primaryScreen() — the pre-v0.12
+    // behaviour, verbatim. The wider tier never fires on a file that
+    // made no choice, so a single-screen user (whose every outputName is
+    // empty because there is only one screen to name) is untouched.
+    //
+    // UNPLUGGED SCREENS. Only names that resolve against
+    // QGuiApplication::screens() are returned, so a mother panel whose
+    // stored output is gone is skipped rather than handed over — which
+    // keeps the quiet-degradation property the first tier's screen loop
+    // was written for, and keeps the sub-window on primary where it
+    // would have been anyway. A session where SOME mother panels name a
+    // live screen and others name a dead one prefers the live one.
+    auto inheritLayoutOutput = [](const Panel *const *panels, int count) {
+        for (int i = 0; i < count; ++i) {
+            const Panel *p = panels[i];
+            if (!p)
+                continue;
+            const QString out = p->outputName();
+            if (out.isEmpty())
+                continue;
+            for (QScreen *s : QGuiApplication::screens()) {
+                if (s && s->name() == out)
+                    return out;
+            }
+        }
+        return QString();
+    };
+
     // Gated on the switch, the same way the windows' own construction
     // effects are: in Single mode the eleven objects exist but nothing
     // mounts, and setOutputName() calls applyGeometry() — which would
     // spend eleven layer-shell property pushes on windows that will
     // never be shown.
     if (playerSplitOn) {
+        // Tier 2, resolved ONCE before any sub-window is touched: the
+        // first mother panel in this layout that names an attached
+        // screen. Empty when no mother panel names one, in which case
+        // every sub-window below keeps the primary it had before.
+        //
+        // The order is the console's rail order (player, monster,
+        // damage, pets) and it matters only for which screen wins when
+        // the four disagree — a state no user has been measured in. A
+        // layout that names one screen for two panels and another for
+        // the other two is a layout the user made deliberately, and the
+        // per-parent tier above already handles the panels that named
+        // their own; this only reaches the sub-windows of a panel that
+        // named nothing.
+        const Panel *const mothers[] = {&playerPanel, &monsterPanel,
+                                        &damagePanel, &petDamagePanel};
+        const QString layoutOutput =
+            inheritLayoutOutput(mothers, int(sizeof(mothers) / sizeof(mothers[0])));
+
         inheritParentOutput(&playerStatusStripPanel, &playerPanel);
         inheritParentOutput(&playerBarsStripPanel, &playerPanel);
         inheritParentOutput(&playerMantlesStripPanel, &playerPanel);
@@ -1082,6 +1190,30 @@ int main(int argc, char **argv)
         inheritParentOutput(&damageShareStripPanel, &damagePanel);
         inheritParentOutput(&damageChartStripPanel, &damagePanel);
         inheritParentOutput(&damageRowsStripPanel, &damagePanel);
+
+        // Tier 2, applied only to what tier 1 left behind. The guard is
+        // what keeps this a FALLBACK and not an override: a sub-window
+        // that just took its own parent's screen is skipped, and so is
+        // one that had a key of its own. When layoutOutput is empty
+        // there is nothing to do and the loop is a no-op.
+        if (!layoutOutput.isEmpty()) {
+            for (Panel *sub : {
+                     (Panel *)&playerStatusStripPanel,
+                     (Panel *)&playerBarsStripPanel,
+                     (Panel *)&playerMantlesStripPanel,
+                     (Panel *)&playerWirebugStripPanel,
+                     (Panel *)&playerWeaponStripPanel,
+                     (Panel *)&playerInfoStripPanel,
+                     (Panel *)&monsterIdentityStripPanel,
+                     (Panel *)&monsterConditionsStripPanel,
+                     (Panel *)&damageShareStripPanel,
+                     (Panel *)&damageChartStripPanel,
+                     (Panel *)&damageRowsStripPanel,
+                 }) {
+                if (sub && sub->outputName().isEmpty())
+                    sub->setOutputName(layoutOutput, false);
+            }
+        }
     }
 
     // v0.15: --output-all, applied AFTER the four per-panel options, and it
