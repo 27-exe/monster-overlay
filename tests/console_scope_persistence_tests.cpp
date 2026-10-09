@@ -517,6 +517,52 @@ int main(int argc, char *argv[])
     app.setOrganizationName(QStringLiteral("monster-overlay"));
     app.setApplicationName(QStringLiteral("monster-overlay"));
 
+    // THE GAME AXIS, PINNED BEFORE THE FIRST ControlPanel IS BUILT.
+    //
+    // This file asserts on [world/split/*] and [world/single/*] — see
+    // splitGroup()/singleGroup() above, which spell World out explicitly
+    // on purpose so a write into the rise domain can never satisfy an
+    // assertion about the world one. That is only a real assertion if
+    // the console is actually IN world, and the console decides which
+    // game it is in by itself, at construction:
+    //
+    //     control_panel.cpp:2081  QSettings s;
+    //                           const QString savedGame = s.value("game");
+    //                           ... switchGame(savedGameId) — or, with no
+    //                           saved row, switchGame(detected->game)
+    //
+    // detectGame() scans /proc for monsterhunterworld.exe and
+    // monsterhunterrise.exe, so on a machine with Rise running (or with
+    // Rise merely still mapped in some process's address space) the
+    // console opens on Rise and every write lands in [rise/split/*]
+    // while every assertion below reads [world/split/*]. Measured on
+    // this machine with a Rise process present:
+    //
+    //     saveAppearance key=player group=rise/split/player outputName='DP-1'
+    //     [world/split/player] outputName =        <- what the test reads
+    //
+    // 14 failures, all of them "got (empty) want DP-1", and none of them
+    // a defect in the write path — the console wrote its pick, into the
+    // game it was actually in.
+    //
+    // The persisted `game` row is the console's own record of that
+    // decision and the FIRST thing it honours, so writing it here is not
+    // a workaround: it is the same state a user leaves behind when they
+    // click the World rail button (switchGame() persists the identical
+    // key, control_panel.cpp:3257). With the row present, the console
+    // takes the savedGame branch and never consults the process table,
+    // which makes the test independent of what the developer happens to
+    // be running.
+    //
+    // AFTER the QApplication above, because the two names are half of
+    // the file's path: written before them this lands in a different
+    // file from the one the console reads.
+    {
+        QSettings gameScope;
+        gameScope.setValue(QStringLiteral("game"), QStringLiteral("world"));
+        gameScope.sync();
+    }
+
     std::printf("== console_scope_persistence_tests ==\n");
     std::printf("(the SCREEN dropdown writes the group the overlay reads)\n\n");
 
@@ -524,6 +570,27 @@ int main(int argc, char *argv[])
     // conf row that puts this console into Split mode.
     installFakeOutputs();
     writeConfLayout(QStringLiteral("split"), home.path());
+
+    // The pin above only works if the console HONOURS it. Nothing else in
+    // this file would notice if control_panel.cpp:2081 stopped reading the
+    // "game" row and went straight back to detectGame(): the writes would
+    // go to [rise/split/*] on a machine with Rise running and every
+    // assertion below would fail, but on a machine with nothing running
+    // they would all pass and the suite would be green for the wrong
+    // reason. So the precondition is asserted, not assumed.
+    //
+    // After installFakeOutputs() and writeConfLayout() on purpose: this
+    // probe is a real ControlPanel, and a console built before the fake
+    // session and the Split conf row exist would be built under different
+    // conditions than every panel below it.
+    {
+        ControlPanel probe;
+        check(probe.currentGame() == mhw::GameId::World,
+              "the console opens on World — the pinned 'game' row was "
+              "honoured, not overridden by whatever detectGame() found in "
+              "/proc on this machine");
+        probe.close();
+    }
 
     // ── 1. THE FAKE SESSION IS REAL ──────────────────────────────────
     //

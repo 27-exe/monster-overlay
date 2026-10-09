@@ -152,6 +152,33 @@ int main(int argc, char *argv[])
     QDir().mkpath(home.filePath(QStringLiteral("monster-overlay")));
     writeConfLayout(QStringLiteral("split"), home.path());
 
+    // THE GAME AXIS, PINNED BEFORE THE ControlPanel BELOW IS BUILT.
+    //
+    // §2 clicks the rail to Rise and back and asserts the World sub-window
+    // comes home. That round trip only means anything if the console
+    // STARTS in World, and the console picks its game by itself:
+    //
+    //     control_panel.cpp:2081  QSettings s;
+    //                           savedGame = s.value("game");
+    //                           ... else switchGame(detected->game)
+    //
+    // detectGame() scans /proc/*/maps for monsterhunterworld.exe and
+    // monsterhunterrise.exe. On a machine with Rise running this console
+    // opens on Rise, the first "switch to World" click is what actually
+    // lands it in World, and the round trip under test is not the one the
+    // section describes — which is how the wall assertion below went red
+    // on a machine with nothing wrong in it.
+    //
+    // The row written here is the same one switchGame() writes when the
+    // user clicks a rail button (control_panel.cpp:3257), and the same one
+    // the constructor honours first, so this puts the console in World for
+    // the same reason a user's click would.
+    {
+        QSettings gameScope;
+        gameScope.setValue(QStringLiteral("game"), QStringLiteral("world"));
+        gameScope.sync();
+    }
+
     ControlPanel cp;
     cp.show();
     for (int i = 0; i < 10; ++i)
