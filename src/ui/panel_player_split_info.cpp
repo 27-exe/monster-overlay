@@ -269,6 +269,30 @@ enum class InfoLine : int {
 
 constexpr int kInfoLines = 4;
 
+// Meta IS THE LAST LINE. This is a compile-time constraint, not a
+// convention, because nothing observable catches breaking it: streamHeight()
+// adds one pitch per DRAWN line whatever order it visits them, so a
+// re-sorted enum leaves every height identical; and both lines paint a
+// full-width cell, so the rendered image is identical too. Measured — the
+// enum was reordered to put Meta first and player-info-three-state-tests
+// stayed green on all 44 checks.
+//
+// What the order does decide is the meaning a reader gets: top to bottom,
+// the reason has to arrive BEFORE the verdict it explains. If Meta stops
+// being last, that reading order inverts silently.
+//
+// So the invariant is asserted here, where a re-sort becomes a build
+// error, and the pixel section in that test keeps the rest honest.
+static_assert(static_cast<int>(InfoLine::Meta) == kInfoLines - 1,
+              "InfoLine::Meta must stay the last line: the reader's reason "
+              "is drawn above the verdict it explains, and both the height "
+              "functions and the rendered image are blind to this order, "
+              "so nothing but this assert will notice it changing");
+static_assert(static_cast<int>(InfoLine::ZoneQuest) == 0
+                  && static_cast<int>(InfoLine::ReaderStatus) == kInfoLines - 2,
+              "the stacking order is ZoneQuest, TimeCarts, ReaderStatus, "
+              "Meta — keep the whole list in that order");
+
 // The pitch every line must reserve, measured at the fonts the paint
 // actually sets, via rowPitch() above:
 //   ZoneQuest    — max(9pt label, 10pt value)          -> ceil(16.89) = 17

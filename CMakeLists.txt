@@ -2226,3 +2226,61 @@ if(BASH_EXECUTABLE)
     )
 endif()
 
+# ---------------------------------------------------------------------------
+# The player-info sub-window's three states, and the enum order that keeps
+# them distinct.
+#
+# The v0.12 split reduced PlayerPanel's conn line to a binary and lost the
+# middle state (attached-but-nothing-resolved) — the one the CachyOS
+# reports were filed under. It was restored in
+# src/ui/panel_player_split_info.cpp, and restoring it added a
+# `ReaderStatus` enumerator to `InfoLine` at index 2 with `Meta` still
+# last. That ordering is LOAD-BEARING: streamHeight() and paintPanel()
+# both walk the enum in numeric order, so a `Meta` that stops being last
+# silently reorders the paint and the reservation, compiles clean, and
+# passes every other assertion in the suite.
+#
+# The pitches are NOT constants — every height is
+# ceil(QFontMetrics::height()) for the font that line draws, so the
+# numbers are host-derived and differ by 1px between the measuring host
+# and the shipped build. This target therefore asserts RELATIONSHIPS
+# (monotonicity, differences that are exact multiples of the shared gap,
+# the reason line collapsing when it has nothing to say) and never a
+# pixel height, using only the two exported layout constants
+# kSplitMargin and kSplitGapWithin.
+#
+# The three states are driven through the PUBLIC contract:
+# update(snapshot) + contentHeight()/contentWidth()/hasVisibleContent()
+# plus an offscreen render. `InfoLine` itself lives in the .cpp's
+# anonymous namespace and is deliberately not exported for this test —
+# the states must be observable from outside, which is also what makes
+# the ordering assertion mean something.
+#
+# The qrc is compiled in so the labels resolve through the real string
+# table rather than the key fallback.
+# ---------------------------------------------------------------------------
+add_executable(player-info-three-state-tests
+    tests/player_info_three_state_tests.cpp
+    src/resources/resources.qrc
+)
+target_link_libraries(player-info-three-state-tests PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+target_include_directories(player-info-three-state-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(player-info-three-state-tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME player-info-three-state-tests COMMAND player-info-three-state-tests)
+# Offscreen is REQUIRED here, not a convention: without it this test passes
+# when run directly and fails under ctest, because the platform plugin
+# changes what paintPanel() resolves its fonts and metrics to — and this
+# file asserts on exactly those. The suite was green on the command line
+# and red in the runner for a whole round before the properties below were
+# added.
+#
+# RESOURCE_LOCK for the same reason the other Widget tests carry it: every
+# Panel constructor reads and writes ~/.config/monster-overlay/panels.ini,
+# so running these concurrently aborts each other. HOME and XDG_CONFIG_HOME
+# are redirected inside the test itself; the lock is what keeps two copies
+# from racing on it.
+set_tests_properties(player-info-three-state-tests PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    RESOURCE_LOCK "panels-ini")
+
