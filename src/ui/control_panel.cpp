@@ -3056,7 +3056,36 @@ void ControlPanel::switchGame(mhw::GameId game)
     // flag) and runs the hot-swap itself, so this half is pure View.
     // Guarded: currentGame() above reads overlay_, and switchGame() is
     // reachable from the rail buttons during teardown.
-    if (overlay_) overlay_->setCurrentGame(game);
+    // v0.18: REBUILD argv BEFORE ASKING FOR THE RESTART.
+    //
+    // setCurrentGame() makes the controller SIGTERM the child and relaunch
+    // it from its OWN stored copy — lastArgv_, written by the previous
+    // buildOverlayArgv(). launch() then appends the NEW --game, so the game
+    // switches and the screens do not: the child comes back carrying the
+    // --output-* values that were in memory the last time the console built
+    // argv, which for a panel whose screen the user has since changed is
+    // stale. Measured on the reporter's machine:
+    //
+    //     explicit --output-monster=DP-1 --output-damage=DP-1
+    //         -> all eleven windows on DP-1
+    //     the console's own launch
+    //         -> monster-identity / monster-conditions on HDMI-A-1
+    //
+    // The overlay's side is correct — Panel::setOutputName() applies the
+    // flag and the split sub-windows inherit it (main.cpp:1051). What
+    // never arrived was the flag, because the restart replayed an argv
+    // built before the user touched the SCREEN dropdowns.
+    //
+    // Same reason applyStartupLayoutMode() calls setLastArgv() before
+    // stop() (control_panel.cpp:4104) — it fixed --layout there and missed
+    // --output-*. The two are the same defect at two call sites: whatever
+    // argv the controller replays has to be the one the CURRENT state
+    // produces.
+    if (overlay_) {
+        overlay_->setLastArgv(buildOverlayArgv(overlay_->lastEditMode()),
+                              overlay_->lastEditMode());
+        overlay_->setCurrentGame(game);
+    }
     const bool isRise = (game == mhw::GameId::Rise);
     riseCard_->refresh();
 
