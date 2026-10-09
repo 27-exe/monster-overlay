@@ -1333,6 +1333,25 @@ void Panel::setOutputName(QString name, bool persist)
             name = QString();
         }
     }
+    // v0.17: picking a screen IS giving this window a new value, and the
+    // console's exit path decides what to re-read purely by this flag.
+    //
+    // Without the stamp, choosing a screen in the console and then closing
+    // it LOST the choice: saveAllSplitAndBaseWindows() sees a panel nobody
+    // "touched", calls loadConfig() on it, and pulls the OLD value back off
+    // disk - which for a window that had never been given an output is the
+    // empty string meaning "follow the primary screen". The empty value is
+    // then written straight back, so the pick survives neither the exit nor
+    // the next launch.
+    //
+    // It looked like the two layout modes interfering - the user saw the
+    // windows that went missing be exactly the ones showing a different
+    // screen in Single mode - but the file said otherwise: every split\*
+    // outputName was EMPTY, including the two that had been set, while
+    // every single\* one held DP-1. The modes were never talking to each
+    // other; one reload was erasing the split picks before they were
+    // written.
+    configTouched_ = true;
     outputName_ = name;
     applyGeometry();
     if (persist)
