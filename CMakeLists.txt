@@ -1588,6 +1588,106 @@ add_executable(world-severable-scan-tests
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         RESOURCE_LOCK "panels-ini")
 
+    # 「有些窗口显示属于 dp-1,但是实际启动 overlay 结果显示在 hdmi」 —
+    # the split sub-window's screen inheritance.
+    #
+    # src/main.cpp:1051 owns the rule as a lambda inside main():
+    # a split sub-window takes its parent panel's outputName when it has
+    # none of its own. The eleven call sites at :1074-1084 are eleven
+    # chances to forget one window, and the window that is forgotten
+    # lands on the OS primary — which on the reporter's machine is a
+    # PORTRAIT HDMI-A-1 while the panel was pointed at a landscape DP-1.
+    # The user then has to toggle the screen by hand to get it back, and
+    # layer-shell has no move gesture, so there is no other way.
+    #
+    # WHY THE TEST CANNOT CALL main(). The lambda is local to main() and
+    # nothing in src/ exposes it; main() also builds its own QApplication
+    # and enters an event loop. So this target asserts the rule through
+    # the same two calls the lambda makes, against the same Panel
+    # classes, in a session with the reporter's two-monitor topology
+    # faked through Qt's own QPA seam (QWindowSystemInterface +
+    # QPlatformScreen) — offscreen has exactly one screen, named "", and
+    # Panel::setOutputName() validates against it, so "DP-1" is always
+    # rejected there and every assertion would pass vacuously.
+    #
+    # MUTATION: delete the body of inheritParentOutput in main.cpp (or
+    # comment out the eleven calls, or invert the sub's-own-key guard)
+    # and tests/main_output_wiring_tests.cpp turns red — §5 compares a
+    # parent's resolved screen width with its sub-window's, and those
+    # agree only if both resolved the same QScreen.
+    add_executable(main-output-wiring-tests
+        tests/main_output_wiring_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(main-output-wiring-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(main-output-wiring-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # The QPA screen-injection seam. Private headers, but mhw-ui already
+    # compiles src/ui/screen_query.cpp against qpa/qplatformscreen.h;
+    # this target needs the same path plus qpa/qwindowsysteminterface.h
+    # to install the fake outputs, so it gets the same include root.
+    target_include_directories(main-output-wiring-tests PRIVATE
+        ${_QT6_GUI_PRIVATE_INCLUDE_DIR})
+    target_compile_options(main-output-wiring-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME main-output-wiring-tests COMMAND main-output-wiring-tests)
+    set_tests_properties(main-output-wiring-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
+
+    # 「有些窗口显示属于 dp-1,但是实际启动 overlay 结果显示在 hdmi」 — the
+    # CONSOLE's half of the same report, which is a persistence bug rather
+    # than an inheritance one.
+    #
+    # tests/main_output_wiring_tests.cpp above pins what the OVERLAY does
+    # with a sub-window that has no output of its own. This target pins
+    # what the CONSOLE writes before the overlay ever starts: the user
+    # picks DP-1 in the SCREEN dropdown, and the question is which group
+    # of panels.ini the pick lands in. The reporter's own file answers it
+    # — [world/single/player] held the DP-1 while [world/split/player] was
+    # empty, on a machine whose conf said layout=split — and the overlay
+    # reads the split group, so the promise the dropdown made never
+    # reached the child and it mounted on the primary HDMI.
+    #
+    # WHY THE ASSERTIONS SPELL THE GROUP OUT. A test that reads whichever
+    # (game, mode) scope is CURRENT answers "the value was written" no
+    # matter which group it landed in, which is exactly the confusion that
+    # produced the bug. Every read here names the full group through
+    # mhw::panelSettingsScopeFor(), and the single-mode group is asserted
+    # to have NOT gained the pick — so a "fix" that writes to both scopes
+    # fails instead of passing.
+    #
+    # THE SAME QPA SEAM as main-output-wiring-tests, for the same reason:
+    # offscreen has exactly one screen, named "", and
+    # Panel::setOutputName() validates against QGuiApplication::screens(),
+    # so "DP-1" is always rejected there and every assertion would pass
+    # vacuously.
+    #
+    # MUTATION: delete the two mhw::setPanelSettings*() calls at the top of
+    # saveBeforeLaunch() (or the same pair in closeEvent(), or the
+    # blockSignals guard in syncOutputCombo()) and this target turns red —
+    # §4/§5 read [world/split/player]/outputName straight off disk and
+    # compare it to the pick that was made.
+    add_executable(console-scope-persistence-tests
+        tests/console_scope_persistence_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(console-scope-persistence-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(console-scope-persistence-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # The QPA screen-injection seam, same as main-output-wiring-tests.
+    target_include_directories(console-scope-persistence-tests PRIVATE
+        ${_QT6_GUI_PRIVATE_INCLUDE_DIR})
+    target_compile_options(console-scope-persistence-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-scope-persistence-tests
+             COMMAND console-scope-persistence-tests)
+    set_tests_properties(console-scope-persistence-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
+
     # screen_query's ARITHMETIC, and the two rules the defect violated.
     #
     # A rotated output reports a 1920x1080 panel mode and a 1080x1920

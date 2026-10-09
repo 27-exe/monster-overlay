@@ -1081,6 +1081,70 @@ void ControlPanel::constructMotherPanels()
     pets_    = static_cast<PetDamagePanel *>(ctl_[3].panel);
 }
 
+// Point one SCREEN dropdown at the panel's CURRENT output choice.
+//
+// WHY A FILE-LOCAL FREE FUNCTION AND NOT A MEMBER. The only header this
+// task may touch is the .cpp, so this cannot be a private member
+// declared in control_panel.h. It takes the two objects it needs as
+// arguments — the combo and the panel — because PanelCtl is private to
+// ControlPanel and a free function cannot name the type. Both call
+// sites are ControlPanel members that already hold both.
+//
+// WHY IT EXISTS AT ALL. The block it replaces used to live inside
+// buildInspector()'s combo construction, where it ran exactly once —
+// against whatever Panel happened to exist at that moment.
+// rebuildMotherPanels() then replaced those Panels with fresh ones that
+// had re-read their outputName from the scope now in force, and nothing
+// told the dropdown. The user's report, verbatim:
+//
+//     「我启动控制台,有些窗口显示属于 dp-1,但是实际启动 overlay
+//       结果显示在 hdmi。我必须要手动将该窗口选择一下 hdmi,然后在
+//       选回 dp-1 才能正常切换到主屏。」
+//
+// "Must choose twice" is the tell: the FIRST pick is not a preference,
+// it is the user forcing the combo's stale index to agree with the
+// member — and only the second one changes anything. The console was
+// showing a screen the overlay had never been told about, because the
+// panel the combo was built against read a DIFFERENT scope than the
+// panel that buildOverlayArgv() reads.
+//
+// Which is exactly the ctor's ordering: constructMotherPanels() at
+// line ~1532 builds the four mothers while applyStartupLayoutMode()
+// (line ~1961) has not resolved the conf's layout= row yet, so the
+// layout global still holds its Single default and the mothers read
+// [world/single/*]. The combo is populated from that. Then
+// applyStartupLayoutMode() resolves Split, switchGame() rebuilds the
+// mothers, and they read [world/split/*] — empty. The combo keeps
+// advertising DP-1; the member says nothing; argv carries no
+// --output-* flag; the overlay mounts on primaryScreen().
+//
+// Called from adoptMotherPanels(), which is the one step both the ctor
+// and rebuildMotherPanels() run after the Panels exist.
+// Idempotent: setting the same index twice is a no-op, and the
+// blockSignals guard stops the programmatic set from being mistaken
+// for a user pick (which would write the value back and stamp
+// configTouched_ on a window the user never touched).
+static void syncOutputCombo(QComboBox *combo, const Panel *panel)
+{
+    if (!combo || combo->count() == 0)
+        return;
+    const QString cur = panel ? panel->outputName() : QString();
+    int want = 0;                      // <PRIMARY> — the empty override
+    if (!cur.isEmpty()) {
+        const int found = combo->findData(cur);
+        // A stored name that matches no attached output (a monitor that
+        // was unplugged) falls back to <PRIMARY>, which is what
+        // Panel::resolveOutputScreen() does for the same value.
+        if (found >= 0)
+            want = found;
+    }
+    if (combo->currentIndex() == want)
+        return;
+    combo->blockSignals(true);
+    combo->setCurrentIndex(want);
+    combo->blockSignals(false);
+}
+
 void ControlPanel::adoptMotherPanels()
 {
     // Preserve the live widget state a rebuild would otherwise lose. The
@@ -1098,6 +1162,17 @@ void ControlPanel::adoptMotherPanels()
         // Master visibility: the inspector chip, which is the only thing
         // that says whether the surface mounts at all.
         p->setPanelEnabled(ctl_[i].master && ctl_[i].master->isChecked());
+        // v0.16: AND THE SCREEN DROPDOWN FOLLOWS THE NEW PANEL. The
+        // combo's index was set once, when buildInspector() ran against
+        // the panel that existed then. This rebuild gave the slot a
+        // fresh Panel that re-read its outputName from the scope now in
+        // force — which is a DIFFERENT scope at startup (the mothers are
+        // built before applyStartupLayoutMode() resolves layout=) and
+        // after any applyLayoutChoice(). Without this line the dropdown
+        // kept advertising the previous panel's screen while argv read
+        // the new panel's, and the user had to pick twice to make them
+        // See syncOutputCombo()'s comment for the full story.
+        syncOutputCombo(ctl_[i].outputCombo, p);
     }
 
     // THE DEMO SEED, which is NOT persisted and therefore NOT readable by
@@ -2289,6 +2364,16 @@ void ControlPanel::closeEvent(QCloseEvent *e)
     //
     // It shares the loop with saveBeforeLaunch() so there is one list of
     // windows rather than two, and a window is added to one place.
+    //
+    // AND THE SCOPE IS STATED HERE TOO, for the reason spelled out on
+    // saveBeforeLaunch(): a Panel derives its group name from the two
+    // scope globals at write time, and this exit runs on a console that
+    // may never have launched anything. Stating it here as well is what
+    // makes the two exits write the same file — without it, a close
+    // after a Single-mode apply wrote the drag into the other
+    // topology's group and the next launch lost it.
+    mhw::setPanelSettingsGame(currentGame());
+    mhw::setPanelSettingsLayout(layoutModeInForce());
     saveAllSplitAndBaseWindows();
 
     saveMaskToDisk();
@@ -2732,12 +2817,26 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         }
         // Pick the persisted value (if any) — match either by userData
         // (output name) or fall back to the first entry.
-        const Panel *p = panelAt(idx);
-        const QString cur = p ? p->outputName() : QString();
-        if (!cur.isEmpty()) {
-            const int found = combo->findData(cur);
-            if (found >= 0) combo->setCurrentIndex(found);
-        }
+        //
+        // This is the ONLY place the combo's index is ever set, and it
+        // runs once, while buildInspector() is constructing the page.
+        // rebuildMotherPanels() destroys and re-creates the Panels
+        // underneath a live combo and re-reads their outputName from the
+        // (possibly different) scope — but nothing re-syncs the combo,
+        // so after a rail click the dropdown keeps advertising the
+        // screen the OLD panel had while the new panel's member holds
+        // whatever the NEW scope says. Measured on this machine:
+        //
+        //     [world/single/player] outputName=DP-1     <- the value
+        //     conf layout=split
+        //     combo displays DP-1  member ''  argv: no --output flag
+        //
+        // The console promised DP-1 and the child mounted on the
+        // primary. syncOutputCombo() below is what closes that gap; it
+        // is called from adoptMotherPanels()'s per-panel loop, and here
+        // once more so the freshly constructed combo starts correct
+        // even when no rebuild follows.
+        syncOutputCombo(combo, panelAt(idx));
         connect(combo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, [this, idx, combo](int /*idx2*/){
             Panel *pan = panelAt(idx);
@@ -3072,6 +3171,14 @@ void ControlPanel::switchGame(mhw::GameId game)
     // mean a Single-mode rail click rebuilt the mothers under the OLD
     // game's namespace — same symptom, different line.
     //
+    // v0.16: syncSplitPreviewToCanvas() now states the pair at its top,
+    // on every path, so this block is no longer the only Single-mode
+    // statement. It is kept because switchGame() must be correct when it
+    // is called from a console whose mode was never synced at all —
+    // which is exactly the ctor's startup call at line 2016, where
+    // applyStartupLayoutMode() (line 1961) has not run yet and the
+    // layout global still holds its Single default.
+    //
     // The mode is set second because setPanelSettingsGame() reads it:
     // the group name is `<game>/<mode>/<key>`, so a stale mode silently
     // sends the rebuild to the other topology's domain.
@@ -3248,6 +3355,43 @@ void ControlPanel::saveAllSplitAndBaseWindows()
 void ControlPanel::saveBeforeLaunch()
 {
     saveMaskToDisk();
+    // v0.16: STATE THE SCOPE BEFORE ANY PANEL WRITES THROUGH IT.
+    //
+    // THE BUG. Panel::saveAppearance() derives its group name from the
+    // two scope globals at the moment of the write, and nothing on this
+    // path stated them. The console therefore wrote into whichever
+    // (game, mode) pair the LAST REBUILDER happened to leave behind:
+    //
+    //   * at construction the mothers are built at ctor line 1532,
+    //     while applyStartupLayoutMode() (line 1961) has not run yet —
+    //     so the layout global still holds its Single default and the
+    //     very first Panels read and wrote [<game>/single/...]
+    //   * syncSplitPreviewToCanvas() sets the mode to Split, but ONLY
+    //     on its split arm, and it returns early before that when the
+    //     mode is Single — so a Single session leaves the global
+    //     saying whatever the previous state was
+    //
+    // The measured symptom was the user's file: `[world/single/*]`
+    // holding four outputName keys while `[world/split/*]` held
+    // almost none, on a machine whose conf said layout=split. And the
+    // overlay read the split group, so the console's promise ("DP-1",
+    // shown in the SCREEN dropdown) never reached the child. The
+    // console said DP-1, the overlay mounted on the primary HDMI.
+    //
+    // WHY THIS AND NOT A SECOND SOURCE OF TRUTH. The alternative
+    // readings are all wrong: appendOutput() reading the file would
+    // have to re-derive the group name (the same two globals), and
+    // Panel::loadConfig() cannot be called here because the console's
+    // in-memory values are fresher than disk. The scope is a launch-
+    // time fact and the console already resolves it once, in
+    // applyStartupLayoutMode(); stating it again here costs two
+    // assignments and makes the write deterministic.
+    //
+    // The mode is set second because setPanelSettingsGame()'s group
+    // name is `<game>/<mode>/<key>` — see the same ordering note in
+    // switchGame().
+    mhw::setPanelSettingsGame(currentGame());
+    mhw::setPanelSettingsLayout(layoutModeInForce());
     // v0.5: persist scale / opacity / margins so the overlay's
     // loadConfig() reads the values the user set in the console.
     // Without this, the overlay always starts with the last
@@ -3652,6 +3796,27 @@ void ControlPanel::syncSplitPreviewToCanvas()
 {
     if (!canvas_)
         return;
+    // THE SCOPE, ON EVERY PATH — NOT ONLY THE SPLIT ONE.
+    //
+    // v0.16: this used to set the two globals AFTER the early return
+    // below, so a Single-mode sync left them holding whatever the last
+    // split build had stated. That is the same defect saveBeforeLaunch()
+    // guards against, seen from the other side: the globals were the
+    // console's only statement of "which namespace am I writing", and
+    // the single topology — the one every default user is in — was
+    // exactly the case that never stated it.
+    //
+    // Moving the pair to the top costs two assignments on a path that
+    // is already rebuilding fourteen windows, and it makes the
+    // invariant local: after any sync, the globals name the (game,
+    // mode) the console is displaying. Nothing below can then disagree
+    // with them, and neither can a later saveAllSplitAndBaseWindows().
+    //
+    // The mode is set second because setPanelSettingsGame()'s group
+    // name is `<game>/<mode>/<key>` — the same ordering switchGame()
+    // and saveBeforeLaunch() use.
+    mhw::setPanelSettingsGame(currentGame());
+    mhw::setPanelSettingsLayout(layoutModeInForce());
     // The mode first, always: setLayoutMode(Single) is what empties the
     // canvas's subSlots_, and it does so regardless of what follows.
     canvas_->setLayoutMode(layoutModeInForce());
@@ -3689,6 +3854,14 @@ void ControlPanel::syncSplitPreviewToCanvas()
     // Also run this before a REBUILD, not only a first build: switching
     // the rail to the other game destroys and recreates the host, and the
     // new host must load that game's sections.
+    //
+    // v0.16: BOTH ARE NOW STATED AT THE TOP OF THIS FUNCTION, ON EVERY
+    // PATH, because a Single-mode sync used to return before reaching
+    // the two calls below and left the globals stale. They are kept
+    // here as well — the two statements are the same values, and this
+    // block documents WHY they must be true at this point in the code
+    // (immediately before fourteen Panel constructors read them), which
+    // is a different fact from "they are true by the time we get here".
     mhw::setPanelSettingsGame(currentGame());
 
     // v0.14: AND THE MODE. The layout namespace is per (game, layout
@@ -3701,12 +3874,12 @@ void ControlPanel::syncSplitPreviewToCanvas()
     // `--layout split` and read [game/split/...], while the console wrote
     // [game/single/...].
     //
-    // The host is only ever built in split mode — the caller returns early
-    // above when the mode is Single — so the mode here is not a choice, it
-    // is what the caller already established. It is spelled out anyway,
-    // because "the default happens to be right" is not something a reader
-    // can verify, and it stops being right the moment a third mode exists.
-    mhw::setPanelSettingsLayout(mhw::PlayerSection::PlayerLayoutMode::Split);
+    // Spelled from layoutModeInForce() rather than hard-coded Split, for
+    // the same reason the top of the function does: the caller's early
+    // return already established that this arm IS split mode, and
+    // "the default happens to be right" is not something a reader can
+    // verify. It also stops being right the moment a third mode exists.
+    mhw::setPanelSettingsLayout(layoutModeInForce());
 
     // THE GAME THE CURRENT HOST WAS BUILT FOR. Recorded at build time so
     // the next call can tell "I am new" (build a host) apart from "I am

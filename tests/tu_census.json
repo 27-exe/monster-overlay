@@ -309,6 +309,7 @@
       "compiled_by": [],
       "refs": [
         "console-output-persistence-tests",
+        "console-scope-persistence-tests",
         "console-split-sync-tests",
         "damage-rows-window-tests",
         "monster-control",
@@ -362,6 +363,7 @@
         "damage-split-parity-tests",
         "damage-split-windows-tests",
         "hud-canvas-split-tests",
+        "main-output-wiring-tests",
         "monster-control-p0-test",
         "monster-parts-window-tests",
         "monster-split-grouping-tests",
@@ -497,6 +499,7 @@
       "compiled_by": [],
       "refs": [
         "hud-canvas-split-tests",
+        "main-output-wiring-tests",
         "monster-control-p0-test",
         "panel-capabilities-tests",
         "panel-settings-scope-tests",
@@ -520,6 +523,7 @@
       "compiled_by": [],
       "refs": [
         "hud-canvas-split-tests",
+        "main-output-wiring-tests",
         "panel-capabilities-tests",
         "player-status-strip-tests",
         "snapshot-regression-tests",
@@ -533,6 +537,7 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "main-output-wiring-tests",
         "panel-capabilities-tests",
         "player-split-strips-tests",
         "split-layout-consistency-tests",
@@ -544,6 +549,7 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "main-output-wiring-tests",
         "panel-capabilities-tests",
         "player-info-strip-tests",
         "split-layout-consistency-tests",
@@ -556,6 +562,7 @@
       "compiled_by": [],
       "refs": [
         "hud-canvas-split-tests",
+        "main-output-wiring-tests",
         "panel-capabilities-tests",
         "player-split-strips-tests",
         "split-layout-consistency-tests",
@@ -568,6 +575,7 @@
       "compiled_by": [],
       "refs": [
         "hud-canvas-split-tests",
+        "main-output-wiring-tests",
         "panel-capabilities-tests",
         "player-weapon-strip-tests",
         "split-layout-consistency-tests",
@@ -579,6 +587,7 @@
       "class": "INDIRECT",
       "compiled_by": [],
       "refs": [
+        "main-output-wiring-tests",
         "panel-capabilities-tests",
         "player-split-strips-tests",
         "split-layout-consistency-tests",
@@ -591,8 +600,10 @@
       "compiled_by": [],
       "refs": [
         "console-output-persistence-tests",
+        "console-scope-persistence-tests",
         "console-split-sync-tests",
         "damage-rows-window-tests",
+        "main-output-wiring-tests",
         "panel-settings-game-scoping-tests",
         "panel-settings-scope-tests",
         "split-console-layout-persistence-tests",
