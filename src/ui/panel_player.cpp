@@ -585,7 +585,20 @@ void PlayerPanel::paintPanel(QPainter &p)
     // panel — which is exactly what made the CachyOS reports unreadable.
     if (!attached_ || !hasData_) {
         const bool connected = attached_;
-        const int rows = status_.isEmpty() ? 1 : 2;
+        // v0.17: three rows, not two — see the pid row's comment below.
+        // It is the THIRD row because the pid line is the widest string in
+        // this branch (「PID 12345 · BASE 0x7ffe00000000」), and putting it
+        // beside the reader's reason would fight the elision: the reason is
+        // the long one and it has to stay readable, since it is the part
+        // that says WHY there is no data.
+        // The pid row exists only when there IS a process: with no
+        // process there is no pid to print, and reserving a line for a
+        // blank one is the dangling-gap defect the split window's
+        // streamHeight() works to avoid. So the third row is conditional,
+        // not reserved-and-left-empty — which is why player_offline_bare
+        // (offline, no reader status, no pid) stays two rows tall.
+        const bool havePid = connected && pid_ > 0;
+        const int rows = havePid ? 3 : (status_.isEmpty() ? 1 : 2);
         const int totalH = kMargin + kTitleH + rows * kQrowH + kMargin;
         setContentSize(kPanelW, totalH);
 
@@ -608,16 +621,48 @@ void PlayerPanel::paintPanel(QPainter &p)
                    mh::tr(connected ? QStringLiteral("ui.player_status_no_data")
                                     : QStringLiteral("ui.player_status_offline")));
 
-        if (!status_.isEmpty()) {
-            const QRectF statusRect(kMargin, kMargin + kTitleH,
-                                    kPanelW - 2 * kMargin, kQrowH);
-            QFont dFont(QStringLiteral("Chakra Petch"), 8);
-            dFont.setStyleStrategy(QFont::PreferAntialias);
-            p.setFont(dFont);
-            p.setPen(QColor(150, 150, 150));
-            const QFontMetricsF fm(dFont);
+        const QRectF statusRect(kMargin, kMargin + kTitleH,
+                                kPanelW - 2 * kMargin, kQrowH);
+        QFont dFont(QStringLiteral("Chakra Petch"), 8);
+        dFont.setStyleStrategy(QFont::PreferAntialias);
+        p.setFont(dFont);
+        p.setPen(QColor(150, 150, 150));
+        const QFontMetricsF fm(dFont);
+        // Row 2 is the reader's reason. It used to be drawn only when
+        // status_ was non-empty, leaving row 2 empty otherwise — which is
+        // the "state word alone, nothing to explain" case. Now that row 3
+        // exists there is always something to say, so an empty status_ draws
+        // an empty row rather than reserving one for nothing.
+        if (!status_.isEmpty())
             p.drawText(statusRect, Qt::AlignLeft | Qt::AlignVCenter,
                        fm.elidedText(status_, Qt::ElideRight, statusRect.width()));
+
+        // v0.17: ROW 3 — the process identity.
+        //
+        // 「应该持久显示pid与内存基址信息的，只要正确识别了就应该显示」。
+        // In the not-connected state there is no process, so no pid: the
+        // row stays blank and the reserved height is honest about that.
+        // In the attached-but-empty state the process IS there — that is
+        // exactly what the state means — and its pid is the half of the
+        // diagnostic that 「○ 无数据」 cannot carry. Row 2 says why the read
+        // failed; row 3 says which process it failed on.
+        //
+        // The guard is the same one the split window uses (35ecd4c): a
+        // reader can be attached without having resolved a pid, and calling
+        // that 未连接 would be a lie while the game is plainly running.
+        if (havePid) {
+            const QRectF pidRect(kMargin, kMargin + kTitleH + kQrowH,
+                                kPanelW - 2 * kMargin, kQrowH);
+            p.setPen(QColor(150, 150, 150));
+            const QString mem =
+                QStringLiteral("PID %1 · BASE 0x%2")
+                    .arg(pid_)
+                    .arg(imageBase_ != 0
+                             ? QString::number(
+                                   static_cast<qulonglong>(imageBase_), 16)
+                             : QStringLiteral("--"));
+            p.drawText(pidRect, Qt::AlignLeft | Qt::AlignVCenter,
+                       fm.elidedText(mem, Qt::ElideRight, pidRect.width()));
         }
         return;
     }
