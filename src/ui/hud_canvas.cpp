@@ -73,6 +73,45 @@ static_assert(kAccents.size() == mhw::kPanelCount);
 static_assert(kNameKeys.size() == mhw::kPanelCount);
 static_assert(kNames.size() == mhw::kPanelCount);
 
+// ─── v0.16: the pets slot, named ──────────────────────────────────────
+//
+// The ONE base panel the Split preview still draws. Every other mother
+// panel has a split table (panel_sections.h: PlayerSection,
+// MonsterSection, DamageSection) whose rows became the eleven
+// sub-windows, so v0.14 correctly excluded its mother box from the
+// Split preview. PetDamageSection has no such table — there is nothing
+// to carve a pets sub-window out of — so in Split it had no
+// representation at all while main.cpp kept mounting the real panel.
+//
+// The number 3 is the fixed slot order panel_accent.h and
+// panel_sections.h already key off (see panel_source.h's
+// kPanelCount comment). Spelling it here keeps the three from drifting
+// apart, and gives the v0.16 gates below something to read that is not
+// a literal.
+constexpr int kPetsPanel = 3;
+static_assert(kPetsPanel < mhw::kPanelCount,
+              "the pets slot must be one of the four base panels");
+
+// WHY THIS EXEMPTION IS CHECKED AND NOT HOPED. There is exactly one
+// split table per NON-pets panel — player, monster, damage — and pets
+// is the fourth panel with none. That count is the whole reason pets
+// is exempt, so it is asserted here: if a fourth table is ever added
+// (most plausibly a pets one, the only section without a table today),
+// this fires and points whoever added it at the paint gate below,
+// which would then be drawing a mother panel whose blocks have already
+// moved into sub-windows — the exact v0.14 defect this gate exists for.
+static_assert(mhw::PlayerSection::kPlayerSplitTargetCount
+                      + mhw::kMonsterSplitTargetCount
+                      + mhw::DamageSplitSlot::kCount
+                  == 11,
+              "the eleven split sub-windows, counted from the tables");
+static_assert(mhw::kPanelCount == 4
+                  && mhw::PlayerSection::kPlayerSplitTargetCount > 0
+                  && mhw::kMonsterSplitTargetCount > 0
+                  && mhw::DamageSplitSlot::kCount > 0,
+              "three of the four base panels have a split table and the "
+              "fourth (pets) has none — that asymmetry is the exemption");
+
 QString panelName(int index)
 {
     const int i = mhw::isPanelIndex(index) ? index : 0;
@@ -1049,11 +1088,34 @@ void HudCanvas::paintEvent(QPaintEvent *)
     // frame instead of the 70% that was left over around four big
     // mother boxes.
     //
-    // SINGLE MODE IS BYTE-IDENTICAL: `!subSlots_.isEmpty()` is exactly
-    // the same gate the old sub-window arm used, and setLayoutMode(Single)
-    // clears the vector, so a Single-mode paint reaches this loop with
-    // the same condition that was already there. The 10 pixel baselines
-    // in tests/baseline/ are the authority and they do not move.
+    // v0.16: EVERY MOTHER PANEL BUT PETS. The pets panel is the one
+    // mother with NO row in any split table (panel_sections.h gives
+    // PlayerSection / MonsterSection / DamageSection a table and gives
+    // PetDamageSection none), so in Split it has no sub-window to be
+    // drawn by, and the overlay mounts the panel itself either way
+    // (main.cpp's pets master gate is `setPanelEnabled(!--no-pets)`,
+    // which the layout mode does not touch). Hiding it here therefore
+    // made the preview disagree with the overlay: the user switched to
+    // Rise+Split, selected 伙伴伤害 in the rail, and the LIVE HUD
+    // below the inspector showed nothing at all.
+    //
+    // THREE of the four stay excluded, and that exclusion is the
+    // v0.14 feature, not a bug: player/monster/damage each have a table
+    // whose rows ARE the windows, so drawing their mother box would
+    // put the old big block back next to the eleven boxes that left it.
+    // Pets is the exception precisely because it has no rows.
+    //
+    // SINGLE MODE IS STILL BYTE-IDENTICAL: `!subSlots_.isEmpty()` is
+    // exactly the same gate the old sub-window arm used, and
+    // setLayoutMode(Single) clears the vector, so a Single-mode paint
+    // reaches this loop with the same condition that was already there.
+    // The 10 pixel baselines in tests/baseline/ are the authority and
+    // they do not move.
+    //
+    // THE `!present` GUARD STAYS A SEPARATE CONDITION, never folded
+    // into this one: a pets panel that is not present (World selected)
+    // must still be skipped, and merging the two predicates into one
+    // guard once segfaulted the Split paint on an unbound canvas.
     const qreal fit = std::min(frame.width()  / logical.width(),
                                frame.height() / logical.height());
     auto logicalToCanvas = [&](const QRect &lr) {
@@ -1063,8 +1125,15 @@ void HudCanvas::paintEvent(QPaintEvent *)
                       lr.height() * fit);
     };
 
-    if (subSlots_.isEmpty()) {
+    // THE ONE MOTHER PANEL THE SPLIT STILL DRAWS. Pets, index 3, is
+    // the only base panel with no split table, so it has no sub-window
+    // to be drawn by and the overlay mounts it in both modes — see the
+    // v0.16 note above. `kPetsPanel` is the spelling, not a literal:
+    // panel_accent.h and panel_sections.h both key off the same slot
+    // order, and a literal here is how the three would drift apart.
+    const bool drawMothers = subSlots_.isEmpty();
     for (int i = 0; i < mhw::kPanelCount; ++i) {
+        if (!drawMothers && i != kPetsPanel) continue;
         if (!slots_[i].bound || !slots_[i].present) continue;
         const Slot &s = slots_[i];
         const qreal z = std::max(0.1, s.src->scale());
@@ -1115,7 +1184,6 @@ void HudCanvas::paintEvent(QPaintEvent *)
         }
 
         slots_[i].lastTarget_ = target;
-    }
     }
 
     // --- v0.14: the split's sub-windows ---
@@ -1247,12 +1315,27 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
 {
     if (e->button() != Qt::LeftButton) return;
     // v0.14: IN SPLIT MODE THE SUB-WINDOWS ARE THE ONLY HIT TARGETS.
-    // The four mother panels are not drawn, so their boxes must not be
+    // The mother panels are not drawn, so their boxes must not be
     // hit-testable either — a click that landed on empty space and moved
     // the monster panel by accident is exactly the "several whole blocks
     // in the way" complaint one layer down. So the sub-window arm runs
     // first and returns; the slot arm below is reached only when the
     // canvas is in Single mode (where subSlots_ is empty by contract).
+    //
+    // v0.16: THAT IS THE v0.14 PAINT GATE, RESTATED. The sub-window arm
+    // is still the only hit target for the eleven sub-windows, and it
+    // still runs first — but "the mother panels are not drawn" no longer
+    // means all four of them. Pets IS drawn in Split (see the paint
+    // arm's kPetsPanel exemption), so a pets click has to reach the slot
+    // arm to be selectable and draggable. Without this, pets would be
+    // painted but not hit-testable: a box the user can see and cannot
+    // move, which is worse than the box not being there.
+    //
+    // The slot arm is reached in Single (subSlots_ empty by contract)
+    // AND in Split for a pets click. For the three excluded mothers it
+    // stays unreachable, because lastTarget_ is left empty whenever the
+    // paint arm skipped them — `lastTarget_.contains()` on an empty
+    // rect is false, so the guard is one thing, not two.
     if (!subSlots_.isEmpty()) {
         for (int i = subSlots_.size() - 1; i >= 0; --i) {
             if (i < subRects_.size() && subRects_[i].contains(e->position())) {
@@ -1269,7 +1352,15 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
                 return;
             }
         }
-        return;   // a click on empty space selects nothing, as before
+        // v0.16: a click on empty space STILL selects nothing — the v0.14
+        // behaviour is unchanged — but it no longer swallows the pets box.
+        // Falling through to the slot arm is safe precisely because the
+        // paint arm left lastTarget_ empty for every mother it skipped,
+        // so the only box the slot arm can possibly claim in Split is
+        // the pets one the user can actually see.
+        //
+        // Single mode reaches here with subSlots_ empty and never falls
+        // through the branch at all.
     }
 
     for (int i = mhw::kPanelCount - 1; i >= 0; --i) {
@@ -1369,6 +1460,15 @@ void HudCanvas::keyPressEvent(QKeyEvent *e)
     // window's own mode. A sub-window selected in Split nudges by
     // subWindowMoved(); a base panel selected in Single nudges by
     // panelMoved() exactly as before. Two index spaces, one key.
+    //
+    // v0.16: AND THE SAME EXEMPTION AS THE PAINT GATE. Pets is a base
+    // panel the Split preview draws and the user can select, so with
+    // pets selected in Split the arrow key must nudge the pets panel by
+    // panelMoved() — not fall through to the base panel arm with
+    // selected_ pointing at a panel that was never drawn. The sub-window
+    // arm below already only fires for a live subSelected_, which a pets
+    // selection never sets, so this reads the same two index spaces the
+    // mouse path does.
     const int step = (e->modifiers() & Qt::ShiftModifier) ? kArrowBigStep : kArrowStep;
     int dx = 0, dy = 0;
     switch (e->key()) {
