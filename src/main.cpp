@@ -1762,6 +1762,11 @@ int main(int argc, char **argv)
                     displayedMonsterAddress = snap.monsters[selected].address;
                     monsterPanel.update(snap.monsters[selected]);
                 }
+            }
+        } else {
+            monsterPanel.setVisible(false);
+        }
+
         // v0.12 third wave: the monster panel’s blocks — the SAME
         // selected monster the panel is showing, so a window and the
         // panel it was carved from can never disagree about which
@@ -1774,18 +1779,56 @@ int main(int argc, char **argv)
         // startup and read their own bits at every consumer, which is
         // what lets the user close the enrage bar without closing the
         // monster.
+        //
+        // v0.17: this block used to sit INSIDE the
+        // `if (!snap.monsters.isEmpty() || showAll)` gate above, inside
+        // the `selected >= 0` branch inside that. Both guards are wrong
+        // for a window: "the reader reports no monster" is precisely the
+        // state a window must be told about, and an empty monster list
+        // is what the player sees on the walk back to camp after a
+        // quest. Skipping the block left each window holding the last
+        // quest's cached model, so hasContent() kept answering true and
+        // the surface stayed mounted showing the dead monster's HP
+        // until the next quest replaced the snapshot — the reported
+        // 「打完一把回到据点不清空」.
+        //
+        // So the block now runs on EVERY tick, and the no-monster case
+        // is a first-class arm rather than an absence. The mother panel
+        // is unaffected: its own gate already hides it, and in Split it
+        // is disabled outright (Tenderize is not a block, v0.16).
         if (monsterSplitOn) {
+            // -1 when there is no live monster: the list is empty, or
+            // every entry in it is dead. Computed here rather than
+            // borrowed from the branch above because that branch is
+            // conditional and this one is not.
+            const int selected = mhw::selectMonsterTarget(
+                snap.monsters, displayedMonsterAddress);
+            if (selected >= 0)
+                displayedMonsterAddress = snap.monsters[selected].address;
+
             const bool keepIdentityDemo = skipUpdate(monsterIdentityStripPanel);
-            if (!keepIdentityDemo)
+            if (keepIdentityDemo) {
+                // Edit mode: the demo owns the window's state until the
+                // mode is left, exactly as the four base panels do.
+                monsterIdentityStripPanel.triggerUpdate();
+            } else if (selected >= 0) {
                 monsterIdentityStripPanel.update(snap.monsters[selected]);
+            } else {
+                monsterIdentityStripPanel.clear();
+            }
             monsterIdentityStripPanel.setVisible(
                 monsterIdentityStripPanel.panelEnabled()
                 && monsterIdentityStripPanel.hasVisibleContent());
 
             const bool keepConditionsDemo =
                 skipUpdate(monsterConditionsStripPanel);
-            if (!keepConditionsDemo)
+            if (keepConditionsDemo) {
+                monsterConditionsStripPanel.triggerUpdate();
+            } else if (selected >= 0) {
                 monsterConditionsStripPanel.update(snap.monsters[selected]);
+            } else {
+                monsterConditionsStripPanel.clear();
+            }
             // v0.13: the parts grid's World-multiplayer suppression is a
             // per-session fact the builder reads, so the Conditions
             // window is told about it here — exactly as MonsterPanel
@@ -1794,11 +1837,6 @@ int main(int argc, char **argv)
             monsterConditionsStripPanel.setVisible(
                 monsterConditionsStripPanel.panelEnabled()
                 && monsterConditionsStripPanel.hasVisibleContent());
-        }
-
-            }
-        } else {
-            monsterPanel.setVisible(false);
         }
 
         if (isRise) {

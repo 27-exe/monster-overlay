@@ -331,6 +331,35 @@ void MonsterIdentityStripPanel::update(const mhw::MonsterSnapshot &m)
     triggerUpdate();
 }
 
+void MonsterIdentityStripPanel::clear()
+{
+    // No live monster: the reader's monster list is empty, or every entry
+    // in it is dead (selectMonsterTarget answered -1). The cached model is
+    // DROPPED rather than left standing, because it is the only state the
+    // paint reads and it describes the monster that just died.
+    //
+    // Without this the window keeps the last quest's portrait, name and HP
+    // fraction, hasContent() keeps answering true through the
+    // identityInfoEnabled() arm (the mask did not change), and the main
+    // loop keeps the surface mounted — the reported 「打完一把回到据点不清空」.
+    // It is not enough to hide the window: the next quest's update() would
+    // then have to overwrite every field, and a single unread field would
+    // resurrect a stale one.
+    //
+    // The same assignment shape as the demo path: the model is a plain
+    // struct, so `= {}` is its full reset and leaves hasData false, which
+    // is exactly what hasContent() and paintPanel()'s defensive branch
+    // already test.
+    model_ = {};
+
+    // The enrage pulse has nothing to count down for a monster that is
+    // gone. An invalid clock answers phase 0 (see pulsePhase()), which is
+    // the brightest stop of the bar — a stopped pulse, not a frozen one.
+    phaseClock_.invalidate();
+
+    triggerUpdate();
+}
+
 void MonsterIdentityStripPanel::retranslateUi()
 {
     // Cached strings first, for the reason the pilot's retranslateUi()

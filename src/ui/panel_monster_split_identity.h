@@ -239,6 +239,17 @@ public:
     // to read, mirroring MonsterPanel's `monster_` member + update().
     void update(const mhw::MonsterSnapshot &m);
 
+    // No live monster. Drops the cached model so the window's own
+    // hasContent() answers false and the main loop unmounts it.
+    //
+    // The counterpart of update(), and the reason it must exist
+    // separately: the reader's monster list is EMPTY when the player is
+    // back in town after a quest, so there is no MonsterSnapshot to
+    // hand in — the "no monster" state is a different value, not a
+    // snapshot with blank fields. MonsterPanel has the same pair for
+    // the same reason.
+    void clear();
+
     // i18n: the translated strings this window draws are re-read at the
     // DRAW site (the 体力 label, the demo monster name) rather than
     // cached in the model, so a locale flip needs no re-seed — only the

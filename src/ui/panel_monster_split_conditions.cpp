@@ -505,6 +505,39 @@ void MonsterConditionsStripPanel::update(const mhw::MonsterSnapshot &m)
     triggerUpdate();
 }
 
+void MonsterConditionsStripPanel::clear()
+{
+    // No live monster: the reader's monster list is empty, or every entry
+    // in it is dead (selectMonsterTarget answered -1). Both grids are
+    // DROPPED rather than left standing, because they are the only state
+    // the paint reads and they describe the monster that just died.
+    //
+    // Without this the window keeps the last quest's ailment cards and
+    // part gauges, hasContent() keeps answering true through whichever
+    // grid is non-empty (the mask did not change), and the main loop
+    // keeps the surface mounted — the reported 「打完一把回到据点不清空」.
+    // Hiding alone is not enough: the next quest's update() would have to
+    // overwrite both grids, and one unread grid would resurrect a stale
+    // one.
+    //
+    // The reset is a full struct assignment on each of the two models —
+    // both are plain structs, so `= {}` empties their card vectors and
+    // restores address 0, which is the same key update() compares to
+    // decide whether to reset the AutoHide tables.
+    ail_   = {};
+    parts_ = {};
+
+    // The 15 s AutoHide tables are keyed by slot, not by monster, and the
+    // address above just changed from a real one to 0. Clearing them here
+    // is the same one-shot reset update() issues on a target switch: it
+    // stops the next quest's cards from being judged "already-silent" by
+    // the previous monster's stamps.
+    partList_.resetAutoHide();
+    ailTracker_.resetAutoHide();
+
+    triggerUpdate();
+}
+
 void MonsterConditionsStripPanel::setMultiplayer(bool on)
 {
     multiplayer_ = on;
@@ -815,18 +848,58 @@ void MonsterConditionsStripPanel::setupDemoData()
     //   - 落穴:        active, timer counts down (60s remaining)
     //   - 毒:          not active, but has 30% build-up and 2 triggers
     //
-    // The ids are the World ones (the same ones the panel's demo uses),
-    // so the palette resolves through the same game-keyed table.
+    // THE IDS ARE GAME-KEYED, AND THIS IS THE BUG THE USER REPORTED.
+    //
+    // The four rows above are the panel's own World ids. The panel gets
+    // away with them because MonsterPanel::setupDemoData() NEVER writes
+    // m.game (panel_monster.cpp:1447-1473), so its snapshot stays
+    // GameId::World and every id resolves.
+    //
+    // This window is not so lucky: it carries `game_` (which the console
+    // moves through setDemoGame()/setGameForDemo(), because its part
+    // names and layer pairs are game-specific) and it seeds the demo
+    // with the PANEL's ids. Under the Rise rail those ids ask the Rise
+    // palette, and two of the four are not in it — Rise 落穴 is id 12,
+    // not 15, and Rise 麻痹陷阱 is id 13, not 14. ailmentStyle() then
+    // answers its neutral grey for both, and the card that should have
+    // carried the trap SVG carries no icon at all. That is the
+    // 「全变成灰色框框」 report, and it is a SPLIT-ONLY symptom: the
+    // mother panel beside it keeps painting World's colours because it
+    // never left World.
+    //
+    // The fix is to seed each game's OWN ids, so the ids and the
+    // palette are always asked the same question. The card LABELS are
+    // already locale-keyed and game-independent (data.demo.ail.*), so
+    // only the ids change — and they change to the ids of the same
+    // ailments in the other game.
     struct Ail { int id; QString name; float timer; float maxT;
                  float bu; float maxB; int cnt; bool active; };
-    const Ail demoAil[] = {
+    const Ail demoAilWorld[] = {
         { 2, mh::tr("data.demo.ail.paralysis"), 12.0F, 20.0F,  0.0F,   0.0F, 1, true },
         {14, mh::tr("data.demo.ail.shock_trap"),  8.0F,  8.0F,  0.0F,   0.0F, 0, true },
         {15, mh::tr("data.demo.ail.pitfall"),   60.0F, 60.0F,  0.0F,   0.0F, 0, true },
         { 1, mh::tr("data.demo.ail.poison"),     0.0F,  0.0F, 30.0F, 100.0F, 2, false},
     };
+    // The same four ailments in Rise's numbering (src/rise/part_schemas.cpp
+    // kRiseAilmentStyles): 眩晕 2, 麻痹陷阱 13 (yellow + trap icon),
+    // 落穴 12 (green + trap icon), 毒 4. Every id here IS in the Rise
+    // table, so every card resolves and the two traps keep their icons.
+    const Ail demoAilRise[] = {
+        { 2, mh::tr("data.demo.ail.paralysis"), 12.0F, 20.0F,  0.0F,   0.0F, 1, true },
+        {13, mh::tr("data.demo.ail.shock_trap"),  8.0F,  8.0F,  0.0F,   0.0F, 0, true },
+        {12, mh::tr("data.demo.ail.pitfall"),   60.0F, 60.0F,  0.0F,   0.0F, 0, true },
+        { 4, mh::tr("data.demo.ail.poison"),     0.0F,  0.0F, 30.0F, 100.0F, 2, false},
+    };
+    const Ail *demoAil = demoAilWorld;
+    int demoAilCount = int(sizeof(demoAilWorld) / sizeof(demoAilWorld[0]));
+    if (game_ == mhw::GameId::Rise) {
+        demoAil = demoAilRise;
+        demoAilCount = int(sizeof(demoAilRise) / sizeof(demoAilRise[0]));
+    }
+
     QVector<mhw::MonsterAilmentSnapshot> ailments;
-    for (const Ail &a : demoAil) {
+    for (int i = 0; i < demoAilCount; ++i) {
+        const Ail &a = demoAil[i];
         mhw::MonsterAilmentSnapshot ail;
         ail.id        = a.id;
         ail.name      = a.name;
