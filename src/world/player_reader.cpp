@@ -437,20 +437,50 @@ PlayerSnapshot MhwReader::readPlayer(QString *error)
         }
 
         // ---- buffs: Consumables + Skills (direct offset read) ----
+        // IsInfinite rows (HunterPie Game/World/Data/AbnormalityData.xml):
+        // the four consumables whose timer the game never counts down —
+        //   0x6CC / 0x6D4=1  Demondrug      鬼人药
+        //   0x6CC / 0x6D4=2  Mega Demondrug 大鬼人药
+        //   0x6D0 / 0x6D8=1  Armorskin      硬化药
+        //   0x6D0 / 0x6D8=2  Mega Armorskin 大硬化药
+        // which is exactly the set of kBuffs rows at these two offsets (each
+        // offset carries a normal and a mega row, told apart only by the
+        // DependsOn/WithValue gate). Upstream
+        // MHWPlayer.GetConsumableAbnormalitiesAsync reads the struct, sees
+        // IsInfinite and forces structure.Timer = 1 purely so the entry
+        // survives the "timer > 0" active test downstream (the value itself is
+        // never rendered). The overlay renders the same entry as "∞", so the
+        // flag is carried on the row instead and the UI decides.
+        //
+        // The DependsOn/WithValue gate still runs first and is what decides
+        // whether the drug is active at all — only the timer read is skipped.
+        // Skipping it (rather than reading it and overriding) is deliberate:
+        // the <= 0.0F filter below would otherwise swallow the entry, which
+        // is precisely how these four went missing.
+        constexpr int kWorldInfiniteBuffOffsets[] = {0x6CC, 0x6D0};
         for (const auto &b : kBuffs) {
+            bool infinite = false;
+            for (const int off : kWorldInfiniteBuffOffsets)
+                infinite = infinite || (b.offset == off);
             if (b.dependsOn != 0) {
                 const auto pre = memory_.read<std::int32_t>(
                     abnormalityBase + static_cast<std::uintptr_t>(b.dependsOn));
                 if (!pre || *pre != b.withValue) continue;
             }
-            const auto timer = memory_.read<float>(
-                abnormalityBase + static_cast<std::uintptr_t>(b.offset));
-            if (!timer || !std::isfinite(*timer) || *timer <= 0.0F)
-                continue;
             PlayerAbnormality ab;
             ab.offset  = b.offset;
             ab.name    = playerBuffName(b.offset, b.dependsOn, b.withValue);
             ab.accent  = b.accent;   // v0.11.0: family from the table, not the name
+            if (infinite) {
+                ab.timer      = 1.0F;   // HunterPie: structure.Timer = 1
+                ab.isInfinite = true;
+                result.buffs.push_back(ab);
+                continue;
+            }
+            const auto timer = memory_.read<float>(
+                abnormalityBase + static_cast<std::uintptr_t>(b.offset));
+            if (!timer || !std::isfinite(*timer) || *timer <= 0.0F)
+                continue;
             ab.timer   = *timer;
             result.buffs.push_back(ab);
         }

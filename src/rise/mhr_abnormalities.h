@@ -195,10 +195,21 @@ inline RiseAbnormalityEvaluation riseEvaluateAbnormality(
 }
 
 // Display text for one active abnormality: "∞" for IsInfinite, "43/120" for
-// buildup counters, "123s" otherwise. The player panel renders this verbatim;
-// it lives here so the offline tests can pin the format.
-QString riseAbnormalityTimerText(float timer, bool infinite, bool buildup,
-                                 float maxBuildup);
+// buildup counters, "123s" otherwise. The player panel renders this verbatim.
+//
+// v0.12.0: this is now a thin forwarder to the shared
+// mhw::abnormalityTimerText() in player/player_types.h, which World's
+// buff/debuff rows use too. It is kept as the Rise spelling because six call
+// sites (panel_player.cpp, panel_player_split.cpp ×2, and the offline tests)
+// already read that way — deleting it would only churn them. The definition
+// moved to the header inline for one concrete reason: the rise-abnormality
+// test target links Qt6::Core + monster-core + game-rise but never mhw-ui, so
+// a definition living in a src/ui/*.cpp would not link there.
+inline QString riseAbnormalityTimerText(float timer, bool infinite,
+                                        bool buildup, float maxBuildup)
+{
+    return abnormalityTimerText(timer, infinite, buildup, maxBuildup);
+}
 
 // ---------------------------------------------------------------------------
 // Localized display names (v0.9 i18n, WS-B).

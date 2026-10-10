@@ -1283,8 +1283,8 @@ void PlayerPanel::paintPanel(QPainter &p)
             const mhw::PlayerAbnormalitySnapshot &a = *riseStatusRows[i];
             drawPill(p, pillRect, accentFor(a.accent),
                      a.name,
-                     mhw::riseAbnormalityTimerText(a.timer, a.isInfinite,
-                                                   a.isBuildup, a.maxTimer));
+                     mhw::abnormalityTimerText(a.timer, a.isInfinite,
+                                               a.isBuildup, a.maxTimer));
         });
         y += riseStatusGridRows * kPillH
              + (riseStatusGridRows - 1) * kRiseStatusRowGap;
@@ -1302,7 +1302,10 @@ void PlayerPanel::paintPanel(QPainter &p)
                      [this](QPainter &p, int i, const QRectF &pillRect) {
             const auto &d = player_.debuffs[i];
             const QString n = d.name.isEmpty() ? mh::tr("ui.player_status_section") : d.name;
-            const QString t = QStringLiteral("%1s").arg(static_cast<int>(d.timer));
+            // Same shared formatter the Rise block above and the split
+            // strip use — one format for every abnormality pill.
+            const QString t = mhw::abnormalityTimerText(d.timer, d.isInfinite,
+                                                        d.isBuildup, d.maxTimer);
             // Accent colour per ailment family (shared with the Rise block).
             drawPill(p, pillRect, accentFor(d.accent), n, t);
         });
@@ -1321,7 +1324,11 @@ void PlayerPanel::paintPanel(QPainter &p)
                      [this](QPainter &p, int i, const QRectF &pillRect) {
             const auto &b = player_.buffs[i];
             const QString n = b.name.isEmpty() ? mh::tr("ui.player_buff_fallback") : b.name;
-            const QString t = QStringLiteral("%1s").arg(static_cast<int>(b.timer));
+            // Same shared formatter — this is where the four World
+            // IsInfinite drugs (鬼人药 / 大鬼人药 / 硬化药 / 大硬化药) now
+            // render as ∞ instead of a countdown the game never had.
+            const QString t = mhw::abnormalityTimerText(b.timer, b.isInfinite,
+                                                        b.isBuildup, b.maxTimer);
             // Accent colour per consumable family (shared with the Rise block).
             drawPill(p, pillRect, accentFor(b.accent), n, t);
         });

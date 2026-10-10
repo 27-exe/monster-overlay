@@ -75,6 +75,12 @@ struct PlayerAbnormality {
     QString name;        // Chinese display name
     float timer{0.0F};   // remaining seconds (>0 = active)
     float maxTimer{0.0F};// tracked max for progress bar scaling
+    // IsInfinite rows (HunterPie AbnormalityData.xml): the entry has no
+    // usable countdown in memory, so the reader publishes it with the
+    // synthetic timer 1 and this flag set, and the UI renders ∞.
+    // IsBuildup rows carry a counter in `timer`, not a countdown.
+    bool isInfinite{false};
+    bool isBuildup{false};
     // v0.11.0: colour family resolved from the stable id/offset by the data
     // table, never from the (translated) display name. See accentFor() in
     // panel_player.cpp.
@@ -104,6 +110,45 @@ struct PlayerAbnormalitySnapshot {
     // translated name.
     AbnormalityAccent accent{AbnormalityAccent::None};
 };
+
+// ---------------------------------------------------------------------------
+// One abnormality timer text, for both games.
+//
+// The single formatter World and Rise (and the split strip and the single
+// panel) share. It lives HERE, inline in this header, for one concrete
+// reason: tests/rise_abnormality_tests.cpp links only
+// Qt6::Core + monster-core + game-rise and never links mhw-ui, so a
+// definition that sat in a src/ui/*.cpp translation unit would leave that
+// target with an unresolved symbol. Everything that includes this header —
+// src/rise/mhr_abnormalities.h, src/ui/panel_player.cpp,
+// src/ui/panel_player_split.cpp, and every test target — sees it.
+//
+// The format is this project's, not HunterPie's: a bare integer-second
+// countdown "Ns" everywhere, never mm:ss. HunterPie's AbnormalityTray
+// formats differently; the overlay has always shown "Ns" and keeps it.
+//
+// The three arms are the three shapes an abnormality's `timer` field can
+// take (the World IsBuildup flag is currently always false — World's
+// AbnormalityData.xml has zero IsBuildup rows — but the arm is kept so a
+// future World row cannot silently fall through to "43s"):
+//   isInfinite → "∞"       HunterPie forces Timer = 1 upstream and the UI
+//                          hides the countdown; we publish the flag instead.
+//   isBuildup  → "43/120"  a counter against its max, not a countdown.
+//                          Without a max it degrades to the bare value.
+//   otherwise  → "123s"    the ordinary remaining-seconds countdown.
+inline QString abnormalityTimerText(float timer, bool isInfinite,
+                                    bool isBuildup, float maxTimer)
+{
+    if (isInfinite)
+        return QStringLiteral("\u221E"); // ∞
+    if (isBuildup) {
+        const int value = static_cast<int>(timer);
+        return maxTimer > 0.0F
+            ? QStringLiteral("%1/%2").arg(value).arg(static_cast<int>(maxTimer))
+            : QString::number(value);
+    }
+    return QStringLiteral("%1s").arg(static_cast<int>(timer));
+}
 
 // v0.7.1: wirebug (翔虫) snapshot. Rise-specific — World has no wirebug
 // system. Read once per poll from MHRWirebugStructure + the in-game

@@ -773,19 +773,9 @@ const RiseAbnormalitySchema *riseFindAbnormality(const char *id)
     return nullptr;
 }
 
-QString riseAbnormalityTimerText(float timer, bool infinite, bool buildup,
-                                 float maxBuildup)
-{
-    if (infinite)
-        return QStringLiteral("\u221E"); // ∞
-    if (buildup) {
-        const int value = static_cast<int>(timer);
-        return maxBuildup > 0.0F
-            ? QStringLiteral("%1/%2").arg(value).arg(static_cast<int>(maxBuildup))
-            : QString::number(value);
-    }
-    return QStringLiteral("%1s").arg(static_cast<int>(timer));
-}
+// riseAbnormalityTimerText() is defined inline in the header (see
+// mhr_abnormalities.h) — it forwards to the shared
+// mhw::abnormalityTimerText() so World and Rise render one format.
 
 namespace {
 

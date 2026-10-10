@@ -126,10 +126,17 @@ constexpr int kBuffB = 106;
 
 // One World pill's timer text. Reads straight from the row the reader
 // published, so the strip and the panel show the same seconds for the
-// same entry.
-QString worldTimerText(float timer)
+// same entry — and the same text the Rise arm shows for the same shape,
+// because both go through the shared mhw::abnormalityTimerText().
+//
+// World's AbnormalityData.xml has no IsBuildup rows, so World rows arrive
+// with isBuildup false and maxTimer unused; the flags are still passed
+// through so a future World row that gains one cannot silently fall into
+// the "Ns" arm.
+QString worldTimerText(const mhw::PlayerAbnormality &row)
 {
-    return QStringLiteral("%1s").arg(static_cast<int>(timer));
+    return mhw::abnormalityTimerText(row.timer, row.isInfinite,
+                                     row.isBuildup, row.maxTimer);
 }
 
 // ---- Pill drawing ------------------------------------------------------------
@@ -332,12 +339,12 @@ StatusStripModel buildStatusStripModel(const mhw::GameSnapshot &snap)
         model.debuffs.reserve(snap.player.debuffs.size());
         for (const auto &d : snap.player.debuffs) {
             model.debuffs.append(
-                StatusPill{d.name, worldTimerText(d.timer), d.accent});
+                StatusPill{d.name, worldTimerText(d), d.accent});
         }
         model.buffs.reserve(snap.player.buffs.size());
         for (const auto &b : snap.player.buffs) {
             model.buffs.append(
-                StatusPill{b.name, worldTimerText(b.timer), b.accent});
+                StatusPill{b.name, worldTimerText(b), b.accent});
         }
         break;
     }
@@ -620,8 +627,18 @@ void PlayerStatusStripPanel::setupDemoData()
                        : mhw::playerBuffAccent(offset, 0, 0);
             if (accent == mhw::AbnormalityAccent::None)
                 accent = fallback;
+            // Routed through the same shared formatter the live rows use, so
+            // the preview cannot drift from a session. The two 300s drug rows
+            // below keep a finite countdown on purpose: the committed
+            // player_world / player_split_world baselines pin those pixels,
+            // and a preview is a layout fixture, not a claim about the game.
+            mhw::PlayerAbnormality row;
+            row.offset = offset;
+            row.name = name;
+            row.timer = timer;
+            row.accent = accent;
             (debuff ? rows_.debuffs : rows_.buffs)
-                .append(mhw::StatusPill{name, worldTimerText(timer), accent});
+                .append(mhw::StatusPill{name, worldTimerText(row), accent});
         };
         seed(true, 0x5DC, mh::tr("data.demo.debuff.poison"), 12.0F);
         seed(true, 0x620, mh::tr("data.demo.debuff.blast"), 41.0F);
