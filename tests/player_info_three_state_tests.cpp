@@ -331,10 +331,19 @@ int main(int argc, char **argv)
     const int wSilent  = widthFor(noDataSnapshot(QString()));
     const int wLive    = widthFor(liveSnapshot());
 
-    checkNum(wOffline == wNoData, wOffline, wNoData,
-          "P0: offline and no-data reserve the SAME width — the meta line "
-          "dominates both, so the differing state word lives inside it "
-          "(the labels themselves are asserted to differ above)");
+    // v0.17: no-data now carries PID/BASE as well as its state word — the
+    // reader found the process and failed to read it, and dropping the pid
+    // there is what made 「有时显示有时不显示」 true. Offline has no process
+    // and prints none, so the two are no longer the same width, and the
+    // difference IS the pid string.
+    //
+    // This asserted they were EQUAL, written back when the pid was dropped
+    // in the no-data state. Equal width was never the property worth
+    // pinning — the words differing inside one width was — and the words
+    // are asserted to differ above, still.
+    checkNum(wNoData > wOffline, wNoData, wOffline,
+          "P0: no-data reserves MORE width than offline — it carries the "
+          "pid the offline state has no process to report");
     check(wSilent != wLive,
           "P0: silent-no-data and live reserve different widths — the "
           "middle state is not the live state");

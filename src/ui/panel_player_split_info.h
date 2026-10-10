@@ -170,6 +170,10 @@ struct InfoRow {
             return State::Offline;
         return hasData ? State::Live : State::NoData;
     }
+
+    // PROBE-ONLY accessor (temporary, not for the repo): lets a throwaway
+    // measurement binary read a built row.
+    [[nodiscard]] const InfoRow &self() const noexcept { return *this; }
 };
 
 // The pure transformation: which metadata the snapshot carries, already
@@ -243,6 +247,9 @@ public:
     // change that cannot be observed, and the seed bug this round
     // fixed was a dispatch that could not be observed.
     [[nodiscard]] mhw::GameId demoGame() const override { return game_; }
+
+    // PROBE-ONLY (temporary): read the resolved row from outside.
+    [[nodiscard]] const mhw::InfoRow &infoRowForProbe() const noexcept;
 
 protected:
     void paintPanel(QPainter &p) override;

@@ -369,20 +369,48 @@ static_assert(static_cast<int>(InfoLine::ZoneQuest) == 0
 // the reader's eye already is.
 QString composeMetaLeft(const mhw::InfoRow &row)
 {
-    switch (row.state()) {
-    case mhw::InfoRow::State::Offline:
+    // The PID/BASE half, and it is printed in EVERY state that HAS one.
+    //
+    // It used to be printed in the Live state only, which is what made the
+    // user's report — 「应该持久显示pid与内存基址信息的，只要正确识别了
+    // 就应该显示。现在有时显示有时不显示」 — true and intermittent at the
+    // same time. NoData is exactly the state where the answer matters most
+    // and the value was thrown away:
+    //
+    //     connected == true, hasData == false
+    //         -> the reader FOUND the process (snap.pid is set)
+    //         -> ptrace or the field read failed, so player.valid is false
+    //         -> and the window printed 「○ 无数据」 and nothing else
+    //
+    // 「无数据」 says the data is missing; it does NOT say the process is.
+    // The reader's own reason (composeReaderStatus, the grey line) says
+    // why the read failed, and the PID says WHICH process it failed on —
+    // the two halves of one diagnostic that were being split across a
+    // state boundary.
+    //
+    // Offline still prints neither: there is no process, so there is no
+    // pid, and a line reading 「PID --」 under 「○ 未连接」 would be noise.
+    // The `pid > 0` guard below covers that case anyway — this is belt
+    // and braces against a reader that sets attached without a pid.
+    if (row.state() == mhw::InfoRow::State::Offline || row.pid <= 0)
         return mh::tr("ui.player_status_offline");
-    case mhw::InfoRow::State::NoData:
-        return mh::tr("ui.player_status_no_data");
-    case mhw::InfoRow::State::Live:
-        break;
-    }
+
     const QString mem = QStringLiteral("PID %1 · BASE 0x%2")
         .arg(row.pid > 0 ? QString::number(row.pid) : QStringLiteral("--"))
         .arg(row.imageBase != 0
                  ? QString::number(static_cast<qulonglong>(row.imageBase), 16)
                  : QStringLiteral("--"));
-    return mh::tr("ui.player_connected").arg(mem);
+
+    switch (row.state()) {
+    case mhw::InfoRow::State::Offline:
+        return mh::tr("ui.player_status_offline");
+    case mhw::InfoRow::State::NoData:
+        return QStringLiteral("%1 · %2")
+            .arg(mh::tr("ui.player_status_no_data"), mem);
+    case mhw::InfoRow::State::Live:
+        return mh::tr("ui.player_connected").arg(mem);
+    }
+    return {};
 }
 
 // The reader-diagnostic line: the reader's own reason, verbatim and
@@ -681,6 +709,12 @@ bool PlayerInfoStripPanel::connEnabled() const
 bool PlayerInfoStripPanel::infoEnabled() const
 {
     return questEnabled() || connEnabled();
+}
+
+// PROBE-ONLY (temporary): read the resolved row from outside.
+const mhw::InfoRow &PlayerInfoStripPanel::infoRowForProbe() const noexcept
+{
+    return row_;
 }
 
 bool PlayerInfoStripPanel::hasContent() const
