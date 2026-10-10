@@ -226,26 +226,6 @@ bool paintsInk(const QImage &img)
     return false;
 }
 
-// The first row that carries ink, scanning down.
-//
-// This is the only probe that can see InfoLine's ORDER. Both height
-// functions add one pitch per drawn line regardless of the order they
-// visit them, so a Meta that stops being last leaves every height in
-// this file untouched — the mutation survives all 40 checks. What it
-// changes is paintPanel()'s advance of `y`, which puts the reader's
-// reason at the meta line's position and the verdict where the reason
-// belonged. That is a pixel fact, so it is asserted on pixels.
-[[nodiscard]] int firstInkRow(const QImage &img)
-{
-    for (int y = 0; y < img.height(); ++y) {
-        const QRgb *row = reinterpret_cast<const QRgb *>(img.constScanLine(y));
-        for (int x = 0; x < img.width(); ++x)
-            if (qAlpha(row[x]) != 0)
-                return y;
-    }
-    return -1;
-}
-
 // Every row that carries ink, bottom-up from the last one: the y of the
 // LOWEST ink is the bottom of the last drawn line.
 [[nodiscard]] int lastInkRow(const QImage &img)

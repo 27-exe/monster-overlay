@@ -367,48 +367,57 @@ static_assert(static_cast<int>(InfoLine::ZoneQuest) == 0
 // The panel reached the offline label through its title row's right edge;
 // this window has no title row, so the label sits on the meta line where
 // the reader's eye already is.
+// Offline prints neither: there is no process, so there is no pid, and a
+// line reading 「PID --」 under 「○ 未连接」 would be noise.
+//
+// The pid guard therefore guards the MEM half, never the state word. It
+// used to sit on the early return as `state() == Offline || pid <= 0`,
+// which sent an attached-but-pidless snapshot down the Offline arm and
+// printed 「○ 未连接」 over a process that WAS found — the exact
+// connected/no-data conflation the three-state model exists to prevent,
+// reintroduced through the back door. A reader that sets attached
+// without a pid now keeps its own state word (○ 无数据, amber) and simply
+// omits the mem half, which is what 「无数据」 already means.
 QString composeMetaLeft(const mhw::InfoRow &row)
 {
-    // The PID/BASE half, and it is printed in EVERY state that HAS one.
-    //
-    // It used to be printed in the Live state only, which is what made the
-    // user's report — 「应该持久显示pid与内存基址信息的，只要正确识别了
-    // 就应该显示。现在有时显示有时不显示」 — true and intermittent at the
-    // same time. NoData is exactly the state where the answer matters most
-    // and the value was thrown away:
-    //
-    //     connected == true, hasData == false
-    //         -> the reader FOUND the process (snap.pid is set)
-    //         -> ptrace or the field read failed, so player.valid is false
-    //         -> and the window printed 「○ 无数据」 and nothing else
-    //
-    // 「无数据」 says the data is missing; it does NOT say the process is.
-    // The reader's own reason (composeReaderStatus, the grey line) says
-    // why the read failed, and the PID says WHICH process it failed on —
-    // the two halves of one diagnostic that were being split across a
-    // state boundary.
-    //
-    // Offline still prints neither: there is no process, so there is no
-    // pid, and a line reading 「PID --」 under 「○ 未连接」 would be noise.
-    // The `pid > 0` guard below covers that case anyway — this is belt
-    // and braces against a reader that sets attached without a pid.
-    if (row.state() == mhw::InfoRow::State::Offline || row.pid <= 0)
+    // The state word, by state. Offline is the only state with no process
+    // behind it, so it is the only one that returns before the mem half
+    // is even considered.
+    if (row.state() == mhw::InfoRow::State::Offline)
         return mh::tr("ui.player_status_offline");
 
-    const QString mem = QStringLiteral("PID %1 · BASE 0x%2")
-        .arg(row.pid > 0 ? QString::number(row.pid) : QStringLiteral("--"))
-        .arg(row.imageBase != 0
-                 ? QString::number(static_cast<qulonglong>(row.imageBase), 16)
-                 : QStringLiteral("--"));
+    // pid > 0 is what makes the mem half worth printing. Offline already
+    // returned, so this is belt and braces against a reader that sets
+    // attached without a pid — and it is belt and braces for real: both
+    // readers only reach `attached = true` on a branch that has already
+    // resolved a pid (world_reader.cpp:97-99, mhr_reader.cpp:304-306),
+    // and findGamePid()/findRisePid() return nullopt rather than a
+    // non-positive pid.
+    const bool havePid = row.pid > 0;
+    const QString mem = havePid
+        ? QStringLiteral("PID %1 · BASE 0x%2")
+              .arg(QString::number(row.pid))
+              .arg(row.imageBase != 0
+                       ? QString::number(static_cast<qulonglong>(row.imageBase), 16)
+                       : QStringLiteral("--"))
+        : QString();
 
     switch (row.state()) {
     case mhw::InfoRow::State::Offline:
         return mh::tr("ui.player_status_offline");
     case mhw::InfoRow::State::NoData:
-        return QStringLiteral("%1 · %2")
-            .arg(mh::tr("ui.player_status_no_data"), mem);
+        // Attached, nothing resolved. The state word stays; the mem half
+        // joins it when the process is known, because 「无数据」 says the
+        // DATA is missing and not the process — and the PID is the half
+        // of the diagnostic that says WHICH process the grey reason line
+        // above it failed on.
+        return mem.isEmpty()
+            ? mh::tr("ui.player_status_no_data")
+            : QStringLiteral("%1 · %2").arg(mh::tr("ui.player_status_no_data"), mem);
     case mhw::InfoRow::State::Live:
-        return mh::tr("ui.player_connected").arg(mem);
+        return mem.isEmpty()
+            ? mh::tr("ui.player_connected").arg(QStringLiteral("--"))
+            : mh::tr("ui.player_connected").arg(mem);
     }
     return {};
 }
@@ -500,33 +509,17 @@ QString composeMetaRight(const mhw::InfoRow &row)
 // number anyone would otherwise write down. A window whose reservation
 // drifts from its draw is the v0.10.3 defect (clipped rows, no warning
 // from Qt), so nothing here may be replaced by an integer.
-[[nodiscard]] int streamHeight(bool quest, bool conn)
-{
-    int h = 2 * kMargin;
-    bool previous = false;
-    for (int i = 0; i < kInfoLines; ++i) {
-        const auto line = static_cast<InfoLine>(i);
-        if (!lineBelongsToStream(line, quest, conn))
-            continue;
-        if (previous)
-            h += kGapLine;
-        h += infoLinePitch(line);
-        previous = true;
-    }
-    return h;
-}
-
-// The same arithmetic, for a resolved row: every line lineIsDrawn()
-// answers true for, one pitch each, one gap between consecutive drawn
-// lines, margins on both ends. This is what contentHeight() calls — the
-// two-bool overload above is the shape the tests mirror.
+// Every line lineIsDrawn() answers true for, one pitch each, one gap
+// between consecutive drawn lines, margins on both ends. This is what
+// contentHeight() calls.
 //
-// It exists as a separate function rather than a third parameter on
-// streamHeight() because the diagnostic line is NOT a stream toggle: it
-// is per-snapshot, and a user who turns the Conn bit off still has the
-// Quest lines. Collapsing the two into one signature would make
-// "the reader had nothing to say" indistinguishable from "the Conn
-// section is off", and those two need different behaviour everywhere.
+// There was a two-bool overload beside this one, taking only (quest,
+// conn) and walking lineBelongsToStream() instead. Restoring the three
+// states made it dead: the diagnostic line is per-snapshot, not a stream
+// toggle, so "the reader had nothing to say" and "the Conn section is off"
+// are different questions, and only this signature can tell them apart —
+// which is exactly why the two-bool one is gone rather than kept for the
+// tests' convenience.
 [[nodiscard]] int streamHeight(const mhw::InfoRow &row, bool quest, bool conn)
 {
     int h = 2 * kMargin;
@@ -709,12 +702,6 @@ bool PlayerInfoStripPanel::connEnabled() const
 bool PlayerInfoStripPanel::infoEnabled() const
 {
     return questEnabled() || connEnabled();
-}
-
-// PROBE-ONLY (temporary): read the resolved row from outside.
-const mhw::InfoRow &PlayerInfoStripPanel::infoRowForProbe() const noexcept
-{
-    return row_;
 }
 
 bool PlayerInfoStripPanel::hasContent() const
