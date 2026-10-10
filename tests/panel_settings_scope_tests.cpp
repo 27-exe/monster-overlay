@@ -751,16 +751,35 @@ int main(int argc, char **argv)
         // (mode => require a non-zero derived mask) so the panels' own
         // panelEnabled() can be asserted against it. This is the value
         // the user's screenshot contradicted.
+        // v0.16: `derived != 0` is no longer the gate. A mother panel
+        // mounts iff it still owns a CONTENT BLOCK, and two of the three
+        // survivors are not blocks: Tenderize is a strip inside each .pc
+        // card (pcHasTenderize()), OtherMembers is the roster filter that
+        // panel_damage.cpp's gates never read. So all three derived masks
+        // are non-zero and all three panels are DISABLED — which is the
+        // whole point of v0.16, and the reason the one-line window the user
+        // screenshotted ("hdmi 都有一个一行的悬浮窗") is gone.
+        //
+        // These assertions used to be `derived != 0` with prose saying
+        // MonsterPanel and DamagePanel stay ENABLED. They kept passing
+        // while describing a state v0.16 had already abolished, which is
+        // worse than a red test: it reads like coverage of the behaviour
+        // that is now the bug.
         const bool playerShouldMount =
-            playerMaskInSplit != 0;
+            mhw::PlayerSection::playerPanelHasBlocks(playerMaskInSplit);
+        const bool monsterShouldMount =
+            mhw::monsterPanelHasBlocks(monsterMaskInSplit);
+        const bool damageShouldMount =
+            mhw::damagePanelHasBlocks(damageMaskInSplit);
         check(!playerShouldMount,
-              "the split gate leaves PlayerPanel DISABLED — no empty frame");
-        check(monsterMaskInSplit != 0,
-              "the split gate leaves MonsterPanel ENABLED — it still owns "
-              "Tenderize");
-        check(damageMaskInSplit != 0,
-              "the split gate leaves DamagePanel ENABLED — it still owns "
-              "the rows");
+              "the split gate leaves PlayerPanel DISABLED — it owns no "
+              "block left, so no empty frame");
+        check(!monsterShouldMount,
+              "and MonsterPanel is DISABLED too — Tenderize is a strip "
+              "inside a .pc card, not a block of its own");
+        check(!damageShouldMount,
+              "and DamagePanel is DISABLED too — OtherMembers is the "
+              "roster filter, and the rows moved to their own window");
 
         // AND THE RUNTIME PROOF, from the objects rather than the tables.
         // Panel::setVisible() returns early for a disabled panel, so

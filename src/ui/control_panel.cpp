@@ -4353,12 +4353,47 @@ void ControlPanel::rebuildAndRender(int idx)
     // have left the exact shell the user photographed on screen while
     // compiling cleanly and looking reasonable.
     //
-    // The predicate that answers the real question is the same one main.cpp
-    // now gates the live overlay on: does this panel still have a CONTENT
-    // BLOCK, as opposed to a bit that only names a non-block (Tenderize,
-    // OtherMembers)? One rule, two processes — so the preview can no longer
-    // show a window the overlay would refuse to mount.
+    // The predicate is one of the three in panel_sections.h, whose own
+    // contract is "does this mask leave its panel with anything to DRAW".
     //
+    // *** AND THE TWO PROCESSES ANSWER DIFFERENT QUESTIONS ON PURPOSE. ***
+    //
+    // An earlier version of this comment claimed "one rule, two
+    // processes — so the preview can no longer show a window the overlay
+    // would refuse to mount". That is FALSE, and measurably so:
+    //
+    //     console:  hasBlocks(0x1ff) = 1   -> draws
+    //     overlay:  hasBlocks(0x000) = 0   -> does not mount
+    //
+    // The values differ because the PANELS differ. main.cpp:562 computes
+    // maskPlayerForPanel = playerPanelMaskFor(mode, maskPlayer), which in
+    // Split mode subtracts every bit kPlayerSplitTargets claimed — all
+    // nine — and hands the overlay's own PlayerPanel a zero mask.
+    // playerPanelMaskFor() has exactly one call site in the tree (main.cpp),
+    // so the console never sees that value. What this Panel was handed is
+    // the user's own checkbox state, set three lines above at :4286.
+    //
+    // So the console is asking about ITS preview Panel ("does the mask
+    // this preview panel holds leave it something to draw?"), and the
+    // overlay is asking about ITS OWN ("did the split leave anything?").
+    // Same function, two subjects, and in Split mode the two subjects
+    // hold different masks by construction.
+    //
+    // Nothing consumes this value in Split mode, which is why the
+    // divergence has never mattered: hud_canvas.cpp:1066 gates the whole
+    // four-mother draw arm on subSlots_.isEmpty(), and Split always has
+    // eleven sub-windows. Measured, by flipping slots_[0].present under
+    // otherwise identical conditions:
+    //
+    //     SPLIT   mother-panel present TRUE vs FALSE -> 0.000000 px delta
+    //     SINGLE  mother-panel present TRUE vs FALSE -> 0.193846 px delta
+    //
+    // So the console call is a no-op in Split and live in Single, and in
+    // Single the two predicates agree — panelMaskFor(Single, m) == m.
+    // Correct by coincidence today. If canvas ever paints mothers under
+    // Split, or a third layout mode appears where Single stops being the
+    // identity, this stops being correct and the console must start
+    // passing the derived mask instead.
     //
     // It is NOT setVisible(false). The slot stays bound so selecting it in
     // the rail still works and the inspector still opens; the window simply

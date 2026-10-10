@@ -538,6 +538,28 @@ inline constexpr uint32_t kPlayerNonBlockMask = 0u;
 // constexpr and pure — no widget, no QApplication, no compositor — so
 // it can be static_assert'd against the tables it reads and probed
 // from a plain main().
+//
+// THE INPUT CONTRACT, because two callers feed it two different masks and
+// the answers legitimately differ:
+//
+//   overlay side   main.cpp passes panelMaskFor(mode, userMask) — the
+//                  mask the panel was HANDED after the split took its
+//                  bits. "Did the split leave anything?"
+//   console side   control_panel.cpp:4371 passes the PREVIEW panel's own
+//                  sectionMask(), which is the user's checkbox state
+//                  (:4286). "Does the mask this preview panel holds leave
+//                                   it something to draw?"
+//
+// Same function, two subjects. In Split the subjects hold different masks
+// by construction — playerPanelMaskFor(Split, 0x1ff) == 0 — so the two
+// callers answer differently:
+//
+//     console  hasBlocks(0x1ff) = 1   -> draws
+//     overlay  hasBlocks(0x000) = 0   -> does not mount
+//
+// That is not a defect in the predicate; it is two panels being asked two
+// questions. It only becomes one if a caller starts passing the OTHER
+// subject's mask, so: pass the mask the panel under test actually holds.
 [[nodiscard]] constexpr bool playerPanelHasBlocks(uint32_t mask) noexcept
 {
     return (mask & kAll & ~kPlayerNonBlockMask) != 0u;
