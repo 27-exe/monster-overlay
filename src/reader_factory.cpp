@@ -16,6 +16,8 @@
 
 #include "reader_factory.h"
 
+#include "monster/monster_types.h"
+
 #include <QDebug>
 
 #include "rise/mhr_reader.h"
@@ -23,9 +25,44 @@
 
 namespace mhw {
 
+namespace {
+// THE TABLE REGISTRY HAS TO BE PULLED IN EXPLICITLY.
+//
+// registerWorldTables() / registerRiseTables() each sit in their game's
+// data TU and self-register through a file-scope `RegisterTablesAtStartup`
+// object. That works for a program that compiles the TU directly, and it
+// is what happened to the World tables — the core data TU is referenced for
+// the part schemas, so its .init_array entry survives.
+//
+// Rise's data TU is referenced only for kRiseAilmentNames, and the linker
+// keeps what a static-library member is pulled in for at function
+// granularity. Measured on monster-overlay:
+//
+//     registerWorldTables()   in the binary
+//     kWorldAilmentStyles     in the binary
+//     registerRiseTables()    NOT in the binary
+//     kRiseAilmentStyles      not even defined
+//
+// So registerRiseTables() never ran, hasAilments stayed false for Rise, and
+// every ailment id missed the table and came back kUnknown — the neutral
+// grey with no icon, which is 「异常状态全变成灰色框框」. Nothing warned: the
+// lookup's "unknown id" arm is a legitimate answer, and a table that was
+// never registered looks exactly like a table with no entry for that id.
+//
+// Calling it here is the fix that survives a new build flag: this TU is the
+// assembly point — it already names both readers, so both games' tables
+// belong to it by the same token that makes the readers part of the binary.
+void registerAllTables()
+{
+    registerWorldTables();
+    registerRiseTables();
+}
+} // namespace
+
 GameReaderPtr createReader(GameId game, const QString &explicitMap,
                            const QStringList &dataDirs)
 {
+    registerAllTables();
     const QString mapFileName = mapFileNameFor(game);
     const QString fallback = developmentMapFallback(mapFileName);
 
