@@ -229,6 +229,41 @@ public:
     // the base panels occupy (Panel::isSubWindow).
     [[nodiscard]] bool isSubWindow() const override { return true; }
 
+    // v0.18: TWO PREVIEWS, NOT ONE. This window's seed used to answer
+    // "what will the overlay draw when a quest is running", which is the
+    // right question for a LAYOUT preview and the wrong one for a
+    // STATUS preview — and the console's split preview is the second.
+    //
+    // The user's report, verbatim: with no game running, the console's
+    // player-info tile showed 「区域 古代森林 · 任务 … / 剩余 … / 猫车 …」
+    // plus a live connection line. What he wanted was the verdict:
+    // 「○ 未连接」. Nothing in the preview told him the truth about his
+    // overlay, because Panel::paintEvent() runs setupDemoData() on the
+    // first paint while editMode_ is true (panel.cpp:1153-1156), and
+    // this window's seed unconditionally built an attached+live+in-quest
+    // snapshot — the one state the three-state machine was built to
+    // distinguish, papered over on every paint.
+    //
+    // So the seed no longer answers alone. The live overlay keeps the
+    // real seed (a design-mode surface has to be draggable and
+    // identifiable, and `--edit` is where that matters); the console
+    // asks for the honest state instead, through setStatePreview().
+    //
+    // WHY THE STATE IS A SNAPSHOT AND NOT AN ENUM. A GameSnapshot is
+    // what the live path takes and what buildInfoModel() consumes, so
+    // routing the console through it means the preview runs the SAME
+    // transformation the overlay runs — including the zone vocabulary,
+    // the quest-state wording and the reader-diagnostic line. A
+    // three-valued enum would have forced a second answer to "what
+    // does each state print" that drifts from the first one the moment
+    // a wording changes.
+    //
+    // WHY IT IS A VIRTUAL ON THE WINDOW AND NOT A CONSOLE-SIDE BRANCH.
+    // The console holds these windows as std::unique_ptr<Panel>, so a
+    // call site on a Panel* needs runtime dispatch (the v0.15 lesson:
+    // a Derived* overload set is resolved statically and never runs).
+    void setStatePreview(const mhw::GameSnapshot &snap);
+
     // v0.13: the game this window's demo seed represents. The zone label
     // is resolved through a per-game vocabulary, so a preview that
     // ignores the game asks the wrong table for the zone's name. Same
@@ -302,8 +337,18 @@ private:
     // "outpost 4". Same shape and same caller as
     // PlayerStatusStripPanel::setGameForDemo.
     mhw::GameId          game_{mhw::GameId::World};
-    // True while what is on screen came from setupDemoData(); the first
-    // authoritative snapshot clears it (and the row with it) so a demo
-    // preview can never survive into a live session.
-    bool demoData_{false};
+    // v0.18: which of the two previews is on screen. False means the
+    // honest one: the row came from setStatePreview(), a real (possibly
+    // empty) snapshot describing what the reader would actually find
+    // right now. True means the layout one: the row came from
+    // setupDemoData(), an attached+live+in-quest fiction whose job is to
+    // make a design-mode surface draggable and identifiable.
+    //
+    // This is deliberately NOT the base's demoPrimed_ (which is public
+    // and one-shot) and not the old demoData_ (which was set by the seed
+    // and never had a second value). The distinction it carries is the
+    // one the console could not see: a window in edit mode with a
+    // truthful row and a window in edit mode with a seeded one, which
+    // are the same state under every other flag this class has.
+    bool                 demoSeed_{false};
 };

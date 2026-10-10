@@ -106,6 +106,7 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 #include <QTime>
 #include <signal.h>
 #include <sys/types.h>
+#include <optional>
 
 // ─── v0.13: the split's sub-window preview ─────────────────────────────
 //
@@ -615,6 +616,21 @@ public:
             // definition below — that dead dispatch is the whole of the
             // 「Rise 预览显示衣装、World 预览显示翔虫」report.
             syncGameForDemo(e.window.get(), game);
+
+            // v0.18: AND THE HONEST STATE, after the seed has been
+            // re-armed. The order is load-bearing: setDemoGame() drops
+            // the one-shot seed, so the NEXT paint would re-run
+            // setupDemoData() and overwrite whatever this call wrote.
+            // Calling it last means the state preview is the last writer
+            // before renderAll(), and the seed's fiction never reaches
+            // the pixmap.
+            //
+            // Every window in the loop gets the call and only one acts
+            // on it — the dynamic_cast inside is the dispatch, and a
+            // no-op for the other thirteen. That is the shape the code
+            // already uses for the game retarget (one virtual call, some
+            // windows inert), so a second one does not add a pattern.
+            syncStatePreview(e.window.get(), game);
         }
     }
 
@@ -715,6 +731,88 @@ private:
     static void syncGameForDemo(Panel *w, mhw::GameId g)
     {
         w->setDemoGame(g);
+    }
+
+    // v0.18: THE HONEST STATE, FOR THE WINDOW THAT HAS ONE TO REPORT.
+    //
+    // WHAT THE USER ASKED FOR, IN HIS WORDS: with no game running, the
+    // console's player-info tile must show 「○ 未连接」 rather than a
+    // seeded 「区域 古代森林 · 任务 … / 剩余 … / 猫车 …」 plus a live
+    // connection line. He was looking at the console to find out what
+    // his overlay was doing, and every other sub-window's seed was
+    // answering a different question ("what will this look like when it
+    // is full") that happens to be the right one for a LAYOUT preview.
+    //
+    // WHY THE SNAPSHOT IS BUILT HERE AND NOT READ FROM A READER. The
+    // console is a separate process from the overlay; it owns no reader
+    // and polls nothing. What it CAN see honestly is the one fact
+    // detectGame() already gives it every 5 seconds for the rail badge:
+    // whether a game process exists. That is exactly the input the
+    // window's own three-state machine needs to answer Offline, and it
+    // is the state the user was in.
+    //
+    // WHY ONLY THIS WINDOW. Every other sub-window seeds a block that
+    // has no "not connected" form at all — a pill strip with no pills is
+    // nothing, and mounting it would show an empty frame, which is the
+    // defect split_no_empty_window_tests was written for. The info
+    // window is the one whose seed overwrote a REAL state with a
+    // fiction, because it is the one whose three states exist to be
+    // read. So the console asks it for the truth and leaves the rest
+    // alone.
+    //
+    // `found` is the process scan's own answer, never inferred: a
+    // detection that exists but is for the OTHER game still reports that
+    // game's pid, and a preview that claimed 未连接 over a running Rise
+    // process under a World rail would be a second, quieter version of
+    // the same bug.
+    static mhw::GameSnapshot stateSnapshotFor(mhw::GameId game)
+    {
+        mhw::GameSnapshot snap;
+        snap.game = game;
+        const std::optional<mhw::GameDetection> detected = mhw::detectGame();
+        if (!detected)
+            return snap;   // Offline: no process, no pid, no data
+
+        // A process exists. Report it as ATTACHED-with-no-data rather
+        // than Live: the console cannot read the game's memory, and
+        // claiming 已连接 · PID … · BASE … would be the same class of
+        // lie the demo was, with a real pid stapled on. The window's
+        // NoData state prints 「○ 无数据」 plus the pid, which is the
+        // honest answer to "is the overlay pointed at a process".
+        snap.attached = true;
+        snap.pid      = detected->pid;
+        // No imageBase: the console has not opened the process, and a
+        // zero base is what composeMetaLeft() already renders as "--".
+        // No player.valid: nothing was resolved.
+        // No status: the reader's own diagnostic sentence is the reader's
+        // to write, and the console has no reader. An empty status
+        // collapses the diagnostic line, which is the correct shape —
+        // a window that printed a reason it did not observe would be
+        // inventing evidence.
+        return snap;
+    }
+
+    // Push the honest state into the one window that has one. Called
+    // from syncAll() AFTER the game retarget, and that order is the
+    // whole reason this is not just a constructor call:
+    //
+    //   setDemoGame(game)  ->  resetDemoPrimed()  ->  the one-shot seed
+    //   is RE-ARMED, so the next paint would run setupDemoData() and
+    //   overwrite whatever the state preview wrote.
+    //
+    // So the state preview is the last writer AND it closes the seed
+    // behind it (markDemoPrimed inside setStatePreview). Without that,
+    // the order alone would not be enough: the seed fires on the next
+    // paint, not on this call, and the fiction would land in the pixmap
+    // after all. With it, "which preview am I showing" is a question
+    // the window answers from its own state rather than from the order
+    // two callers happened to run in.
+    static void syncStatePreview(Panel *w, mhw::GameId game)
+    {
+        auto *info = dynamic_cast<PlayerInfoStripPanel *>(w);
+        if (!info)
+            return;   // every other window: the layout seed stands
+        info->setStatePreview(stateSnapshotFor(game));
     }
 
     // std::vector, not QVector: see the ctor's note on COW vs the

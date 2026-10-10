@@ -637,10 +637,51 @@ void PlayerInfoStripPanel::update(const mhw::GameSnapshot &snap)
 
     // A demo row is never live state (the rule every other split window
     // applies): the first authoritative snapshot replaces it outright, so
-    // an edit-mode preview cannot survive into a live session and start
+    // an edit-mode preview cannot survive into a real session and start
     // reporting a quest that does not exist.
-    demoData_ = false;
+    demoSeed_ = false;
 
+    triggerUpdate();
+}
+
+void PlayerInfoStripPanel::setStatePreview(const mhw::GameSnapshot &snap)
+{
+    // v0.18: THE CONSOLE'S HALF. Same transformation as the live path —
+    // buildInfoModel(snap) is the ONLY thing that decides what this
+    // window prints, so a preview and a live session cannot disagree
+    // about the wording of any of the three states. What differs is the
+    // snapshot: this one describes what a reader would find RIGHT NOW,
+    // which is the question the console's preview exists to answer.
+    //
+    // It is NOT gated on editMode(), and that is the whole point. The
+    // console builds its windows in edit mode (control_panel.cpp:355,
+    // because a design-mode surface is the draggable one), so a gate
+    // here would hand the control straight back to the seed that
+    // overwrites the row on the first paint. This setter runs after that
+    // and wins, because it is called on every sync.
+    //
+    // AND IT CLOSES THE SEED BEHIND IT. Panel::paintEvent() runs
+    // setupDemoData() on the first paint while editMode_ is true and
+    // demoPrimed_ is false, so a state preview written before that paint
+    // would be overwritten by the fiction one frame later.
+    // markDemoPrimed() is the base class's own latch for exactly this,
+    // and prepareDamagePreview() (control_panel.cpp:891) already uses
+    // the pair the same way — write the row, then hold the seed off.
+    // The window is now in a state where only an explicit
+    // resetDemoPrimed() (a game retarget, or a locale flip under
+    // demoSeed_) can bring the demo back.
+    quest_ = snap.quest;
+    zone_  = snap.zone;
+    row_   = mhw::buildInfoModel(snap);
+    demoSeed_ = false;
+    markDemoPrimed();
+
+    // A window that reports no content must not keep the layout's
+    // reservation. This one never does — hasContent() below answers
+    // true whenever either section bit is on — but the height it
+    // reports is a function of the row, and the row just changed, so
+    // the reservation is recomputed by the next setContentSize()
+    // inside paintPanel().
     triggerUpdate();
 }
 
@@ -652,11 +693,19 @@ void PlayerInfoStripPanel::retranslateUi()
     // the answer correct if this is ever called from anywhere else.
     setWindowTitle(mh::tr("ui.player_strip_title"));
 
-    if (editMode()) {
+    if (editMode() && demoSeed_) {
         // The demo seed resolves its zone name and quest labels from the
         // locale pair at build time, so dropping it makes the next paint
         // re-seed in the new language — the same reason the mantle window
         // drops its demo (panel_player_split_mantles.cpp:271-278).
+        //
+        // v0.18: THE CONDITION IS NOW demoSeed_, NOT editMode(). A console
+        // window in edit mode whose row came from setStatePreview() has
+        // no seed to drop — its zone/quest are real values cached in
+        // zone_/quest_ — and it takes the re-resolve branch below, which
+        // is the same one a live row takes. Gating on editMode() alone
+        // would have left that window re-seeding the demo on the next
+        // paint and undoing the console's honest state.
         resetDemoPrimed();
     } else {
         // Re-resolve the three localized label fields against the new
@@ -706,7 +755,21 @@ bool PlayerInfoStripPanel::infoEnabled() const
 
 bool PlayerInfoStripPanel::hasContent() const
 {
-    if (demoData_ && editMode())
+    // v0.18: the demo half of the keep-alive. The old body read
+    // `if (demoData_ && editMode()) return true;`, which answered
+    // "the seed RAN" rather than "the seed PRODUCED anything" — the
+    // distinction split_no_empty_window_tests.cpp exists to police.
+    // That test sweeps every window in both games, so the flag alone
+    // would have mounted an empty frame under a game whose seed is
+    // deliberately empty (mantles under Rise, wirebug under World).
+    //
+    // demoSeed_ is narrower than demoData_ was in one way and wider in
+    // another: it is set ONLY by setupDemoData(), so it still means
+    // "what is on screen is synthetic", and the row it points at is
+    // checked against the section mask below exactly as before. What
+    // changed is that the CONSOLE's row no longer sets it — a
+    // setStatePreview() row is a real answer, not a keep-alive excuse.
+    if (demoSeed_ && editMode())
         return true;
     if (!infoEnabled())
         return false;
@@ -850,6 +913,22 @@ void PlayerInfoStripPanel::setDemoGame(mhw::GameId game)
 
 void PlayerInfoStripPanel::setupDemoData()
 {
+    // v0.18: THE LAYOUT PREVIEW, AND ONLY THE LAYOUT PREVIEW.
+    //
+    // This used to be the ONLY preview this window had, because
+    // editMode_ was the only question anyone asked — so the console
+    // inherited a seed that answers "what does a running quest look
+    // like" while the user was asking "why is my overlay empty". The
+    // console now asks setStatePreview() instead (see the header); this
+    // body remains for the live overlay's `--edit` surface, where a
+    // draggable, identifiable window IS the requirement.
+    //
+    // The seed itself is unchanged and that is deliberate: every pixel
+    // of the ten single-mode baselines and the console's other tiles
+    // still runs through it, and a design-mode surface that no longer
+    // showed what the window looks like full of content would be a
+    // regression of the kind this project pins with baselines.
+    //
     // Edit-mode preview: attached, in a quest, in a four-man party — the
     // same numbers PlayerPanel's own demo seeds (panel_player.cpp:1259,
     // :1261-1262, :1266, :1294) so the two windows' previews agree and
@@ -891,7 +970,7 @@ void PlayerInfoStripPanel::setupDemoData()
     quest_ = snap.quest;
     zone_  = snap.zone;
     row_   = mhw::buildInfoModel(snap);
-    demoData_ = true;
+    demoSeed_ = true;
 }
 
 void PlayerInfoStripPanel::paintPanel(QPainter &p)
@@ -989,7 +1068,28 @@ void PlayerInfoStripPanel::paintPanel(QPainter &p)
     };
 
     // ---- Line 1: 区域 | 任务 -------------------------------------------
-    if (quest) {
+    //
+    // v0.18: THE GATE IS lineIsDrawn(), NOT THE SECTION BIT.
+    //
+    // This used to read `if (quest)`, which draws the zone/quest row
+    // whenever the Quest section is ON — and the Quest section is on by
+    // default (sectionMask_ defaults to 0xFFFFFFFF). So the offline state
+    // printed 「区域 未知区域 / 任务 -- · 空闲」 under a 38px-tall window
+    // that had reserved exactly one meta line, and the user's request
+    // for 「○ 未连接」 was answered with a row that was never supposed to
+    // exist.
+    //
+    // THE DRIFT WAS PRE-EXISTING, not introduced here: a standalone probe
+    // at HEAD b36bd4a renders the same two lines from an empty snapshot.
+    // It was invisible in the console because the demo seed always set
+    // hasQuest, and invisible in the overlay because a quest was running.
+    // Making the console's preview honest is what exposed it.
+    //
+    // contentHeight() already asked the right question — streamHeight()
+    // walks lineIsDrawn() — so this closes a gap the height had never
+    // had. The reserve and the draw now read the same predicate, which
+    // is the invariant the file's own header comment claims.
+    if (quest && lineIsDrawn(InfoLine::ZoneQuest, row_)) {
         const QFont fLabel  = makeFont(kLabelPt);
         const QFont fValue  = makeFont(kValuePt, QFont::Medium);
         const QColor cLabel(kLabelR, kLabelG, kLabelB);
@@ -1017,7 +1117,12 @@ void PlayerInfoStripPanel::paintPanel(QPainter &p)
     }
 
     // ---- Line 2: 剩余 | 猫车 -------------------------------------------
-    if (quest) {
+    //
+    // v0.18: same gate as line 1, and for the same reason. TimeCarts is
+    // owned by the Quest stream, so "no quest" means neither of that
+    // stream's two lines exists — reserving one and drawing the other is
+    // the drift the height function never had.
+    if (quest && lineIsDrawn(InfoLine::TimeCarts, row_)) {
         const QFont fLabel  = makeFont(kLabelPt);
         const QFont fValue  = makeFont(kValuePt, QFont::Medium);
         const QFont fTimer  = makeFont(kTimerPt, QFont::Bold);
