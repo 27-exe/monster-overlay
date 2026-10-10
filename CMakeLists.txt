@@ -38,6 +38,37 @@ find_package(Threads REQUIRED)
 # What may NOT live here: any concrete game's reader, data table, types, or
 # offset constant. Both of those now live in game-rise / game-world, and the
 # nm assertion in scripts/assert_lib_purity.sh keeps them out.
+# ---------------------------------------------------------------------------
+# The producer Lua, staged beside the binaries that hash it.
+#
+# RiseReFrameworkManager decides the overlay Lua is Modified when
+# fileSha256(luaSourcePath(applicationDir)) disagrees with the copy already
+# installed in the game directory, and it says so as a REFUSAL to install —
+# 「悬浮窗 Lua 与打包副本不一致」. luaSourcePath() resolves to
+# <applicationDir>/reframework/autorun/mhr-overlay-damage.lua, i.e. inside
+# the build tree.
+#
+# Nothing was putting it there. A single `rm -rf build` therefore left the
+# console reporting a corrupted Lua for a file that was byte-identical to
+# the installed one, and damage tracking silently stopped. The source is
+# tracked at reframework/mhr-overlay-damage.lua; this stages it, so the
+# build tree cannot drift from the thing the hash is compared against.
+set(_MONS_OVERLAY_LUA_SRC
+    "${CMAKE_CURRENT_SOURCE_DIR}/reframework/mhr-overlay-damage.lua")
+set(_MONS_OVERLAY_LUA_DST_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/reframework/autorun")
+add_custom_command(
+    OUTPUT "${_MONS_OVERLAY_LUA_DST_DIR}/mhr-overlay-damage.lua"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_MONS_OVERLAY_LUA_DST_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_MONS_OVERLAY_LUA_SRC}"
+            "${_MONS_OVERLAY_LUA_DST_DIR}/mhr-overlay-damage.lua"
+    DEPENDS "${_MONS_OVERLAY_LUA_SRC}"
+    COMMENT "Staging the Rise producer Lua for the hash-based install gate")
+add_custom_target(monster-overlay-lua ALL
+    DEPENDS "${_MONS_OVERLAY_LUA_DST_DIR}/mhr-overlay-damage.lua")
+
+
 add_library(monster-core STATIC
     src/core/string_table.h
     src/core/string_table.cpp
