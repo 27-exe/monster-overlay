@@ -465,7 +465,13 @@ int main(int argc, char *argv[])
             fprintf(stderr, "FAIL: locale chip / railBrandSub missing\n");
             return 9;
         }
-        if (brandSub->text() != QStringLiteral("控制台  ·  %1").arg(QApplication::applicationVersion())) {
+        // v1.0.0: the sidebar's third line is the prototype's `notreal`
+        // note, not the version string — the version moved to the settings
+        // dialog's About section (`set.version`). This assertion is still
+        // about locale: the note is translated, so it flips with the chip.
+        // The version is no longer asserted HERE because it is no longer
+        // rendered HERE.
+        if (brandSub->text() != QStringLiteral("非真实连接 · 不会修改 panels.ini 或任何配置文件")) {
             fprintf(stderr, "FAIL: expected zh copy before the switch, got '%s'\n",
                     qPrintable(brandSub->text()));
             return 10;
@@ -492,7 +498,10 @@ int main(int argc, char *argv[])
         };
 
         clickChip();   // zh-CN -> en-US
-        if (brandSub->text() != QStringLiteral("CONTROL CONSOLE  ·  %1").arg(QApplication::applicationVersion())) {
+        // v1.0.0: the prototype's `notreal` note again, in English. The
+        // version string this used to carry lives in the settings dialog's
+        // About section now.
+        if (brandSub->text() != QStringLiteral("Not a real connection · does not modify panels.ini or any config file")) {
             fprintf(stderr, "FAIL: chip click did not retranslate ('%s')\n",
                     qPrintable(brandSub->text()));
             return 11;
@@ -524,7 +533,8 @@ int main(int argc, char *argv[])
         }
 
         clickChip();   // en-US -> zh-CN
-        if (brandSub->text() != QStringLiteral("控制台  ·  %1").arg(QApplication::applicationVersion())) {
+        // v1.0.0: the prototype's `notreal` note, back in Chinese.
+        if (brandSub->text() != QStringLiteral("非真实连接 · 不会修改 panels.ini 或任何配置文件")) {
             fprintf(stderr, "FAIL: second click did not restore zh copy ('%s')\n",
                     qPrintable(brandSub->text()));
             return 13;
@@ -562,7 +572,10 @@ int main(int argc, char *argv[])
             return 15;
         }
         QLabel *brandSub = cp4.findChild<QLabel *>(QStringLiteral("railBrandSub"));
-        if (!brandSub || brandSub->text() != QStringLiteral("控制台  ·  %1").arg(QApplication::applicationVersion())) {
+        // v1.0.0: same carrier as above — the prototype's `notreal` note.
+        // The point of this check is that an explicit locale beats a stale
+        // conf, and a translated note proves the chrome followed it.
+        if (!brandSub || brandSub->text() != QStringLiteral("非真实连接 · 不会修改 panels.ini 或任何配置文件")) {
             fprintf(stderr, "FAIL: console chrome did not stay on the explicit locale ('%s')\n",
                     brandSub ? qPrintable(brandSub->text()) : "railBrandSub missing");
             return 16;

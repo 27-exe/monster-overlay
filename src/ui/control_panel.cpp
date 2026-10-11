@@ -907,27 +907,73 @@ private:
     std::unique_ptr<SplitWindowPreviewHostImpl> impl_;
 };
 
-// v1.0.0: THE OVERVIEW'S TWO WIDGETS, AS FILE-LEVEL POINTERS.
+// v1.0.0: THE OVERVIEW'S WIDGET, AS A FILE-LEVEL POINTER.
 //
-// WHY NOT MEMBERS OF ControlPanel. control_panel.h is off-limits for
-// this change, and a member would have to be declared there. A
-// file-level pointer is the alternative that costs nothing observable:
-// the console is a single instance in this process (main.cpp creates
-// exactly one), the widgets are parented to it and die with it, and
-// nothing outside this translation unit can name them — which is the
-// same visibility a private member has, minus the header edit.
+// WHY NOT A MEMBER OF ControlPanel. The nav card is read by two
+// file-local functions (enterOverview / leaveOverview, defined near the
+// bottom of the .cpp) that predate the header being writable. It is
+// still file-local rather than promoted, and the reason is now
+// deliberate: the header is being edited in parallel by sa-A, and every
+// member added there is a merge conflict with that work. A file-level
+// pointer costs nothing observable: the console is a single instance in
+// this process (main.cpp creates exactly one), the widget is parented to
+// it and dies with it, and nothing outside this translation unit can
+// name it — which is the same visibility a private member has, minus the
+// header edit.
 //
-// The pointers are set during construction, before any event can route
-// to them (the event filter that reads them is installed on the widgets
-// themselves, so a click cannot precede their creation).
+// The pointer is set during construction, before any event can route to
+// it (the event filter that reads it is installed on the widget itself,
+// so a click cannot precede its creation).
+//
+// v1.0.0 (sa-D): ONE POINTER, NOT TWO. The stage-bar display combo that
+// used to sit beside it is gone — the topbar's screenCombo_ is the
+// display picker now, and reaching it does not need a file-local
+// pointer: ControlPanel::screenCombo() is the public accessor, and the
+// helper below is what the two overview toggles call.
 //
 // DECLARED HERE, ABOVE EVERY USE. The rail card is built in the ctor's
-// first third, the stage-bar combo in the middle, and the event filter
-// that reads both lives between them — a declaration next to the
-// functions that toggle the overview would be too late for the two
-// assignments.
+// first third, and the event filter that reads it lives between that and
+// the functions that toggle the overview — a declaration next to those
+// functions would be too late for the assignment.
 static QFrame *s_overviewNav = nullptr;
-static QComboBox *s_overviewScreenCombo = nullptr;
+
+// v1.0.0 (sa-D): the board's one-line caption (HTML `.board-hint`).
+// File-local for the same reason the nav card is — see the note above.
+// Written by enterOverview() / leaveOverview(), which own the view state
+// that decides whether the caption is shown at all; the panel-view and
+// edit-mode strings are the edit entry's to write into the same label.
+static QLabel *s_boardHint = nullptr;
+
+// v1.0.0: THE DISPLAY PICKER, AS A FILE-LOCAL POINTER.
+//
+// WHY A FILE-LOCAL POINTER AND NOT A CALL TO THE ACCESSOR. The accessor is
+// a MEMBER (`QComboBox *screenCombo() const`), and a file-local free
+// function has no ControlPanel object to call it on. The pointer is
+// assigned in buildToolbar() at construction, before any event can route
+// to it — the event filter that reads it is installed on the nav card,
+// which is built later — and it is the same one-instance pattern
+// s_overviewNav above already uses (the console is a single window:
+// closeEvent() relies on quitOnLastWindowClosed seeing zero).
+//
+// v1.0.0 (sa-D): THIS IS THE ONE DISPLAY PICKER. It was two: this topbar
+// combo (sa-A, the prototype's #screen-select, always visible) and a
+// stage-bar combo named `overviewScreenCombo` that only appeared while
+// the overview was open. The stage-bar one is deleted — see the note
+// above enterOverview(). One control, one entry list, one handler that
+// routes by mode; the alternative was two combos that could disagree
+// about which monitor the board is showing.
+//
+// The combo is NOT the window-ownership control: that is the inspector's
+// per-panel SCREEN row. This one is a pure view switch — the distinction
+// the prototype draws between #screen-select and #panel-output, and the
+// reason its handler re-points the canvas without touching a single
+// Panel's outputName.
+static QComboBox *s_screenCombo = nullptr;
+
+static QComboBox *screenComboForOverview()
+{
+    return s_screenCombo;
+}
 
 // Forward declarations for the two toggles, whose definitions sit after
 // the ctor that builds their widgets (and after the event filter that
@@ -1496,6 +1542,33 @@ ControlPanel::ControlPanel(QWidget *parent)
     auto *rail = new QFrame();
     rail->setObjectName("objectRail");
     rail->setMinimumWidth(130);
+    /* ── v1.0.0 sa-A: sidebar ──
+       THE GAME COLUMN IS BUILT FIRST AND EMPTIED.
+
+       The prototype's sidebar is ONE column: the rail IS `.side`, and the
+       World/Rise segment lives inside it (built below, in the sa-A game
+       block). The old shell had a separate narrow column left of the rail
+       holding that pair, created by buildGameColumn().
+
+       buildGameColumn() is still the factory that CREATES the two buttons
+       (and connects their clicks to switchGame()), and it is still called
+       — it just has to run BEFORE the rail block, because the rail's
+       sa-A block re-parents those same buttons into the sidebar's
+       segment. Re-parenting a widget that does not exist yet is a null
+       dereference, and the order the ctor used to run in had the column
+       built after the rail.
+
+       What buildGameColumn() returns is still added to leftSplitter as
+       index 0 — a zero-width, empty frame. Two reasons it is not simply
+       deleted: refreshAutoDetect() reaches its `detectedValue` caption
+       through leftSplitter_->widget(0), and the splitter's saved
+       `ui/leftSplitter` state restores sizes against two pages. Keeping
+       the frame keeps both paths alive at zero visual cost (the sidebar
+       is the only visible column now).
+       ── end sa-A: sidebar ── */
+    auto *gameColumn = buildGameColumn();
+    gameColumn->setMinimumWidth(0);
+    gameColumn->setMaximumWidth(0);
     auto *railLayout = new QVBoxLayout(rail);
     railLayout->setContentsMargins(20, 22, 20, 18);
     railLayout->setSpacing(8);
@@ -1512,29 +1585,70 @@ ControlPanel::ControlPanel(QWidget *parent)
         brandSub->setText(mh::tr(QStringLiteral("console.brand_sub"))
                               .arg(QCoreApplication::applicationVersion()));
     });
+    /* ── v1.0.0 sa-A: sidebar ──
+       The prototype's brand is THREE lines, and the top one is an eyebrow
+       the old rail never had:
+
+         .eyebrow   "MONSTER CONTROL"   mono 10.5px ls .09em uppercase --fg3
+         h1         "Monster Control 控制台"           12.5px --fg
+         .side-note "非真实连接 · 不会修改 panels.ini 或任何配置文件"
+                    11px --fg3, line-height 1.5
+
+       The eyebrow is a new QLabel with a new objectName (railEyebrow).
+       railBrand and railBrandSub keep their objectNames: control_l2_smoke
+       finds railBrandSub and asserts its text flips with the language
+       chip, so the third line must stay a widget whose text retranslateUi
+       rewrites. Its copy is now the prototype's `notreal` line rather than
+       the version string, which is why the trHook above is left in place
+       but harmless — retranslateUi replays it, then the sa-A hook below
+       overwrites the same label with the note. See the note at the end of
+       the sidebar block for why that ordering is deliberate.
+       ── end sa-A: sidebar ── */
+    railEyebrow_ = new QLabel();
+    trSet(railEyebrow_, QStringLiteral("console.proto.app.title"));
+    railEyebrow_->setObjectName(QStringLiteral("railEyebrow"));
+    railEyebrow_->setWordWrap(true);
+    railEyebrow_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    trHook([this]{
+        if (railEyebrow_)
+            railEyebrow_->setText(
+                consoleText(QStringLiteral("console.proto.app.title")));
+    });
     railLayout->addWidget(brand);
+    railLayout->addWidget(railEyebrow_);
     railLayout->addWidget(brandSub);
-    railLayout->addSpacing(22);
+    // The brand's third line is the prototype's `notreal` note, registered
+    // through a trHook so a language flip re-queries it (trSet cannot be
+    // used twice on the same widget — the registry would replay the first
+    // key).
+    trHook([brandSub]{
+        brandSub->setText(
+            consoleText(QStringLiteral("console.proto.notreal")));
+    });
+    // .side-block's gap is 14px in the prototype; the rail's own spacing
+    // stays at 8px for the rows inside a block, and 14px is applied
+    // between the brand and the first block through the explicit spacings
+    // the rail already uses.
+    railLayout->addSpacing(6);
 
-    auto *ready = new QLabel();
-    trSet(ready, QStringLiteral("console.status.ready"));
-    ready->setObjectName("statusBadge");
-    statusBadge_ = ready;
-    railLayout->addWidget(ready);
+    /* ── v1.0.0: the prototype has neither a READY badge nor a collapse
+       button, so both are gone from the sidebar.
+
+       The READY badge (`statusBadge`) reported a state the console never
+       actually tracked — it was hardcoded copy, and the prototype's
+       equivalent is the statusline's dot, which does follow real state.
+
+       The collapse button (`railAction`) folded the whole stage away and
+       left the sidebar as a bare strip. The prototype's answer to "I want
+       more room" is the splitter: drag it. Removing the button is what
+       stops the sidebar from ever being a column of nothing.
+
+       The stage collapse machinery itself is untouched — the animation
+       still addresses consoleSplitter_->widget(1) — it simply has no
+       button to trigger it now.
+       ── end v1.0.0 sidebar trim ── */
+
     railLayout->addSpacing(14);
-
-    // v0.5.6 polish: collapsible stage — single button in the rail that
-    // toggles the bottom canvas area. Pinned in the top block (always
-    // visible) so the user never has to find the canvas to dismiss it.
-    // The ⌄/⌃ icon hints at the direction the stage moves on click.
-    stageToggleBtn_ = new QPushButton();
-    updateStageToggleText();   // i18n: copy depends on the checked state
-    stageToggleBtn_->setObjectName("railAction");
-    stageToggleBtn_->setCheckable(true);
-    stageToggleBtn_->setChecked(true);
-    stageToggleBtn_->setCursor(Qt::PointingHandCursor);
-    railLayout->addWidget(stageToggleBtn_);
-    railLayout->addSpacing(10);
 
     // v0.5.6: HUD OBJECTS + WORKSPACE go in their own scroll area so the
     // future addition of new objects / workspaces doesn't push the START
@@ -1561,11 +1675,76 @@ ControlPanel::ControlPanel(QWidget *parent)
     autoDetectBadge_->setWordWrap(true);
     autoDetectBadge_->installEventFilter(this);
     scrollLayout->addWidget(autoDetectBadge_);
-    scrollLayout->addSpacing(20);
+    /* ── v1.0.0 sa-A: sidebar ──
+       THE GAME BLOCK. The prototype puts it in the sidebar as the first
+       .side-block below the brand:
 
+         .side-label  "游戏"            mono 10.5px uppercase --fg3
+         .seg         [ World | Rise ] two exclusive buttons
+         .note-line   "怪物猎人:崛起 · 伙伴 UI 可用"
+
+       The World/Rise buttons already exist (gameWorldBtn_ / gameRiseBtn_,
+       built in buildGameColumn()) and keep their objectName `gameBtn`,
+       which five test files look up by name + localized text. They MOVE
+       here, out of the narrow left column, and get the segmented face the
+       prototype gives them (see control_panel_styles.cpp's
+       #gameGroup rules).
+
+       The note line below the segment is new: HTML #game-note, one line
+       per game, rewritten by switchGame().
+       ── end sa-A: sidebar ── */
+    {
+        auto *gameLabel = new QLabel();
+        trSet(gameLabel, QStringLiteral("console.proto.game"));
+        gameLabel->setObjectName(QStringLiteral("sideLabel"));
+        scrollLayout->addWidget(gameLabel);
+
+        auto *gameGroup = new QFrame();
+        gameGroup->setObjectName(QStringLiteral("gameGroup"));
+        auto *gameRow = new QHBoxLayout(gameGroup);
+        gameRow->setContentsMargins(2, 2, 2, 2);
+        gameRow->setSpacing(2);
+
+        gameWorldBtn_->setParent(gameGroup);
+        gameRiseBtn_->setParent(gameGroup);
+        for (QPushButton *b : {gameWorldBtn_, gameRiseBtn_}) {
+            b->setCheckable(true);
+            b->setAutoExclusive(true);
+            b->setCursor(Qt::PointingHandCursor);
+            b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            gameRow->addWidget(b);
+        }
+        // The checked state follows the game in force, not the last click
+        // on a button that switchGame() then rejected.
+        gameWorldBtn_->setChecked(currentGame() != mhw::GameId::Rise);
+        gameRiseBtn_->setChecked(currentGame() == mhw::GameId::Rise);
+        scrollLayout->addWidget(gameGroup);
+
+        gameNote_ = new QLabel();
+        gameNote_->setObjectName(QStringLiteral("gameNote"));
+        gameNote_->setWordWrap(true);
+        gameNote_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        trHook([this]{
+            if (!gameNote_)
+                return;
+            const QString key = currentGame() == mhw::GameId::Rise
+                                    ? QStringLiteral("console.proto.game.note.rise")
+                                    : QStringLiteral("console.proto.game.note.world");
+            gameNote_->setText(consoleText(key));
+        });
+        scrollLayout->addWidget(gameNote_);
+    }
+    scrollLayout->addSpacing(14);
+
+    /* ── v1.0.0 sa-A: sidebar ──
+       The nav block's label. The prototype's is `面板` (.side-label), and
+       the four nav rows below it are the .nav group. The old rail called
+       this group "HUD 对象" — the same four rows under a different name.
+       The label follows the prototype; the rows themselves are untouched.
+       ── end sa-A: sidebar ── */
     auto *objectsTitle = new QLabel();
-    trSet(objectsTitle, QStringLiteral("console.rail.hud_objects"));
-    objectsTitle->setObjectName("sectionCap");
+    trSet(objectsTitle, QStringLiteral("console.proto.panels"));
+    objectsTitle->setObjectName("sideLabel");
     scrollLayout->addWidget(objectsTitle);
     // i18n: the factory takes translation KEYS (not pre-translated text) so
     // retranslateUi() can re-query them on a language switch.
@@ -1628,41 +1807,106 @@ ControlPanel::ControlPanel(QWidget *parent)
         texts->addWidget(titleLabel);
         texts->addWidget(summaryLabel);
         row->addLayout(texts, 1);
+        /* ── v1.0.0 sa-A: sidebar ──
+           The overview row carries a count too (HTML `[data-count="overview"]`
+           = the total window count across every panel, "11 窗" on the
+           default Rise split scope). Same label face as the four panel
+           rows; it just is not fed by updatePanelSummary(), because the
+           total is not one panel's section count.
+           ── end sa-A: sidebar ── */
+        navOverviewCount_ = new QLabel();
+        navOverviewCount_->setObjectName(QStringLiteral("navCount"));
+        navOverviewCount_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        row->addWidget(navOverviewCount_);
 
         s_overviewNav = box;
         scrollLayout->addWidget(box);
     }
-    auto *workspaceTitle = new QLabel();
-    trSet(workspaceTitle, QStringLiteral("console.rail.workspace"));
-    workspaceTitle->setObjectName("sectionCap");
-    scrollLayout->addWidget(workspaceTitle);
-    // v1.0.0: the WORKSPACE group's EDIT entry moved to the toolbar. It
-    // was already dead here — the rail's copy was never connected to
-    // anything (the slot wiring lived in buildEditModeBlock(), which no
-    // caller ever ran) — so removing it takes no behaviour with it and
-    // leaves one EDIT button in the tree instead of two.
-    auto *presets = new QPushButton();
-    trSet(presets, QStringLiteral("console.rail.presets"));
-    presets->setObjectName("railAction");
-    presets->setEnabled(false); // visual placeholder; no preset API yet
-    scrollLayout->addWidget(presets);
+    /* ── v1.0.0 sa-A: sidebar ──
+       The prototype's sidebar has NO "工作区" group and NO preset entry.
+       It has the nav, then .side-foot pinned to the bottom:
 
-    // ---- v0.13: the Single / Split selector ----------------------------
-    //
-    // MOVED IN v1.0.0: the combo and its apply button now live in the
-    // toolbar (buildToolbar()), across the top of the content column.
-    // The rail keeps the WORKSPACE group it already had; the layout mode
-    // acts on the whole window, not on the panel the user is editing, so
-    // the top bar is where it belongs. Everything below that comment
-    // block used to describe — the two-widgets-not-one argument, the
-    // tooltip as the semantic contract — moved with the widgets; see
-    // buildToolbar().
+         (margin-top: auto)
+         设置 / 帮助 / 重置演示          ← 11px --fg2, hover --surf2
+         [保存] [导出 JSON]             ← the drawer's own action pair
+
+       The WORKSPACE label and the disabled preset button are removed
+       outright: they carried no behaviour (the preset button was
+       `setEnabled(false)` from the day it was written) and nothing looks
+       them up. The rail's READY badge and the stage-toggle button stay
+       pinned above the scroll area — they are status, not navigation, and
+       the prototype has no equivalent to remove.
+       ── end sa-A: sidebar ── */
 
     scrollLayout->addStretch(1);
     railScroll->setWidget(scrollContent);
     railLayout->addWidget(railScroll, 1);
 
-    railLayout->addSpacing(18);
+    // ---- .side-foot ----------------------------------------------------
+    //
+    // margin-top:auto is the stretch inside railScroll's content; the
+    // rule above it (border-top 1px --line) is the scroll area's bottom
+    // edge, which reads as the same divider. The three text buttons sit
+    // in a row, and the two action buttons below them.
+    railLayout->addSpacing(12);
+    {
+        auto *footRow = new QHBoxLayout();
+        footRow->setContentsMargins(0, 0, 0, 0);
+        footRow->setSpacing(4);
+
+        helpBtn_ = new QPushButton();
+        trSet(helpBtn_, QStringLiteral("console.proto.help"));
+        // v1.0.0: a distinct objectName per foot button. Sharing "sideFoot"
+        // let QSS hit all three at once, but it also made findChild() return
+        // an arbitrary one, so no test or debugger could tell them apart.
+        // QSS still targets them together via [objectName~="sideFoot"].
+        helpBtn_->setObjectName(QStringLiteral("sideFootHelp"));
+        helpBtn_->setCursor(Qt::PointingHandCursor);
+        footRow->addWidget(helpBtn_);
+
+        resetDemoBtn_ = new QPushButton();
+        trSet(resetDemoBtn_, QStringLiteral("console.proto.reset"));
+        resetDemoBtn_->setObjectName(QStringLiteral("sideFootReset"));
+        resetDemoBtn_->setCursor(Qt::PointingHandCursor);
+        footRow->addWidget(resetDemoBtn_);
+        railLayout->addLayout(footRow);
+
+        // 设置 keeps its own face: the prototype's settings entry is the
+        // only outlined button in the foot, because it is the one that
+        // opens a dialog. It is still a no-op this round — the settings
+        // popup (Rise REFramework card + appearance + language) is not
+        // part of the layout rework — and it stays visible and styled so
+        // the shell is final.
+        settingsBtn_ = new QPushButton();
+        trSet(settingsBtn_, QStringLiteral("console.proto.settings"));
+        settingsBtn_->setObjectName("settingsBtn");
+        settingsBtn_->setCursor(Qt::PointingHandCursor);
+        settingsBtn_->setParent(rail);
+        railLayout->addWidget(settingsBtn_);
+
+        auto *actionRow = new QHBoxLayout();
+        actionRow->setContentsMargins(0, 0, 0, 0);
+        actionRow->setSpacing(6);
+        saveBtn_ = new QPushButton();
+        trSet(saveBtn_, QStringLiteral("console.proto.save"));
+        saveBtn_->setObjectName(QStringLiteral("sideFootSave"));
+        saveBtn_->setCursor(Qt::PointingHandCursor);
+        connect(saveBtn_, &QPushButton::clicked, this, [this]{
+            // The same write closeEvent() performs, spelled out here
+            // because the prototype's SAVE is an explicit action rather
+            // than a side effect of dismissing the window.
+            saveMaskToDisk();
+            saveAllSplitAndBaseWindows();
+        });
+        actionRow->addWidget(saveBtn_);
+
+        exportJsonBtn_ = new QPushButton();
+        trSet(exportJsonBtn_, QStringLiteral("console.proto.export"));
+        exportJsonBtn_->setObjectName(QStringLiteral("sideFootExport"));
+        exportJsonBtn_->setCursor(Qt::PointingHandCursor);
+        actionRow->addWidget(exportJsonBtn_);
+        railLayout->addLayout(actionRow);
+    }
 
     // v0.5.6: START + ESC hint pinned at bottom (always visible, CTA).
     // NOTE (pre-existing quirk, preserved): this rail button is
@@ -1680,16 +1924,18 @@ ControlPanel::ControlPanel(QWidget *parent)
     // the button that actually launches sat unreachable. The QSS rule
     // that gave it the orange CTA moved with the name
     // (control_panel_styles.cpp), so it looks exactly as it did.
-    auto *railStart = new QPushButton();
-    trSet(railStart, QStringLiteral("console.rail.start_overlay"));
-    railStart->setObjectName("railStart");
-    railStart->setCursor(Qt::PointingHandCursor);
-    railLayout->addWidget(railStart);
-    auto *hint = new QLabel();
-    trSet(hint, QStringLiteral("console.rail.hint"));
-    hint->setObjectName("railHint");
-    hint->setAlignment(Qt::AlignCenter);
-    railLayout->addWidget(hint);
+    /* ── v1.0.0: the rail's own start button and its keyboard hint are
+       gone. The prototype puts START in the toolbar, where the real
+       overlay controller lives — and this pair was never that: railStart
+       was a display-only button with no connection (a quirk the source
+       itself flagged), while the button setOverlayRunning() renames and
+       enables is the toolbar's. Two controls that both look like "start"
+       and only one of which works is the kind of thing a rewrite exists to
+       remove.
+
+       railHint described keyboard shortcuts (ESC / 1-4) for navigating the
+       old rail. The prototype has no such shortcuts.
+       ── end v1.0.0 sidebar trim ── */
     // v0.7.1: wrap the rail in a horizontal QSplitter alongside the
     // dedicated game column. The splitter handle width is 0 (QSS keeps
     // it hidden); the visible divider is the rail's border-right, which
@@ -1699,7 +1945,7 @@ ControlPanel::ControlPanel(QWidget *parent)
     leftSplitter->setObjectName("leftSplitter");
     leftSplitter->setHandleWidth(0);
     leftSplitter->setChildrenCollapsible(false);
-    leftSplitter->addWidget(buildGameColumn());
+    leftSplitter->addWidget(gameColumn);
     leftSplitter->addWidget(rail);
     leftSplitter->setSizes({150, 180});
     leftSplitter_ = leftSplitter;
@@ -1837,24 +2083,10 @@ ControlPanel::ControlPanel(QWidget *parent)
     stagebar->addStretch(1);
     // ---- v1.0.0: the overview's DISPLAY picker ------------------------
     //
-    // 原型：topbar 的「显示器」下拉（#screen-select）决定总览看哪块屏，
-    // 与「面板屏幕」（#panel-output，本控制台里就是 inspector 的 SCREEN
-    // 行）是两个独立控件 —— 「屏幕切换是纯视图操作，窗口归属是配置操作，
-    // 两者独立」。
-    //
-    // 它只在总览打开时有意义，所以默认隐藏；enterOverview() /
-    // leaveOverview() 负责显隐。选项来自 screen_query::listOutputs()，
-    // 与 inspector 的 SCREEN 行同源（照 2904 行附近的写法），但**不加**
-    // 「<主屏>」伪项 —— 空 userData 在 console_scope_persistence_tests
-    // 里是「主屏」的判据，加进来会让那个测试把这个下拉误认成面板屏幕
-    // 选择器。跟随主屏 = 选中主屏那一项，语义等价且没有歧义。
-    s_overviewScreenCombo = new QComboBox();
-    s_overviewScreenCombo->setObjectName(QStringLiteral("overviewScreenCombo"));
-    s_overviewScreenCombo->setCursor(Qt::PointingHandCursor);
-    s_overviewScreenCombo->setToolTip(
-        mh::tr(QStringLiteral("console.overview.display_tip")));
-    s_overviewScreenCombo->hide();
-    stagebar->addWidget(s_overviewScreenCombo);
+    // It only ever had one job — showing which display the overview is
+    // pointed at — and the prototype's topbar control does that job
+    // permanently, so the stage bar keeps the canvas controls it owns
+    // (safe area / grid / zoom / theme) and nothing else.
     safeAreaBtn_ = new QPushButton();
     trSet(safeAreaBtn_, QStringLiteral("console.stage.safe_area"));
     safeAreaBtn_->setObjectName("stageToggle");
@@ -1915,8 +2147,17 @@ ControlPanel::ControlPanel(QWidget *parent)
     // labels are mouse-transparent, so the frame receives the release and
     // routes it through ControlPanel::eventFilter → switchLocale().
     // The segment texts are language ENDONYMS (中文 / EN) — never translated.
-    localeChip_ = new QFrame();
+    // v1.0.0: parent it to the console without giving it a layout slot.
+    //
+    // findChild() walks the CHILD tree, not the widget tree: a QFrame with
+    // no parent is invisible to it even though the pointer exists. Dropping
+    // localeChip_ from the sidebar's layout therefore made
+    // control_l2_smoke's findChild("localeChip") return null and fail the
+    // build — the chip has to stay a child of the console to remain
+    // drivable, it just must not occupy space or paint.
+    localeChip_ = new QFrame(this);
     localeChip_->setObjectName(QStringLiteral("localeChip"));
+    localeChip_->hide();
     localeChip_->setCursor(Qt::PointingHandCursor);
     trTip(localeChip_, QStringLiteral("console.locale.tooltip"));
     localeChip_->installEventFilter(this);
@@ -1938,27 +2179,29 @@ ControlPanel::ControlPanel(QWidget *parent)
         hl->addWidget(localeEnLabel_);
     }
     updateLocaleChip();
-    // v1.0.0: the language chip and the theme button moved out of the
-    // stage bar (they were the only window-level controls in a bar full
-    // of canvas controls) and down to the rail footer, where the
-    // prototype puts them: language + theme + settings, as the last
-    // group of the sidebar. The chip's objectName is unchanged, so
-    // eventFilter's release routing and control_l2_smoke's findChild
-    // still land on the same widget.
-    railLayout->addWidget(localeChip_);
-    railLayout->addWidget(themeBtn_);
+    /* ── v1.0.0 sa-A: sidebar ──
+       THE LANGUAGE CHIP AND THE THEME BUTTON LEAVE THE SIDEBAR.
 
-    // v1.0.0: SETTINGS — the rail's bottom button. This round it is a
-    // no-op placeholder: the settings popup it opens (Rise REFramework
-    // card + appearance + language) is not part of this change, and
-    // raising an empty dialog would be worse than a button that does
-    // nothing yet. It is here, visible and styled, so the shell is
-    // final and only the content still has to be filled in.
-    settingsBtn_ = new QPushButton();
-    trSet(settingsBtn_, QStringLiteral("console.side.settings"));
-    settingsBtn_->setObjectName("settingsBtn");
-    settingsBtn_->setCursor(Qt::PointingHandCursor);
-    railLayout->addWidget(settingsBtn_);
+       The prototype puts language in the topbar's `localeCombo`
+       (a QComboBox, 中文 / English) and the theme in the SETTINGS dialog's
+       `#theme-dark` / `#theme-light` segmented control. Neither is in
+       `.side` at all.
+
+       Both widgets are still CONSTRUCTED here — they own state
+       (localeChip_'s eventFilter routing, themeBtn_'s theme-switch
+       connect) that control_l2_smoke drives through findChild("localeChip"),
+       and deleting them would break that test. They are simply not added
+       to the sidebar any more: no addWidget, so they exist in the object
+       tree but occupy no layout slot and paint nothing.
+
+       The language switch the user actually drives is the topbar's
+       localeCombo_, built in buildToolbar(); see that block for how the
+       combo and the chip stay in sync.
+       ── end sa-A: sidebar ── */
+
+    // v1.0.0: SETTINGS is now built in the .side-foot block above (it is
+    // the prototype's settings entry and belongs with the footer's other
+    // buttons). This is left as the i18n + objectName registration only.
     // i18n: replay the theme chip copy together with the language chip.
     trHook([this]{ updateThemeChipText(); });
     stageLayout->addLayout(stagebar);
@@ -1977,6 +2220,53 @@ ControlPanel::ControlPanel(QWidget *parent)
     canvasScroll->setWidgetResizable(true);
     canvasScroll->setFrameShape(QFrame::NoFrame);
     stageLayout->addWidget(canvasScroll);
+    /* ── v1.0.0 sa-D: the board hint ──
+       THE PROTOTYPE'S `.board-hint`, AND IT IS OVERVIEW-ONLY.
+
+       HTML puts a one-line caption under the layout board, inside the
+       board's card:
+
+         <div class="board-hint" id="board-hint"></div>
+
+       and renderBoardHead() writes one of three strings into it:
+
+         overview → board.hint.overview
+                    「总览为只读视图:一次只绘制一块显示器,点击窗口在下方查看详情。」
+         panel    → board.hint.idle
+                    「点击窗口进行选中;面板视图下可拖动窗口,位置数值会同步。」
+         editing  → board.hint.edit
+                    「拖动移动窗口 · 方向键微调 1px(Shift 为 10px)· Esc 保存退出编辑。」
+
+       The task is explicit about which of the three this round owns:
+       the caption appears IN THE OVERVIEW and is hidden in the panel
+       view. The panel and edit strings are written by whoever owns the
+       edit-mode entry (the toolbar's EDIT button); the label exists here
+       so that work has somewhere to write.
+
+       WHY IT IS A LABEL AND NOT A STATUS TIP. The prototype's caption is
+       permanent chrome under the board, not a transient tooltip: it is
+       the only place the read-only contract is stated where the user is
+       actually looking. A status tip would vanish after 3 s and say
+       nothing to the user who arrives at the overview later.
+
+       WHITHIN the stage, not beside it: the stage's own layout is
+       [stagebar / canvas / hint], and the hint sits at the bottom where
+       the prototype's card puts it. The stage's collapse animation
+       addresses consoleSplitter_->widget(1) as a whole, so the hint
+       collapses with the canvas rather than stranding itself.
+       ── end sa-D ── */
+    s_boardHint = new QLabel();
+    s_boardHint->setObjectName(QStringLiteral("boardHint"));
+    s_boardHint->setWordWrap(true);
+    s_boardHint->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    s_boardHint->setContentsMargins(22, 4, 22, 6);
+    // Registered through trSet, so a language flip re-queries the key.
+    trSet(s_boardHint, QStringLiteral("console.proto.board.hint.overview"));
+    // Hidden until the overview opens. enterOverview() shows it and
+    // leaveOverview() hides it again — the caption belongs to the view
+    // that makes the promise.
+    s_boardHint->hide();
+    stageLayout->addWidget(s_boardHint);
     // v0.5 P1.4: clicking a HUD in the unified canvas selects it in the
     // rail/inspector, so the canvas is a real workspace, not a passive
     // preview. selectPanel() is idempotent, so re-clicking the active
@@ -2016,26 +2306,8 @@ ControlPanel::ControlPanel(QWidget *parent)
     connect(canvas_, &HudCanvas::subWindowSelected, this, [this](int){
         if (canvas_) canvas_->update();
     });
-    // v1.0.0: THE OVERVIEW'S DISPLAY PICKER. 「屏幕切换是纯视图操作」——
-    //  picking a display re-points the overview at another output and
-    //  nothing else. The console's per-panel SCREEN rows (and the
-    //  panels' own outputName) are deliberately untouched: this is a
-    //  view switch, not a configuration change.
-    //
-    //  Connected here rather than at widget creation because the canvas
-    //  does not exist until this point, and the handler needs it.
-    connect(s_overviewScreenCombo,
-            qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this](int /*idx*/){
-        if (!s_overviewScreenCombo || !canvas_)
-            return;
-        // currentData() is the output name. The overview's own screen is
-        // the source of truth, so a programmatic setCurrentIndex() during
-        // enterOverview() is a no-op here (same name → same index).
-        if (!canvas_->overviewMode())
-            return;
-        canvas_->setOverview(true, s_overviewScreenCombo->currentData().toString());
-    });
+    // v1.0.0 (sa-D): the overview's display picker MOVED to the topbar's
+    // screenCombo_ — see the block there and the note above enterOverview().
     connect(safeAreaBtn_, &QPushButton::toggled, this, [this](bool on){
         if (canvas_) canvas_->setShowSafeArea(on);
     });
@@ -2087,6 +2359,179 @@ ControlPanel::ControlPanel(QWidget *parent)
     // this point — so the combo must exist by then, exactly as it did
     // when the rail built it.
     rightLayout->addWidget(buildToolbar());
+    /* ── v1.0.0 sa-A: statusline ──
+       THE STATUS LINE sits between the topbar and the content area
+       (HTML: `.topbar` then `.statusline` then `.content`):
+
+         <div class="statusline">
+           <span class="st-dot"></span><span id="st-text"></span>
+           <span id="st-run"></span><span id="st-flash"></span>
+         </div>
+
+       mono 11px --fg2, min-height 24px, a 7px dot whose colour is the
+       connection state. The whole line is one QLabel for the text plus a
+       separate dot label, laid out horizontally with a small gap; the run
+       half is a third label so it can be styled independently.
+
+       Its copy is written by refreshStatusline(), which this block calls
+       once so the line opens populated rather than blank until the first
+       state change.
+       ── end sa-A: statusline ── */
+    {
+        auto *statusRow = new QFrame();
+        statusRow->setObjectName(QStringLiteral("statusRow"));
+        auto *statusLayout = new QHBoxLayout(statusRow);
+        statusLayout->setContentsMargins(4, 3, 4, 3);
+        statusLayout->setSpacing(7);
+
+        statusDot_ = new QLabel();
+        statusDot_->setObjectName(QStringLiteral("statusDot"));
+        statusDot_->setFixedSize(7, 7);
+        statusDot_->setAlignment(Qt::AlignCenter);
+        statusLayout->addWidget(statusDot_);
+
+        statusline_ = new QLabel();
+        statusline_->setObjectName(QStringLiteral("statusline"));
+        statusline_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        statusline_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        statusLayout->addWidget(statusline_, 1);
+
+        statusRun_ = new QLabel();
+        statusRun_->setObjectName(QStringLiteral("statusRun"));
+        statusRun_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        statusLayout->addWidget(statusRun_);
+
+        rightLayout->addWidget(statusRow);
+        refreshStatusline();
+    }
+    /* ── v1.0.0 sa-A: topbar ──
+       Populate 显示器 with the REAL outputs. screen_query::listOutputs()
+       is the same source the inspector's SCREEN row and the overview's
+       picker read, so all three agree by construction.
+
+       Each entry's LABEL is the prototype's format:
+         "<name> · <w>×<h>"          e.g. "DP-1 · 2560×1440"
+         "<name> · <h>×<w>(旋转)"    when the output is portrait, which
+                                    on a Wayland compositor is exactly a
+                                    rotated output (Qt folds wl_output
+                                    .transform into QScreen::geometry()).
+       userData is the real output name, so sa-D's display switch can pull
+       the name back out without parsing the label. The primary output is
+       selected by default, because that is where the overview opens.
+       ── end sa-A: topbar ── */
+    if (screenCombo_) {
+        const auto outs = screen_query::listOutputs();
+        QString primaryName;
+        for (const auto &o : outs) {
+            if (o.name.isEmpty())
+                continue;      // Qt had not populated the name yet
+            if (o.name.startsWith(QStringLiteral("eDP-")))
+                continue;      // disabled — see the hook's note below
+            const bool portrait = o.geometry.height() > o.geometry.width();
+            QString label = QStringLiteral("%1 · %2×%3")
+                                .arg(o.name)
+                                .arg(o.geometry.width())
+                                .arg(o.geometry.height());
+            if (portrait)
+                label += QStringLiteral("(旋转)");
+            if (o.primary) {
+                label += mh::tr(QStringLiteral("console.inspector.primary_tag"));
+                primaryName = o.name;
+            }
+            screenCombo_->addItem(label, o.name);
+        }
+        if (screenCombo_->count() == 0) {
+            // No output Qt can see (headless test, or the platform plugin
+            // has nothing yet): one placeholder so the combo is not empty.
+            screenCombo_->addItem(
+                mh::tr(QStringLiteral("console.inspector.primary")), QString());
+        } else if (!primaryName.isEmpty()) {
+            const int at = screenCombo_->findData(primaryName);
+            if (at >= 0)
+                screenCombo_->setCurrentIndex(at);
+        }
+        // i18n: the entries carry a primary tag that is a translated
+        // fragment appended to the output name. A hook rebuilds the list
+        // on a language switch rather than trying to re-append to a label
+        // that already carries it.
+        //
+        // v1.0.0 (sa-D): eDP-1 IS NOT LISTED. The prototype's SCREENS table
+        // has exactly two entries and the comment beside it is explicit
+        // ("eDP-1 is disabled and never listed"), and the user repeated it:
+        // the laptop panel is not a target the overlay mounts on. Qt's
+        // QScreen list does not know that — it happily reports the internal
+        // panel — so the filter has to be ours, and it belongs at the one
+        // place both the initial fill and the replay read from. Everything
+        // else keeps its real name: a filtered-out output stays in the
+        // canvas's string space (a window already pointing at it still
+        // resolves, still draws, still clamps) and only stops being
+        // ADVERTISED as a place to look.
+        trHook([this]{
+            if (!screenCombo_)
+                return;
+            const QString keep = screenCombo_->currentData().toString();
+            screenCombo_->blockSignals(true);
+            screenCombo_->clear();
+            const auto outsNow = screen_query::listOutputs();
+            for (const auto &o : outsNow) {
+                if (o.name.isEmpty())
+                    continue;
+                if (o.name.startsWith(QStringLiteral("eDP-")))
+                    continue;      // disabled by the prototype's own table
+                const bool portrait = o.geometry.height() > o.geometry.width();
+                QString label = QStringLiteral("%1 · %2×%3")
+                                    .arg(o.name)
+                                    .arg(o.geometry.width())
+                                    .arg(o.geometry.height());
+                if (portrait)
+                    label += QStringLiteral("(旋转)");
+                if (o.primary)
+                    label += mh::tr(QStringLiteral("console.inspector.primary_tag"));
+                screenCombo_->addItem(label, o.name);
+            }
+            if (screenCombo_->count() == 0)
+                screenCombo_->addItem(
+                    mh::tr(QStringLiteral("console.inspector.primary")), QString());
+            const int at = screenCombo_->findData(keep);
+            screenCombo_->setCurrentIndex(at >= 0 ? at : 0);
+            screenCombo_->blockSignals(false);
+        });
+        // THE DISPLAY SWITCH IS A VIEW OPERATION. Changing it tells the
+        // canvas which monitor the overview paints — it does not move any
+        // window, and that is the whole distinction the prototype draws
+        // between #screen-select (view) and #panel-output (ownership).
+        //
+        // v1.0.0 (sa-D): THE TWO MODES, ONE CONTROL. The prototype has a
+        // single #screen-select that means one thing in either view: "the
+        // display the board is showing". Qt's canvas distinguishes the
+        // overview's screen (overviewScreen_, set by setOverview) from
+        // the panel view's preview frame (previewOutputName_, set by
+        // setPreviewScreen), so the handler routes by mode:
+        //
+        //   overview → setOverview(true, screen)  re-points the overview
+        //   panel    → setPreviewScreen(screen)   moves the frame, which
+        //              is exactly what the inspector's SCREEN row does
+        //
+        // Both are view operations and neither writes a Panel's
+        // outputName, so the panel-view branch cannot move a window any
+        // more than the overview branch can.
+        connect(screenCombo_, &QComboBox::currentIndexChanged,
+                this, [this](int idx){
+                    if (idx < 0 || !screenCombo_ || !canvas_)
+                        return;
+                    const QString screen = screenCombo_->itemData(idx).toString();
+                    if (canvas_->overviewMode()) {
+                        canvas_->setOverview(true, screen);
+                    } else {
+                        canvas_->setPreviewScreen(screen);
+                        // The split sub-windows follow the frame for the
+                        // same reason selectPanel() does: the drag clamp
+                        // has to agree with the rectangle being looked at.
+                        pushPreviewScreenToSplitWindows(canvas_,
+                                                        splitPreview_.get());
+                    }
+                });
+    }
     // The drawer takes index 0 and the stage stays at index 1: the
     // collapse animation addresses consoleSplitter_->widget(1), and
     // moving stage would have meant rewriting four call sites for a
@@ -2207,10 +2652,18 @@ ControlPanel::ControlPanel(QWidget *parent)
             consoleSplitter_->setSizes({topH, 0});
         }
     });
-    connect(stageToggleBtn_, &QPushButton::toggled, this, [this](bool checked){
-        updateStageToggleText();   // i18n: ⌄/⌃ copy lives in one helper
-        animStageTo(checked);
-    });
+    // v1.0.0: the collapse button is gone, and so is its connection.
+    // stageToggleBtn_ is now null, and connect() on a null sender is a
+    // crash the moment the console is built — not a silent no-op.
+    // animStageTo() stays: it is still the right way to animate the stage
+    // and the splitter animation path is unchanged, it just has no button
+    // wired to it.
+    if (stageToggleBtn_) {
+        connect(stageToggleBtn_, &QPushButton::toggled, this, [this](bool checked){
+            updateStageToggleText();   // i18n: ⌄/⌃ copy lives in one helper
+            animStageTo(checked);
+        });
+    }
 
     // ---- overlay subprocess lifecycle ---------------------------------
     // v0.11: extracted into mhw::OverlayProcessController (the same
@@ -2523,6 +2976,20 @@ void ControlPanel::retranslateUi()
     // The overlay START/STOP + badge re-style lives in the runningChanged
     // slot; replaying it here re-applies the current copy.
     setOverlayRunning(overlay_->isRunning());  // rail START/STOP + badge
+    /* ── v1.0.0 sa-A: sidebar + statusline ──
+       The three rebuilt-shell refreshes, replayed on a language flip for
+       the same reason the inspector's are: they all build their copy from
+       consoleText(), and a language switch is the one event that has to
+       rewrite every one of them without a restart.
+
+       refreshNavCounts()  → the nav rows' "{n} 窗" counts
+       refreshStatusline() → the status line's five states
+       syncLayoutSegmentToMode() → the segment's checked state and the
+                             Split-only visibility of 分开密度
+       ── end sa-A: sidebar + statusline ── */
+    refreshNavCounts();
+    refreshStatusline();
+    syncLayoutSegmentToMode();
     for (int i = 0; i < mhw::kPanelCount; ++i)
         updatePanelSummary(i);                    // counts + nav summaries
     for (int i = 0; i < mhw::kPanelCount; ++i)
@@ -2819,6 +3286,27 @@ void ControlPanel::selectPanel(int idx)
         s_overviewNav->style()->unpolish(s_overviewNav);
         s_overviewNav->style()->polish(s_overviewNav);
     }
+    /* ── v1.0.0 sa-D: leaving the overview by clicking a PANEL card ──
+       The prototype's nav is one group of mutually-exclusive entries:
+       clicking a panel while the overview is open switches the view to
+       that panel, exactly as clicking 总览 switches it back. Qt's rail
+       delivers the two as separate event-filter arms (the panel cards
+       through the loop above, the overview card through the branch after
+       it), so the overview's exit has to be asked for here as well.
+
+       WHY HERE AND NOT IN THE EVENT FILTER. selectPanel() is reachable
+       from three places the filter's mouse-release arm is not — the
+       canvas's own panelSelected() signal (a click on a panel box), the
+       inspector's tab, and switchGame()'s pets guard — and all three mean
+       "the user is now looking at a panel". Leaving the overview in the
+       filter would cover the click and miss the other two.
+
+       leaveOverview() is idempotent: it calls setOverview(false), which
+       returns immediately when the mode is already off, and it re-hides
+       a caption that is already hidden. So calling it unconditionally
+       costs one comparison in the panel path.
+       ── end sa-D ── */
+    leaveOverview(canvas_);
 }
 
 // ─── v1.0.0: the single-display overview ──────────────────────────────
@@ -2829,19 +3317,24 @@ void ControlPanel::selectPanel(int idx)
 // display's windows only, whatever the mode) and stop accepting drags
 // and arrow-key nudges. Both live in HudCanvas::setOverview().
 //
-// WHY THESE ARE FILE-LOCAL FUNCTIONS AND NOT MEMBERS. The console's
-// overview state is exactly two widget pointers (s_overviewNav /
-// s_overviewScreenCombo, declared just above), and a member would mean
-// editing control_panel.h — which this change is not allowed to touch.
-// pushPreviewScreenToSplitWindows above sets the precedent: file-local,
-// because the whole edit stays in this translation unit.
+// v1.0.0 (sa-D): THE DISPLAY PICKER MOVED. It used to be a second combo
+// on the stage bar (s_overviewScreenCombo, objectName
+// `overviewScreenCombo`), hidden until the overview opened. sa-A built
+// the prototype's real topbar control instead — screenCombo_, objectName
+// `screenCombo`, always visible, entries from screen_query::listOutputs()
+// in the prototype's `DP-1 · 2560×1440` format — and that is the one
+// widget now. Two combos that both answer "which display" is the exact
+// duplicate-source-of-truth the prototype's #screen-select (view) versus
+// #panel-output (ownership) distinction was drawn to avoid, and the old
+// one is deleted rather than hidden: a hidden combo still answers
+// findChildren<QComboBox*> and still carries its own entry list.
 //
-// WHY THE DISPLAY PICKER IS REBUILT EVERY TIME. Monitors are plugged and
-// unplugged between sessions and between clicks, and a stale entry list
-// is the "I picked DP-2 and nothing happened" failure. Rebuilding costs
-// one in-process QScreen walk (screen_query::listOutputs()), which is
-// the same cost the inspector's SCREEN row pays once at construction.
-
+// So enterOverview() / leaveOverview() no longer own the combo's
+// contents or its visibility — they own the canvas's overview state and
+// the nav card's highlight. The combo's own handler (in the ctor) does
+// the routing: in overview mode it re-points the canvas, in panel mode it
+// sets the preview screen, which is the pre-existing behaviour the
+// inspector's SCREEN row also performs.
 
 void enterOverview(HudCanvas *canvas)
 {
@@ -2850,37 +3343,25 @@ void enterOverview(HudCanvas *canvas)
     // The screen the overview starts on: whichever display the user was
     // last looking at. That is the canvas's own preview screen, so the
     // frame they are already looking at does not jump on entry.
+    //
+    // v1.0.0 (sa-D): the topbar's screenCombo_ is the display picker now,
+    // and its entry is PLACED from here rather than rebuilt: the combo is
+    // populated once in the ctor from the same screen_query::listOutputs()
+    // the inspector's SCREEN row reads, so rebuilding it on every entry
+    // would be a second source of truth. All this does is move its index
+    // to the display the canvas just adopted — which is the canvas's own
+    // answer after setOverview() normalised an empty screen to the
+    // primary's real name, so it lands on a real item whenever the list
+    // has one and -1 (no match) leaves the first entry rather than a blank.
     const QString screen = canvas->previewScreen();
     canvas->setOverview(true, screen);
 
-    QComboBox *combo = s_overviewScreenCombo;
-    if (combo) {
+    if (QComboBox *combo = screenComboForOverview()) {
         combo->blockSignals(true);
-        combo->clear();
-        // NO "<PRIMARY>" PSEUDO-ENTRY, deliberately: an empty userData
-        // is how console_scope_persistence_tests recognises a panel
-        // screen picker, and a second combo with the same shape would
-        // make that test drive this one instead. Following the primary
-        // is expressed by selecting the primary's own entry — the same
-        // semantics with no ambiguous item.
-        const auto outs = screen_query::listOutputs();
-        for (const auto &o : outs) {
-            QString label = o.name;
-            if (o.primary)
-                label += mh::tr(QStringLiteral("console.inspector.primary_tag"));
-            label += QStringLiteral("  ·  %1×%2")
-                         .arg(o.geometry.width()).arg(o.geometry.height());
-            combo->addItem(label, o.name);
-        }
-        // Place the current entry. setOverview() normalised an empty
-        // screen to the primary's real name, so this lands on a real
-        // item whenever the list has one; -1 (no match) leaves the combo
-        // showing its first entry rather than a blank.
         const int at = combo->findData(canvas->overviewScreen());
         if (at >= 0)
             combo->setCurrentIndex(at);
         combo->blockSignals(false);
-        combo->show();
     }
 
     if (QFrame *navCard = s_overviewNav) {
@@ -2888,14 +3369,17 @@ void enterOverview(HudCanvas *canvas)
         navCard->style()->unpolish(navCard);
         navCard->style()->polish(navCard);
     }
+    // The board's caption. It is the overview's promise — read-only, one
+    // display, click to inspect — and it is only true while the overview
+    // is open, so it appears here and nowhere else.
+    if (s_boardHint)
+        s_boardHint->show();
 }
 
 void leaveOverview(HudCanvas *canvas)
 {
     if (canvas)
         canvas->setOverview(false);
-    if (s_overviewScreenCombo)
-        s_overviewScreenCombo->hide();
     // The panel cards keep whatever highlight selectPanel() last set;
     // leaving the overview does not change which panel is selected.
     if (QFrame *navCard = s_overviewNav) {
@@ -2903,6 +3387,11 @@ void leaveOverview(HudCanvas *canvas)
         navCard->style()->unpolish(navCard);
         navCard->style()->polish(navCard);
     }
+    // And the caption goes with it. The panel view's own line (idle /
+    // edit) is the edit entry's to write; leaving the overview hides
+    // this one regardless of what comes next.
+    if (s_boardHint)
+        s_boardHint->hide();
 }
 
 
@@ -2988,12 +3477,31 @@ QWidget *ControlPanel::buildObjectButton(const QString &letter,
     texts->addWidget(titleLabel);
     texts->addWidget(summaryLabel);
     row->addLayout(texts, 1);
+    /* ── v1.0.0 sa-A: sidebar ──
+       The prototype's nav row is [name … count] — `[data-count]`, mono
+       10px --fg3, e.g. "5 窗" / "2 窗" / "3 窗" / "1 窗". The Qt shell
+       had no count at all; it had a section-summary line instead
+       (navSummary, "3 / 9 分区" style) which the prototype does NOT have
+       in the nav row.
+
+       Both are kept: navSummary stays the second line of the row's text
+       stack (it is what updatePanelSummary() already rewrites, and a
+       test-visible objectName), and navCount is a new right-aligned label
+       the window-count pass fills. The count is what the prototype shows;
+       the summary is Qt's own richer line, and dropping it would lose
+       information the inspector does not surface anywhere else.
+       ── end sa-A: sidebar ── */
+    auto *count = new QLabel();
+    count->setObjectName(QStringLiteral("navCount"));
+    count->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    row->addWidget(count);
     auto *enabled = new QLabel(QStringLiteral("●"));
     enabled->setObjectName("navEnabled");
     row->addWidget(enabled);
 
     ctl_[idx].navButton = box;
     ctl_[idx].navSummary = summaryLabel;
+    navCounts_[idx] = count;
     return box;
 }
 
@@ -3378,135 +3886,656 @@ QWidget *ControlPanel::buildGameColumn()
     return col;
 }
 
-// v1.0.0: THE TOOLBAR — the bar across the top of the content column.
-//
-// Layout mode (combo + apply), EDIT and START live here now. All three
-// used to be scattered: the mode pair sat in the rail's WORKSPACE group,
-// the EDIT button sat in the rail as a dead entry, and START lived in
-// buildEditModeBlock() — a function with no caller, which is why the
-// button that actually launches the overlay was dead code while the
-// rail showed a display-only fake with the same name.
-//
-// They are one group now because they answer one question: "what is the
-// window doing?" — which mode, whether to reposition it by hand, and
-// whether to show it at all. None of them is per-panel, which is what
-// kept them out of the drawer.
-//
-// The buildEditModeBlock() comment and body are further down; the
-// function is dead code kept for the provenance of these buttons.
+/* ── v1.0.0 sa-A: topbar ──
+   THE TOPBAR IS REBUILT TO THE PROTOTYPE'S NINE CONTROLS.
+
+   HTML `.topbar` is `background --surf; border 1.5px --line; radius 12px;
+   padding 8px 10px; display flex; gap 8px; flex-wrap wrap`, and it holds:
+
+     布局     [整块 | 分块]        ← a SEGMENTED CONTROL, not a combo
+     显示器   <select>              DP-1 · 2560×1440
+     演示状态 <select>              实时 / 离线 / 无数据
+     实例     <select>              Rise only
+     语言     <select>              中文 / English
+     分开密度 <select>              紧凑 / 标准    split only
+     连接     chip                  已连接 / 未连接
+     编辑布局 button
+     启动     button (primary)
+
+   The old shell's toolbar held FOUR things: layoutCombo_ + layoutApplyBtn_
+   + editBtn_ + startBtn_. The two that survive keep their objectNames
+   (enterEdit / startBtn) and their ctor wiring; the layout pair is
+   replaced by the segmented control, and six controls are new.
+
+   THE OLD PAIR IS KEPT IN THE TREE, HIDDEN. Four test files drive the
+   layout mode through findChild("layoutCombo") / findChild("layoutApply"):
+   console_split_sync_tests.cpp:227-228 and console_scope_persistence_tests
+   .cpp:899-901 look them up and click them, and
+   console_scope_persistence_tests.cpp:426 walks every combo in the page
+   and must SKIP layoutCombo by name to avoid mistaking it for a panel
+   screen picker. Removing them turns four test files red for a purely
+   cosmetic reason, so they stay constructed with their objectNames and
+   their signals — hidden, and kept in sync by the segmented control's
+   handlers (see below). layoutComboMode(), layoutComboIndexFor() and
+   updateLayoutApplyEnabled() are untouched and keep reading them.
+
+   THE SEGMENT'S SEMANTICS ARE THE COMBO'S. Clicking the entry that
+   differs from the mode in force pushes the choice into layoutCombo_ and
+   commits it through applyLayoutChoice() — the same function
+   layoutApplyBtn_'s click used to call. That keeps the prototype's
+   one-click feel without changing what a commit does: `--layout` is read
+   once at overlay startup, so a mode change still persists and still
+   relaunches a live child, exactly as the two-widget pair documented.
+   ── end sa-A: topbar ── */
 QWidget *ControlPanel::buildToolbar()
 {
     auto *bar = new QFrame();
-    bar->setObjectName("toolbar");
+    bar->setObjectName("topbar");
     auto *hl = new QHBoxLayout(bar);
-    hl->setContentsMargins(14, 8, 14, 8);
-    hl->setSpacing(10);
+    // The prototype's padding 8px 10px and gap 8px, on a flex row that
+    // wraps. Qt has no flex-wrap: a QHBoxLayout in a QFrame with a
+    // size policy that lets it grow vertically gets the same result from
+    // the layout's own wordWrapping-ish behaviour when the width runs
+    // out — the widgets keep their size hints and the row simply runs out
+    // of room, so the container grows. Explicit minimum widths below keep
+    // each group from being squeezed below its label + control.
+    hl->setContentsMargins(10, 8, 10, 8);
+    hl->setSpacing(8);
 
-    // ---- layout mode: combo + apply ---------------------------------
+    // ---- 布局: the segmented control -----------------------------------
     //
-    // MOVED HERE FROM THE RAIL (v1.0.0). The rail's WORKSPACE group used
-    // to hold this pair; the toolbar is where the prototype puts them,
-    // next to EDIT and START, because all four act on the WINDOW rather
-    // than on the panel the user is editing.
-    //
-    // TWO WIDGETS, NOT ONE. A combo alone would record a choice that
-    // changes nothing: `--layout` is read once at overlay startup and
-    // the window topology is derived from it, so picking an entry
-    // mid-hunt would silently do nothing (the "the console is broken"
-    // failure). A button alone would restart a live overlay with no way
-    // to say WHERE the user wants to go. Combo + apply is the smallest
-    // pair whose semantics are exactly the truth: pick, then commit,
-    // and committing relaunches when it must.
-    layoutCombo_ = new QComboBox();
-    layoutCombo_->setObjectName("layoutCombo");
-    layoutCombo_->setCursor(Qt::PointingHandCursor);
-    layoutCombo_->addItem(
-        mh::tr(QStringLiteral("console.layout.single")));
-    layoutCombo_->addItem(
-        mh::tr(QStringLiteral("console.layout.split")));
-    // i18n: the two entries are static copy, but they are ITEM text, and
-    // trSet() only handles a widget's Text property. A hook re-adds them
-    // on a language switch instead — see retranslateUi().
-    trHook([this]{
-        if (!layoutCombo_) return;
-        const int keep = layoutCombo_->currentIndex();
-        layoutCombo_->blockSignals(true);
-        layoutCombo_->setItemText(kLayoutComboSingleIndex,
-            mh::tr(QStringLiteral("console.layout.single")));
-        layoutCombo_->setItemText(kLayoutComboSplitIndex,
-            mh::tr(QStringLiteral("console.layout.split")));
-        layoutCombo_->setCurrentIndex(keep);
-        layoutCombo_->blockSignals(false);
-    });
-    hl->addWidget(layoutCombo_);
+    // Two exclusive QPushButtons in a bordered frame — the prototype's
+    // `.seg`. NOT a QComboBox: the prototype's `#mode-seg` is a group of
+    // buttons, and the whole point of matching it is that the user sees
+    // both options at once instead of one behind a drop-down arrow.
+    {
+        auto *label = new QLabel();
+        trSet(label, QStringLiteral("console.proto.layout"));
+        label->setObjectName(QStringLiteral("tbLabel"));
+        hl->addWidget(label);
 
-    layoutApplyBtn_ = new QPushButton();
-    trSet(layoutApplyBtn_, QStringLiteral("console.layout.apply"));
-    layoutApplyBtn_->setObjectName("layoutApply");
-    layoutApplyBtn_->setCursor(Qt::PointingHandCursor);
-    layoutApplyBtn_->setEnabled(false);   // nothing to do until a change
-    // The tooltip is the semantic contract, stated where the user asks
-    // for it rather than in a manual: what this button does, and what
-    // it does NOT (it cannot flip a running overlay in place).
-    trTip(layoutApplyBtn_, QStringLiteral("console.layout.apply_tip"));
-    hl->addWidget(layoutApplyBtn_);
-    connect(layoutCombo_, &QComboBox::currentIndexChanged,
-            this, [this]{ updateLayoutApplyEnabled(); });
-    // The one place a user commits a mode. Everything the commit does
-    // (persist, and restart the child when it must) is inside
-    // applyLayoutChoice() — the lambda only forwards the choice, so the
-    // semantics live in one named, commentable function.
-    connect(layoutApplyBtn_, &QPushButton::clicked, this,
-            [this]{ applyLayoutChoice(layoutComboMode()); });
+        layoutSeg_ = new QFrame();
+        layoutSeg_->setObjectName(QStringLiteral("layoutSeg"));
+        auto *seg = new QHBoxLayout(layoutSeg_);
+        seg->setContentsMargins(2, 2, 2, 2);
+        seg->setSpacing(2);
 
-    // ---- EDIT ---------------------------------------------------------
+        layoutSingleBtn_ = new QPushButton();
+        trSet(layoutSingleBtn_, QStringLiteral("console.proto.single"));
+        layoutSingleBtn_->setObjectName(QStringLiteral("layoutSegSingle"));
+        layoutSingleBtn_->setCheckable(true);
+        layoutSingleBtn_->setAutoExclusive(true);
+        layoutSingleBtn_->setCursor(Qt::PointingHandCursor);
+        seg->addWidget(layoutSingleBtn_);
+
+        layoutSplitBtn_ = new QPushButton();
+        trSet(layoutSplitBtn_, QStringLiteral("console.proto.split"));
+        layoutSplitBtn_->setObjectName(QStringLiteral("layoutSegSplit"));
+        layoutSplitBtn_->setCheckable(true);
+        layoutSplitBtn_->setAutoExclusive(true);
+        layoutSplitBtn_->setCursor(Qt::PointingHandCursor);
+        seg->addWidget(layoutSplitBtn_);
+
+        hl->addWidget(layoutSeg_);
+
+        // The checked state is the mode in force, not a pending choice:
+        // a click on the entry already in force is a no-op (the same
+        // guard setMode() has in the prototype), and a click on the other
+        // entry commits immediately.
+        const bool split = layoutModeInForce_
+                           == mhw::PlayerSection::PlayerLayoutMode::Split;
+        layoutSingleBtn_->setChecked(!split);
+        layoutSplitBtn_->setChecked(split);
+        // The old pair, kept alive for the tests and kept in step: it is
+        // hidden, and its index is what layoutComboMode() reads.
+        // v1.0.0: parent it to the console. A QComboBox with no parent and
+        // no layout slot is invisible to findChild(), which walks the CHILD
+        // tree — so "kept alive for the tests" only holds if it is a child.
+        // Hidden + parented is the combination that satisfies both: the
+        // tests can drive it, the toolbar does not have to show it.
+        layoutCombo_ = new QComboBox(this);
+        layoutCombo_->setObjectName("layoutCombo");
+        layoutCombo_->setCursor(Qt::PointingHandCursor);
+        layoutCombo_->addItem(mh::tr(QStringLiteral("console.layout.single")));
+        layoutCombo_->addItem(mh::tr(QStringLiteral("console.layout.split")));
+        trHook([this]{
+            if (!layoutCombo_) return;
+            const int keep = layoutCombo_->currentIndex();
+            layoutCombo_->blockSignals(true);
+            layoutCombo_->setItemText(kLayoutComboSingleIndex,
+                mh::tr(QStringLiteral("console.layout.single")));
+            layoutCombo_->setItemText(kLayoutComboSplitIndex,
+                mh::tr(QStringLiteral("console.layout.split")));
+            layoutCombo_->setCurrentIndex(keep);
+            layoutCombo_->blockSignals(false);
+        });
+        // v1.0.0: arm the apply button for the restored index BEFORE hiding.
+        //
+        // setCurrentIndex() only emits currentIndexChanged when the index
+        // actually moves. When the console restores already in Split and a
+        // caller then asks for Split, the index does not move, the signal
+        // never fires, and updateLayoutApplyEnabled() never runs — so the
+        // apply button stays disabled for a selection that IS pending.
+        // Seeding the state directly here makes the enable decision depend
+        // on the index rather than on having seen an edge.
+        layoutCombo_->setCurrentIndex(layoutComboIndexFor(layoutModeInForce_));
+        updateLayoutApplyEnabled();
+        layoutCombo_->hide();
+
+        layoutApplyBtn_ = new QPushButton(this);
+        trSet(layoutApplyBtn_, QStringLiteral("console.layout.apply"));
+        layoutApplyBtn_->setObjectName("layoutApply");
+        layoutApplyBtn_->setCursor(Qt::PointingHandCursor);
+        layoutApplyBtn_->setEnabled(false);   // nothing to do until a change
+        trTip(layoutApplyBtn_, QStringLiteral("console.layout.apply_tip"));
+        layoutApplyBtn_->hide();
+        connect(layoutCombo_, &QComboBox::currentIndexChanged,
+                this, [this]{ updateLayoutApplyEnabled(); });
+        connect(layoutApplyBtn_, &QPushButton::clicked, this,
+                [this]{ applyLayoutChoice(layoutComboMode()); });
+
+        // The segment's click: mirror into the hidden pair, then commit.
+        // Mirroring FIRST is what keeps a test that sets the combo's index
+        // and clicks apply() working after a user has used the segment.
+        auto commitFromSeg = [this](bool toSplit){
+            const int want = toSplit ? kLayoutComboSplitIndex
+                                     : kLayoutComboSingleIndex;
+            if (layoutCombo_ && layoutCombo_->currentIndex() != want)
+                layoutCombo_->setCurrentIndex(want);
+            applyLayoutChoice(layoutComboMode());
+            // Re-assert the in-force state: applyLayoutChoice() can refuse
+            // (the confirm dialog is declined), and a segment button left
+            // checked on a mode that did not change would be a lie.
+            syncLayoutSegmentToMode();
+        };
+        connect(layoutSingleBtn_, &QPushButton::clicked, this,
+                [commitFromSeg]{ commitFromSeg(false); });
+        connect(layoutSplitBtn_, &QPushButton::clicked, this,
+                [commitFromSeg]{ commitFromSeg(true); });
+    }
+
+    // ---- 显示器 ---------------------------------------------------------
     //
-    // The rail's WORKSPACE entry used to be labelled "layout mode" and
-    // wired to launchOverlayChild(edit=true) — the same action this
-    // button performs under the EDIT label the prototype uses. The
-    // objectName changes with it (enterEdit), which is the point: the
-    // rail entry's name said what it was for in the old shell and would
-    // be a lie here.
-    editBtn_ = new QPushButton();
-    trSet(editBtn_, QStringLiteral("console.toolbar.edit"));
-    editBtn_->setObjectName("enterEdit");
-    editBtn_->setCursor(Qt::PointingHandCursor);
-    // No connect() here either — the ctor wires editBtn_ to
-    // launchOverlayChild(edit=true) below, exactly as it did when the
-    // rail created it.
-    hl->addWidget(editBtn_);
+    // THE OVERVIEW'S DISPLAY SWITCH (HTML #screen-select). It decides
+    // which monitor the read-only overview paints; it is NOT a window's
+    // owner — that is the inspector's SCREEN row, a different control with
+    // different semantics ("screen switching is a pure view operation,
+    // window ownership is a configuration operation").
+    //
+    // Entries come from screen_query::listOutputs(), formatted exactly as
+    // the prototype formats them:
+    //     "DP-1 · 2560×1440"                 (U+00B7, U+00D7)
+    //     "HDMI-A-1 · 1080×1920(旋转)"        rotated outputs get the suffix
+    // userData is the REAL output name, so sa-D's display switch can pull
+    // the name back out without parsing the label.
+    {
+        auto *label = new QLabel();
+        trSet(label, QStringLiteral("console.proto.display"));
+        label->setObjectName(QStringLiteral("tbLabel"));
+        hl->addWidget(label);
+
+        screenCombo_ = new QComboBox();
+        screenCombo_->setObjectName(QStringLiteral("screenCombo"));
+        screenCombo_->setCursor(Qt::PointingHandCursor);
+        trTip(screenCombo_, QStringLiteral("console.overview.display_tip"));
+        screenCombo_->setMinimumWidth(190);
+        // The static pointer the overview toggles read — see the
+        // accessor's declaration in the header for why it is not a member
+        // lookup. Assigned here, at construction, before any event can
+        // route to it (the overview's event filter is installed on the
+        // nav card, which is built later).
+        s_screenCombo = screenCombo_;
+        hl->addWidget(screenCombo_);
+    }
+
+    // ---- 演示状态 -------------------------------------------------------
+    //
+    // 实时 / 离线 / 无数据. The prototype's #state-select; it drives the
+    // status line's copy and the preview's data density. This round it
+    // drives the STATUS LINE only — the canvas's data behaviour is sa-D's.
+    {
+        auto *label = new QLabel();
+        trSet(label, QStringLiteral("console.proto.state.demo"));
+        label->setObjectName(QStringLiteral("tbLabel"));
+        hl->addWidget(label);
+
+        demoStateCombo_ = new QComboBox();
+        demoStateCombo_->setObjectName(QStringLiteral("demoStateCombo"));
+        demoStateCombo_->setCursor(Qt::PointingHandCursor);
+        demoStateCombo_->addItem(
+            consoleText(QStringLiteral("console.proto.state.live")));
+        demoStateCombo_->addItem(
+            consoleText(QStringLiteral("console.proto.state.offline")));
+        demoStateCombo_->addItem(
+            consoleText(QStringLiteral("console.proto.state.noData")));
+        trHook([this]{
+            if (!demoStateCombo_)
+                return;
+            const int keep = demoStateCombo_->currentIndex();
+            demoStateCombo_->blockSignals(true);
+            demoStateCombo_->setItemText(0,
+                consoleText(QStringLiteral("console.proto.state.live")));
+            demoStateCombo_->setItemText(1,
+                consoleText(QStringLiteral("console.proto.state.offline")));
+            demoStateCombo_->setItemText(2,
+                consoleText(QStringLiteral("console.proto.state.noData")));
+            demoStateCombo_->setCurrentIndex(keep);
+            demoStateCombo_->blockSignals(false);
+        });
+        demoStateCombo_->setCurrentIndex(demoState_);
+        connect(demoStateCombo_, &QComboBox::currentIndexChanged,
+                this, [this](int idx){
+                    demoState_ = idx;
+                    refreshStatusline();
+                });
+        hl->addWidget(demoStateCombo_);
+
+        // .tb-note — "仅界面演示 · 非实机".
+        auto *note = new QLabel();
+        trSet(note, QStringLiteral("console.proto.state.note"));
+        note->setObjectName(QStringLiteral("tbNote"));
+        hl->addWidget(note);
+    }
+
+    // ---- 实例 (Rise only) ----------------------------------------------
+    //
+    // The prototype hides this group unless the game is Rise. This round
+    // it is a placeholder with one real entry: the console does not
+    // enumerate running game instances (that is what detectGame() does,
+    // and its answer is already the rail badge), so the combo carries a
+    // single "not detected" entry and is shown/hidden with the game. The
+    // widget exists so the topbar's shape is final and the Rise-only
+    // visibility rule is implemented where sa-D can extend it.
+    //
+    // v1.0.0 (sa-D): THE ENTRY IS THE DETECTOR'S OWN ANSWER, NOT A
+    // PLACEHOLDER. The rail badge calls mhw::detectGame() every 5 seconds
+    // and stores the result in gameDetected_; this combo reads the same
+    // two facts through refreshInstanceCombo() — "which game is running"
+    // and "its pid" — and lists the running instance when there is one.
+    // That is honest where a placeholder is not: the console really can
+    // see one process, and saying "未检测到" while one runs would be the
+    // demo-copy lie this file spends its length avoiding.
+    //
+    // It still lists at most ONE instance, because detectGame() answers
+    // for one: it scans /proc and reports the first match. A second game
+    // process is invisible to it, and inventing entries for processes we
+    // did not observe is exactly what a real instance picker must not do.
+    //
+    // THE LABEL IS A KEY THE PARENT MUST ADD. The prototype has NO
+    // instance control (grep for "instance" in console-single-display.html
+    // returns nothing), so its 128-string table has no key for this group
+    // either — the task brief asked for one, and the honest way to build
+    // it is to name the key it needs and let the missing-key rule surface
+    // it. StringTable::tr() returns the KEY ITSELF for a miss, which is
+    // this project's documented "better diagnostic than blank" behaviour:
+    // the label will read "console.proto.instance" until the parent adds
+    // 实例 / Instance to console.json's proto block.
+    {
+        auto *label = new QLabel();
+        trSet(label, QStringLiteral("console.proto.instance"));
+        label->setObjectName(QStringLiteral("tbLabel"));
+        hl->addWidget(label);
+
+        instanceCombo_ = new QComboBox();
+        instanceCombo_->setObjectName(QStringLiteral("instanceCombo"));
+        instanceCombo_->setCursor(Qt::PointingHandCursor);
+        instanceCombo_->addItem(
+            consoleText(QStringLiteral("console.detect.none")));
+        instanceCombo_->setMinimumWidth(140);
+        instanceCombo_->setVisible(currentGame() == mhw::GameId::Rise);
+        hl->addWidget(instanceCombo_);
+    }
+
+    // ---- 语言 -----------------------------------------------------------
+    //
+    // REPLACES THE SIDEBAR'S EN/CH CHIP. The prototype puts language in
+    // the topbar as a QComboBox (中文 / English), so the chip that used to
+    // sit in .side-foot is gone from the layout and this is what the user
+    // drives. The chip widget still exists (control_l2_smoke finds it and
+    // clicks it), so the two are kept in sync: this combo writes the same
+    // locale through the same switchLocale(), and the chip's visual state
+    // is refreshed by updateLocaleChip() inside applyLocale().
+    //
+    // THE LABEL. `proto.set.appearance` ("外观") is the SETTINGS dialog's
+    // appearance header, not this group's name. The prototype's own word
+    // for the language group is `language` ("语言" / "Language"), which
+    // lives in its settings block; it is referenced below and flagged in
+    // the report if it is absent from console.json.
+    {
+        auto *label = new QLabel();
+        trSet(label, QStringLiteral("console.proto.language"));
+        label->setObjectName(QStringLiteral("tbLabel"));
+        hl->addWidget(label);
+
+        localeCombo_ = new QComboBox();
+        localeCombo_->setObjectName(QStringLiteral("localeCombo"));
+        localeCombo_->setCursor(Qt::PointingHandCursor);
+        // The entries are language ENDONYMS, like the chip's segments:
+        // they name themselves and are never translated.
+        localeCombo_->addItem(mh::tr(QStringLiteral("console.locale.zh")));
+        localeCombo_->addItem(mh::tr(QStringLiteral("console.locale.en")));
+        localeCombo_->setCurrentIndex(
+            mhw::StringTable::instance().isEnglish() ? 1 : 0);
+        trHook([this]{
+            if (!localeCombo_)
+                return;
+            const int keep = localeCombo_->currentIndex();
+            localeCombo_->blockSignals(true);
+            localeCombo_->setItemText(0, mh::tr(QStringLiteral("console.locale.zh")));
+            localeCombo_->setItemText(1, mh::tr(QStringLiteral("console.locale.en")));
+            localeCombo_->setCurrentIndex(
+                mhw::StringTable::instance().isEnglish() ? 1 : 0);
+            Q_UNUSED(keep);
+            localeCombo_->blockSignals(false);
+        });
+        connect(localeCombo_, &QComboBox::currentIndexChanged,
+                this, [this](int idx){
+                    switchLocale(idx == 1 ? QStringLiteral("en-US")
+                                          : QStringLiteral("zh-CN"));
+                });
+        hl->addWidget(localeCombo_);
+    }
+
+    // ---- 分开密度 (split only) -----------------------------------------
+    //
+    // 紧凑 / 标准. Shown only while the layout mode is Split.
+    //
+    // v1.0.0 (sa-D): THERE IS NO SUCH CONTROL IN THE PROTOTYPE, AND IT HAS
+    // NO EFFECT HERE — BOTH STATED PLAINLY. A grep for "density", 紧凑 and
+    // 标准 across console-single-display.html returns NOTHING: the topbar
+    // holds 布局 / 显示器 / 面板屏幕 / 演示状态 / 编辑布局 / 启动 and the
+    // settings modal holds language / theme / REFramework. No density, no
+    // instance selector either. The task brief asked for both; the honest
+    // reading of the brief is "build the widget so the shell is final",
+    // not "invent a prototype control that does not exist".
+    //
+    // So the combo carries two entries and no handler. It is NOT wired to
+    // anything, because the only thing it could drive is the split's
+    // geometry — and that is the overlap-free wall plus the user's own
+    // drags, both of which a density knob would silently overwrite. A
+    // control that reflows windows the user has placed by hand is worse
+    // than a control that does nothing yet, and pretending otherwise is
+    // how a demo string became a shipped lie elsewhere in this file.
+    //
+    // WHAT IS REAL: the Split-only visibility. syncLayoutSegmentToMode()
+    // flips it on every mode change, so the rule is exercised by the
+    // control the user actually drives.
+    //
+    // THE LABEL AND THE ENTRIES ARE PARENT-MUST-ADD KEYS. `proto.split` is
+    // the LAYOUT mode's own word (分块) and reusing it here would name this
+    // control after a different one; `state.live` / `state.offline` are the
+    // DEMO states. So they are new keys — density / density.compact /
+    // density.normal — and StringTable::tr()'s documented miss behaviour
+    // (return the key itself) makes the gap visible rather than blank.
+    {
+        auto *label = new QLabel();
+        trSet(label, QStringLiteral("console.proto.density"));
+        label->setObjectName(QStringLiteral("tbLabel"));
+        hl->addWidget(label);
+
+        densityCombo_ = new QComboBox();
+        densityCombo_->setObjectName(QStringLiteral("densityCombo"));
+        densityCombo_->setCursor(Qt::PointingHandCursor);
+        // 紧凑 / 标准 — the two density steps. `state.live` and
+        // `state.offline` are NOT the right words (they are the demo
+        // states), so these two are also parent-must-add keys rather than
+        // borrowed ones. See the report.
+        densityCombo_->addItem(
+            consoleText(QStringLiteral("console.proto.density.compact")));
+        densityCombo_->addItem(
+            consoleText(QStringLiteral("console.proto.density.normal")));
+        densityCombo_->setMinimumWidth(110);
+        densityCombo_->setVisible(
+            layoutModeInForce_ == mhw::PlayerSection::PlayerLayoutMode::Split);
+        hl->addWidget(densityCombo_);
+    }
+
+    // ---- 连接 chip ------------------------------------------------------
+    //
+    // HTML .chip: a rounded pill with a 6px status dot, mono 10px copy.
+    // `connected` is the dynamic property the QSS keys off; the text is
+    // 已连接 / 未连接 and follows the real process detector.
+    //
+    // v1.0.0 (sa-D): THE DETECTOR IS REAL, AND THE CHIP READS THE SAME
+    // ANSWER EVERYONE ELSE DOES. `gameDetected_` starts false (nothing
+    // detected), and the two places that change it are
+    // refreshAutoDetect()'s 5-second timer and the auto-detect badge's
+    // click handler — both of which end in refreshStatusline(), which
+    // rewrites the chip's property and its text from the fact they just
+    // learned. So the chip is wired to the real mhw::detectGame() answer
+    // without a second scan of its own: one resolver, one timer, three
+    // surfaces (badge / statusline / chip) reading the same bool.
+    //
+    // The pid is deliberately NOT in the chip's copy. The rail badge beside
+    // it names the process and its pid; two widgets printing the same pid
+    // is one more place for them to drift apart.
+    {
+        connectChip_ = new QFrame();
+        connectChip_->setObjectName(QStringLiteral("connectChip"));
+        connectChip_->setProperty("connected", false);
+        auto *chipRow = new QHBoxLayout(connectChip_);
+        chipRow->setContentsMargins(9, 3, 9, 3);
+        chipRow->setSpacing(6);
+
+        auto *dot = new QLabel();
+        dot->setObjectName(QStringLiteral("connectChipDot"));
+        chipRow->addWidget(dot);
+
+        connectChipText_ = new QLabel();
+        connectChipText_->setObjectName(QStringLiteral("connectChipText"));
+        connectChipText_->setText(
+            consoleText(QStringLiteral("console.proto.off.conn")));
+        chipRow->addWidget(connectChipText_);
+        trHook([this]{
+            if (connectChipText_)
+                connectChipText_->setText(
+                    gameDetected_
+                        ? consoleText(QStringLiteral("console.proto.st.live"))
+                              .arg(gameName(currentGame()))
+                        : consoleText(QStringLiteral("console.proto.off.conn")));
+        });
+        hl->addWidget(connectChip_);
+    }
 
     hl->addStretch(1);
 
-    // ---- START --------------------------------------------------------
+    // ---- 编辑布局 -------------------------------------------------------
     //
-    // The REAL launcher. It used to live in buildEditModeBlock(), a
-    // function with no caller — so the button that actually starts the
-    // overlay was dead code, and the rail's START was a display-only
-    // fake that setOverlayRunning() renamed to STOP. That quirk is
-    // preserved on the rail's copy (removing it would disturb the rail
-    // footer layout), but the toolbar now owns the live one, so
-    // startBtn_ points at a button that is really in the tree.
+    // The same button the old toolbar had, same objectName (enterEdit),
+    // same ctor wiring (launchOverlayChild(edit=true)). Only its face
+    // changes: the prototype's .btn, and .btn.on (clay fill) while the
+    // board is in edit mode.
+    editBtn_ = new QPushButton();
+    trSet(editBtn_, QStringLiteral("console.proto.edit"));
+    editBtn_->setObjectName("enterEdit");
+    editBtn_->setCursor(Qt::PointingHandCursor);
+    hl->addWidget(editBtn_);
+
+    // ---- 启动 -----------------------------------------------------------
     //
-    // The CLICK WIRING IS NOT HERE. The ctor connects startBtn_ /
-    // editBtn_ a few hundred lines below (launch, or stop when one is
-    // already alive), and it must stay there — that connection is what
-    // the running/not-running toggle means. Duplicating it here would
-    // fire launch twice per click. Only the button's CONSTRUCTION moved.
-    //
-    // setOverlayRunning() flips this button's text and objectName
-    // between startBtn / stopBtn; QSS keys off the swapped name
-    // (control_panel_styles.cpp), so no extra wiring is needed here.
+    // The real launcher. setOverlayRunning() flips its text and objectName
+    // between startBtn / stopBtn and the QSS follows the swap, so the
+    // prototype's .btn.primary / .btn.running pair is produced by the same
+    // mechanism that has always driven it. The click wiring stays in the
+    // ctor — see the note there.
     startBtn_ = new QPushButton();
     startBtn_->setObjectName("startBtn");
     startBtn_->setCursor(Qt::PointingHandCursor);
-    // The caption depends on liveness and is written by
-    // setOverlayRunning() — call it once so the button opens with the
-    // right copy instead of a blank until the first state change.
     setOverlayRunning(overlay_ && overlay_->isRunning());
     hl->addWidget(startBtn_);
 
     return bar;
+}
+
+// ── v1.0.0 sa-A: topbar ──
+// Push the mode in force into the segmented control. Called after a
+// layout change (committed or refused) so the two buttons always show the
+// truth rather than the last click.
+// ── end sa-A: topbar ──
+void ControlPanel::syncLayoutSegmentToMode()
+{
+    const bool split = layoutModeInForce_
+                       == mhw::PlayerSection::PlayerLayoutMode::Split;
+    if (layoutSingleBtn_)
+        layoutSingleBtn_->setChecked(!split);
+    if (layoutSplitBtn_)
+        layoutSplitBtn_->setChecked(split);
+    if (layoutCombo_) {
+        const int want = layoutComboIndexFor(layoutModeInForce_);
+        if (layoutCombo_->currentIndex() != want)
+            layoutCombo_->setCurrentIndex(want);
+    }
+    // 分开密度 is Split-only, so the mode change decides its visibility.
+    if (densityCombo_)
+        densityCombo_->setVisible(split);
+    updateLayoutApplyEnabled();
+}
+
+// ── v1.0.0 sa-A: sidebar + statusline ──
+// Rebuild the nav rows' window counts and the status line's copy from the
+// state in force. One pass so a language flip, a game switch, a mode
+// change and a demo-state change all land together.
+//
+// THE COUNTS ARE THE PROTOTYPE'S. renderSide() counts every window in the
+// current scope and writes "{n} 窗" per panel row, with the overview row
+// carrying the total. Qt's equivalent of "every window in the current
+// scope" is the layout the canvas is actually drawing:
+//   * Single  → one window per enabled panel (the mother panels).
+//   * Split   → the split host's windows, grouped by parent slot.
+// Both are read from the live objects rather than from a second table, so
+// a count can never disagree with what the user sees on the canvas.
+// ── end sa-A: sidebar + statusline ──
+void ControlPanel::refreshNavCounts()
+{
+    // Per-panel window counts, and the total.
+    std::array<int, mhw::kPanelCount> counts{};
+    int total = 0;
+    const bool split = layoutModeInForce_
+                       == mhw::PlayerSection::PlayerLayoutMode::Split;
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
+        if (i == 3 && currentGame() == mhw::GameId::World) {
+            counts[i] = 0;      // pets has no window in World
+            continue;
+        }
+        int n = 0;
+        if (split && splitPreview_)
+            n = splitPreview_->countForParent(i);
+        else if (panelAt(i))
+            n = 1;              // the mother panel is one window
+        counts[i] = n;
+        total += n;
+    }
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
+        if (!navCounts_[i])
+            continue;
+        navCounts_[i]->setText(counts[i] > 0
+            ? consoleText(QStringLiteral("console.proto.wins.count"))
+                  .arg(counts[i])
+            : QString());
+    }
+    if (navOverviewCount_)
+        navOverviewCount_->setText(total > 0
+            ? consoleText(QStringLiteral("console.proto.wins.count")).arg(total)
+            : QString());
+}
+
+// ── v1.0.0 sa-A: statusline ──
+// The status line's five states, per QT-SPEC.md §A.7:
+//
+//   live    "Monster Hunter {g} · 数据流 12 ms"   ← demoState live
+//   offline "演示离线 · 未连接游戏进程"             ← demoState offline
+//   nodata  "未检测到游戏数据"                     ← demoState noData
+//   running "模拟运行中 · PID {p}"                 ← the overlay is alive
+//   stopped "未启动(演示)"                         ← the overlay is not
+//
+// The dot's colour carries the connection state (teal live / rust offline
+// / olive no-data), and the run half carries liveness. The ONLY real data
+// in any of it is mhw::detectGame()'s process detection, which
+// refreshAutoDetect() has already stored in gameDetected_.
+// ── end sa-A: statusline ──
+void ControlPanel::refreshStatusline()
+{
+    if (!statusline_)
+        return;
+    const QString gameNameStr = gameName(currentGame());
+    QString text;
+    QString dotState;
+    if (demoState_ == 1) {
+        text = consoleText(QStringLiteral("console.proto.st.offline"));
+        dotState = QStringLiteral("off");
+    } else if (demoState_ == 2) {
+        text = consoleText(QStringLiteral("console.proto.st.nodata"));
+        dotState = QStringLiteral("nodata");
+    } else {
+        text = consoleText(QStringLiteral("console.proto.st.live"))
+                   .arg(gameNameStr);
+        dotState = QStringLiteral("live");
+    }
+    statusline_->setText(text);
+    statusline_->setToolTip(text);
+    if (statusDot_) {
+        statusDot_->setProperty("state", dotState);
+        statusDot_->style()->unpolish(statusDot_);
+        statusDot_->style()->polish(statusDot_);
+    }
+    // The connection chip mirrors the same fact.
+    if (connectChip_) {
+        connectChip_->setProperty("connected", gameDetected_);
+        connectChip_->style()->unpolish(connectChip_);
+        connectChip_->style()->polish(connectChip_);
+    }
+    if (connectChipText_) {
+        connectChipText_->setText(
+            gameDetected_
+                ? consoleText(QStringLiteral("console.proto.st.live"))
+                      .arg(gameNameStr)
+                : consoleText(QStringLiteral("console.proto.off.conn")));
+    }
+    if (statusRun_) {
+        const bool running = overlay_ && overlay_->isRunning();
+        statusRun_->setText(running
+            ? consoleText(QStringLiteral("console.proto.st.running"))
+                  .arg(overlay_ ? overlay_->overlayPid() : 0)
+            : consoleText(QStringLiteral("console.proto.st.stopped")));
+    }
+}
+
+// ── v1.0.0 sa-D: the instance picker ──
+// ONE entry, and it is the detector's own answer: the running game's name
+// and pid, or "未检测到" when there is none. Same fact the rail badge
+// prints and the connect chip colours itself from — refreshAutoDetect()
+// learns it once and this is the third surface that reads it.
+//
+// WHY IT REBUILDS THE LIST RATHER THAN SETTING TEXT. The two states have
+// different lengths ("未检测到" versus "Monster Hunter Rise · pid 4242"),
+// and a combo whose single item keeps its old width would clip one of
+// them. Rebuilding costs one string assignment on a 5-second timer.
+//
+// The selection is NOT preserved across a rebuild: there is exactly one
+// entry, so index 0 is always right, and preserving an index would be
+// code that only pretends to matter.
+// ── end sa-D ──
+void ControlPanel::refreshInstanceCombo()
+{
+    if (!instanceCombo_)
+        return;
+    // Rise-only, so a World console never shows the group at all — the
+    // same rule switchGame() applies when it flips the visibility.
+    if (currentGame() != mhw::GameId::Rise)
+        return;
+    const QString label = gameDetected_
+        ? consoleText(QStringLiteral("console.detect.short"))
+              .arg(gameName(lastDetectedGame_))
+              .arg(lastDetectedPid_)
+        : consoleText(QStringLiteral("console.detect.none"));
+    if (instanceCombo_->count() == 1
+        && instanceCombo_->itemText(0) == label)
+        return;      // unchanged: no rewrite, no repolish
+    instanceCombo_->blockSignals(true);
+    instanceCombo_->clear();
+    instanceCombo_->addItem(label, gameDetected_ ? lastDetectedPid_ : 0);
+    instanceCombo_->setCurrentIndex(0);
+    instanceCombo_->blockSignals(false);
 }
 
 // R5: EDIT MODE block — orange "ENTER EDIT" button on the right,
@@ -3645,12 +4674,34 @@ void ControlPanel::switchGame(mhw::GameId game)
         gameWorldBtn_->setProperty("selected", !isRise);
         gameWorldBtn_->style()->unpolish(gameWorldBtn_);
         gameWorldBtn_->style()->polish(gameWorldBtn_);
+        /* ── v1.0.0 sa-A: sidebar ──
+           The game segment's checked state. The two buttons are now an
+           exclusive pair (setAutoExclusive(true) in the ctor), so
+           setChecked() on one clears the other and the `selected`
+           property the QSS reads is the segment's own visual truth — the
+           same state, now expressed the way the prototype's `.seg
+           button.active` expresses it.
+           ── end sa-A: sidebar ── */
+        gameWorldBtn_->setChecked(!isRise);
     }
     if (gameRiseBtn_) {
         gameRiseBtn_->setProperty("selected", isRise);
         gameRiseBtn_->style()->unpolish(gameRiseBtn_);
         gameRiseBtn_->style()->polish(gameRiseBtn_);
+        gameRiseBtn_->setChecked(isRise);
     }
+    /* ── v1.0.0 sa-A: sidebar ──
+       Everything the game switch changes in the rebuilt shell:
+         * the segment's note line ("怪物猎人:崛起 · 伙伴 UI 可用")
+         * the nav rows' window counts (World has no pets window, so the
+           pets row's count goes blank and the total drops)
+         * 实例 is Rise-only, so its visibility follows the game
+         * the status line names the game in its live copy
+       ── end sa-A: sidebar ── */
+    if (instanceCombo_)
+        instanceCombo_->setVisible(isRise);
+    refreshNavCounts();
+    refreshStatusline();
 
     // v0.7.1: rebuild the inspector preview so the player panel shows
     // the right side row for the new game. Without this the inspector
@@ -4095,6 +5146,21 @@ void ControlPanel::refreshAutoDetect()
 {
     if (!autoDetectBadge_) return;
     const auto detected = mhw::detectGame();
+    /* ── v1.0.0 sa-A: statusline ──
+       The status line's connection half is the ONLY real data in it, and
+       this is where that data arrives. The detector's answer is stored in
+       gameDetected_ and the status line + connection chip are rewritten
+       from it — the same fact the rail badge shows, one resolver, no
+       second answer.
+       ── end sa-A: statusline ── */
+    gameDetected_ = detected.has_value();
+    /* ── v1.0.0 sa-D: instance picker ──
+       The pid travels with the fact. It is stored here, next to the bool,
+       because the 实例 combo prints both and they arrive together — a
+       separate lookup later would be a second answer to "which process",
+       which is how the badge and the picker end up disagreeing.
+       ── end sa-D ── */
+    lastDetectedPid_ = detected ? detected->pid : -1;
     QString detectedShort;
     if (detected) {
         lastDetectedGame_ = detected->game;
@@ -4119,15 +5185,31 @@ void ControlPanel::refreshAutoDetect()
     }
     autoDetectBadge_->style()->unpolish(autoDetectBadge_);
     autoDetectBadge_->style()->polish(autoDetectBadge_);
-    // v0.7.1: mirror the detected game into the GAME column's read-only
-    // caption so the user sees it without scrolling to the rail badge.
+    /* ── v1.0.0 sa-A: sidebar ──
+       The game column's read-only caption. The column itself is gone from
+       the layout (the game selector moved into the sidebar), but
+       leftSplitter_->widget(0) is still that column's QFrame — it is the
+       splitter's first page whether or not anything shows it — and the
+       caption is still a child of it. Writing through the property keeps
+       this path working for the day the caption is re-homed; a null check
+       on the page is what makes it safe when widget(0) is nothing at all.
+       ── end sa-A: sidebar ── */
     if (leftSplitter_) {
-        auto *col = leftSplitter_->widget(0);
-        if (col) {
-            QLabel *cap = static_cast<QLabel*>(col->property("detectedValue").value<void*>());
+        if (auto *col = leftSplitter_->widget(0)) {
+            QLabel *cap = static_cast<QLabel*>(
+                col->property("detectedValue").value<void*>());
             if (cap) cap->setText(detectedShort);
         }
     }
+    /* ── v1.0.0 sa-A: statusline ──
+       And the status line, which now knows whether a game is running.
+       ── end sa-A: statusline ── */
+    refreshStatusline();
+    /* ── v1.0.0 sa-D: instance picker ──
+       And the 实例 combo, which now knows which process and its pid.
+       Same tick, same facts — the three surfaces cannot disagree.
+       ── end sa-D ── */
+    refreshInstanceCombo();
 }
 
 void ControlPanel::loadMaskFromDisk()
@@ -4604,6 +5686,18 @@ void ControlPanel::applyLayoutChoice(mhw::PlayerSection::PlayerLayoutMode mode)
         layoutModeInForce_ = mode;
         updateLayoutApplyEnabled();
         saveMaskToDisk();     // also rewrites the layout= row
+        /* ── v1.0.0 sa-A: topbar ──
+           The segmented control follows the mode, and the split-only
+           controls' visibility with it. Called here rather than only in
+           the segment's click handler because applyLayoutChoice() is also
+           reachable from the hidden combo pair (which four test files
+           drive directly), and the segment has to be right after either
+           path commits.
+           ── end sa-A: topbar ── */
+        syncLayoutSegmentToMode();
+        // The nav counts are per-mode: Single draws one window per panel,
+        // Split draws the split host's windows.
+        refreshNavCounts();
         //
         // Nothing else has to move: the mode is a whole-canvas decision,
         // the four base panels' pixmaps are unchanged by a topology
@@ -4642,6 +5736,12 @@ void ControlPanel::applyLayoutChoice(mhw::PlayerSection::PlayerLayoutMode mode)
     layoutModeInForce_ = mode;
     updateLayoutApplyEnabled();
     saveMaskToDisk();         // the row the relaunched child will read
+    /* ── v1.0.0 sa-A: topbar ──
+       The same follow-up on the running-child arm: the segment and the
+       Split-only visibility track the committed mode.
+       ── end sa-A: topbar ── */
+    syncLayoutSegmentToMode();
+    refreshNavCounts();
     // v0.13: the canvas follows the mode immediately, so the user sees
     // the preview change before the child has even been asked to exit.
     syncSplitPreviewToCanvas();
@@ -5029,6 +6129,14 @@ void ControlPanel::setOverlayRunning(bool running)
         statusBadge_->style()->unpolish(statusBadge_);
         statusBadge_->style()->polish(statusBadge_);
     }
+    /* ── v1.0.0 sa-A: statusline ──
+       The run half of the status line ("未启动(演示)" / "模拟运行中 · PID
+       {p}") is liveness, which is exactly what this function is told.
+       Rewriting it here — rather than in a timer — means the line can
+       never disagree with the START button's own label, because both are
+       written from the same `running` argument.
+       ── end sa-A: statusline ── */
+    refreshStatusline();
 }
 
 // v0.5 UI-link: sync the APPEARANCE sliders to match the panel's current

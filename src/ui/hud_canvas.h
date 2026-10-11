@@ -131,6 +131,17 @@ public:
         return static_cast<int>(subSlots_.size());
     }
 
+    // How many of the sub-windows above belong to ONE parent panel.
+    //
+    // The .win-panel footer's denominator. The prototype writes
+    // `onCount/def.sections.length` — a count over THAT WINDOW's own
+    // sections — and the Qt translation is a count over the parent's
+    // rows, because a split-table row IS a window here. The per-parent
+    // count is what makes "怪物 · 1/2" say the truth; subWindowCount()
+    // would say "1/11" and call a monster window one of eleven, which
+    // is the preview misrepresenting the thing it previews.
+    [[nodiscard]] int subWindowCountForParent(int parentSlot) const;
+
     // ─── v0.14: the split canvas the user actually asked for ───────────
     //
     // Two halves of the same complaint — 「分块模式的控制台几乎不可用.我要的是
@@ -224,6 +235,62 @@ public:
     void setShowGrid(bool on);
     bool showSafeArea() const { return showSafeArea_; }
     bool showGrid()      const { return showGrid_; }
+
+    // v1.0.0: the prototype's `board.editing` state — one boolean that
+    // switches the whole board into its edit-face:
+    //
+    //   * the 80-logical-px board grid fades in (HTML's .board.editing
+    //     .board-grid opacity 0→1),
+    //   * the board's own border turns clay (--clay #D97757) instead of
+    //     the resting --line2 #4C4C45,
+    //   * every .win card's border becomes DASHED
+    //     (.board.editing .win { border-style:dashed }).
+    //
+    // Deliberately NOT folded into showGrid_: that flag is the user's
+    // long-standing "grid on/off" preference for the centre crosshair
+    // and is toggled from the stagebar, while `editing` is a transient
+    // mode the prototype drives from the toolbar's 编辑布局 button.
+    // Reusing one flag for both would make the prototype's editing
+    // state silently overwrite the user's saved preference.
+    //
+    // Default false: every non-editing paint keeps the resting face, so
+    // the pixel-identity argument for the default path is unchanged.
+    void setEditing(bool on);
+    bool editing() const { return editing_; }
+    // ─── v1.0.0 sa-B: the member this accessor reads ──────────────────
+    //
+    // The ACCESSOR above was added for the board's editing state, but the
+    // field it returns was not yet declared, so the class does not
+    // compile without it. Declared here, next to the accessor and with
+    // the same default (false), because that is the one place the
+    // declaration belongs — a member next to the getter that returns it
+    // is the only layout where a reader finds both.
+    //
+    // IF SA-D ALSO DECLARES IT, the merge will show a duplicate
+    // declaration and the parent session should keep EITHER one. This is
+    // noted in the report.
+    bool editing_{false};
+
+    // The short handle the prototype's WIN_META[].short carries — the
+    // word a card prints in .win-name ("info", "status", "hp", "pet").
+    // For a sub-window it is the SPLIT TABLE ROW's own handle, so the
+    // board names a card with the same short word the prototype would,
+    // read from the same table rather than a second hand-written list.
+    // For a mother panel it is the panel's own handle
+    // ("player" / "monster" / "damage" / "pet").
+    [[nodiscard]] QString winName(int panelIndex, int subIndex = -1) const;
+
+    // The scale badge a card prints in .win-sc — the prototype's
+    // `win.scale.toFixed(2) + "x"` ("1.00x", "2.50x"), read live from
+    // the window's own PanelSource::scale().
+    [[nodiscard]] QString winScale(int panelIndex, int subIndex = -1) const;
+
+    // The third row a card prints in .win-panel: the owning panel's
+    // display name. For a sub-window this is the panel it was carved
+    // out of (parentSlot), which is exactly the question the prototype
+    // answers with `panel.<def.panel>` — the overview spans several
+    // panels, so the card has to say whose it is.
+    [[nodiscard]] QString winPanelName(int panelIndex, int subIndex = -1) const;
 
     // v0.5 zoom: 1.0 = fit-to-widget (default). >1 enlarges the
     // screen frame beyond the viewport; the parent QScrollArea
@@ -446,10 +513,48 @@ private:
         bool selected{false}; // the drag / click highlight
     };
 
+    // ─── v1.0.0 sa-B: the window card's text, as paintWindowCard needs it ─
+    // The prototype's `.win` is three rows: a header (name + scale), three
+    // grey content bars, and a footer naming the panel and how many
+    // sections are on. SubWindowPaintInfo carries the GEOMETRY (rect,
+    // selection); this carries the TEXT and the two flags that change the
+    // border, so a card can be painted from one struct pair without the
+    // painter reaching back into the console for strings.
+    //
+    // WHY A SECOND STRUCT AND NOT THREE MORE FIELDS ON THE FIRST. The
+    // geometry struct is filled by layoutSubWindows() and is consumed by
+    // code that must not know what a card looks like. Keeping the card's
+    // copy separate means the geometry pass stays unchanged — which is
+    // what keeps the drag/hit-test paths and their tests independent of
+    // this paint.
+    struct WindowCardPaintInfo {
+        QString name;        // .win-name — the window's short label
+        qreal scale{1.0};    // .win-sc — "1.00x"
+        QString panelLine;   // .win-panel — "怪物 · 4/6"
+        bool hovered{false}; // .win:hover — border lifts to --board-fg3
+        bool editing{false}; // .board.editing .win — border goes dashed
+    };
+
     // Paint one sub-window box: its frame, its title, and the drag
     // highlight when it is the one being moved or nudged.
     void paintSubWindowBox(const SubWindowPaintInfo &info,
                            QPainter &p) const;
+    // ─── v1.0.0 sa-B ──────────────────────────────────────────────────
+    // Paint the prototype's window CARD inside a sub-window's rect: the
+    // three-row .win structure (header / content bars / panel footer),
+    // the accent ring and soft shadow when selected, and the dashed
+    // border in the editing state.
+    //
+    // It is a SEPARATE function from paintSubWindowBox() so the default
+    // (non-card) path keeps its exact pixels: the 12 Single-mode
+    // baselines and the two canvas->grab() suites in
+    // console_split_sync_tests / damage_rows_window_tests pin what the
+    // canvas paints today, and the card is the v1.0.0 rework's addition
+    // on top of it. The caller decides which one a window gets.
+    // ─── end sa-B ─────────────────────────────────────────────────────
+    void paintWindowCard(const SubWindowPaintInfo &info,
+                         const WindowCardPaintInfo &card,
+                         QPainter &p) const;
 
     // The one layout pass, called from paintEvent. Fills subRects_ and
     // returns the boxes the painter draws, so the painter stays a pure
@@ -575,6 +680,9 @@ private:
     int selected_{0};
     bool showSafeArea_{true};
     bool showGrid_{true};
+    // v1.0.0: the prototype's `board.editing` state. False by default,
+    // so a canvas nobody has put into edit mode paints the resting face
+    // — the same short-circuit discipline as overviewMode_.
     qreal zoom_{1.0};
     // v0.8: tracks the user's SCREEN selection so the preview's
     // "screen frame" rectangle and the per-panel drag clamps match

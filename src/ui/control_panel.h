@@ -224,6 +224,36 @@ private:
     // panel. The objectNames are unchanged, so the tests that drive them
     // through findChild() keep working.
     QWidget *buildToolbar();
+    /* ── v1.0.0 sa-A: topbar / sidebar / statusline ──
+       Three refresh passes the rebuilt shell needs, all of them driven
+       from state changes that already existed:
+
+         syncLayoutSegmentToMode()  re-asserts the segmented control and
+             the hidden combo pair after a layout change, and re-applies
+             the Split-only visibility of 分开密度. Called from the
+             segment's click handler and from applyLayoutChoice().
+         refreshNavCounts()         writes the nav rows' window counts
+             ("{n} 窗") and the overview row's total. Called from
+             retranslateUi(), switchGame() and the mode change.
+         refreshStatusline()        rewrites the status line's five states
+             from demoState_ + the overlay's liveness. Called from
+             retranslateUi(), the demo-state combo, setOverlayRunning()
+             and refreshAutoDetect().
+
+       They are members rather than file-local statics because they read
+       members (splitPreview_, layoutModeInForce_, demoState_, the nav
+       count labels) that a static could only reach through a lookup
+       table — and because sa-D needs the same three entry points.
+       ── end sa-A ── */
+    void syncLayoutSegmentToMode();
+    void refreshNavCounts();
+    void refreshStatusline();
+    // v1.0.0 (sa-D): the topbar's 实例 picker. Rise-only; it lists the
+    // one running game process mhw::detectGame() can see, or 未检测到.
+    // Called from refreshAutoDetect(), which is where the detector's
+    // answer arrives — so this reads a cached fact rather than scanning
+    // /proc a second time on the same tick.
+    void refreshInstanceCombo();
     // v0.7.1: dedicated narrow column for the World/Rise game selector.
     // Returns a QWidget the caller parents to the horizontal QSplitter
     // on the left edge of the window; the existing rail sits to its
@@ -430,6 +460,120 @@ private:
     // language) is not part of the layout rework — but the shell is final,
     // so the button exists, is styled and is visible.
     QPushButton *settingsBtn_ = nullptr;
+
+    // ─── v1.0.0 sa-A: the prototype's sidebar + topbar ──────────────────
+    //
+    // The HTML prototype (console-single-display.html) is now the truth
+    // source for the console's chrome. What follows is the widget set the
+    // prototype's .side / .topbar / .statusline need and the old shell did
+    // not have. Every one of them is built in the ctor, in one block
+    // marked `/* ── v1.0.0 sa-A: sidebar ── */` or
+    // `/* ── v1.0.0 sa-A: topbar ── */`.
+    //
+    // WHY THESE ARE MEMBERS AND NOT FILE-LOCAL STATICS. The overview's nav
+    // card (s_overviewNav) is file-local because it was added under a
+    // no-header rule and nothing needs it from outside the .cpp. This round
+    // is allowed to touch the header, and these need more than a pointer:
+    // a status line that several state changes rewrite, a demo-state combo
+    // that gates the status line's text, and a screen combo the display
+    // switch owns. Members are also what lets sa-D wire the same handles
+    // without a second lookup table.
+    //
+    // v1.0.0 (sa-D): THE SCREEN COMBO HAS BOTH. screenCombo_ is the member
+    // the toolbar owns; s_screenCombo (in the .cpp) is the file-local alias
+    // the two overview toggles read, because a free function has no object
+    // to call a member accessor on. Same widget, two spellings — see the
+    // declaration's comment for why that is not the duplicate it looks like.
+    //
+    // THE SIDEBAR BRAND (three lines, as the prototype spells them):
+    //   .eyebrow   "MONSTER CONTROL"  mono 10.5px uppercase --fg3
+    //   h1         "Monster Control 控制台"  12.5px --fg
+    //   .side-note "非真实连接 · 不会修改 panels.ini 或任何配置文件"
+    // The eyebrow is a NEW widget (the old rail had only brand + brandSub);
+    // railBrandSub_ is reused for the third line and keeps its objectName
+    // so control_l2_smoke's locale-chip assertion still finds a widget
+    // whose text flips with the language.
+    QLabel *railEyebrow_ = nullptr;
+    // The game segment's note line (HTML #game-note): "怪物猎人:崛起 ·
+    // 伙伴 UI 可用" — one line per game, so switching games rewrites it.
+    QLabel *gameNote_ = nullptr;
+    // The four nav rows' window counts (HTML [data-count]) and the
+    // overview row's total. The nav FRAMES themselves stay where they
+    // were (ctl_[i].navButton / s_overviewNav) — their objectNames are
+    // test-visible — so only the count labels are new.
+    std::array<QLabel *, mhw::kPanelCount> navCounts_{};
+    QLabel *navOverviewCount_ = nullptr;
+    // The .side-foot buttons: 设置 / 帮助 / 重置演示 + 保存 / 导出 JSON.
+    // settingsBtn_ (above) is the 设置 entry; the other four are new.
+    QPushButton *helpBtn_ = nullptr;
+    QPushButton *resetDemoBtn_ = nullptr;
+    QPushButton *saveBtn_ = nullptr;
+    QPushButton *exportJsonBtn_ = nullptr;
+
+    // THE TOPBAR. Nine controls, in the prototype's order:
+    //   layoutSeg_    整块 / 分块   (two exclusive buttons — NOT a combo)
+    //   screenCombo   显示器        (the overview's display switch)
+    //   demoStateCombo 演示状态      实时 / 离线 / 无数据
+    //   instanceCombo 实例          Rise only
+    //   localeCombo   语言          中文 / English
+    //   densityCombo  分开密度       紧凑 / 标准   split only
+    //   connectChip   连接 chip     已连接 / 未连接
+    //   editBtn_ / startBtn_  编辑布局 / 启动   (both existed already)
+    //
+    // THE LAYOUT SWITCH IS TWO BUTTONS, NOT A COMBO. The prototype's
+    // #mode-seg is a segmented control, and the Qt shell that preceded it
+    // used a combo + apply because `--layout` is frozen for the child's
+    // lifetime. That argument still holds for the LAUNCH, so the two
+    // buttons keep the apply semantics: clicking the entry that differs
+    // from the mode in force commits it through applyLayoutChoice(), which
+    // is the same function the old apply button called. The widget that
+    // records the intention is gone; the commit path is unchanged.
+    //
+    // layoutCombo_ / layoutApplyBtn_ KEEP EXISTING. Four test files drive
+    // the mode through findChild("layoutCombo") / findChild("layoutApply")
+    // (console_split_sync_tests, console_scope_persistence_tests ×2,
+    // plus the picker-identification walk that must skip layoutCombo by
+    // name). Removing them would break those tests, so they stay
+    // constructed — hidden, with the segmented control driving the same
+    // state — and layoutComboIndexFor() / layoutComboMode() /
+    // updateLayoutApplyEnabled() keep working off them exactly as before.
+    // See buildToolbar() for how the two stay in sync.
+    QFrame *layoutSeg_ = nullptr;
+    QPushButton *layoutSingleBtn_ = nullptr;
+    QPushButton *layoutSplitBtn_ = nullptr;
+    QComboBox *screenCombo_ = nullptr;
+    QComboBox *demoStateCombo_ = nullptr;
+    QComboBox *instanceCombo_ = nullptr;
+    QComboBox *localeCombo_ = nullptr;
+    QComboBox *densityCombo_ = nullptr;
+    QFrame *connectChip_ = nullptr;
+    QLabel *connectChipText_ = nullptr;
+
+    // THE STATUSLINE (HTML .statusline): mono 11px --fg2, four states
+    // keyed off the demo-state combo and the real process detector.
+    //   live    "Monster Hunter {g} · 数据流 12 ms"
+    //   offline "演示离线 · 未连接游戏进程"
+    //   nodata  "未检测到游戏数据"
+    //   stopped "未启动(演示)"          ← the overlay is not running
+    //   running "模拟运行中 · PID {p}"   ← the overlay IS running
+    // The only REAL data in any of them is mhw::detectGame()'s process
+    // detection; the rest is the prototype's demo copy.
+    QLabel *statusline_ = nullptr;
+    QLabel *statusDot_ = nullptr;
+    QLabel *statusRun_ = nullptr;
+    // The demo state in force, mirrored from demoStateCombo_ so the
+    // status line can be rewritten without a combo lookup. 0 = live,
+    // 1 = offline, 2 = noData — the combo's index order.
+    int demoState_ = 0;
+    // The last game detectGame() saw, so the status line's "已连接 /
+    // 未连接" half reflects the same fact the rail badge does.
+    bool gameDetected_ = false;
+    // v1.0.0 (sa-D): the pid that came with it. -1 when nothing is
+    // running, which is also what GameDetection's default would be; the
+    // instance picker prints it, and the connect chip deliberately does
+    // not (the badge names the process, the chip says 已连接).
+    qint64 lastDetectedPid_ = -1;
+
     int selectedPanel_ = 0;
 
     // L4: status badge in the top-right, shows "READY" by default and

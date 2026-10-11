@@ -2,6 +2,7 @@
 
 #include <QColor>
 #include <QFont>
+#include <QFontDatabase>
 #include <QFontMetrics>
 #include <QGuiApplication>
 #include <QKeyEvent>
@@ -92,6 +93,31 @@ constexpr int kPetsPanel = 3;
 static_assert(kPetsPanel < mhw::kPanelCount,
               "the pets slot must be one of the four base panels");
 
+// ─── v1.0.0: the prototype's mono stack ───────────────────────────────
+//
+// The prototype's `.win` text (`.win-name`, `.win-sc`, `.win-panel`,
+// `.be-title`) all read `font-family:var(--mono)`, which the HTML
+// resolves to `ui-monospace, "SF Mono", Menlo, Consolas, "Noto Sans
+// Mono CJK SC", monospace`. Qt's answer to the same question is
+// QFontDatabase::systemFont(FixedFont), which returns a real
+// monospace on every platform we ship — the same resolution
+// control_panel_styles.cpp's monoFamily() performs for the console's
+// QSS. Reading it through one static keeps the card's three rows in
+// ONE family instead of three fonts that happen to agree today.
+//
+// WHY NOT "Chakra Petch". That is the console's display face, and the
+// card's rows are mono in the prototype — a proportional face makes
+// `1.00x` a different width than `2.50x`, which is exactly what the
+// right-aligned scale badge must not do.
+QFont cardMonoFont(int pointSize)
+{
+    static const QString family = QFontDatabase::systemFont(
+                                      QFontDatabase::FixedFont).family();
+    QFont f(family, pointSize);
+    f.setStyleStrategy(QFont::StyleStrategy::PreferAntialias);
+    return f;
+}
+
 // WHY THIS EXEMPTION IS CHECKED AND NOT HOPED. There is exactly one
 // split table per NON-pets panel — player, monster, damage — and pets
 // is the fourth panel with none. That count is the whole reason pets
@@ -118,6 +144,73 @@ QString panelName(int index)
     const QString key = QString::fromLatin1(kNameKeys[i]);
     const QString val = mh::tr(key);
     return val == key ? QString::fromLatin1(kNames[i]) : val;
+}
+
+// ─── v1.0.0: the prototype's WIN_META[].short handles ─────────────────
+//
+// The HTML board names a card with a SHORT handle — "info", "status",
+// "bars", "hp", "share" — read from WIN_META[def.id].short, and that is
+// the word the .win-name row prints. Qt has the same identity already:
+// the split table row IS the window, so its row index is the same
+// handle the prototype's CATALOG row is.
+//
+// WHY THIS IS A TABLE AND NOT A SETTINGS-KEY LOOKUP. The window's own
+// Panel::settingsKey() would be the obvious source ("player-info",
+// "monster-identity"), but it is not reachable from here: the canvas
+// holds a PanelSource*, which carries geometry and nothing else, and
+// widening that interface for one display string would put the console's
+// persistence vocabulary into the paint path. The (parentSlot, tableRow)
+// pair the binding already carries is the same identity, and this table
+// is its spelling.
+//
+// ASCII ON PURPOSE, exactly like kNames: these are mono glyphs drawn
+// inside a card whose width is the window's own content width, and a
+// localized long name would be elided to nothing on the narrow strips
+// (the 翔虫 window is 520x220 logical, and at a 0.33 fit that is ~62
+// device px of card). The prototype's `short` is English in both
+// locales for the same reason — its own zh table spells
+// WIN_META["player-info"].short as "info".
+struct WinShortEntry {
+    int parentSlot;
+    int row;
+    const char *shortName;
+};
+
+constexpr WinShortEntry kWinShorts[] = {
+    // kPlayerSplitTargets, in the table's own order:
+    //   row 0 Debuff|Buff, row 1 Mantles, row 2 Wirebug, row 3 Bars,
+    //   row 4 Weapon|Sharpness, row 5 Conn|Quest
+    {0, 0, "status"},
+    {0, 1, "mantles"},
+    {0, 2, "wirebug"},
+    {0, 3, "bars"},
+    {0, 4, "weapon"},
+    {0, 5, "info"},
+    // kMonsterSplitTargets: row 0 Identity, row 1 Conditions
+    {1, 0, "identity"},
+    {1, 1, "conds"},
+    // kDamageSplitTargets: row 0 Share, row 1 Chart, row 2 Rows
+    {2, 0, "share"},
+    {2, 1, "chart"},
+    {2, 2, "rows"},
+};
+
+// The four mother panels' handles, in the fixed slot order.
+const std::array<const char *, mhw::kPanelCount> kPanelShorts = {
+    "player", "monster", "damage", "pet",
+};
+
+// One row of the table above, or the empty string for an index pair the
+// tables do not have. Written as a linear walk over 11 entries rather
+// than a lookup structure because 11 comparisons is cheaper than a hash
+// build and the table is compile-time constant.
+QString winShortFor(int parentSlot, int row)
+{
+    for (const WinShortEntry &e : kWinShorts) {
+        if (e.parentSlot == parentSlot && e.row == row)
+            return QString::fromLatin1(e.shortName);
+    }
+    return {};
 }
 
 constexpr int kHeader = 56;
@@ -328,6 +421,86 @@ void HudCanvas::setShowGrid(bool on)
     if (showGrid_ == on) return;
     showGrid_ = on;
     update();
+}
+
+// ─── v1.0.0: the board's edit state and the card's three strings ──────
+//
+// setEditing() is the one entry point the console calls when the
+// prototype's 编辑布局 button toggles. It is a plain flag plus a repaint
+// because that is all the state there is: the grid, the board border
+// colour and the cards' dash pattern are all READ from it at paint time
+// (see paintEvent), so there is no second copy to keep in step.
+//
+// The no-op guard is the same one every other setter here uses: a
+// console that calls setEditing(true) on every toolbar repaint must not
+// schedule a repaint each time.
+void HudCanvas::setEditing(bool on)
+{
+    if (editing_ == on)
+        return;
+    editing_ = on;
+    update();
+}
+
+QString HudCanvas::winName(int panelIndex, int subIndex) const
+{
+    // A sub-window is named by its split-table row; a mother panel by
+    // its own handle. subIndex >= 0 is the discriminator, matching
+    // windowOutputName()'s convention so the two accessors read alike.
+    if (subIndex >= 0) {
+        if (subIndex >= subSlots_.size())
+            return {};
+        return winShortFor(subSlots_[subIndex].parentSlot,
+                           subSlots_[subIndex].tableRow);
+    }
+    if (!mhw::isPanelIndex(panelIndex))
+        return {};
+    return QString::fromLatin1(kPanelShorts[panelIndex]);
+}
+
+QString HudCanvas::winScale(int panelIndex, int subIndex) const
+{
+    // The window's OWN scale, read through the same PanelSource the
+    // geometry path reads — so the badge can never disagree with the
+    // box's size, which is the same "one mapping" rule screenFrame()
+    // exists for. A window that is not bound has no scale, and the
+    // prototype's own default is 1.
+    const PanelSource *src = nullptr;
+    if (subIndex >= 0) {
+        if (subIndex < subSlots_.size())
+            src = subSlots_[subIndex].src;
+    } else if (mhw::isPanelIndex(panelIndex)) {
+        src = slots_[panelIndex].src;
+    }
+    if (!src)
+        return QStringLiteral("1.00x");
+    return QStringLiteral("%1x").arg(std::max(0.05, src->scale()), 0, 'f', 2);
+}
+
+QString HudCanvas::winPanelName(int panelIndex, int subIndex) const
+{
+    // The owning panel's DISPLAY name, localized. For a sub-window that
+    // is the panel it was carved out of — the question the prototype's
+    // .win-panel answers with `T("panel."+def.panel)`, and the reason
+    // the third row exists at all: the overview spans every panel, so a
+    // card has to say whose it is.
+    if (subIndex >= 0) {
+        if (subIndex >= subSlots_.size())
+            return {};
+        return panelName(subSlots_[subIndex].parentSlot);
+    }
+    return panelName(panelIndex);
+}
+
+int HudCanvas::subWindowCountForParent(int parentSlot) const
+{
+    if (parentSlot < 0)
+        return 0;
+    int n = 0;
+    for (const SubSlot &s : subSlots_)
+        if (s.parentSlot == parentSlot)
+            ++n;
+    return n;
 }
 
 void HudCanvas::setSelectedPanel(int index)
@@ -1238,13 +1411,56 @@ void HudCanvas::paintEvent(QPaintEvent *)
     bg.setColorAt(0.45, QColor(15, 22, 22));
     bg.setColorAt(1,    QColor(6, 9, 10));
     p.fillRect(frame, bg);
-    p.setPen(QPen(QColor(56, 60, 62), 1));
+    // v1.0.0: the board's own border is --line2 (#4C4C45) at rest and
+    // --clay (#D97757) while the board is in edit mode — the prototype's
+    // `.board.editing{border-color:var(--clay);cursor:crosshair}`.
+    // MEASURED against the 1600x1000 capture: the resting border samples
+    // as (68,68,62) on the top edge and (46,46,42) at the rounded
+    // corners, which is #4C4C45 at 1px over the board ground with the
+    // browser's own antialiasing. The clay step is the HTML token
+    // verbatim, since no capture was taken in editing mode.
+    p.setPen(QPen(editing_ ? QColor(217, 119, 87) : QColor(76, 76, 69), 1));
     p.drawRect(frame);
 
     if (showSafeArea_) {
         p.setPen(QPen(QColor(255, 255, 255, 28), 1, Qt::DashLine));
         p.drawRect(frame.adjusted(frame.width() * .055, frame.height() * .055,
                                   -frame.width() * .055, -frame.height() * .055));
+    }
+
+    // v1.0.0: the prototype's .board-grid — an 80-LOGICAL-pixel lattice
+    // in rgba(233,231,222,.07), drawn ONLY while the board is editing
+    // (`.board.editing .board-grid{opacity:1}`, the resting opacity is 0
+    // so nothing is painted at all).
+    //
+    // THE CELL SIZE IS THE PROTOTYPE'S OWN NUMBER, read from its source
+    // (console-single-display.html L1514):
+    //     grid.style.backgroundSize = (80*fit)+"px "+(80*fit)+"px";
+    // so the pitch in canvas pixels is 80 * fit, with `fit` the very
+    // factor screenFrame() just returned — not a second computation of
+    // it, which is the two-copies-of-one-mapping rule this file is built
+    // on. At the capture's 0.3366 fit that is ~26.9 canvas px per cell,
+    // which is what the measurement in WIN-CARD-GEOMETRY.md recorded.
+    //
+    // The lines are anchored at the frame's left/top and walk rightwards
+    // and downwards, mirroring how CSS lays a background image out from
+    // the padding box's origin. A cell smaller than a device pixel is
+    // skipped rather than drawn as a smeared wash: at fit < 0.0125 the
+    // lattice would be denser than the screen can show, and the
+    // prototype's own 0.04 fit floor makes that unreachable anyway.
+    if (editing_ && fit > 0.0) {
+        const qreal cell = 80.0 * fit;
+        if (cell >= 1.0) {
+            p.save();
+            p.setPen(QPen(QColor(233, 231, 222, 18), 1));   // .07 * 255
+            for (qreal x = frame.left(); x <= frame.right(); x += cell)
+                p.drawLine(QPointF(x, frame.top()),
+                           QPointF(x, frame.bottom()));
+            for (qreal y = frame.top(); y <= frame.bottom(); y += cell)
+                p.drawLine(QPointF(frame.left(), y),
+                           QPointF(frame.right(), y));
+            p.restore();
+        }
     }
 
     if (showGrid_) {
@@ -1412,6 +1628,82 @@ void HudCanvas::paintEvent(QPaintEvent *)
             layoutSubWindows(fit, frame.topLeft(), logical);
         for (const SubWindowPaintInfo &info : boxes)
             paintSubWindowBox(info, p);
+
+        // ─── v1.0.0: the board's empty state ───────────────────────────
+        //
+        // The prototype's .board-empty: when the board has NO window to
+        // draw it says so, in two different pairs of strings depending
+        // on whether the view is the overview (spanning every panel) or
+        // one panel's windows:
+        //
+        //   overview → board.empty.overview      + board.empty.overview.sub
+        //   panel    → board.empty.panel         + board.empty.panel.sub
+        //
+        // WHY TWO AND NOT ONE. The two states have different causes and
+        // therefore different advice: an empty overview means "nothing
+        // on this display at all", and the sub-line tells the user to
+        // switch displays or retarget a window; an empty panel means
+        // "this panel's windows live elsewhere or are hidden", and its
+        // sub-line says exactly that. Collapsing them into one string
+        // would have the board give advice that does not apply to the
+        // state it is in — which is the failure the prototype's own
+        // i18n table is shaped to avoid.
+        //
+        // The condition is "the layout pass produced no box", which is
+        // the same fact the loop above just acted on. It is NOT
+        // "subSlots_ is empty" — that case is Single mode, where the
+        // four mother panels are the picture and there is nothing to be
+        // empty about.
+        //
+        // DRAWN INSIDE THE FRAME, centred, exactly as the prototype's
+        // .board-empty{position:absolute;inset:0;display:flex;
+        // align-items:center;justify-content:center} places it: the
+        // board is the frame here, so the text block is centred in the
+        // frame with the prototype's 20px padding.
+        if (boxes.isEmpty()) {
+            const bool overview = overviewMode_;
+            const QString titleKey = overview
+                ? QStringLiteral("console.proto.board.empty.overview")
+                : QStringLiteral("console.proto.board.empty.panel");
+            const QString subKey = overview
+                ? QStringLiteral("console.proto.board.empty.overview.sub")
+                : QStringLiteral("console.proto.board.empty.panel.sub");
+            const QString sub = mh::tr(subKey);
+            // 20px of padding, and the text is capped at 340px wide —
+            // .be-sub{max-width:340px}. A narrow portrait frame gets a
+            // narrower block rather than a clipped one.
+            const qreal maxTextW = qMin(340.0, frame.width() - 40.0);
+            if (maxTextW > 40.0) {
+                const QRectF block(frame.center().x() - maxTextW / 2,
+                                   frame.center().y() - 20,
+                                   maxTextW, 40);
+                p.save();
+                // .be-title — mono 11px, uppercase, letter-spaced,
+                // --fg2 (#ADABA1).
+                QFont titleFont = cardMonoFont(8);
+                titleFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.7);
+                p.setFont(titleFont);
+                p.setPen(QColor(173, 171, 161));
+                const QFontMetrics tfm(p.font());
+                const QString title = tfm.elidedText(mh::tr(titleKey),
+                                                     Qt::ElideRight,
+                                                     int(maxTextW));
+                p.drawText(QRectF(block.left(), block.top(),
+                                  block.width(), 12),
+                           Qt::AlignHCenter | Qt::AlignVCenter, title);
+                // .be-sub — 11.5px, --fg3 (#87867F), 5px below the title.
+                QFont subFont = cardMonoFont(8);
+                p.setFont(subFont);
+                p.setPen(QColor(135, 134, 127));
+                const QFontMetrics sfm(p.font());
+                const QString subText = sfm.elidedText(sub, Qt::ElideRight,
+                                                       int(maxTextW));
+                p.drawText(QRectF(block.left(), block.top() + 17,
+                                  block.width(), 14),
+                           Qt::AlignHCenter | Qt::AlignVCenter, subText);
+                p.restore();
+            }
+        }
     }
 
     // --- footer ---
@@ -1456,10 +1748,83 @@ void HudCanvas::paintEvent(QPaintEvent *)
 void HudCanvas::paintSubWindowBox(const SubWindowPaintInfo &info,
                                  QPainter &p) const
 {
+    // ─── v1.0.0 sa-B: the window card ──────────────────────────────────
+    //
+    // WHEN THE WINDOW IS BOUND, IT IS DRAWN AS THE PROTOTYPE'S CARD.
+    //
+    // The prototype's board draws every window as a `.win` card — three
+    // rows, an accent border, a soft shadow when selected — and that card
+    // IS the preview's content. The Qt canvas already has the window's
+    // real rendered pixmap for a bound window, so the card is drawn FIRST
+    // (its frame, header, bars and footer) and the pixmap is composited
+    // INSIDE the card's content area, below the header and above the
+    // footer. That is what makes the console read as the prototype's
+    // board while still showing the user the real panel they configured.
+    //
+    // WHEN THE WINDOW IS NOT BOUND, the old dashed-frame-plus-title box
+    // stays exactly as it was: an unbound row is a row whose window did
+    // not resolve, and the old vocabulary ("this is a preview, not the
+    // thing itself") is the honest one for it. The two paths are chosen
+    // by `src`, which is the same fact the pixmap arm below already keys
+    // off — no new state.
+    const PanelSource *src = (info.index >= 0 && info.index < subSlots_.size())
+                                 ? subSlots_[info.index].src
+                                 : nullptr;
+    if (src) {
+        WindowCardPaintInfo card;
+        // .win-name — the window's short handle. winName() is the
+        // authoritative accessor: it reads the SAME split-table row the
+        // prototype's WIN_META[].short reads, so the card names itself
+        // with the word the HTML board would print, from one table
+        // rather than a second hand-written list. It falls back to the
+        // geometry pass's title when the index does not resolve.
+        card.name = winName(info.parentSlot, info.index);
+        if (card.name.isEmpty())
+            card.name = info.title;
+        card.scale = std::max(0.05, src->scale());
+        // .win-panel — the prototype writes
+        //     T("panel."+def.panel) · onCount/def.sections.length
+        // i.e. the owning panel's name, then how many of the WINDOW'S
+        // OWN sections are on. Qt's equivalent is the parent panel's
+        // display name plus the window's position among its parent's
+        // rows and that parent's row count — both read from the console's
+        // own tables (panel_sections.h), so a card's footer can never
+        // name a count the inspector does not agree with.
+        //
+        // WHY NOT subWindowCount(). That is every sub-window on the
+        // canvas (6+2+3 = 11), so "怪物 · 1/11" would claim a monster
+        // window is one of eleven when it is one of TWO — the exact
+        // "the preview misrepresents the thing it previews" failure
+        // panel_accent.h's header comment exists to prevent. The
+        // per-parent count is the honest denominator.
+        const int parentRowCount = subWindowCountForParent(info.parentSlot);
+        card.panelLine = QStringLiteral("%1 · %2/%3")
+                             .arg(panelName(info.parentSlot))
+                             .arg(parentRowCount > 0
+                                      ? subSlots_[info.index].tableRow + 1 : 1)
+                             .arg(parentRowCount > 0 ? parentRowCount : 1);
+        // .board.editing — the dashed border the prototype draws while
+        // the board is in edit mode. `editing()` is the flag setEditing()
+        // owns; the card only reads it, so there is one writer.
+        card.editing = editing();
+        paintWindowCard(info, card, p);
+    }
+
     // THE PARENT'S OWN COLOUR. The split's whole visual claim is "these
     // boxes left that panel", and the parent's accent is how the preview
     // says it without a second legend.
     QColor accent = mhw::panel_accent::forSlot(info.parentSlot);
+
+    // WHEN THE CARD IS DRAWN, IT IS THE WHOLE BOX.
+    //
+    // The pixmap, the dashed frame, the title above and the drag tag
+    // below are the OLD box's vocabulary, and every one of them would
+    // paint over the card: the pixmap covers all three rows, the dashed
+    // frame doubles the card's border, and the two labels sit outside a
+    // box that already names itself. So the card path returns here and
+    // the old path is left exactly as it was for an unbound row.
+    if (src)
+        return;
 
     // The box's own rendered pixmap, when the host pushed one. Drawn
     // first so the frame lands on top of it.
@@ -1515,6 +1880,206 @@ void HudCanvas::paintSubWindowBox(const SubWindowPaintInfo &info,
         QRectF tagBox(info.rect.left() - 2, info.rect.bottom() + 4, tagW, 14);
         p.fillRect(tagBox, QColor(0, 0, 0, 190));
         p.drawText(tagBox, Qt::AlignCenter, tag);
+        p.restore();
+    }
+}
+
+// ─── v1.0.0 sa-B: the window card (.win) ──────────────────────────────
+//
+// The prototype's window card is a THREE-ROW structure, and it is the
+// single most recognisable thing in the board — the user compares the Qt
+// console against the HTML screenshots window-by-window:
+//
+//   .win        border 1px --line2, radius 4px, board-fg text,
+//               background linear-gradient(180deg, --on-dark-10, --on-dark-04)
+//               padding 3px 4px, gap 2px, flex column
+//   .win-hd     [.win-name 名字] [.win-sc 1.0x]        ← header row
+//   .win-body   <i>100%</i> <i>72%</i> <i>48%</i>      ← three grey bars
+//   .win-panel  所属面板名 · 开/总                    ← footer row
+//   .win.sel    border --board-accent + a 1.5px ring and a soft shadow
+//   .board.editing .win   border-style dashed
+//
+// Every colour below is PINNED and does NOT follow the console theme,
+// because the board is a picture of a game overlay on a desktop: the
+// prototype's own note records that a near-black --fg on #101010 measured
+// 1.11:1, which is why --board-* exists at all. Painting the card from
+// uiTheme() would make it unreadable in the light theme and would also
+// make the board's pixels change with a theme switch — which is exactly
+// what the canvas->grab() pixel assertions in console_split_sync_tests
+// and damage_rows_window_tests must not see.
+//
+// WHY THIS IS A SEPARATE FUNCTION AND NOT MORE OF paintSubWindowBox().
+// The box the split preview draws today is a dashed frame plus a title
+// above it — a "this is a preview, not the thing itself" vocabulary. The
+// prototype's card is the window itself, drawn where the window will be.
+// Keeping the two apart means the default (non-overview) path can keep
+// its existing pixels byte-for-byte, which is what the 12 Single-mode
+// baselines and the two grab() suites pin.
+// ─── end sa-B ─────────────────────────────────────────────────────────
+void HudCanvas::paintWindowCard(const SubWindowPaintInfo &info,
+                                const WindowCardPaintInfo &card,
+                                QPainter &p) const
+{
+    const QRectF r = info.rect;
+    if (r.width() < 4 || r.height() < 4)
+        return;      // too small to carry a card; nothing to draw
+
+    // --- the card's own surface -----------------------------------------
+    // background: linear-gradient(180deg, on-dark-10, on-dark-04) over
+    // the board's own ground. Qt has no "rgba over what is behind", so
+    // the gradient's two stops are composited here as the alpha the
+    // prototype's tokens describe: 10% and 4% of #E9E7DE over the board
+    // ground (#101010) — the same two numbers, resolved once.
+    const QColor onDark10(233, 231, 222, 26);   // .10 * 255
+    const QColor onDark04(233, 231, 222, 10);   // .04 * 255
+    QLinearGradient surface(r.topLeft(), QPointF(r.left(), r.bottom()));
+    surface.setColorAt(0, onDark10);
+    surface.setColorAt(1, onDark04);
+
+    p.save();
+    p.setBrush(surface);
+    // border: 1px --line2 (#4C4C45), dashed in the editing state and on
+    // hover. The prototype's `.board.editing .win{border-style:dashed}`.
+    const QColor line2(76, 76, 69);
+    const QColor accent(224, 138, 108);         // --board-accent
+    // .win:hover — border-color --board-fg3 (#87867F) plus
+    // box-shadow 0 0 0 1px --on-dark-14. NOT dashed: the editing dash
+    // and the hover lift are two different states in the prototype, and
+    // a hover that also dashed would read as "I am editing this" when
+    // the board is merely being pointed at.
+    const QColor boardFg3Hover(135, 134, 127);   // --board-fg3
+    const bool dashed = card.editing;
+    QPen pen(dashed ? accent : line2, 1,
+             dashed ? Qt::DashLine : Qt::SolidLine);
+    if (!dashed && card.hovered)
+        pen.setColor(boardFg3Hover);
+    p.save();
+    p.setPen(pen);
+    p.setBrush(surface);
+    p.drawRoundedRect(r, 4, 4);
+    // The hover ring: 1px of --on-dark-14 (14% of #E9E7DE) hugging the
+    // card. Measured against the prototype this is the whole hover
+    // shadow, so it is drawn rather than skipped.
+    if (!dashed && card.hovered) {
+        p.setPen(QPen(QColor(233, 231, 222, 36), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(r.adjusted(-1, -1, 1, 1), 4, 4);
+    }
+    p.restore();
+
+    // --- row 1: .win-hd  [name] [1.00x] ---------------------------------
+    // MEASURED, NOT ASSUMED (html-shots/WIN-CARD-GEOMETRY.md): on the
+    // 1600x1000 capture the card's header text occupies 9 pixel rows
+    // starting 9px below the card's top border, the name begins at the
+    // content box's left edge and the scale badge ends at its right
+    // edge. So the row is 9px tall with a 3px top inset — the numbers
+    // below, not a round guess.
+    //
+    // name is mono 11px in --board-fg (#E9E7DE); the scale badge is mono
+    // 10px in --board-fg2 (#ADABA1), right-aligned with margin-left:auto.
+    const QColor boardFg(233, 231, 222);
+    const QColor boardFg2(173, 171, 161);
+    const QColor boardFg3(135, 134, 127);
+    const int pad = 4;                    // .win padding: 3px 4px
+    const int hdH = 9;                    // measured glyph rows
+    QRectF hd = r.adjusted(pad, 3, -pad, 0);
+    hd.setHeight(hdH);
+    if (hd.width() > 24) {
+        p.save();
+        // 11px CSS ≈ 8.3pt; 10px ≈ 7.5pt. Qt sizes in points, and the
+        // two must stay one step apart or the badge reads as the name.
+        p.setFont(cardMonoFont(8));
+        const QFontMetrics fm(p.font());
+        const QString scaleText = QStringLiteral("%1x")
+                                      .arg(card.scale, 0, 'f', 2);
+        const int scaleW = fm.horizontalAdvance(scaleText) + 4;
+        const int nameW = int(hd.width()) - scaleW;
+        if (nameW > 8) {
+            p.setPen(boardFg);
+            // The name is ellipsised, exactly as .win-name's
+            // `text-overflow: ellipsis` does, so a long section name
+            // never runs into the scale.
+            p.drawText(QRectF(hd.left(), hd.top(), nameW, hd.height()),
+                       Qt::AlignLeft | Qt::AlignVCenter,
+                       fm.elidedText(card.name, Qt::ElideRight, nameW));
+            p.setFont(cardMonoFont(7));
+            p.setPen(boardFg2);
+            p.drawText(QRectF(hd.right() - scaleW, hd.top(),
+                              scaleW, hd.height()),
+                       Qt::AlignRight | Qt::AlignVCenter, scaleText);
+        }
+        p.restore();
+    }
+
+    // --- row 2: .win-body  three grey bars ------------------------------
+    // 100% / 72% / 48% of the card's CONTENT width, in --on-dark-22
+    // (22% of #E9E7DE). This is the prototype's stand-in for "this
+    // window has content"; the Qt console paints the REAL content on
+    // top of it when the window's own pixmap is available (see the
+    // caller), so the bars are what an unbound or empty window shows —
+    // the same information, at the same size.
+    //
+    // MEASURED: the three bars are 3 device rows tall with a 1px gap
+    // between them on the capture (HTML's 2px height + 2px gap lose a
+    // row to antialiasing at this scale). They start 22px below the
+    // card's top and end well before the footer row.
+    const QColor onDark22(233, 231, 222, 56);   // .22 * 255
+    const int barTop = int(r.top()) + 22;
+    const int barH = 3;                    // measured glyph rows
+    const int barGap = 1;                  // measured gap
+    const int barW = int(r.width()) - 2 * pad;
+    for (int i = 0; i < 3; ++i) {
+        const qreal frac = (i == 0) ? 1.0 : (i == 1) ? 0.72 : 0.48;
+        const int w = int(barW * frac);
+        if (w <= 0)
+            continue;
+        const int y = barTop + i * (barH + barGap);
+        if (y + barH > int(r.bottom()) - 11)
+            break;      // would collide with the footer row
+        p.fillRect(QRectF(r.left() + pad, y, w, barH), onDark22);
+    }
+
+    // --- row 3: .win-panel  所属面板名 · 开/总 ---------------------------
+    // mono 9.5px board-fg3 (#87867F), ellipsised. The prototype writes
+    // `T("panel."+panel) · onCount/sections.length`; Qt's equivalent is
+    // the panel's display name plus the section counts the window
+    // actually carries.
+    //
+    // MEASURED: the footer's glyph rows sit 10px above the card's bottom
+    // border, i.e. a 3px bottom inset plus 10 rows of text.
+    QRectF ft = r.adjusted(pad, 0, -pad, -3);
+    ft.setHeight(10);                      // measured glyph rows
+    ft.moveBottom(r.bottom() - 3);
+    if (ft.width() > 24 && ft.height() > 6) {
+        p.save();
+        p.setFont(cardMonoFont(7));        // 9.5px ≈ 7pt
+        p.setPen(boardFg3);
+        const QFontMetrics fm(p.font());
+        p.drawText(ft, Qt::AlignLeft | Qt::AlignVCenter,
+                   fm.elidedText(card.panelLine, Qt::ElideRight, int(ft.width())));
+        p.restore();
+    }
+
+    // --- .win.sel: the accent ring + soft shadow ------------------------
+    // border-color --board-accent plus box-shadow 0 0 0 1.5px
+    // --board-accent, 0 4px 14px --shadow. Qt has no box-shadow, so the
+    // ring is drawn as a second rounded rect just outside the card — the
+    // same visual weight at the same place.
+    if (info.selected) {
+        p.save();
+        p.setPen(QPen(accent, 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(r.adjusted(-1.5, -1.5, 1.5, 1.5), 4, 4);
+        // The soft shadow, as four low-alpha bands under the ring. A real
+        // blur is not available on a QPainter path without a QGraphicsScene,
+        // and a solid dark band would read as a border rather than a lift.
+        QColor shadow(0, 0, 0, 70);
+        for (int i = 1; i <= 3; ++i) {
+            shadow.setAlpha(70 - i * 18);
+            p.setPen(QPen(shadow, 1));
+            p.drawRoundedRect(r.adjusted(-1.5 - i, -1.5 - i,
+                                         1.5 + i, 1.5 + i), 4 + i, 4 + i);
+        }
         p.restore();
     }
 }
