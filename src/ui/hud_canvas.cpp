@@ -577,6 +577,14 @@ QVector<HudCanvas::SubWindowPaintInfo> HudCanvas::layoutSubWindows(
         const SubSlot &sub = subSlots_[i];
         if (!sub.src)
             continue;
+        // v1.0.0: the overview draws ONLY the windows configured for its
+        // display. The box is not laid out at all, so it is not painted
+        // and not hit-testable either — a window that is not part of
+        // this display's picture must not be clickable in it. Same
+        // short-circuit discipline as the paint gate: with
+        // overviewMode_ false this is one comparison against a false.
+        if (overviewMode_ && !overviewDrawsSub(i))
+            continue;
 
         // THE CONTRACT, READ NOT GUESSED. The box's extent is the
         // window's own contentWidth()/contentHeight() (Panel's v0.12
@@ -632,14 +640,27 @@ void HudCanvas::setZoom(qreal z)
 
 QSize HudCanvas::sizeHint() const
 {
-    if (zoom_ <= 1.0)
-        return QSize(820, 520);
-    // When zoomed, report the enlarged size so QScrollArea shows bars.
+    // v1.0.0: the hint follows the CURRENT display's aspect ratio, not a
+    // fixed 820x520.
+    //
+    // The fixed size was written when the preview was always one 16:9
+    // landscape screen, so 520 was 820's own ratio plus chrome and the
+    // discrepancy never showed. With a portrait output in the mix the two
+    // disagree — heightForWidth(1640) answers 3010 while sizeHint() says
+    // 520 — and Qt's layout takes the smaller, so the widget is 520 tall
+    // while screenFrame() computes its avail from rect() and gets 520 too.
+    // The frame then collapses: a 1596-wide avail times physAR 0.5625 gives
+    // 898, which does not fit in 520, so the height arm fires and yields
+    // 924x520 — and the measured pixels showed the screen drawn as a thin
+    // horizontal band, which is what a 1596x898 frame clipped to 520 looks
+    // like from the inside.
+    //
+    // Zoom still scales the width; the height now follows from the ratio.
     const QSize phys = previewScreenInfo().physical;
     const qreal ar = phys.height() / qreal(phys.width());
-    const int w = qRound(820 * zoom_);
+    const int w = qRound(820 * (zoom_ > 1.0 ? zoom_ : 1.0));
     const int h = qRound(w * ar) + kHeader + kFooter;
-    return QSize(w, std::max(520, h));
+    return QSize(w, std::max(360, h));
 }
 
 int HudCanvas::heightForWidth(int width) const
@@ -776,6 +797,172 @@ void HudCanvas::setPreviewScreen(QString outputName)
     rebuildScreenCache();
     updateGeometry();
     update();
+}
+
+// ─── v1.0.0: the single-display overview ──────────────────────────────
+//
+// ONE DISPLAY AT A TIME, READ-ONLY. The prototype's contract, verbatim:
+// 「总览为只读视图：一次只绘制一块显示器，点击窗口在下方查看详情。」
+//
+// WHY THIS IS NOT setPreviewScreen() PLUS A FILTER. The overview needs
+// its own screen slot because it must survive the console's own
+// navigation: selectPanel() calls canvas_->setPreviewScreen() on every
+// tab change, and the SCREEN dropdown does the same on every pick. If
+// the overview read previewOutputName_ as its screen, a single rail
+// click would move it — the overview would show whatever panel the user
+// happened to inspect, which is the "filtering by view state is
+// self-referential" trap. So the two are separate: overviewScreen_ is
+// what the overview looks at, and setPreviewScreen() is what the
+// per-panel editing looks at.
+//
+// ENTERING points the canvas at the overview's screen (the frame the
+// user sees has to be the display the overview describes), and EXITING
+// puts back whatever was there. Both paths rebuild the screen cache so
+// a screen plugged or unplugged during the session still lands on real
+// geometry.
+//
+// THE DEFAULT PATH IS UNTOUCHED. setOverview(false) is what every
+// non-overview code path calls (and what the console calls on leaving),
+// and it restores rather than clears: a console that never enters the
+// overview never reads these members at all, and the paint gate below
+// is a short-circuit on overviewMode_ being false.
+void HudCanvas::setOverview(bool on, const QString &screen)
+{
+    if (on == overviewMode_ && (!on || screen == overviewScreen_))
+        return;
+
+    if (on) {
+        savedPreviewOutput_ = previewOutputName_;
+        overviewMode_ = true;
+        // An empty screen means "follow primary" in the console's
+        // vocabulary; normalise it to a REAL output name so the window
+        // attribution and the overview screen compare in one string
+        // space. An unnamed screen (offscreen, headless) stays empty,
+        // and the filter then treats every window as belonging here —
+        // the degenerate case draws everything, which is what the
+        // single-monitor user sees anyway.
+        overviewScreen_ = screen.isEmpty() ? primaryOutputName() : screen;
+        // The frame the user looks at has to be the display described.
+        if (overviewScreen_ != previewOutputName_)
+            previewOutputName_ = overviewScreen_;
+    } else {
+        overviewMode_ = false;
+        overviewScreen_.clear();
+        previewOutputName_ = savedPreviewOutput_;
+        savedPreviewOutput_.clear();
+    }
+    rebuildScreenCache();
+    updateGeometry();
+    update();
+}
+
+// ─── v1.0.0: which display a window is CONFIGURED for ────────────────
+//
+// The prototype's resolveScreen(), spelled once:
+//
+//     the window's own outputName
+//       -> its parent panel's outputName      (a split sub-window)
+//       -> the primary
+//
+// THE DELIBERATE DIFFERENCE FROM boundOutputName(). That function's
+// last step falls back to previewOutputName_ — the screen the canvas
+// happens to be previewing — because a drag clamp wants "the screen
+// this window is measured against, as far as the console has told us".
+// The overview asks a different question: "where is this window
+// CONFIGURED to live". Those coincide for a window that names a screen
+// and diverge for one that follows primary, and in the overview the
+// divergence is fatal: with previewOutputName_ == DP-1 every
+// primary-following window would claim to be on DP-1, so the overview
+// would show DP-1's windows while the user looks at the primary and
+// vice versa — filtering by the view state it is supposed to be
+// filtering. Hence the explicit primary fallback here.
+//
+// This is a CONFIGURATION fact, not a view state, so it is stable under
+// the screen switch and under selectPanel(): the user can flip the
+// display dropdown all they like without moving a single window.
+QString HudCanvas::windowOutputName(int panelIndex, int subIndex) const
+{
+    const PanelSource *src = nullptr;
+    if (subIndex >= 0) {
+        if (subIndex >= subSlots_.size())
+            return {};
+        src = subSlots_[subIndex].src;
+        if (!src)
+            return {};
+        // A split sub-window names no screen of its own; its parent's
+        // answer is the next link in the chain, exactly as the
+        // prototype's `scope().panels[win.panel].output` is.
+        const QString own = src->outputName();
+        if (!own.isEmpty())
+            return own;
+        const int parent = subSlots_[subIndex].parentSlot;
+        if (mhw::isPanelIndex(parent))
+            panelIndex = parent;
+        else
+            panelIndex = -1;
+    } else if (mhw::isPanelIndex(panelIndex)) {
+        src = slots_[panelIndex].src;
+        if (!src)
+            return {};
+        return src->outputName();
+    } else {
+        return {};
+    }
+
+    if (mhw::isPanelIndex(panelIndex) && slots_[panelIndex].src) {
+        const QString parentName = slots_[panelIndex].src->outputName();
+        if (!parentName.isEmpty())
+            return parentName;
+    }
+    // Step 3: the primary, as a name (not the screen state).
+    return primaryOutputName();
+}
+
+QString HudCanvas::primaryOutputName() const
+{
+    // The in-process walk, matching rebuildScreenCache()'s table: Qt's
+    // own QScreen list. detect() is deliberately NOT called — it shells
+    // out with a 2 s budget and this runs per painted window.
+    if (QScreen *s = QGuiApplication::primaryScreen())
+        return s->name();
+    return {};
+}
+
+// ─── v1.0.0: the overview's paint filter ──────────────────────────────
+//
+// A MOTHER PANEL is drawn in the overview only when it is on the
+// overview's screen AND it actually has something to show. The second
+// clause is the conservative half: under Split the console pushes a
+// Split-semantics mask (see control_panel.cpp's own note at its
+// setPanelPresent call site), so a mother's pixmap can be empty or
+// stale while `present` still says true. Skipping a null pixmap avoids
+// drawing an empty frame; the mask semantics themselves are a separate,
+// larger fix and are deliberately not attempted here.
+bool HudCanvas::overviewDrawsPanel(int panelIndex) const
+{
+    if (!overviewMode_ || !mhw::isPanelIndex(panelIndex))
+        return false;
+    const Slot &s = slots_[panelIndex];
+    if (!s.bound || !s.src)
+        return false;
+    if (!s.present || s.pixmap.isNull() || !s.enabled)
+        return false;
+    return windowOutputName(panelIndex) == overviewScreen_;
+}
+
+bool HudCanvas::overviewDrawsSub(int subIndex) const
+{
+    if (!overviewMode_ || subIndex < 0 || subIndex >= subSlots_.size())
+        return false;
+    const SubSlot &s = subSlots_[subIndex];
+    if (!s.src)
+        return false;
+    // A sub-window whose pixmap was never pushed is a window the console
+    // could not resolve; drawing its frame would claim a window that
+    // does not exist.
+    if (s.pixmap.isNull())
+        return false;
+    return windowOutputName(-1, subIndex) == overviewScreen_;
 }
 
 QString HudCanvas::cornerLabel(int index) const
@@ -1028,16 +1215,23 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.drawLine(22, 38, width() - 22, 38);
 
     // --- screen frame ---
-    const QRectF avail = QRectF(rect()).adjusted(22, 46, -22, -kFooter);
+    // v1.0.0: ask screenFrame() instead of repeating the arithmetic.
+    //
+    // This block used to compute the frame inline, so paintEvent and
+    // mouseMoveEvent disagreed the moment either changed — the exact
+    // two-copies-of-one-mapping drift this file's own comments warn about
+    // (hud_canvas.cpp:1384-1391). It also meant the overview's portrait /
+    // landscape fix only reached the drag path, and the drawn frame stayed
+    // portrait for BOTH displays.
+    //
+    // The symptom that made it visible: both DP-1 (2560x1440) and
+    // HDMI-A-1 (1080x1920) produced a frame taller than wide, so the
+    // portrait display looked correct and hid the landscape one's bug.
     const QSize phys = si.physical;
-    const QSize logical = si.logical;
-    const qreal physAR = phys.height() / qreal(phys.width());
-    QSizeF screen(avail.width(), avail.width() * physAR);
-    if (screen.height() > avail.height())
-        screen = QSizeF(avail.height() / physAR, avail.height());
-    const QRectF frame(QPointF(avail.center().x() - screen.width() / 2,
-                               avail.center().y() - screen.height() / 2),
-                       screen);
+    QSize logical = si.logical;
+    QRectF frame;
+    qreal fit = 0.0;
+    screenFrame(frame, fit, logical);
 
     QLinearGradient bg(frame.topLeft(), frame.bottomRight());
     bg.setColorAt(0,    QColor(34, 50, 42));
@@ -1116,8 +1310,8 @@ void HudCanvas::paintEvent(QPaintEvent *)
     // into this one: a pets panel that is not present (World selected)
     // must still be skipped, and merging the two predicates into one
     // guard once segfaulted the Split paint on an unbound canvas.
-    const qreal fit = std::min(frame.width()  / logical.width(),
-                               frame.height() / logical.height());
+    // `fit` came out of screenFrame() above — the same expression, computed
+    // once. Recomputing it here is what let the two drift.
     auto logicalToCanvas = [&](const QRect &lr) {
         return QRectF(frame.left() + lr.x() * fit,
                       frame.top()  + lr.y() * fit,
@@ -1131,9 +1325,25 @@ void HudCanvas::paintEvent(QPaintEvent *)
     // v0.16 note above. `kPetsPanel` is the spelling, not a literal:
     // panel_accent.h and panel_sections.h both key off the same slot
     // order, and a literal here is how the three would drift apart.
-    const bool drawMothers = subSlots_.isEmpty();
+    // v1.0.0: AND THE OVERVIEW DRAWS ALL OF THEM. The overview is "every
+    // window on one display, read-only" — the mother panels ARE part of
+    // that picture in Split (the user may have left some panels
+    // un-split), so the gate is `subSlots_.isEmpty() || overviewMode_`
+    // rather than `subSlots_.isEmpty()`. Written as a SHORT-CIRCUIT so
+    // the default path is bit-for-bit what it was: with overviewMode_
+    // false the expression is the old condition and not one extra
+    // instruction is executed. That identity is what keeps
+    // console_split_sync_tests' and damage_rows_window_tests'
+    // canvas->grab() pixel assertions green.
+    //
+    // WHICH mothers actually get painted is then narrowed by
+    // overviewDrawsPanel() — the overview draws only the windows
+    // configured for its display, and only those with something to
+    // show (see the note on that function about the Split mask).
+    const bool drawMothers = subSlots_.isEmpty() || overviewMode_;
     for (int i = 0; i < mhw::kPanelCount; ++i) {
         if (!drawMothers && i != kPetsPanel) continue;
+        if (overviewMode_ && !overviewDrawsPanel(i)) continue;
         if (!slots_[i].bound || !slots_[i].present) continue;
         const Slot &s = slots_[i];
         const qreal z = std::max(0.1, s.src->scale());
@@ -1314,6 +1524,46 @@ void HudCanvas::paintSubWindowBox(const SubWindowPaintInfo &info,
 void HudCanvas::mousePressEvent(QMouseEvent *e)
 {
     if (e->button() != Qt::LeftButton) return;
+    // v1.0.0: THE OVERVIEW IS READ-ONLY. 「总览为只读视图：一次只绘制一
+    // 块显示器，点击窗口在下方查看详情。」 — a click SELECTS so the
+    // inspector can show the window's geometry, and does nothing else.
+    //
+    // The drag state is deliberately never entered: subDragging_ /
+    // dragging_ / the ClosedHandCursor are all below this return, so
+    // the cursor stays an arrow and mouseMoveEvent's drag arms have no
+    // live state to act on. That is the whole read-only guarantee for
+    // the mouse, and it is one branch at the top rather than a guard in
+    // each of the three drag arms — a guard in each arm is three
+    // chances to miss one.
+    //
+    // The selection is not cosmetic: the console's panelSelected /
+    // subWindowSelected handlers open the inspector page and move the
+    // rail's highlight, which is exactly how the prototype's "click a
+    // window to inspect below" works. So the SAME two signals fire, and
+    // nothing else does.
+    if (overviewMode_) {
+        for (int i = subSlots_.size() - 1; i >= 0; --i) {
+            if (i < subRects_.size() && subRects_[i].contains(e->position())) {
+                const bool changed = (subSelected_ != i);
+                subSelected_ = i;
+                if (changed)
+                    emit subWindowSelected(i);
+                update();
+                return;
+            }
+        }
+        for (int i = mhw::kPanelCount - 1; i >= 0; --i) {
+            if (!slots_[i].lastTarget_.contains(e->position()))
+                continue;
+            if (i != selected_) {
+                selected_ = i;
+                update();
+                emit panelSelected(i);
+            }
+            return;
+        }
+        return;   // empty space: no drag, no selection change
+    }
     // v0.14: IN SPLIT MODE THE SUB-WINDOWS ARE THE ONLY HIT TARGETS.
     // The mother panels are not drawn, so their boxes must not be
     // hit-testable either — a click that landed on empty space and moved
@@ -1396,6 +1646,7 @@ void HudCanvas::screenFrame(QRectF &frame, qreal &fit, QSize &logical) const
     const QRectF avail = QRectF(rect()).adjusted(22, 46, -22, -kFooter);
     const QSize phys = si.physical;
     const qreal physAR = phys.height() / qreal(phys.width());
+
     QSizeF screen(avail.width(), avail.width() * physAR);
     if (screen.height() > avail.height())
         screen = QSizeF(avail.height() / physAR, avail.height());
@@ -1410,6 +1661,13 @@ void HudCanvas::screenFrame(QRectF &frame, qreal &fit, QSize &logical) const
 
 void HudCanvas::mouseMoveEvent(QMouseEvent *e)
 {
+    // v1.0.0: THE OVERVIEW NEVER DRAGS. Read-only means read-only for
+    // the pointer too — the press handler above never sets the drag
+    // state, so these arms are already inert, but a stray state (a drag
+    // started before entering the overview, say) would otherwise still
+    // write real margins. One branch here is the belt to that braces.
+    if (overviewMode_)
+        return;
     if (subDragging_ && subDragIndex_ >= 0) {
         QRectF frame;
         qreal fit = 0.0;
@@ -1456,6 +1714,15 @@ void HudCanvas::mouseReleaseEvent(QMouseEvent *e)
 
 void HudCanvas::keyPressEvent(QKeyEvent *e)
 {
+    // v1.0.0: THE OVERVIEW NEVER NUDGES. The arrow keys write REAL
+    // margins — panelMoved() / subWindowMoved() land on the live Panel —
+    // so a read-only view must not pass them through. The base class
+    // still gets them (scrolling, focus navigation), which is why this
+    // forwards rather than swallows.
+    if (overviewMode_) {
+        QWidget::keyPressEvent(e);
+        return;
+    }
     // v0.14: the arrow keys move whichever window is selected, in that
     // window's own mode. A sub-window selected in Split nudges by
     // subWindowMoved(); a base panel selected in Single nudges by

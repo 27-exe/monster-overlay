@@ -23,6 +23,33 @@
       "start_overlay": "▶   启动悬浮窗",
       "stop_overlay": "■   停止悬浮窗"
     },
+    "toolbar": {
+      "layout": "布局",
+      "edit": "编辑布局",
+      "start": "启动悬浮窗",
+      "stop": "停止悬浮窗"
+    },
+    "drawer": {
+      "empty": "未选中窗口",
+      "empty_sub": "在布局区点击一个窗口，这里显示它的显示配置和实时预览"
+    },
+    "side": {
+      "settings": "设置"
+    },
+    "settings": {
+      "title": "设置",
+      "appearance": "外观",
+      "language": "语言",
+      "theme": "主题",
+      "rise": "崛起环境 · REFramework 与脚本",
+      "rise_note": "仅崛起需要。世界模式不显示本节。"
+    },
+    "overview": {
+      "nav": "总览",
+      "display": "显示器",
+      "nav_summary": "一次一台显示器",
+      "display_tip": "切换总览查看的显示器（纯视图操作，不改变窗口归属）"
+    },
     "game": {
       "world": "世界",
       "rise": "崛起"

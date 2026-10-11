@@ -217,6 +217,13 @@ private:
                                const QString &summaryKey, int idx);
     QWidget *buildRule();
     QWidget *buildEditModeBlock();
+    // v1.0.0 console rework: the horizontal bar across the top of the
+    // content column — layout mode (combo + apply), EDIT and the real
+    // START. These four controls used to sit in the rail's scroll area;
+    // they moved here because they act on the whole window, not on one
+    // panel. The objectNames are unchanged, so the tests that drive them
+    // through findChild() keep working.
+    QWidget *buildToolbar();
     // v0.7.1: dedicated narrow column for the World/Rise game selector.
     // Returns a QWidget the caller parents to the horizontal QSplitter
     // on the left edge of the window; the existing rail sits to its
@@ -418,6 +425,11 @@ private:
     QPushButton *zoomOutBtn_  = nullptr;
     QPushButton *zoomInBtn_   = nullptr;
     QLabel      *zoomLabel_   = nullptr;
+    // v1.0.0: the rail footer's SETTINGS button. A no-op placeholder this
+    // round — the settings popup (Rise REFramework card, appearance,
+    // language) is not part of the layout rework — but the shell is final,
+    // so the button exists, is styled and is visible.
+    QPushButton *settingsBtn_ = nullptr;
     int selectedPanel_ = 0;
 
     // L4: status badge in the top-right, shows "READY" by default and

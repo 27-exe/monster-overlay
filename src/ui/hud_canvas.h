@@ -37,6 +37,20 @@ public:
     void setPanelPresent(int index, bool present);
     [[nodiscard]] bool panelPresent(int index) const;
     void setSelectedPanel(int index);
+
+    // ─── v1.0.0 overview observability ─────────────────────────────────
+    //
+    // The overview draws ONE display at a time, chosen from a dropdown, and
+    // the frame it draws is sized from that display's aspect ratio. Without
+    // a reader for "which display is that", the only way to check the
+    // switch worked is to look at pixels — and a frame that is tall for
+    // BOTH displays looks like a working portrait mode until you compare
+    // the two. That is exactly the bug this exposes: both came back tall,
+    // because screenFrame()'s avail was dominated by the widget's own
+    // heightForWidth() rather than by physAR.
+    [[nodiscard]] QString previewOutput() const { return previewOutputName_; }
+    [[nodiscard]] QSize previewPhysicalSize() const
+    { return previewScreenInfo().physical; }
     void bindPanel(int index, const PanelSource *src);
 
     // ─── v0.13 split-mode preview ───────────────────────────────────────
@@ -168,6 +182,43 @@ public:
     // output the panels will actually land on.
     void setPreviewScreen(QString outputName);
     [[nodiscard]] QString previewScreen() const { return previewOutputName_; }
+
+    // ─── v1.0.0: the single-display overview ───────────────────────────
+    //
+    // 原型语义（console-single-display.html）：总览一次只画一块显示器上的
+    // 所有窗口（跨面板），且是只读视图 —— 「总览为只读视图：一次只绘制
+    // 一块显示器，点击窗口在下方查看详情」。
+    //
+    // 它是纯 VIEW 状态，与 previewScreen（也是视图状态）分开保存：
+    // overviewScreen_ 记「总览在看哪块屏」，previewOutputName_ 仍然是
+    // 「canvas 当前在预览哪块屏」。进入总览时后者被设为前者（否则画面
+    // 还是旧屏的框），退出时恢复，这样 selectPanel() 在总览期间被跳过
+    // 也不会把画面抢走。
+    //
+    // overviewMode_ 默认 false，且默认绘制路径一个分支都不加：绘制闸写
+    // 成 `subSlots_.isEmpty() || overviewMode_` 的短路形式，
+    // overviewMode_ 恒 false 时与改写前逐位等价 —— 这是
+    // console_split_sync_tests / damage_rows_window_tests 的
+    // canvas->grab() 像素断言能继续通过的根据。
+    //
+    // `screen` 为空表示「跟随主屏」；为空时用 primaryOutputName() 落一个
+    // 真实输出名，让窗口归属与总览屏用同一个字符串空间比较。
+    void setOverview(bool on, const QString &screen = QString());
+    [[nodiscard]] bool overviewMode() const { return overviewMode_; }
+    [[nodiscard]] QString overviewScreen() const { return overviewScreen_; }
+
+    // 「这个窗口配置上属于哪块屏」—— 原型 resolveScreen() 的规则：
+    // 窗口自己的 outputName → 所属母面板的 outputName → 主屏。
+    //
+    // 刻意不走 boundOutputName()：那条链在第三步回落
+    // previewOutputName_（canvas 当前预览哪块屏，视图状态），而总览要
+    // 回答的是配置事实。按视图状态过滤会自我循环 —— 用户切到 DP-1 看
+    // 总览，跟面板的 outputName 没有半点关系。
+    //
+    // `subIndex` 是 subSlots_ 的下标；负数（默认）问母面板 0..3。
+    // 返回空串表示「跟随主屏」。
+    [[nodiscard]] QString windowOutputName(int panelIndex,
+                                           int subIndex = -1) const;
 
     void setShowSafeArea(bool on);
     void setShowGrid(bool on);
@@ -476,6 +527,23 @@ private:
     // accessors existed, so nothing changes until they land.
     [[nodiscard]] QString boundOutputName(const PanelSource *src) const;
 
+    // v1.0.0: 「跟随主屏」的空串归一成一个真实输出名，让总览的窗口归属
+    // 与 overviewScreen_ 落在同一个字符串空间里比较。空串、未连接的输
+    // 出都归一为 Qt 的主屏名；连那个也取不到就保持空串（此时总览按
+    // 「什么都归属主屏」处理，等价于不过滤）。
+    [[nodiscard]] QString primaryOutputName() const;
+
+    // v1.0.0: 总览过滤。回答「这块屏上应该画哪些窗口」，规则见
+    // windowOutputName() 的注释。
+    //
+    // 母面板额外要求 present && !pixmap.isNull()：总览下恢复绘制三个
+    // 母面板时，control_panel.cpp 传进来的 mask 还是 Split 语义的（见
+    // 它自己 4489-4494 行的说明），pixmap 可能是空或旧值。本轮的稳妥
+    // 处理是「空 pixmap 就跳过」，不修 mask 语义 —— 那是更大的坑，
+    // 留待单独任务。
+    [[nodiscard]] bool overviewDrawsPanel(int panelIndex) const;
+    [[nodiscard]] bool overviewDrawsSub(int subIndex) const;
+
     // v0.11.4: rebuild the per-output preview cache from the CURRENT
     // QGuiApplication::screens() list. Declared const because the
     // cache is per-widget state, not observable state: calling it is
@@ -512,6 +580,25 @@ private:
     // "screen frame" rectangle and the per-panel drag clamps match
     // the output the panels are bound to. Empty = primary.
     QString previewOutputName_;
+
+    // v1.0.0: the single-display overview. Two separate pieces of state,
+    // and the separation is the whole point:
+    //
+    //   overviewMode_    — the view is read-only and draws every window
+    //                      on ONE display. Default false, and the paint
+    //                      gate is written as a short-circuit so a false
+    //                      here costs nothing (see the header comment).
+    //   overviewScreen_  — WHICH display the overview is looking at.
+    //                      Deliberately not previewOutputName_: entering
+    //                      the overview saves the old preview screen and
+    //                      points the canvas at this one, so leaving
+    //                      restores exactly what the user was editing.
+    //
+    // savedPreviewOutput_ is what the exit path restores. It is only
+    // meaningful while overviewMode_ is true.
+    bool overviewMode_{false};
+    QString overviewScreen_;
+    QString savedPreviewOutput_;
 
     // v0.11.4: per-instance screen cache. Was two function-level statics
     // inside previewScreenInfo() — built once per PROCESS, so a monitor

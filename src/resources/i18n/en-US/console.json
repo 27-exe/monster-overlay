@@ -23,6 +23,33 @@
       "start_overlay": "▶   START OVERLAY",
       "stop_overlay": "■   STOP OVERLAY"
     },
+    "toolbar": {
+      "layout": "Layout",
+      "edit": "Edit layout",
+      "start": "Start overlay",
+      "stop": "Stop overlay"
+    },
+    "drawer": {
+      "empty": "No window selected",
+      "empty_sub": "Click a window in the layout area to see its display settings and live preview here"
+    },
+    "side": {
+      "settings": "Settings"
+    },
+    "settings": {
+      "title": "Settings",
+      "appearance": "Appearance",
+      "language": "Language",
+      "theme": "Theme",
+      "rise": "Rise environment · REFramework & scripts",
+      "rise_note": "Rise only. Hidden in World."
+    },
+    "overview": {
+      "nav": "Overview",
+      "display": "Display",
+      "nav_summary": "One display at a time",
+      "display_tip": "Switch the display the overview shows (view only; window ownership is unchanged)"
+    },
     "game": {
       "world": "WORLD",
       "rise": "RISE"

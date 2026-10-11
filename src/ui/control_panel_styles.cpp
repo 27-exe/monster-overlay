@@ -93,6 +93,34 @@ QString consoleStyleSheet()
         "QPushButton#stopBtn:hover{background:#b8482f;}"
         "QPushButton#stopBtn:pressed{background:#8a311f;}"
         "QPushButton#startBtn:disabled{background:%4;color:%6;}"
+        // v1.0.0: the rail's decorative START (display-only — the live
+        // launcher is the toolbar's startBtn). Same orange CTA the rail
+        // button always had; it just has its own name now so it cannot
+        // be confused with the button that launches.
+        "QPushButton#railStart{background:%9;color:%2;"
+        " border:none;border-radius:3px;padding:12px 28px;font-family:'Chakra Petch';"
+        " font-weight:700;font-size:14px;letter-spacing:2px;}"
+        "QPushButton#railStart:hover{background:%9;}"
+        "QPushButton#railStart:pressed{background:%9;}"
+        // v1.0.0: the toolbar's START / EDIT are shorter than the rail
+        // buttons they replace (12px/28px of padding made a full-width
+        // CTA; in a bar they read as a brick). Same colour and family,
+        // tighter box.
+        "QPushButton#toolbar QPushButton,QPushButton#toolbar > QPushButton{padding:6px 14px;}"
+        "QComboBox#layoutCombo{background:%3;color:%2;border:1px solid %8;border-radius:3px;"
+        "padding:6px 10px;font-family:'Chakra Petch';font-size:13px;}"
+        "QComboBox#layoutCombo:hover{border-color:%9;}"
+        "QComboBox#layoutCombo::drop-down{border:none;width:18px;}"
+        "QComboBox#layoutCombo::down-arrow{image:none;width:0px;height:0px;}"
+        "QPushButton#layoutApply{background:transparent;color:%2;border:1px solid %9;border-radius:3px;"
+        "padding:6px 14px;font-family:'Chakra Petch';font-size:13px;}"
+        "QPushButton#layoutApply:hover{background:%9;color:%2;}"
+        "QPushButton#layoutApply:disabled{color:%6;border-color:%8;}"
+        // v1.0.0: SETTINGS — the rail footer button, styled as a rail
+        // action but pinned at the bottom of the sidebar.
+        "QPushButton#settingsBtn{background:transparent;color:%6;border:1px solid %8;border-radius:3px;"
+        "padding:10px 12px;font-family:'Chakra Petch';font-size:13px;letter-spacing:1px;}"
+        "QPushButton#settingsBtn:hover{background:%3;color:%2;}"
         "QLabel#editCap{color:%6;font-family:'Noto Sans SC';font-size:13px;"
         " background:transparent;border:none;}"
         "QLabel#previewTitle{color:%6;font-family:'Chakra Petch';"
@@ -106,7 +134,12 @@ QString consoleStyleSheet()
         // stage has any height — collapsing to 0 hides the border
         // automatically (no leftover sliver).
         "QFrame#objectRail{background:%1;border-right:1px solid %8;}"
-        "QFrame#inspectorHost{background:%2;}"
+        // v1.0.0: the inspector column is gone; its host is now the
+        // DRAWER under the layout area, and the toolbar is a bar of its
+        // own above it. Both carry a background so the window reads as
+        // three stacked bands instead of one flat surface.
+        "QFrame#configHost{background:%2;}"
+        "QFrame#toolbar{background:%2;border-bottom:1px solid %8;}"
         "QFrame#stage{background:%1;border-top:1px solid %8;}"
         "QLabel#railBrand{font-family:'Chakra Petch';font-size:17px;letter-spacing:2px;color:%2;}"
         "QLabel#railBrandSub,QLabel#railHint{font-family:'Chakra Petch';font-size:12px;letter-spacing:1px;color:%6;}"
@@ -125,8 +158,13 @@ QString consoleStyleSheet()
         "text-align:left;padding:11px 18px;font-family:'Chakra Petch';font-size:13px;letter-spacing:1px;}"
         "QPushButton#railAction:hover{background:%3;color:%2;}"
         "QPushButton#railAction:disabled{color:%6;}"
-        "QLabel#inspectorTitle{font-family:'Chakra Petch';font-size:24px;letter-spacing:2px;color:%2;}"
-        "QLabel#inspectorSub{font-family:'Noto Sans SC';font-size:14px;color:%6;}"
+        "QLabel#inspectorTitle{font-family:'Chakra Petch';font-size:13px;letter-spacing:2px;color:%2;}"
+        "QLabel#inspectorSub{font-family:'Noto Sans SC';font-size:12px;color:%6;}"
+        // v1.0.0: the empty drawer. Centred, muted, and deliberately
+        // smaller than the panel titles — it is a placeholder face, not
+        // a heading the user came here to read.
+        "QLabel#drawerEmptyTitle{font-family:'Chakra Petch';font-size:14px;letter-spacing:2px;color:%6;}"
+        "QLabel#drawerEmpty{font-family:'Noto Sans SC';font-size:12px;color:%6;background:transparent;}"
         "QLabel#countLabel{font-family:'Chakra Petch';font-size:14px;font-weight:600;letter-spacing:1px;color:%2;}"
         "QLabel#countLabelP{color:%11;}"
         "QLabel#countLabelM{color:%9;}"
