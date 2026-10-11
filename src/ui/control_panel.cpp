@@ -2433,7 +2433,7 @@ ControlPanel::ControlPanel(QWidget *parent)
                                 .arg(o.geometry.width())
                                 .arg(o.geometry.height());
             if (portrait)
-                label += QStringLiteral("(旋转)");
+                label += mh::tr(QStringLiteral("console.proto.screen.rot"));
             if (o.primary) {
                 label += mh::tr(QStringLiteral("console.inspector.primary_tag"));
                 primaryName = o.name;
@@ -2484,7 +2484,7 @@ ControlPanel::ControlPanel(QWidget *parent)
                                     .arg(o.geometry.width())
                                     .arg(o.geometry.height());
                 if (portrait)
-                    label += QStringLiteral("(旋转)");
+                    label += mh::tr(QStringLiteral("console.proto.screen.rot"));
                 if (o.primary)
                     label += mh::tr(QStringLiteral("console.inspector.primary_tag"));
                 screenCombo_->addItem(label, o.name);
@@ -3792,11 +3792,15 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     vl->addLayout(posRow);
     ctl_[idx].posSpinX = spinX;
     ctl_[idx].posSpinY = spinY;
+    // persist=false, the same as every other console path that moves a
+    // panel (drag at 2283, the split host at 542/562). The console writes
+    // once, in closeEvent; typing a digit must not saveConfig() per
+    // keystroke, or there is nothing left to cancel.
     connect(spinX, &QSpinBox::valueChanged, this, [this, idx](int v){
         Panel *p = panelAt(idx);
         QMargins m = p->margins();
         m.setLeft(v);
-        p->setMargins(m);
+        p->setMargins(m, /*persist=*/false);
         updatePosLabel(idx);
         rebuildAndRender(idx);
     });
@@ -3804,7 +3808,7 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         Panel *p = panelAt(idx);
         QMargins m = p->margins();
         m.setTop(v);
-        p->setMargins(m);
+        p->setMargins(m, /*persist=*/false);
         updatePosLabel(idx);
         rebuildAndRender(idx);
     });
@@ -6225,6 +6229,24 @@ void ControlPanel::syncAppearance(int idx)
         c.opacitySlider->setValue(qRound(panel->opacity() * 100));
         if (c.bgAlphaSlider) c.bgAlphaSlider->setValue(panel->bgAlpha());
         c.opacitySlider->blockSignals(false);
+    }
+    // v1.0.0: the editable position. Without this the two position
+    // controls disagree after a drag: posLabel reads the live margins and
+    // updates, while the spins keep the values they were built with. A
+    // user who drags a panel and then looks at the spin sees a number that
+    // is not where the panel is.
+    if (c.posSpinX || c.posSpinY) {
+        const QMargins m = panel->margins();
+        if (c.posSpinX) {
+            c.posSpinX->blockSignals(true);
+            c.posSpinX->setValue(m.left());
+            c.posSpinX->blockSignals(false);
+        }
+        if (c.posSpinY) {
+            c.posSpinY->blockSignals(true);
+            c.posSpinY->setValue(m.top());
+            c.posSpinY->blockSignals(false);
+        }
     }
 }
 
