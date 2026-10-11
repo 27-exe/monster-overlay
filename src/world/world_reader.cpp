@@ -97,9 +97,11 @@ bool MhwReader::ensureAttached(GameSnapshot &snapshot)
     snapshot.attached = true;
     snapshot.pid = *pid;
     snapshot.imageBase = imageBase_;
-    snapshot.status = trMessage("reader.world_connected")
-                          .arg(*pid)
-                          .arg(static_cast<qulonglong>(imageBase_), 0, 16);
+    // v1.0.0: same as the Rise reader above — the attach-success status is a
+    // diagnostic string, not a second copy of the process identity. The
+    // meta line owns the PID/BASE rendering; this row exists to say why a
+    // read succeeded or failed.
+    snapshot.status = trMessage("reader.world_connected");
     return true;
 }
 

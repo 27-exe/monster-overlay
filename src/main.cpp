@@ -1901,6 +1901,40 @@ int main(int argc, char **argv)
                         damagePanel.updateRiseDamage(damageSnapshot);
                     if (!keepPetDemo)
                         petDamagePanel.updateRiseDamage(damageSnapshot);
+
+                    // v1.0.0: THE SPLIT DAMAGE WINDOWS, on the Rise side.
+                    //
+                    // 「控制台显示 dps 脚本正常，但是游戏内没显示悬浮窗」.
+                    // This is the World arm's v0.15 fix, which never had a
+                    // Rise counterpart: `if (damageSplitOn)` lives at
+                    // main.cpp:2009, INSIDE the `} else {` (World) branch
+                    // that opens at :1971. So on Rise the three damage
+                    // sub-windows were constructed, masked and never fed.
+                    //
+                    // Why that reads as "no damage overlay at all" rather
+                    // than "the sub-windows are missing": damagePanelMaskFor()
+                    // has already taken Rows | Share | Chart AWAY from
+                    // DamagePanel in Split mode, so the mother panel is
+                    // correctly disabled by damagePanelHasBlocks() (v0.16
+                    // pinned, panel_sections.h:1234). With the mother gone
+                    // AND the sub-windows undriven, Rise + split had no
+                    // damage surface anywhere on screen. World split was
+                    // fixed by exactly this drive; Rise was never given it.
+                    //
+                    // The demo guard is the same keepXDemo shape the mother
+                    // and pets use one line up, so an --edit launch keeps its
+                    // seeded rows instead of being overwritten by an empty
+                    // feed.
+                    if (damageSplitOn) {
+                        if (!keepDamageDemo) {
+                            damageShareStripPanel.updateRiseDamage(
+                                damageSnapshot);
+                            damageChartStripPanel.updateRiseDamage(
+                                damageSnapshot);
+                            damageRowsStripPanel.updateRiseDamage(
+                                damageSnapshot);
+                        }
+                    }
                 } else {
                     const auto feedError = diagnosticReader->lastError();
                     if (feedError != lastRiseDamageFeedError) {
@@ -1925,6 +1959,22 @@ int main(int argc, char **argv)
                         damagePanel.updateRiseDamage(feedLost);
                     if (!keepPetDemo)
                         petDamagePanel.updateRiseDamage(feedLost);
+
+                    // v1.0.0: same three windows, same reason, the other
+                    // half of the branch. A lost feed must CLEAR them for
+                    // the same reason the mother panel is cleared two lines
+                    // up: leaving the last quest's numbers on screen after
+                    // the producer goes quiet is the stale-data defect the
+                    // non-hunting snapshot exists to prevent. Feeding only
+                    // the success path would leave Rise + split showing the
+                    // previous quest's DPS whenever the feed drops.
+                    if (damageSplitOn) {
+                        if (!keepDamageDemo) {
+                            damageShareStripPanel.updateRiseDamage(feedLost);
+                            damageChartStripPanel.updateRiseDamage(feedLost);
+                            damageRowsStripPanel.updateRiseDamage(feedLost);
+                        }
+                    }
                 }
             }
             // Rise 与 World 同口径：没有可用数据就不挂载面板。
@@ -1968,6 +2018,32 @@ int main(int argc, char **argv)
             petDamagePanel.setVisible(petDamagePanel.panelEnabled()
                                       && petDamagePanel.hasVisibleContent());
             petDamagePanel.triggerUpdate();
+
+            // v1.0.0: the mount half of the three damage sub-windows, and
+            // the exact same expression the World arm uses at the end of
+            // its own branch. Fed above, decided here: the split windows
+            // ask panelEnabled() && hasVisibleContent() and nothing else —
+            // NO damagePanelHasBlocks(), because that predicate asks
+            // whether the MOTHER still owns a block, and in Split mode the
+            // answer is a correct false for a panel that is supposed to be
+            // hidden. These windows are not that panel.
+            //
+            // Placing it in the Rise arm rather than after the if/else is
+            // deliberate: it must sit inside `if (isRise)`, since the World
+            // arm already drives its own copies from the GameSnapshot. Same
+            // gate, two arms, one reason — the shape DamagePanel and
+            // PetDamagePanel already have.
+            if (damageSplitOn) {
+                damageShareStripPanel.setVisible(
+                    damageShareStripPanel.panelEnabled()
+                    && damageShareStripPanel.hasVisibleContent());
+                damageChartStripPanel.setVisible(
+                    damageChartStripPanel.panelEnabled()
+                    && damageChartStripPanel.hasVisibleContent());
+                damageRowsStripPanel.setVisible(
+                    damageRowsStripPanel.panelEnabled()
+                    && damageRowsStripPanel.hasVisibleContent());
+            }
         } else {
             petDamagePanel.setVisible(false);
             // Always deliver empty/non-hunting snapshots too. DamagePanel owns

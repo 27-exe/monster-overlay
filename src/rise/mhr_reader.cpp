@@ -304,9 +304,23 @@ bool MhrReader::ensureAttached(GameSnapshot &snapshot)
     snapshot.attached = true;
     snapshot.pid = *pid;
     snapshot.imageBase = imageBase_;
-    snapshot.status = trMessage(QStringLiteral("reader.rise_connected"))
-                          .arg(*pid)
-                          .arg(static_cast<qulonglong>(imageBase_), 0, 16);
+    // v1.0.0: the successful-attach status no longer repeats the process
+    // identity. This string IS the reader's status stream — the row the
+    // player windows print as their diagnostic line — and it used to carry
+    // 「MHR 已连接 · PID 605366 · BASE 0x6fffea9f0000」 while the very same
+    // window's meta line printed the identical 「PID 605366 · BASE 0x…」
+    // one line below it. Two copies of the same address on one window,
+    // and because the reader says 已连接 while the reader has not yet
+    // resolved a single field, the two lines also disagreed about whether
+    // there was data at all.
+    //
+    // The process identity is not lost: snap.pid and snap.imageBase are the
+    // canonical carriers and the meta line renders them (composeMetaLeft
+    // in panel_player_split_info.cpp). What this stream should say is why
+    // the read succeeded or failed, which is what the readerStatus row is
+    // for. Keeping them separate is what lets the diagnostic line collapse
+    // in the live state without taking the identity with it.
+    snapshot.status = trMessage(QStringLiteral("reader.rise_connected"));
     return true;
 }
 

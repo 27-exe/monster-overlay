@@ -45,6 +45,23 @@ PlayerViewModel::PlayerIdentity PlayerViewModel::resolveIdentity(
         }
     }
 
+    // v1.0.0 note (recorded here after trying it the other way): the
+    // 「title screen shows my name and MR」 fix is NOT this function's job.
+    //
+    // Tried: an early `if (snap.player.maxHealth <= 0) return empty;` guard
+    // here, on the reasoning that name / masterRank / weaponId all live in
+    // the save header and so answer before the player is in a quest. It
+    // broke 53 of 68 checks in player-view-model-tests and was wrong on the
+    // merits too: this is a pure identity transform, and its contract is
+    // "what did the snapshot say about the hunter", not "is the hunter
+    // interesting yet". A snapshot that carries a name and no HP is a
+    // coherent thing to describe.
+    //
+    // The window that MOUNTS is the thing that has to decide, and it does,
+    // in PlayerWeaponStripPanel::hasContent(). Same predicate, correct
+    // layer — a transform asked to refuse valid data cannot be tested, and
+    // cannot be reused.
+
     return {masterRank, name, weaponId, partyCount};
 }
 

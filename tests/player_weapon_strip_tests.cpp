@@ -75,12 +75,22 @@ void check(bool cond, const std::string &what)
 // `sharpness` is the gauge block, defaulted invalid so the pre-merge
 // tests below read exactly the way they did before the gauge came back;
 // the merge tests fill it in.
+//
+// v1.0.0 — `inGame`. Every fixture here describes a hunter that has been
+// sent into a quest, which is what maxHealth > 0 now means (see
+// buildWeaponIdentityModel in panel_player_split_weapon.cpp: the name and
+// MR are save-header fields, readable at the title screen, so the model
+// gates on HP to answer 「进了游戏」 rather than 「进程在」). Defaulting it
+// ON keeps every existing check describing the case it was written for;
+// the title-screen behaviour gets its own explicit check below rather
+// than being smuggled in by every fixture.
 mhw::GameSnapshot snapshotOf(bool playerValid, const QString &name,
                              int weaponId, int masterRank,
                              const mhw::SharpnessSnapshot &sharpness = {},
                              bool withLocalPartyMember = false,
                              const QString &partyName = QString(),
-                             int partyWeaponId = -1, int partyRank = 0)
+                             int partyWeaponId = -1, int partyRank = 0,
+                             bool inGame = true)
 {
     mhw::GameSnapshot snap;
     snap.game = mhw::GameId::World;
@@ -91,6 +101,7 @@ mhw::GameSnapshot snapshotOf(bool playerValid, const QString &name,
     pl.weaponId   = weaponId;
     pl.masterRank = masterRank;
     pl.sharpness  = sharpness;
+    pl.maxHealth  = inGame ? 100.0F : 0.0F;
     snap.player   = pl;
 
     if (withLocalPartyMember) {
@@ -414,6 +425,63 @@ int main(int argc, char **argv)
                   && empty.weaponId < 0 && !empty.sharpness.valid,
               "hasContent: no name, no weapon, no gauge is still the "
               "do-not-mount answer");
+    }
+
+    // ====================================================================
+    // 8b. v1.0.0 — THE TITLE SCREEN. 「世界在开始界面就显示了我的昵称与 MR」
+    //
+    // The report that produced this section was not a demo-data leak:
+    // setupDemoData() is gated behind editMode_ and never runs in a live
+    // session. The name, the MR and the weapon id all come from the SAVE
+    // HEADER, which the process has loaded before the player picks a save,
+    // so the window mounted at the title screen naming a hunter who had
+    // not been sent anywhere.
+    //
+    // The discriminator is HP: maxHealth is zero until the in-game player
+    // struct exists. These four checks pin both halves of the contract —
+    // the gate closes at the title screen, and it opens again the moment
+    // the hunter is in a quest — because a gate that never opens would
+    // look identical to this one in a unit test.
+    // ====================================================================
+    {
+        // The title screen, with a save loaded: everything the save header
+        // can give, and nothing from the in-game player struct.
+        const mhw::GameSnapshot title = snapshotOf(
+            /*playerValid=*/true, QString::fromUtf8(kA),
+            /*weaponId=*/3, /*masterRank=*/247, /*sharpness=*/{},
+            /*withLocalPartyMember=*/false, /*partyName=*/QString(),
+            /*partyWeaponId=*/-1, /*partyRank=*/0, /*inGame=*/false);
+        const mhw::WeaponIdentityRow atTitle =
+            mhw::buildWeaponIdentityModel(title);
+
+        check(atTitle.isEmpty(),
+              "title screen: a save header with no HP produces no row at all");
+        check(!atTitle.hasName,
+              "title screen: the hunter name is withheld");
+        check(atTitle.masterRank == 0,
+              "title screen: the master rank is withheld");
+        check(atTitle.weaponId < 0,
+              "title screen: the weapon id is withheld");
+
+        // And the gate OPENS: same save, now in a quest. This is the check
+        // that would fail if the gate were stuck shut.
+        const mhw::GameSnapshot hunting = snapshotOf(
+            /*playerValid=*/true, QString::fromUtf8(kA),
+            /*weaponId=*/3, /*masterRank=*/247, /*sharpness=*/{},
+            /*withLocalPartyMember=*/false, /*partyName=*/QString(),
+            /*partyWeaponId=*/-1, /*partyRank=*/0, /*inGame=*/true);
+        const mhw::WeaponIdentityRow inQuest =
+            mhw::buildWeaponIdentityModel(hunting);
+
+        check(inQuest.hasName
+                  && inQuest.name == QString::fromUtf8(kA),
+              "in a quest: the same save's name comes back");
+        check(inQuest.masterRank == 247,
+              "in a quest: the same save's rank comes back");
+        check(inQuest.weaponId == 3,
+              "in a quest: the same save's weapon comes back");
+        check(!inQuest.isEmpty(),
+              "in a quest: the window mounts again");
     }
 
     // ====================================================================

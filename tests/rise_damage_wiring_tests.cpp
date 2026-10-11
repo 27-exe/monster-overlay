@@ -144,6 +144,63 @@ void checkContains(std::string_view haystack, std::string_view needle,
 // The inverse assertion, for guarding against a regression back to a rule we
 // deliberately removed (e.g. a branch that force-shows a panel regardless of
 // whether it has anything to draw).
+// v1.0.0: the boolean sibling of checkContains(). The branch test this
+// file now carries is not a substring question — it is "is this offset
+// between these two offsets", which has no haystack to hand a
+// checkContains call. Kept next to the other two so every assertion in
+// this file reads the same way.
+// v1.0.0: find the `} else {` that ACTUALLY closes the arm starting at
+// `armStart`, by walking brace depth from the `if`'s opening brace.
+//
+// Why this exists instead of a substring search for "}else{": the Rise
+// poll arm contains two NESTED else branches of its own — the else of
+// `if (newestReader)` and the else of `if (feedError != ...)` — so the
+// first "}else{" after `if (isRise)` is one of those, several hundred
+// characters early. A substring test that anchored on it reported all
+// nine drive positions missing while the code was correct, which is the
+// worst kind of test: it fails on a fix and passes on the bug's absence
+// for the wrong reason.
+//
+// The compaction in compact() strips comments and whitespace but not
+// braces, so depth-walking is exact. Returns npos when the arm is not
+// closed, which is itself a finding worth reporting.
+std::size_t armElseOffset(std::string_view src, std::size_t armStart)
+{
+    const auto open = src.find('{', armStart);
+    if (open == std::string_view::npos)
+        return std::string_view::npos;
+
+    int depth = 0;
+    for (std::size_t i = open; i < src.size(); ++i) {
+        if (src[i] == '{')
+            ++depth;
+        else if (src[i] == '}') {
+            --depth;
+            if (depth == 0) {
+                // The arm's closing brace. What follows is the `else`.
+                const auto after = src.find('{', i);
+                if (after != std::string_view::npos) {
+                    const auto tail = src.substr(i + 1, after - i - 1);
+                    if (tail.find("else") != std::string_view::npos)
+                        return after;
+                }
+                return std::string_view::npos;
+            }
+        }
+    }
+    return std::string_view::npos;
+}
+
+void checkTrue(bool condition, std::string_view description)
+{
+    if (condition)
+        std::cout << "PASS: " << description << '\n';
+    else
+        std::cerr << "FAIL: " << description << '\n';
+    if (!condition)
+        ++failures;
+}
+
 void checkNotContains(std::string_view haystack, std::string_view needle,
                       std::string_view description)
 {
@@ -301,6 +358,116 @@ int main()
                   "console hides the pets rail card per game");
     checkContains(panelSource, "setPanelPresent(3,petsAvailable)",
                   "console removes the pets stage tile per game");
+
+    // ====================================================================
+    // v1.0.0 — RISE + SPLIT ACTUALLY DRIVES THE THREE DAMAGE WINDOWS.
+    //
+    // 「控制台显示 dps 脚本正常，但是游戏内没显示悬浮窗」.
+    //
+    // Why this needs more than checkContains: the World arm's drive already
+    // existed, so "the three windows are fed somewhere in main.cpp" was
+    // TRUE while the bug was live. What was missing was the branch — the
+    // World arm's `if (damageSplitOn)` sat inside `} else {`, and Rise took
+    // the `if (isRise)` path, so on Rise the windows were constructed,
+    // masked and never fed. A substring test cannot see that; only an
+    // offset comparison between the `if (isRise)` marker and its `} else {`
+    // can, because in the compacted source those two strings ARE the
+    // branch boundary.
+    //
+    // Each window is checked twice: fed AND mounted. Feeding without
+    // mounting is the v0.15 failure this file's own comment describes
+    // ("Constructing a window is not driving one"); mounting without
+    // feeding is what the bug looked like from the outside.
+    // ====================================================================
+    {
+        // SECOND occurrence, deliberately. main.cpp has an early
+        // `if (isRise)` that only decides which damage readers to build,
+        // and the poll-time one further down that carries the whole Rise /
+        // World split. Anchoring on the first makes this test measure the
+        // wrong arm — which is exactly what the first version of it did,
+        // reporting all nine positions missing when the code was correct.
+        //
+        // So: take the LAST `if(isRise)`. If someone adds a third one after
+        // it the test will say so rather than quietly pass, because the
+        // boundary it then finds belongs to the newer arm.
+        const auto riseArm = mainSource.rfind("if(isRise)");
+        const auto worldArm = armElseOffset(mainSource, riseArm);
+        checkTrue(riseArm != std::string::npos,
+              "v1.0.0: main.cpp still has the if(isRise) arm to compare against");
+        checkTrue(worldArm != std::string::npos,
+              "v1.0.0: the Rise arm is brace-closed with an else after it "
+              "(depth-walked, because the arm contains nested else "
+              "branches a substring search would mistake for this one)");
+        checkTrue(riseArm < worldArm,
+              "v1.0.0: the Rise arm opens before the World arm");
+
+        // Guard the anchor itself. This test reasons about "the poll-time
+        // Rise arm", and it finds that arm with rfind — so a THIRD
+        // `if (isRise)` appearing later would silently become the anchor
+        // and the test would start measuring a different arm while still
+        // reporting green. Count them instead.
+        int riseArms = 0;
+        for (auto at = mainSource.find("if(isRise)");
+             at != std::string::npos;
+             at = mainSource.find("if(isRise)", at + 1))
+            ++riseArms;
+        checkTrue(riseArms == 2,
+              "v1.0.0: main.cpp has exactly two `if (isRise)` arms — the "
+              "reader-construction one and the poll-time one this test "
+              "anchors on. A third would move the rfind anchor without any "
+              "check here failing loudly.");
+
+        if (riseArm != std::string::npos && worldArm != std::string::npos) {
+            // Inside = after if(isRise), before } else {. Outside the arm
+            // is where the World drive lives, which is exactly where the
+            // Rise drive must NOT be.
+            //
+            // rfind, NOT find: main.cpp has `setVisible(editMode)` for these
+            // windows at construction (main.cpp:1413-1416), long before the
+            // poll arm. A find-from-zero therefore lands on the CONSTRUCTION
+            // call, reports "not in the Rise arm", and does so while the
+            // poll-side call sits right there. Searching forward from the
+            // arm start is the only thing that means "the poll drives it".
+            const auto inRiseArm = [&](std::string_view needle) {
+                const auto at = mainSource.find(needle, riseArm);
+                return at != std::string::npos && at < worldArm;
+            };
+
+            checkTrue(inRiseArm("damageShareStripPanel.updateRiseDamage(damageSnapshot)"),
+                  "v1.0.0: the share window is FED on the Rise arm — the "
+                  "World-only drive is what left Rise + split with no "
+                  "damage surface at all");
+            checkTrue(inRiseArm("damageChartStripPanel.updateRiseDamage(damageSnapshot)"),
+                  "v1.0.0: the chart window is fed on the Rise arm");
+            checkTrue(inRiseArm("damageRowsStripPanel.updateRiseDamage(damageSnapshot)"),
+                  "v1.0.0: the per-player rows window is fed on the Rise "
+                  "arm — this is the window whose missing drive the v0.15 "
+                  "comment predicted for World");
+
+            checkTrue(inRiseArm("damageShareStripPanel.updateRiseDamage(feedLost)"),
+                  "v1.0.0: a LOST feed clears the share window too, so "
+                  "Rise does not keep the last quest's numbers on screen "
+                  "after the producer goes quiet");
+            checkTrue(inRiseArm("damageChartStripPanel.updateRiseDamage(feedLost)"),
+                  "v1.0.0: a lost feed clears the chart window");
+            checkTrue(inRiseArm("damageRowsStripPanel.updateRiseDamage(feedLost)"),
+                  "v1.0.0: a lost feed clears the rows window");
+
+            checkTrue(inRiseArm("damageShareStripPanel.setVisible("),
+                  "v1.0.0: the share window is MOUNTED on the Rise arm — fed "
+                  "but never setVisible is the same invisible bug");
+            checkTrue(inRiseArm("damageChartStripPanel.setVisible("),
+                  "v1.0.0: the chart window is mounted on the Rise arm");
+            checkTrue(inRiseArm("damageRowsStripPanel.setVisible("),
+                  "v1.0.0: the rows window is mounted on the Rise arm");
+
+            // And the negative: the World drive must stay OUT of the Rise
+            // arm, or a Rise launch would take the GameSnapshot arm's path.
+            checkTrue(!inRiseArm("damageShareStripPanel.update(damageSnap)"),
+                  "v1.0.0: the Rise arm does not also run the World "
+                  "GameSnapshot drive — the two arms feed different data");
+        }
+    }
 
     if (failures == 0)
         std::cout << "\nrise-damage-wiring-tests: ALL PASSED\n";

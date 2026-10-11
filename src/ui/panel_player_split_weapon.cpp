@@ -204,6 +204,26 @@ WeaponIdentityRow buildWeaponIdentityModel(const mhw::GameSnapshot &snap)
     const PlayerViewModel vm;
     const PlayerViewModel::PlayerIdentity id = vm.resolveIdentity(snap);
 
+    // v1.0.0: 「世界在开始界面就显示了我的昵称和 MR」.
+    //
+    // name / masterRank / weaponId are SAVE HEADER fields. The process has
+    // them the instant the game loads a save, which is well before the
+    // player enters a quest — so the window mounted on the title screen
+    // and named a hunter who had not been sent anywhere. Not demo data:
+    // setupDemoData() is gated behind editMode_ (panel.cpp:1153), and this
+    // function never consults it. It is real data arriving earlier than it
+    // is useful.
+    //
+    // maxHealth is the discriminator — zero until the in-game player struct
+    // exists, positive once it does. Emitting the empty row here rather
+    // than refusing inside resolveIdentity() keeps that function a pure
+    // transform of the snapshot ("what did it say"), the contract its
+    // 68-check suite pins. This function answers the different question
+    // ("what should this window show"), and hasContent() downstream turns
+    // the empty row into an unmounted surface.
+    if (snap.player.maxHealth <= 0.0F)
+        return WeaponIdentityRow{};
+
     row.weaponId   = id.weaponId;
     row.name       = id.name;
     row.hasName    = !id.name.isEmpty();

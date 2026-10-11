@@ -333,22 +333,47 @@ static_assert(static_cast<int>(InfoLine::ZoneQuest) == 0
     case InfoLine::TimeCarts:
         return row.hasQuest;
     case InfoLine::ReaderStatus:
-        // Drawn in exactly the two states the panel drew it in: offline
-        // (nothing found) and attached-but-nothing-resolved. In the live
-        // state the reader's status is "MHW 已连接 · PID …", which is
-        // already the meta line below it — printing both would be a
-        // duplicate row, and the panel did not draw it either
-        // (panel_player.cpp:586-587 returned early before it).
+        // v1.0.0: this row is a DIAGNOSIS, so it is drawn only when there
+        // is a diagnosis to give. Two states carry one:
         //
-        // AND only when the reader actually said something. The panel
-        // collapsed the row in that case (panel_player.cpp:588,
-        // `rows = status_.isEmpty() ? 1 : 2`), and a window that reserves
-        // a line it does not draw is a dangling gap the user reads as a
-        // layout defect — the mirror image of the clipped-row defect the
-        // pitch functions exist to prevent. Both this predicate and the
-        // paint ask the same question, so they cannot disagree.
+        //   * Offline, where the status says which lookup failed —
+        //     「等待 MonsterHunterRise.exe」 is the single most useful
+        //     thing on screen when nothing is happening.
+        //   * Attached-but-nothing-resolved, where the status says why
+        //     the read failed — the ptrace denial text lives here.
+        //
+        // A SUCCESSFUL attach has neither. Before v1.0.0 the status
+        // string carried 「PID … · BASE 0x…」 and was suppressed only in
+        // the Live state, so the attached-but-empty window printed
+        //
+        //     MHR 已连接 · PID 605366 · BASE 0x6fffea9f0000
+        //     ● ○ 无数据 · PID 605366 · BASE 0x6fffea9f0000
+        //
+        // — two copies of the address, and two rows that contradict each
+        // other about whether the overlay is connected. The address is now
+        // rendered once, by the meta row, from snap.pid / snap.imageBase;
+        // what was left of the status row on a successful attach was the
+        // bare word 「已连接」 sitting above a verdict of 「无数据」, which
+        // is the contradiction with one copy of the number removed.
+        //
+        // So the rule is the honest one: draw the row when the reader has
+        // something to REPORT, not when it has something to announce. The
+        // reader already distinguishes the two — its failure strings say
+        // what went wrong, its success string says only that it worked.
+        //
+        // AND only when the reader actually said something (the panel
+        // collapsed the row at panel_player.cpp:588 for the same reason:
+        // a window that reserves a line it does not draw is a dangling
+        // gap the user reads as a layout defect). Both this predicate and
+        // the paint ask the same question, so they cannot disagree.
         if (row.state() == mhw::InfoRow::State::Live)
             return false;
+        if (row.connected
+            && (row.readerStatus.contains(mh::tr("reader.rise_connected"))
+                || row.readerStatus.contains(
+                    mh::tr("reader.world_connected")))) {
+            return false;   // success: no diagnosis, no row
+        }
         return !row.readerStatus.isEmpty();
     case InfoLine::Meta:
         return true;

@@ -142,10 +142,10 @@
     "invalid_read_request": "Invalid memory read request: 0x%1, %2 bytes",
     "waiting_exe": "Waiting for %1",
     "ptrace_denied": "Found PID %1 but reading its memory was denied: %2. With ptrace_scope=1 a same-user non-descendant needs CAP_SYS_PTRACE: sudo setcap cap_sys_ptrace+ep <overlay path>, or temporarily sudo sysctl kernel.yama.ptrace_scope=0.",
-    "world_connected": "MHW connected · PID %1 · BASE 0x%2",
+    "world_connected": "MHW connected",
     "rise_waiting": "Waiting for MonsterHunterRise.exe",
     "rise_attach_failed": "Found PID %1 but reading its memory failed: %2. With ptrace_scope=1 a same-user non-descendant needs CAP_SYS_PTRACE: sudo setcap cap_sys_ptrace+ep <overlay path>, or temporarily sudo sysctl kernel.yama.ptrace_scope=0.",
-    "rise_connected": "MHR connected · PID %1 · BASE 0x%2",
+    "rise_connected": "MHR connected",
     "partial_read_failed": " · partial read failed: %1"
   }
 }

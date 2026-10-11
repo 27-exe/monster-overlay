@@ -142,10 +142,10 @@
     "invalid_read_request": "无效内存读取请求: 0x%1, %2 bytes",
     "waiting_exe": "等待 %1",
     "ptrace_denied": "已发现 PID %1，但读取其内存被拒绝：%2。ptrace_scope=1 且进程非子孙时需要 CAP_SYS_PTRACE：给覆盖层二进制设 sudo setcap cap_sys_ptrace+ep <路径>，或临时 sudo sysctl kernel.yama.ptrace_scope=0。",
-    "world_connected": "MHW 已连接 · PID %1 · BASE 0x%2",
+    "world_connected": "MHW 已连接",
     "rise_waiting": "等待 MonsterHunterRise.exe",
     "rise_attach_failed": "已发现 PID %1，但读取其内存失败：%2。ptrace_scope=1 且进程非子孙时需要 CAP_SYS_PTRACE：给覆盖层二进制设 sudo setcap cap_sys_ptrace+ep <路径>，或临时 sudo sysctl kernel.yama.ptrace_scope=0。",
-    "rise_connected": "MHR 已连接 · PID %1 · BASE 0x%2",
+    "rise_connected": "MHR 已连接",
     "partial_read_failed": " · 部分读取失败: %1"
   }
 }
