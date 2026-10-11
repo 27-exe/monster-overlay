@@ -3554,6 +3554,22 @@ void setBoardEditing(HudCanvas *canvas, bool on)
     // meant to describe; the two calls in that order are what make the
     // caption and the board unable to disagree.
     canvas->setEditing(on);
+    // AND THE BUTTON'S OWN FACE. Without this the edit toggle is the one
+    // control that does not say which mode it is in: the board grows a clay
+    // border and dashed cards, and the button that caused it looks
+    // untouched. The property is what QPushButton#enterEdit[on="true"] keys
+    // off, and because setEditing() repaints the canvas and not the
+    // toolbar, the polish pair has to be explicit rather than left to the
+    // next event that happens to touch the button.
+    if (s_editBtn) {
+        // A string literal, not QStringLiteral: QObject::setProperty's
+        // first parameter is `const char *`, and a QString does not convert
+        // to it. The literal is also how the rest of this file sets
+        // dynamic properties (setProperty("navObject", true) and friends).
+        s_editBtn->setProperty("on", on);
+        s_editBtn->style()->unpolish(s_editBtn);
+        s_editBtn->style()->polish(s_editBtn);
+    }
     refreshBoardHint(canvas);
 }
 
