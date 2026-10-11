@@ -324,6 +324,7 @@
       "save": "保存",
       "save.hint": "已保存到浏览器(演示数据)",
       "scale": "缩放",
+      "screen.rot": "(旋转)",
       "screen.tag": "屏幕",
       "sec.none": "该窗口没有可切换的分区。",
       "sec.note.single": "整块布局下每个面板只有一个窗口，显示内容开关在本列。",

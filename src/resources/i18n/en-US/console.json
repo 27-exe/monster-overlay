@@ -324,6 +324,7 @@
       "save": "Save",
       "save.hint": "Saved to browser (demo data)",
       "scale": "Scale",
+      "screen.rot": "(rotated)",
       "screen.tag": "Screen",
       "sec.none": "This window has no switchable sections.",
       "sec.note.single": "In single layout each panel is one window; content switches are in this column.",

@@ -3694,24 +3694,25 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         screenLab->setObjectName(QStringLiteral("sliderLabel"));
         auto *combo = new QComboBox();
         combo->setCursor(Qt::PointingHandCursor);
-        // First entry: explicit "follow primary" — empty userData so
-        // Panel::setOutputName("") clears the override.
-        combo->addItem(mh::tr(QStringLiteral("console.inspector.primary")), QString());
-        // Item 0 is UI copy ("<PRIMARY>") — re-localize it in place. The
-        // remaining items are screen names + geometry and must not move.
+        // First entry: "follow the mother panel" — empty userData so
+        // Panel::setOutputName("") clears the override and Qt resolves
+        // the OS primary (which the mother panel falls back to).
+        combo->addItem(mh::tr(QStringLiteral("console.proto.follow")), QString());
+        // Item 0 is UI copy — re-localize it in place. The remaining
+        // items are screen names + resolution and must not move.
         trHook([combo]{
-            combo->setItemText(0, mh::tr(QStringLiteral("console.inspector.primary")));
+            combo->setItemText(0, mh::tr(QStringLiteral("console.proto.follow")));
         });
         const auto outs = screen_query::listOutputs();
         for (const auto &o : outs) {
+            // v1.0.0 T2: the prototype's label — "DP-1 · 2560×1440", and a
+            // portrait output says so. No @x,y and no primary tag: the
+            // prototype has neither.
             QString label = o.name;
-            if (o.primary)
-                label += mh::tr(QStringLiteral("console.inspector.primary_tag"));
-            // Append the geometry so the user can tell two same-named
-            // outputs apart (rare on Niri, common on X11 multi-GPU).
-            label += QStringLiteral("  ·  %1×%2 @%3,%4")
-                .arg(o.geometry.width()).arg(o.geometry.height())
-                .arg(o.geometry.x()).arg(o.geometry.y());
+            label += QStringLiteral(" · %1×%2")
+                .arg(o.geometry.width()).arg(o.geometry.height());
+            if (o.geometry.height() > o.geometry.width())
+                label += mh::tr(QStringLiteral("console.proto.screen.rot"));
             combo->addItem(label, o.name);
         }
         // Pick the persisted value (if any) — match either by userData
@@ -3768,6 +3769,45 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         vl->addLayout(screenRow);
         ctl_[idx].outputCombo = combo;
     }
+    // v1.0.0 T2: editable x/y. The label below stays — it reports the
+    // quadrant, which the spins do not.
+    auto *posRow = new QHBoxLayout();
+    posRow->setSpacing(8);
+    auto *spinX = new QSpinBox();
+    spinX->setObjectName("posSpinX");
+    spinX->setRange(0, 9999);
+    spinX->setSuffix(QStringLiteral(" px"));
+    auto *spinY = new QSpinBox();
+    spinY->setObjectName("posSpinY");
+    spinY->setRange(0, 9999);
+    spinY->setSuffix(QStringLiteral(" px"));
+    {
+        Panel *p0 = panelAt(idx);
+        const QMargins m0 = p0->margins();
+        spinX->setValue(m0.left());
+        spinY->setValue(m0.top());
+    }
+    posRow->addWidget(spinX);
+    posRow->addWidget(spinY);
+    vl->addLayout(posRow);
+    ctl_[idx].posSpinX = spinX;
+    ctl_[idx].posSpinY = spinY;
+    connect(spinX, &QSpinBox::valueChanged, this, [this, idx](int v){
+        Panel *p = panelAt(idx);
+        QMargins m = p->margins();
+        m.setLeft(v);
+        p->setMargins(m);
+        updatePosLabel(idx);
+        rebuildAndRender(idx);
+    });
+    connect(spinY, &QSpinBox::valueChanged, this, [this, idx](int v){
+        Panel *p = panelAt(idx);
+        QMargins m = p->margins();
+        m.setTop(v);
+        p->setMargins(m);
+        updatePosLabel(idx);
+        rebuildAndRender(idx);
+    });
     // v0.5 BEHAVIOR → POSITION: shows the panel's anchor corner and
     // current margins. The user moves the panel via canvas drag or
     // arrow keys; this label is read-only feedback.
@@ -3782,6 +3822,30 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     posLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     ctl_[idx].posLabel = posLabel;
     vl->addWidget(posLabel);
+
+    // ── v1.0.0 T3: the prototype's .preview ──────────────────────────
+    auto *previewCap = new QLabel();
+    trSet(previewCap, QStringLiteral("console.proto.preview"));
+    previewCap->setObjectName("sectionCap");
+    vl->addWidget(previewCap);
+
+    // QLabel (not QFrame) so the box can be assigned to PanelCtl::preview,
+    // whose member type is QLabel* and is left untouched. QLabel derives
+    // from QFrame, so every QWidget call below behaves identically.
+    auto *previewBox = new QLabel();
+    previewBox->setObjectName("previewBox");
+    previewBox->setMinimumHeight(110);
+    previewBox->setProperty("previewWidget", true);   // QSS 用属性选择器兜底
+    auto *pv = new QVBoxLayout(previewBox);
+    pv->setContentsMargins(10, 10, 10, 10);
+    pv->setSpacing(4);
+    auto *previewText = new QLabel();
+    trSet(previewText, QStringLiteral("console.proto.preview.empty"));
+    previewText->setWordWrap(true);
+    previewText->setObjectName("previewText");
+    pv->addWidget(previewText);
+    vl->addWidget(previewBox);
+    ctl_[idx].preview = previewBox;    // ← 这个指针现在是 null，赋值后就有意义
     vl->addStretch(1);
     auto *foot = new QHBoxLayout();
     // The reset copy embeds the panel name → formatting hook.

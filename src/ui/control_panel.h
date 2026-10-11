@@ -22,6 +22,7 @@
 #include <functional>
 #include <memory>
 #include <QtGlobal>
+#include <QSpinBox>
 
 class QSplitter;
 class QPropertyAnimation;
@@ -197,6 +198,10 @@ private:
         QSlider *opacitySlider = nullptr;
         QSlider *bgAlphaSlider = nullptr;
             QLabel *posLabel = nullptr;
+        // v1.0.0 T2: editable position. The label reports the quadrant;
+        // these two carry the raw margins the user types.
+        QSpinBox *posSpinX = nullptr;
+        QSpinBox *posSpinY = nullptr;
         // v0.8: per-panel screen selection dropdown. Entries are the
         // outputs QGuiApplication::screens() reports; the special first
         // entry "<PRIMARY>" (empty userData) means "follow OS primary".
