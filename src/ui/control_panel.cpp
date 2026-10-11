@@ -982,6 +982,48 @@ static QComboBox *screenComboForOverview()
 void enterOverview(HudCanvas *canvas);
 void leaveOverview(HudCanvas *canvas);
 
+// v1.0.0: the board's edit state, written from one place, and the
+// caption that describes it.
+//
+// File-local for the same reason s_overviewNav is (see the note above):
+// the header is being edited in parallel and a private member there is
+// a merge conflict with that work. The callers are the toolbar's
+// 编辑布局 button and ControlPanel::keyPressEvent's Esc arm, both member
+// functions in this translation unit, so a free function taking
+// HudCanvas* is exactly as reachable as a member would be.
+//
+// WHAT setBoardEditing() OWNS, AND WHY IT IS NOT TWO CALL SITES. The
+// board's edit face has two independent parts — HudCanvas::setEditing()
+// for the grid / clay border / dashed cards, and the caption that
+// describes them — and both have to change together or the board shows
+// an edit face whose caption still promises the read-only overview. One
+// function, one order, no caller can half-apply it.
+//
+// THE CAPTION IS DERIVED, NOT REMEMBERED. refreshBoardHint() reads the
+// canvas's own two view flags, so both the string and the visibility
+// are a pure function of state rather than of which entry point ran
+// last: overview → the overview line, edit → the edit line, neither →
+// the panel view's idle line, hidden. A third entry (a rail click
+// leaving the overview, the Esc arm leaving edit mode) therefore needs
+// no knowledge of the other two modes.
+//
+// i18n BY HOOK, NOT BY A FROZEN setText(). The label's string is a
+// function of the live view state, so it is registered through trHook()
+// at construction (see gameNote_ for the same pattern). The console
+// switches language without a restart, and retranslateUi() replays the
+// hook with the CURRENT mode's key instead of freezing whatever
+// language was in force when the mode was entered.
+void setBoardEditing(HudCanvas *canvas, bool on);
+void refreshBoardHint(HudCanvas *canvas);
+
+// The edit toggle. A file-local pointer for the same reason s_boardHint is
+// one: these three helpers are free functions so that the overview's
+// enter/leave pair can call them without the console's full type, and the
+// button they need is a private member. 4606 builds it (the one in
+// buildEditModeBlock() at 4840 is dead code — that function has no
+// caller), and 2829 is the only thing that flips it.
+static QPushButton *s_editBtn = nullptr;
+
 // v0.15: re-push the canvas's current preview screen into every split
 // sub-window.
 //
@@ -2260,11 +2302,18 @@ ControlPanel::ControlPanel(QWidget *parent)
     s_boardHint->setWordWrap(true);
     s_boardHint->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     s_boardHint->setContentsMargins(22, 4, 22, 6);
-    // Registered through trSet, so a language flip re-queries the key.
-    trSet(s_boardHint, QStringLiteral("console.proto.board.hint.overview"));
-    // Hidden until the overview opens. enterOverview() shows it and
-    // leaveOverview() hides it again — the caption belongs to the view
-    // that makes the promise.
+    // Registered through a hook rather than trSet, so a language flip
+    // re-queries the key the CURRENT mode needs — see refreshBoardHint()
+    // below for why the choice is three-way and read from live state.
+    // The hook also owns the label's visibility, which is why the
+    // overview toggles no longer show() / hide() it themselves.
+    trHook([this]{
+        if (canvas_)
+            refreshBoardHint(canvas_);
+    });
+    // Hidden until a mode needs it: neither the overview nor edit mode
+    // is on at construction, and the hook above has just written the
+    // panel view's idle line into a label the panel view does not show.
     s_boardHint->hide();
     stageLayout->addWidget(s_boardHint);
     // v0.5 P1.4: clicking a HUD in the unified canvas selects it in the
@@ -2754,8 +2803,39 @@ ControlPanel::ControlPanel(QWidget *parent)
         if (overlay_->isRunning()) overlay_->stop();
         else { launchOverlayChild(/*editMode=*/false); }
     });
-    connect(editBtn_, &QPushButton::clicked, this,
-            [this]{ launchOverlayChild(/*editMode=*/true); });
+    // v1.0.0: 编辑布局 (HTML's .btn.on) TOGGLES THE BOARD'S EDIT FACE.
+    //
+    // It is the one entry the prototype's #edit-toggle offers, and it has
+    // two jobs at once, both of which were missing: it hands the board
+    // its edit state (grid, clay border, dashed cards) through
+    // HudCanvas::setEditing(), and it writes the caption the board owes
+    // the user while that state holds. Neither existed before — the
+    // button only ever launched a child process — so the console showed
+    // a board that could not be told it was being edited.
+    //
+    // TOGGLE, NOT LAUNCH. The prototype's 编辑布局 is a mode switch on the
+    // board the user is already looking at; the child process it used to
+    // spawn was the old shell's way of editing the OVERLAY's windows,
+    // which is a different surface (the panels behind this preview). The
+    // console's own drag / arrow-key paths are already wired to
+    // panelMoved / subWindowMoved and persist on exit, so entering edit
+    // mode here needs no process at all.
+    connect(editBtn_, &QPushButton::clicked, this, [this]{
+        if (!canvas_)
+            return;
+        // THE TWO MODES ARE MUTUALLY EXCLUSIVE. The overview is a
+        // read-only view of one display; the edit face is the opposite
+        // — grid, clay border, dashed cards, live nudges. Leaving the
+        // overview first is what makes the edit face mean one thing
+        // rather than two overlapping ones, and it reuses the exit path
+        // that already restores the preview screen, the nav highlight
+        // and the caption. leaveOverview() is idempotent (setOverview()
+        // returns early when already off), so the panel path costs one
+        // comparison.
+        if (canvas_->overviewMode())
+            leaveOverview(canvas_);
+        setBoardEditing(canvas_, !canvas_->editing());
+    });
 
     loadMaskFromDisk();
     // v0.13: the layout mode. Read AFTER the widgets exist (the combo is
@@ -3131,12 +3211,37 @@ void ControlPanel::closeEvent(QCloseEvent *e)
 
 // v0.5 P1: 1/2/3/4 hot-keys for the HUD objects rail. Visible in the
 // rail hint at the bottom of the left column.
+//
+// v1.0.0: AND ESC LEAVES THE BOARD'S EDIT MODE. The prototype's
+// `.board-hint.edit` copy promises it in as many words — 「Esc 保存退出
+// 编辑」 — so the key is part of the edit face's contract, not a
+// convenience. The save half is already true: the console persists on
+// exit and on launch (saveBeforeLaunch / closeEvent), and a board drag
+// writes through panelMoved / subWindowMoved with persist=false
+// precisely so nothing is lost between now and then. So Esc's job here
+// is only the exit.
+//
+// WHY HERE AND NOT IN THE CANVAS. The canvas owns the arrow keys (it
+// has ClickFocus and already swallows them while editing), but the
+// console window is where focus sits after a toolbar click, and
+// HudCanvas::keyPressEvent's own Esc arm would have to reach back into
+// this file's edit state. One window-level handler for a window-level
+// mode is the same shape the overview uses (its nav card's toggle lives
+// in eventFilter, not in the canvas).
+//
+// The 1/2/3/4 rail hot-keys are checked FIRST and unchanged: they are
+// not part of any edit-mode contract, and Esc is the only key that
+// ends a mode.
 void ControlPanel::keyPressEvent(QKeyEvent *e)
 {
     if (e->key() == Qt::Key_1) { selectPanel(0); return; }
     if (e->key() == Qt::Key_2) { selectPanel(1); return; }
     if (e->key() == Qt::Key_3) { selectPanel(2); return; }
     if (e->key() == Qt::Key_4) { selectPanel(3); return; }
+    if (e->key() == Qt::Key_Escape && canvas_ && canvas_->editing()) {
+        setBoardEditing(canvas_, false);
+        return;
+    }
     QMainWindow::keyPressEvent(e);
 }
 
@@ -3340,6 +3445,21 @@ void enterOverview(HudCanvas *canvas)
 {
     if (!canvas)
         return;
+    // v1.0.0: AND THE EDIT FACE GOES OFF ON THE WAY IN. The overview is
+    // the read-only view — no grid, no clay border, no dashed cards, no
+    // nudges — and it is reachable from a board that is editing via the
+    // sidebar's nav card, which is the one entry the 编辑布局 button does
+    // not pass through. Without this, entering the overview from edit
+    // mode left the board drawing its edit face over a read-only view:
+    // the grid stayed up, the border stayed clay and the cards stayed
+    // dashed, while the arrow keys had already been shut off.
+    //
+    // The reverse direction is already covered — 编辑布局 calls
+    // leaveOverview() before entering edit mode — so one call here makes
+    // the two modes mutually exclusive from both sides rather than one.
+    // Idempotent: setEditing(false) on a board that is not editing
+    // returns without a repaint.
+    canvas->setEditing(false);
     // The screen the overview starts on: whichever display the user was
     // last looking at. That is the canvas's own preview screen, so the
     // frame they are already looking at does not jump on entry.
@@ -3371,9 +3491,10 @@ void enterOverview(HudCanvas *canvas)
     }
     // The board's caption. It is the overview's promise — read-only, one
     // display, click to inspect — and it is only true while the overview
-    // is open, so it appears here and nowhere else.
-    if (s_boardHint)
-        s_boardHint->show();
+    // is open. refreshBoardHint() writes both the string and the
+    // visibility from the state, so this is the same call the edit entry
+    // makes rather than a second place the three strings are spelled.
+    refreshBoardHint(canvas);
 }
 
 void leaveOverview(HudCanvas *canvas)
@@ -3387,11 +3508,88 @@ void leaveOverview(HudCanvas *canvas)
         navCard->style()->unpolish(navCard);
         navCard->style()->polish(navCard);
     }
-    // And the caption goes with it. The panel view's own line (idle /
-    // edit) is the edit entry's to write; leaving the overview hides
-    // this one regardless of what comes next.
-    if (s_boardHint)
-        s_boardHint->hide();
+    // And the caption goes with it — the panel view's own line (idle /
+    // edit) is the edit entry's to write, and leaving the overview
+    // re-derives both the string and the visibility from the state, so a
+    // board that is editing keeps its edit caption across the exit
+    // instead of having it hidden by a hide() that assumed the panel
+    // view was what came next.
+    refreshBoardHint(canvas);
+}
+
+// ─── v1.0.0: the board's edit state ───────────────────────────────────
+//
+// The prototype's `board.editing` on the console's own board: the grid
+// fades in, the board's border turns clay and every card's border goes
+// dashed. All three are READ from HudCanvas::editing() at paint time, so
+// the one write here is the whole edit face — see the declaration's note
+// for why this is a free function and not a member.
+//
+// v1.0.0 (sa-B) made the canvas able to hold the state; this is the
+// writer that was missing. Before it, `editing_` was dead: it was read
+// by three paint sites (the grid, the board's border colour and every
+// card's dash pattern) and nothing in the program ever assigned it, so
+// the grid never appeared, the board's border stayed --line2 and the
+// cards stayed solid.
+//
+// NOT DONE HERE: THE BUTTON'S OWN `.btn.on` FACE. The prototype's
+// `#edit-toggle` carries a clay fill while the board is editing, and
+// this is where the property flip would go — but the QSS that selects
+// it lives in control_panel_styles.cpp, which this round is forbidden
+// to touch, so the flip would be invisible. It is left for whoever owns
+// that file: a `QPushButton#enterEdit[on="true"]` rule beside the
+// existing `#enterEdit` pair, plus the two style()->polish() lines here.
+// The board itself does not need it — every edit-face change is read
+// from editing() at paint time.
+//
+// THEN THE CAPTION, LAST. refreshBoardHint() is called after
+// setEditing() rather than before so it reads the state it is meant to
+// describe; the two calls in that order are what make the caption and
+// the board unable to disagree.
+void setBoardEditing(HudCanvas *canvas, bool on)
+{
+    if (!canvas)
+        return;
+    // setEditing() first so refreshBoardHint() reads the state it is
+    // meant to describe; the two calls in that order are what make the
+    // caption and the board unable to disagree.
+    canvas->setEditing(on);
+    refreshBoardHint(canvas);
+}
+
+// The board's one-line caption (HTML `.board-hint`), written from the
+// canvas's own view state. renderBoardHead() picks one of three strings
+// and this is that choice, spelled once: overview while the read-only
+// single-display view is open, the edit line while the board is editing,
+// and the panel view's idle line otherwise.
+//
+// AND IT OWNS THE VISIBILITY TOO, for the same reason it owns the
+// string. Both are a function of the same two flags, and deriving them
+// together is what makes the third entry points safe: selectPanel()
+// calls leaveOverview() on every rail click, and leaveOverview()'s own
+// hide() would strand an edit caption if it ran while the board was
+// editing. Reading the state means a caller cannot half-apply a mode.
+//
+// i18n BY HOOK, NOT BY A FROZEN setText(). The caption's key is a
+// function of the live view state, which is exactly the case trHook()
+// exists for — the same pattern the game note line above uses (see
+// gameNote_). The hook registered at construction calls in here, so a
+// language flip replays it through retranslateUi() and gets the CURRENT
+// mode's string instead of freezing whatever language was in force when
+// the mode was entered.
+void refreshBoardHint(HudCanvas *canvas)
+{
+    if (!s_boardHint || !canvas)
+        return;
+    const bool overview = canvas->overviewMode();
+    const bool editing  = canvas->editing();
+    const QString key = overview
+            ? QStringLiteral("console.proto.board.hint.overview")
+            : (editing
+                   ? QStringLiteral("console.proto.board.hint.edit")
+                   : QStringLiteral("console.proto.board.hint.idle"));
+    s_boardHint->setText(consoleText(key));
+    s_boardHint->setVisible(overview || editing);
 }
 
 
@@ -3562,125 +3760,96 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
     bar->setAccent(panelAccent(idx));
     ctl_[idx].countBar = bar;
     vl->addWidget(bar);
-    vl->addSpacing(10);
-    auto *contentCap = new QLabel();
-    trSet(contentCap, QStringLiteral("console.inspector.content"));
-    contentCap->setObjectName("sectionCap");
-    vl->addWidget(contentCap);
 
-    const QStringList &keys = idx == 0 ? mhw::PlayerSection::names()
-                            : idx == 1 ? mhw::MonsterSection::names()
-                            : idx == 2 ? mhw::DamageSection::names()
-                                       : mhw::PetDamageSection::names();
-    for (int b = 0; b < labels.size(); ++b) {
-        auto *row = new SectionRow(labels[b], b < keys.size() ? keys[b] : QString(), iconKind(idx, b));
-        row->setAccent(panelAccent(idx));
-        // i18n: the row's bit index is `keys[b]` (a stable ASCII id); the
-        // display label is re-resolved from panel_sections displayName()
-        // on every language switch instead of freezing Chinese at build.
-        trHook([row, idx, b]{ row->setDisplayText(sectionLabel(idx, b)); });
-        // v0.7.1: World/Rise row visibility is set in switchGame() after
-        // construction so all rows are created equal. See ControlPanel
-        // constructor → switchGame() for the source of truth.
-        ctl_[idx].subs.push_back(row);
-        vl->addWidget(row);
+    // ── v1.0.0: the field groups, in the prototype's order ─────────
+    //
+    // 位置 → 目标显示器 → 外观 → 显示内容 → 预览. Every group but the
+    // content list already carried a sectionCap (appearance, content,
+    // preview); position and target display got theirs here. The two
+    // that moved (the position spins and the output combo) keep their
+    // construction code verbatim — same ranges, same suffixes, same
+    // connects, same ctl_[idx] assignments — only their place in the
+    // column changed, plus a 12px gap between groups and none between
+    // a caption and the widgets it names.
+    //
+    // The Rise card stays where it has always been relative to the
+    // section rows: after them, before appearance.
+    vl->addSpacing(12);
+
+    // 位置 — the prototype's first group. The spins are editable; the
+    // label below them stays, because it reports the quadrant, which
+    // the spins do not.
+    auto *posCap = new QLabel();
+    trSet(posCap, QStringLiteral("console.proto.position"));
+    posCap->setObjectName("sectionCap");
+    vl->addWidget(posCap);
+
+    // v1.0.0 T2: editable x/y. The label below stays — it reports the
+    // quadrant, which the spins do not.
+    auto *posRow = new QHBoxLayout();
+    posRow->setSpacing(8);
+    auto *spinX = new QSpinBox();
+    spinX->setObjectName("posSpinX");
+    spinX->setRange(0, 9999);
+    spinX->setSuffix(QStringLiteral(" px"));
+    auto *spinY = new QSpinBox();
+    spinY->setObjectName("posSpinY");
+    spinY->setRange(0, 9999);
+    spinY->setSuffix(QStringLiteral(" px"));
+    {
+        Panel *p0 = panelAt(idx);
+        const QMargins m0 = p0->margins();
+        spinX->setValue(m0.left());
+        spinY->setValue(m0.top());
     }
+    posRow->addWidget(spinX);
+    posRow->addWidget(spinY);
+    vl->addLayout(posRow);
+    ctl_[idx].posSpinX = spinX;
+    ctl_[idx].posSpinY = spinY;
+    // persist=false, the same as every other console path that moves a
+    // panel (drag at 2283, the split host at 542/562). The console writes
+    // once, in closeEvent; typing a digit must not saveConfig() per
+    // keystroke, or there is nothing left to cancel.
+    connect(spinX, &QSpinBox::valueChanged, this, [this, idx](int v){
+        Panel *p = panelAt(idx);
+        QMargins m = p->margins();
+        m.setLeft(v);
+        p->setMargins(m, /*persist=*/false);
+        updatePosLabel(idx);
+        rebuildAndRender(idx);
+    });
+    connect(spinY, &QSpinBox::valueChanged, this, [this, idx](int v){
+        Panel *p = panelAt(idx);
+        QMargins m = p->margins();
+        m.setTop(v);
+        p->setMargins(m, /*persist=*/false);
+        updatePosLabel(idx);
+        rebuildAndRender(idx);
+    });
+    // v0.5 BEHAVIOR → POSITION: shows the panel's anchor corner and
+    // current margins. The user moves the panel via canvas drag or
+    // arrow keys; this label is read-only feedback.
+    auto *posLabel = new QLabel();
+    posLabel->setObjectName("posLabel");
+    // v1.0.0: NO fixed width. This label used to be pinned at 350px,
+    // which fitted the 480px inspector column it lived in; the drawer is
+    // narrower than that (and resizable), so the pin either clipped the
+    // corner + margin readout or forced a horizontal scrollbar. Word
+    // wrap handles the long case and elides the pathological one.
+    posLabel->setWordWrap(true);
+    posLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    ctl_[idx].posLabel = posLabel;
+    vl->addWidget(posLabel);
 
     vl->addSpacing(12);
 
-    // v0.11 K4-A1: the Rise-only REFramework management card (build, refresh
-    // and the four button actions) lives in src/ui/rise_reframework_card.
-    if (idx == 2) {
-        riseCard_->build(content, vl);
-    }
+    // 目标显示器 — the prototype's second group.
+    auto *targetCap = new QLabel();
+    trSet(targetCap, QStringLiteral("console.proto.target"));
+    targetCap->setObjectName("sectionCap");
+    vl->addWidget(targetCap);
 
-    // v0.5 UI-link: APPEARANCE sliders (scale + opacity), live preview.
-    auto *appCap = new QLabel();
-    trSet(appCap, QStringLiteral("console.inspector.appearance"));
-    appCap->setObjectName("sectionCap");
-    vl->addWidget(appCap);
-
-    auto *scaleRow = new QHBoxLayout();
-    scaleRow->setSpacing(8);
-    auto *scaleLab = new QLabel();
-    trSet(scaleLab, QStringLiteral("console.inspector.scale"));
-    scaleLab->setObjectName("sliderLabel");
-    auto *scaleVal = new QLabel();
-    scaleVal->setObjectName("sliderValue");
-    auto *scaleSlider = new QSlider(Qt::Horizontal);
-    scaleSlider->setRange(50, 300);
-    {
-        Panel *p = panelAt(idx);
-        scaleSlider->setValue(qRound(p->scale() * 100));
-    }
-    scaleVal->setText(QStringLiteral("%1%").arg(scaleSlider->value()));
-    connect(scaleSlider, &QSlider::valueChanged, this, [this, idx, scaleVal](int v){
-        scaleVal->setText(QStringLiteral("%1%").arg(v));
-        Panel *p = panelAt(idx);
-        p->setScale(v / 100.0, false);
-        rebuildAndRender(idx);
-    });
-    scaleRow->addWidget(scaleLab);
-    scaleRow->addWidget(scaleSlider, 1);
-    scaleRow->addWidget(scaleVal);
-    vl->addLayout(scaleRow);
-    ctl_[idx].scaleSlider = scaleSlider;
-
-    auto *opacRow = new QHBoxLayout();
-    opacRow->setSpacing(8);
-    auto *opacLab = new QLabel();
-    trSet(opacLab, QStringLiteral("console.inspector.opacity"));
-    opacLab->setObjectName("sliderLabel");
-    auto *opacVal = new QLabel();
-    opacVal->setObjectName("sliderValue");
-    auto *opacSlider = new QSlider(Qt::Horizontal);
-    opacSlider->setRange(10, 100);
-    {
-        Panel *p2 = panelAt(idx);
-        opacSlider->setValue(qRound(p2->opacity() * 100));
-    }
-    opacVal->setText(QStringLiteral("%1%").arg(opacSlider->value()));
-    connect(opacSlider, &QSlider::valueChanged, this, [this, idx, opacVal](int v){
-        opacVal->setText(QStringLiteral("%1%").arg(v));
-        Panel *p = panelAt(idx);
-        p->setOpacity(v / 100.0, false);
-        rebuildAndRender(idx);
-    });
-    opacRow->addWidget(opacLab);
-    opacRow->addWidget(opacSlider, 1);
-    opacRow->addWidget(opacVal);
-    vl->addLayout(opacRow);
-    ctl_[idx].opacitySlider = opacSlider;
-
-    // v0.5 BG OPACITY: controls the panel background alpha independently
-    // of the overall window opacity. KWin's blur-behind is a compositor
-    // effect on translucent surfaces; this slider adjusts how much of
-    // the game scene shows through the panel body.
-    auto *bgRow = new QHBoxLayout();
-    bgRow->setSpacing(8);
-    auto *bgLab = new QLabel();
-    trSet(bgLab, QStringLiteral("console.inspector.bg_alpha"));
-    bgLab->setObjectName("sliderLabel");
-    auto *bgVal = new QLabel();
-    bgVal->setObjectName("sliderValue");
-    auto *bgSlider = new QSlider(Qt::Horizontal);
-    bgSlider->setRange(0, 255);
-    {
-        Panel *p3 = panelAt(idx);
-        bgSlider->setValue(p3->bgAlpha());
-    }
-    bgVal->setText(QStringLiteral("%1").arg(bgSlider->value()));
-    connect(bgSlider, &QSlider::valueChanged, this, [this, idx, bgVal](int v){
-        bgVal->setText(QStringLiteral("%1").arg(v));
-        Panel *p = panelAt(idx);
-        p->setBgAlpha(v, false);
-        rebuildAndRender(idx);
-    });
-    bgRow->addWidget(bgLab);
-    bgRow->addWidget(bgSlider, 1);
-    bgRow->addWidget(bgVal);
-    vl->addLayout(bgRow);
-    ctl_[idx].bgAlphaSlider = bgSlider;
     // v0.8: SCREEN row — per-panel output selection. Lists every
     // QScreen the Qt platform plugin reports, plus a "<PRIMARY>"
     // pseudo-entry meaning "follow OS primary" (empty userData).
@@ -3769,64 +3938,135 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         vl->addLayout(screenRow);
         ctl_[idx].outputCombo = combo;
     }
-    // v1.0.0 T2: editable x/y. The label below stays — it reports the
-    // quadrant, which the spins do not.
-    auto *posRow = new QHBoxLayout();
-    posRow->setSpacing(8);
-    auto *spinX = new QSpinBox();
-    spinX->setObjectName("posSpinX");
-    spinX->setRange(0, 9999);
-    spinX->setSuffix(QStringLiteral(" px"));
-    auto *spinY = new QSpinBox();
-    spinY->setObjectName("posSpinY");
-    spinY->setRange(0, 9999);
-    spinY->setSuffix(QStringLiteral(" px"));
-    {
-        Panel *p0 = panelAt(idx);
-        const QMargins m0 = p0->margins();
-        spinX->setValue(m0.left());
-        spinY->setValue(m0.top());
-    }
-    posRow->addWidget(spinX);
-    posRow->addWidget(spinY);
-    vl->addLayout(posRow);
-    ctl_[idx].posSpinX = spinX;
-    ctl_[idx].posSpinY = spinY;
-    // persist=false, the same as every other console path that moves a
-    // panel (drag at 2283, the split host at 542/562). The console writes
-    // once, in closeEvent; typing a digit must not saveConfig() per
-    // keystroke, or there is nothing left to cancel.
-    connect(spinX, &QSpinBox::valueChanged, this, [this, idx](int v){
-        Panel *p = panelAt(idx);
-        QMargins m = p->margins();
-        m.setLeft(v);
-        p->setMargins(m, /*persist=*/false);
-        updatePosLabel(idx);
-        rebuildAndRender(idx);
-    });
-    connect(spinY, &QSpinBox::valueChanged, this, [this, idx](int v){
-        Panel *p = panelAt(idx);
-        QMargins m = p->margins();
-        m.setTop(v);
-        p->setMargins(m, /*persist=*/false);
-        updatePosLabel(idx);
-        rebuildAndRender(idx);
-    });
-    // v0.5 BEHAVIOR → POSITION: shows the panel's anchor corner and
-    // current margins. The user moves the panel via canvas drag or
-    // arrow keys; this label is read-only feedback.
-    auto *posLabel = new QLabel();
-    posLabel->setObjectName("posLabel");
-    // v1.0.0: NO fixed width. This label used to be pinned at 350px,
-    // which fitted the 480px inspector column it lived in; the drawer is
-    // narrower than that (and resizable), so the pin either clipped the
-    // corner + margin readout or forced a horizontal scrollbar. Word
-    // wrap handles the long case and elides the pathological one.
-    posLabel->setWordWrap(true);
-    posLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    ctl_[idx].posLabel = posLabel;
-    vl->addWidget(posLabel);
 
+    vl->addSpacing(12);
+
+    // 外观 — one caption over the three sliders.
+    // v0.5 UI-link: APPEARANCE sliders (scale + opacity), live preview.
+    auto *appCap = new QLabel();
+    trSet(appCap, QStringLiteral("console.inspector.appearance"));
+    appCap->setObjectName("sectionCap");
+    vl->addWidget(appCap);
+
+    auto *scaleRow = new QHBoxLayout();
+    scaleRow->setSpacing(8);
+    auto *scaleLab = new QLabel();
+    trSet(scaleLab, QStringLiteral("console.inspector.scale"));
+    scaleLab->setObjectName("sliderLabel");
+    auto *scaleVal = new QLabel();
+    scaleVal->setObjectName("sliderValue");
+    auto *scaleSlider = new QSlider(Qt::Horizontal);
+    scaleSlider->setRange(50, 300);
+    {
+        Panel *p = panelAt(idx);
+        scaleSlider->setValue(qRound(p->scale() * 100));
+    }
+    scaleVal->setText(QStringLiteral("%1%").arg(scaleSlider->value()));
+    connect(scaleSlider, &QSlider::valueChanged, this, [this, idx, scaleVal](int v){
+        scaleVal->setText(QStringLiteral("%1%").arg(v));
+        Panel *p = panelAt(idx);
+        p->setScale(v / 100.0, false);
+        rebuildAndRender(idx);
+    });
+    scaleRow->addWidget(scaleLab);
+    scaleRow->addWidget(scaleSlider, 1);
+    scaleRow->addWidget(scaleVal);
+    vl->addLayout(scaleRow);
+    ctl_[idx].scaleSlider = scaleSlider;
+
+    auto *opacRow = new QHBoxLayout();
+    opacRow->setSpacing(8);
+    auto *opacLab = new QLabel();
+    trSet(opacLab, QStringLiteral("console.inspector.opacity"));
+    opacLab->setObjectName("sliderLabel");
+    auto *opacVal = new QLabel();
+    opacVal->setObjectName("sliderValue");
+    auto *opacSlider = new QSlider(Qt::Horizontal);
+    opacSlider->setRange(10, 100);
+    {
+        Panel *p2 = panelAt(idx);
+        opacSlider->setValue(qRound(p2->opacity() * 100));
+    }
+    opacVal->setText(QStringLiteral("%1%").arg(opacSlider->value()));
+    connect(opacSlider, &QSlider::valueChanged, this, [this, idx, opacVal](int v){
+        opacVal->setText(QStringLiteral("%1%").arg(v));
+        Panel *p = panelAt(idx);
+        p->setOpacity(v / 100.0, false);
+        rebuildAndRender(idx);
+    });
+    opacRow->addWidget(opacLab);
+    opacRow->addWidget(opacSlider, 1);
+    opacRow->addWidget(opacVal);
+    vl->addLayout(opacRow);
+    ctl_[idx].opacitySlider = opacSlider;
+
+    // v0.5 BG OPACITY: controls the panel background alpha independently
+    // of the overall window opacity. KWin's blur-behind is a compositor
+    // effect on translucent surfaces; this slider adjusts how much of
+    // the game scene shows through the panel body.
+    auto *bgRow = new QHBoxLayout();
+    bgRow->setSpacing(8);
+    auto *bgLab = new QLabel();
+    trSet(bgLab, QStringLiteral("console.inspector.bg_alpha"));
+    bgLab->setObjectName("sliderLabel");
+    auto *bgVal = new QLabel();
+    bgVal->setObjectName("sliderValue");
+    auto *bgSlider = new QSlider(Qt::Horizontal);
+    bgSlider->setRange(0, 255);
+    {
+        Panel *p3 = panelAt(idx);
+        bgSlider->setValue(p3->bgAlpha());
+    }
+    bgVal->setText(QStringLiteral("%1").arg(bgSlider->value()));
+    connect(bgSlider, &QSlider::valueChanged, this, [this, idx, bgVal](int v){
+        bgVal->setText(QStringLiteral("%1").arg(v));
+        Panel *p = panelAt(idx);
+        p->setBgAlpha(v, false);
+        rebuildAndRender(idx);
+    });
+    bgRow->addWidget(bgLab);
+    bgRow->addWidget(bgSlider, 1);
+    bgRow->addWidget(bgVal);
+    vl->addLayout(bgRow);
+    ctl_[idx].bgAlphaSlider = bgSlider;
+
+    vl->addSpacing(12);
+
+    // 显示内容 — the section rows.
+    auto *contentCap = new QLabel();
+    trSet(contentCap, QStringLiteral("console.inspector.content"));
+    contentCap->setObjectName("sectionCap");
+    vl->addWidget(contentCap);
+
+    const QStringList &keys = idx == 0 ? mhw::PlayerSection::names()
+                            : idx == 1 ? mhw::MonsterSection::names()
+                            : idx == 2 ? mhw::DamageSection::names()
+                                       : mhw::PetDamageSection::names();
+    for (int b = 0; b < labels.size(); ++b) {
+        auto *row = new SectionRow(labels[b], b < keys.size() ? keys[b] : QString(), iconKind(idx, b));
+        row->setAccent(panelAccent(idx));
+        // i18n: the row's bit index is `keys[b]` (a stable ASCII id); the
+        // display label is re-resolved from panel_sections displayName()
+        // on every language switch instead of freezing Chinese at build.
+        trHook([row, idx, b]{ row->setDisplayText(sectionLabel(idx, b)); });
+        // v0.7.1: World/Rise row visibility is set in switchGame() after
+        // construction so all rows are created equal. See ControlPanel
+        // constructor → switchGame() for the source of truth.
+        ctl_[idx].subs.push_back(row);
+        vl->addWidget(row);
+    }
+
+    vl->addSpacing(12);
+
+    // v0.11 K4-A1: the Rise-only REFramework management card (build, refresh
+    // and the four button actions) lives in src/ui/rise_reframework_card.
+    if (idx == 2) {
+        riseCard_->build(content, vl);
+    }
+
+    vl->addSpacing(12);
+
+    // 预览 — the prototype's last group.
     // ── v1.0.0 T3: the prototype's .preview ──────────────────────────
     auto *previewCap = new QLabel();
     trSet(previewCap, QStringLiteral("console.proto.preview"));
@@ -4415,6 +4655,7 @@ QWidget *ControlPanel::buildToolbar()
     // board is in edit mode.
     editBtn_ = new QPushButton();
     trSet(editBtn_, QStringLiteral("console.proto.edit"));
+    s_editBtn = editBtn_;   // the board-edit helpers key the button's face off this
     editBtn_->setObjectName("enterEdit");
     editBtn_->setCursor(Qt::PointingHandCursor);
     hl->addWidget(editBtn_);
