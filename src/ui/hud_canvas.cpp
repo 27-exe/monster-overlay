@@ -23,9 +23,11 @@
 #include <concepts>
 
 #include "panel.h"
+#include "window_layout_geometry.h"
 #include "panel_accent.h"
 #include "panel_source.h"
 #include "screen_query.h"
+#include "ui_theme.h"
 #include "core/string_table.h"
 
 namespace mh {
@@ -215,38 +217,41 @@ QString winShortFor(int parentSlot, int row)
 
 constexpr int kHeader = 56;
 constexpr int kFooter = 38;
-constexpr int kArrowStep = 10;      // logical px per arrow press
-constexpr int kArrowBigStep = 50;   // with Shift
+// v1.0.0: THE PROTOTYPE'S OWN STEPS, NOT ROUND NUMBERS.
+//
+//     if(e.shiftKey){dx*=10;dy*=10;}
+//
+// so a plain arrow moves the window 1px and Shift+arrow moves it 10px,
+// in the window's LOGICAL space (the same space the drag converts to —
+// see mouseMoveEvent's qRound(delta / fit)). The 10/50 these used to be
+// was the console's own invention and it was two orders of magnitude
+// coarser than the HTML's: a single tap teleported a window across a
+// quarter of the board, so the fine adjustment the keys exist for was
+// not possible at all. The clamp in movedMargins()/movedSubMargins() is
+// unchanged — only the delta that reaches it is smaller.
+constexpr int kArrowStep = 1;       // logical px per arrow press
+constexpr int kArrowBigStep = 10;   // with Shift
 
 // v0.8: removed the unused file-scope screenInfo() shim — every caller
 // now goes through HudCanvas::previewScreenInfo(), which honours the
 // user's output selection. See hud_canvas.h::setPreviewScreen.
 
+// ── v1.0.0 integration (stage D): ONE FORMULA, SHARED ───────────────────
+// This used to be the only copy of the four-corner arithmetic. The
+// inspector's X/Y fields now have to convert the SAME way (a field means
+// "logical top-left in the target output", which is NOT `margins.left()`
+// for three of the four corners), and two copies of a four-way switch is
+// exactly how the field and the box drift apart again.
+//
+// The whole body moved verbatim into ui/window_layout_geometry.h — same
+// `max(1, int(content * scale))` extent, same screen.left()/right()/
+// bottom() edges, same QRect(tl, extent) — so this is a delegation, not
+// a rewrite: the default path is byte-for-byte what it was, including
+// the rounding, and the 12 baselines that read this rect are the proof.
 QRect anchoredRect(const QRect &screen, Corner corner, const QMargins &m,
                    const QSize &content, qreal scale)
 {
-    const int w = std::max(1, int(content.width() * scale));
-    const int h = std::max(1, int(content.height() * scale));
-    int x = 0, y = 0;
-    switch (corner) {
-    case Corner::TopLeft:
-        x = screen.left() + m.left();
-        y = screen.top()  + m.top();
-        break;
-    case Corner::TopRight:
-        x = screen.right() - w - m.right();
-        y = screen.top()   + m.top();
-        break;
-    case Corner::BottomLeft:
-        x = screen.left()  + m.left();
-        y = screen.bottom() - h - m.bottom();
-        break;
-    case Corner::BottomRight:
-        x = screen.right()  - w - m.right();
-        y = screen.bottom() - h - m.bottom();
-        break;
-    }
-    return QRect(x, y, w, h);
+    return mhw::layout::anchoredRect(screen, corner, m, content, scale);
 }
 
 QString cornerName(Corner c)
@@ -272,6 +277,166 @@ QString cornerName(Corner c)
 }
 
 } // namespace
+
+// ─── v1.0.0: the prototype's --clay-light token, both themes ───────────
+//
+// The prototype's board is a PICTURE OF A GAME OVERLAY ON A DESKTOP, so
+// its --board-* colours are pinned: they must not read the console
+// theme, or the board's own pixels would change when the operator
+// switches the console's chrome (see the PRODUCT DECISION above, and
+// paintWindowCard's note on why --fg measured 1.11:1 on #101010).
+//
+// --clay-light is the ONE board colour the prototype itself switches
+// per theme (reference.html L32 / L62):
+//
+//     :root                    --clay-light:#e39a7e   (227,154,126)
+//     :root[data-theme=light]  --clay-light:#b85c38   (184, 92, 56)
+//
+// and .board-window.selected { border:2px solid var(--clay-light) } is
+// the selected window's whole identity — the probe read a constant
+// QColor(227,154,126) in both themes and saw 0 differing pixels.
+// So this branches on the SAME predicate the rest of the console
+// branches on (isDarkTheme(), the one uiTheme() is selected by), and
+// the two values below are that token's two values, transcribed from
+// the HTML rather than invented. Reading the palette through the same
+// predicate — rather than hardcoding a third dark-only literal — is
+// what makes a theme switch actually reach the board.
+//
+// NOTHING ELSE HERE MOVES. The 1px resting .board-window border is
+// rgba(224,138,108,.75) in the HTML for BOTH themes (no var() at all),
+// the selection ring is a literal rgba(217,119,87,.35) in both themes,
+// and the dashed edit-mode border only changes its STYLE — so those
+// stay pinned and only the clay-light stroke follows the theme.
+QColor boardClayLight()
+{
+    return isDarkTheme() ? QColor(227, 154, 126)   // #e39a7e
+                         : QColor(184, 92, 56);    // #b85c38
+}
+
+// ─── v1.0.0: the FROZEN board's own tokens ─────────────────────────────
+//
+// Every value below is transcribed from `reference.html` line by line.
+// These four are the whole reason the fidelity board reads as the
+// prototype's board and not as the old stage recoloured: `--board` is a
+// flat `#101010` in BOTH themes (lines 39 and 69 are identical), the
+// border is `--board-line` (40/70), and the ground OUTSIDE the board is
+// `--page`, which is the one board-adjacent colour that DOES move with
+// the theme (21 / 51).
+
+// `.board { background: var(--board) }` — the same value in both themes.
+QColor boardGround()
+{
+    return QColor(0x10, 0x10, 0x10);
+}
+
+// `.board { border: 1px solid var(--board-line) }` — same in both themes.
+QColor boardLine()
+{
+    return QColor(0x2e, 0x2e, 0x2a);
+}
+
+// `.board-viewport` sits on `.stage-body { background: var(--page) }`,
+// so the canvas's own ground around the board is the PAGE token and it
+// is the one that follows the theme. Reading it through isDarkTheme()
+// rather than pinning the dark value is what keeps a light console from
+// growing a black ring around a black board.
+QColor boardPageGround()
+{
+    return isDarkTheme() ? QColor(0x18, 0x18, 0x16)   // #181816
+                         : QColor(0xf4, 0xf2, 0xed);  // #f4f2ed
+}
+
+// `.board.editing { border-color: var(--clay) }` — DARK #d97757, LIGHT
+// #9c4623 (lines 31 / 61). Note this is --clay, NOT --clay-light: the
+// edit-mode board frame is the duller of the two, and the two are 0x9c
+// apart in the red channel, so confusing them is visible at a glance.
+//
+// PAIRED WITH, AND NOT THE SAME AS, the inset band below.
+QColor boardClay()
+{
+    return isDarkTheme() ? QColor(0xd9, 0x77, 0x57)   // #d97757
+                         : QColor(0x9c, 0x46, 0x23);  // #9c4623
+}
+
+// ─── the three box-shadow layers, as painters ──────────────────────────
+//
+// `.board`'s shadow line is
+//     box-shadow: 0 0 0 1px rgba(255,255,255,.03),
+//                 inset 0 0 0 12px rgba(255,255,255,.015);
+// and `.board.editing`'s is
+//     box-shadow: 0 0 0 1px var(--clay),
+//                 inset 0 0 0 12px rgba(217,119,87,.06);
+// Three distinct regions and one detail worth spelling out: the INNER
+// band is a hardcoded rgba(217,119,87,.06), NOT var(--clay) — so in the
+// light theme the border and the outer ring go to #9c4623 while the
+// inset band stays warm orange at 6%. Transcribing that literally is the
+// difference between matching the CSS and matching an approximation of
+// it.
+constexpr qreal kBoardInset = 12.0;   // the 12px inset band
+
+// `.board.editing::before` — the lattice. `inset:12px` puts it on the
+// same rect the inset band frames, `opacity:.28` multiplies everything
+// below, and `background-size:5% 5%` makes it a 20x20 cell grid.
+constexpr qreal kBoardGridOpacity = 0.28;
+constexpr qreal kBoardGridLineAlpha = 0.08;   // rgba(255,255,255,.08)
+constexpr int kBoardGridCells = 20;           // 100% / 5%
+// The line's final alpha. Compositing .08 white at .28 opacity is what
+// the browser does; resolving it to ONE number here means the painter
+// never has to lean on QPainter::setOpacity and therefore never has to
+// save/restore around a line the prototype would have drawn flat.
+constexpr int kBoardGridLineAlphaInt =
+    int(255.0 * kBoardGridLineAlpha * kBoardGridOpacity + 0.5);   // 6
+
+// The `.board` outer ring, one pixel OUTSIDE the border.
+constexpr qreal kBoardRingWidth = 1.0;
+
+// The `.board-viewport` padding, which is what the canvas widget itself
+// stands for in fidelity mode: `padding:12px 14px 0`. The zero at the
+// bottom is the HTML's, not an omission — `.board-viewport` has no
+// bottom pad and the `.board-hint` row that follows it is a sibling
+// widget (ControlPanel's boardHint label), not part of the canvas.
+constexpr qreal kBoardPadTop = 12.0;
+constexpr qreal kBoardPadX = 14.0;
+
+// `.board` vs `.board.portrait`, as WIDTH caps.
+constexpr qreal kBoardMaxWidthLandscape = 1050.0;   // min(100%, 1050px)
+constexpr qreal kBoardMaxWidthPortrait = 560.0;     // min(48%, 560px)
+constexpr qreal kBoardPortraitFraction = 0.48;      // the 48%
+constexpr qreal kBoardPortraitMinHeight = 220.0;    // min-height:220px
+
+// `.board-label { font:10px var(--mono) }` and `.board-empty`'s
+// `font:11px var(--mono)` are the two sizes the file already maps
+// through cardMonoFont(8); the empty state's `<strong>` is
+// `font:15px var(--serif)`, the one place on the board where the serif
+// stack is used at all.
+constexpr int kBoardMonoPt = 8;        // 10-11px mono  → 8pt
+constexpr int kBoardEmptyTitlePt = 11; // 15px serif    → 11pt
+
+// `.board-empty { padding:24px }` and `<strong>{margin-bottom:6px}`.
+constexpr qreal kBoardEmptyPad = 24.0;
+constexpr qreal kBoardEmptyGap = 6.0;
+
+// The display the board describes, as `.board-portrait`'s toggle sees
+// it. reference.html:474 writes `classList.toggle('portrait', sc.rot)`
+// and its two displays are 2560x1440 (rot:false) and 1080x1920
+// (rot:true) — so the only thing `rot` can mean, for a board that reads
+// geometry rather than a hardcoded display table, is "this output is
+// taller than it is wide". That is the predicate below, deliberately
+// derived from the real output's logical size instead of hardcoding the
+// demo's DP-1 / HDMI-A-1 names.
+bool isPortrait(const QSize &physical)
+{
+    return physical.width() > 0 && physical.height() > physical.width();
+}
+
+// The real output's aspect ratio, with the guard the legacy arm of
+// screenFrame() never needed because it could assume a screen existed.
+qreal physicalAspect(const QSize &physical)
+{
+    return (physical.width() > 0)
+               ? physical.height() / qreal(physical.width())
+               : (9.0 / 16.0);
+}
 
 // ─── v0.13: the split's sub-window preview ─────────────────────────────
 
@@ -434,11 +599,48 @@ void HudCanvas::setShowGrid(bool on)
 // The no-op guard is the same one every other setter here uses: a
 // console that calls setEditing(true) on every toolbar repaint must not
 // schedule a repaint each time.
+//
+// v1.0.0: AND THE MODE SWITCH INVALIDATES THE GESTURE IN FLIGHT — it
+// does not wait for the release. Leaving edit mode drops the drag
+// state (see the body), so a press that started while editing cannot
+// be finished by a later motion once the mode has been toggled off
+// and on again. That is the prototype's own shape: `state.editing` is
+// the only writer and setupDrag() re-runs from scratch on the next
+// press, so no gesture outlives the mode it was validated in.
 void HudCanvas::setEditing(bool on)
 {
     if (editing_ == on)
         return;
     editing_ = on;
+    // v1.0.0: THE DRAG IS SCOPED TO ONE EDITING SESSION.
+    //
+    // The press validated `editing_` once and mouseMoveEvent re-reads
+    // it on every motion — but "the flag is true again" is not the
+    // same as "THIS gesture was allowed". Press while editing → Esc →
+    // edit again → the next motion satisfies both gates and FINISHES
+    // the drag the user already cancelled, emitting subWindowMoved()
+    // from a start point captured two mode changes ago. The probe
+    // reproduced exactly that: press, setEditing(false),
+    // setEditing(true), move → subWindowMoved fired.
+    //
+    // So the drag state is torn down with the mode, the same way
+    // setLayoutMode(Single) already tears it down when the sub-windows
+    // it indexes go away: a live drag is only ever valid inside the
+    // editing session that started it. This is NOT a global ban on
+    // dragging — a fresh press in edit mode starts a fresh drag, which
+    // is the only gesture the prototype recognises.
+    //
+    // Nothing else is cleared: the selection stays (selecting is not
+    // editing, and a click that also armed a drag keeps what it
+    // selected), and mouseReleaseEvent still clears the cursor and
+    // both flags, so a cancelled gesture ends in the same consistent
+    // state it always did — the only thing removed is the window in
+    // which a cancelled gesture stays live.
+    subDragging_ = false;
+    subDragIndex_ = -1;
+    dragging_ = false;
+    dragIndex_ = -1;
+    unsetCursor();
     update();
 }
 
@@ -501,6 +703,20 @@ int HudCanvas::subWindowCountForParent(int parentSlot) const
         if (s.parentSlot == parentSlot)
             ++n;
     return n;
+}
+
+// The four-slot arm's painted boxes, by panel index. SEE THE HEADER for
+// why this exists; the body is deliberately trivial — it is a read of
+// what paintEvent already decided (line ~1911 resets every entry, the
+// mother loop writes the ones it drew), not a second layout, so the
+// rects a test reads are the rects the click handler hit-tests.
+QVector<QRectF> HudCanvas::motherWindowRects() const
+{
+    QVector<QRectF> out;
+    out.reserve(mhw::kPanelCount);
+    for (int i = 0; i < mhw::kPanelCount; ++i)
+        out.append(slots_[i].lastTarget_);
+    return out;
 }
 
 void HudCanvas::setSelectedPanel(int index)
@@ -572,6 +788,36 @@ void HudCanvas::setSubWindowBindings(QVector<SubWindowBinding> bindings)
         slot.tableRow = b.tableRow;
         subSlots_.append(slot);
     }
+    // v1.0.0: AND THE SELECTION DROPS OUT OF RANGE WITH THEM. A replace
+    // can shrink the vector (a panel un-split, a section masked off), and
+    // the selection it leaves behind would then point past the end —
+    // where every consumer reads: subRects_[i] in the hit-test,
+    // subSlots_[i].src in the drag start, movedSubMargins()'s own bounds
+    // check, and the arrow-key arm's index guard. Clearing here makes the
+    // setter's own contract ("an out-of-range index clears") true of the
+    // path that produces out-of-range indices in the first place, rather
+    // than leaving it to whichever consumer happens to check first.
+    //
+    // Same reason as setLayoutMode(Single): no repaint of its own, the
+    // update() below covers it.
+    if (subSelected_ >= subSlots_.size())
+        subSelected_ = -1;
+    // ── v1.0.0 integration (stage A / O2 review ②) ──────────────────────
+    // AND THE DRAG INDEX GOES WITH IT, for the same reason as the
+    // selection above: the bindings it indexes were just replaced, so an
+    // index kept across a replace points at whatever window landed there
+    // next and mouseMoveEvent's sub arm would keep writing THAT window's
+    // margins from this gesture's start point. The selection arm's own
+    // note lists the four consumers that read an out-of-range index; the
+    // drag adds a fifth (movedSubMargins via subDragIndex_). Clearing the
+    // flags rather than only the index means a release that arrives after
+    // the replace finds nothing to clean up — a rebind cancels the
+    // gesture outright, which is the only honest answer to "whose window
+    // am I moving?". Does NOT touch `dragging_`/`dragIndex_`: those index
+    // the four mother panels, which setSubWindowBindings() does not
+    // replace (setLayoutMode() owns that vector).
+    subDragging_ = false;
+    subDragIndex_ = -1;
     update();
 }
 
@@ -582,6 +828,96 @@ void HudCanvas::setSubWindowPixmap(int index, const QPixmap &pixmap, bool enable
     subSlots_[index].pixmap = pixmap;
     subSlots_[index].enabled = enabled;
     update();
+}
+
+// ─── v1.0.0: the console writes the selection back ─────────────────────
+//
+// The one public write for `subSelected_`, so the inspector and the
+// board cannot disagree. See the header for the full contract; the
+// shape here is:
+//
+//   1. normalise out-of-range to -1, never ignore it. A rebuilt binding
+//      list leaves the previous selection pointing past the end, and an
+//      index the drag/arrow paths would act on is the bug this avoids.
+//   2. no-op guard, same as every other setter here.
+//   3. update() ONLY. No signal — see the header on why emitting
+//      subWindowSelected from here would close the loop.
+void HudCanvas::setSelectedSubWindow(int index)
+{
+    const int want = (index >= 0 && index < subSlots_.size()) ? index : -1;
+    if (subSelected_ == want)
+        return;
+    subSelected_ = want;
+    update();
+}
+
+// ─── v1.0.0: the console-fidelity flag ─────────────────────────────────
+//
+// A paint-and-geometry switch, nothing more. It does not read settings,
+// it is not wired to the stagebar, and the overlay never sees it: the
+// console turns it on once at construction and every effect is a branch
+// inside this file.
+//
+// updateGeometry() is here and not an optimisation. The fidelity board
+// is `width:min(100%,1050px)` with `aspect-ratio:16/9`, so the height
+// the layout wants is a different function of the width than the legacy
+// `820 * physAR + header + footer` — and a QScrollArea that has already
+// sized the widget will not re-ask until the widget says its hint
+// changed.
+void HudCanvas::setConsoleFidelityMode(bool on)
+{
+    if (on == consoleFidelity_)
+        return;
+    consoleFidelity_ = on;
+    updateGeometry();
+    update();
+}
+
+// ─── v1.0.0: window visibility, consumed ───────────────────────────────
+//
+// The setter is deliberately boring: bounds-check, no-op on an unchanged
+// value, repaint. Everything interesting is in what the flag DOES — see
+// layoutSubWindows() for the single gate that takes a hidden window out
+// of the layout, the paint and the hit-test all at once.
+//
+// A REBIND RESETS THIS, deliberately: setSubWindowBindings() builds a
+// fresh QVector<SubSlot> and a fresh SubSlot is visible. The shell has
+// to push its filter again after every rebuild — carrying a per-INDEX
+// visibility across a rebind would apply whatever window was at slot A
+// last time's filter to whatever window lands at A next, which is worse
+// than forgetting the filter entirely.
+void HudCanvas::setSubWindowVisible(int index, bool visible)
+{
+    if (index < 0 || index >= subSlots_.size())
+        return;   // unknown index: a safe no-op, never a growth
+    if (subSlots_[index].visible == visible)
+        return;
+    subSlots_[index].visible = visible;
+    update();
+}
+
+bool HudCanvas::subWindowVisible(int index) const
+{
+    if (index < 0 || index >= subSlots_.size())
+        return true;   // not a live window: the DEFAULT, not a guess
+    return subSlots_[index].visible;
+}
+
+void HudCanvas::setPanelWindowVisible(int panelIndex, bool visible)
+{
+    if (!mhw::isPanelIndex(panelIndex))
+        return;   // unknown index: a safe no-op
+    if (panelVisible_[panelIndex] == visible)
+        return;
+    panelVisible_[panelIndex] = visible;
+    update();
+}
+
+bool HudCanvas::panelWindowVisible(int panelIndex) const
+{
+    if (!mhw::isPanelIndex(panelIndex))
+        return true;   // not a live panel: the DEFAULT
+    return panelVisible_[panelIndex];
 }
 
 // ─── v0.14: the overlap-free wall ──────────────────────────────────────
@@ -745,11 +1081,30 @@ QVector<HudCanvas::SubWindowPaintInfo> HudCanvas::layoutSubWindows(
     out.reserve(static_cast<int>(subSlots_.size()));
     subRects_.resize(subSlots_.size());
 
+    // ── v1.0.0 (OUTPUT-OWNERSHIP-FIX, C3): the panel view's filter ─────
+    // reference.html:442's `visibleWindows()` is ONE list with ONE
+    // filter, and `resolveOutput(w) === state.display` plus `d.panel ===
+    // state.view` apply in the overview AND in the panel view. The board
+    // only ever had the first half, and only under overviewMode_, so a
+    // panel view painted all eleven split boxes against a chip of six.
+    // Computed ONCE, outside the loop, for the same reason `fit` is.
+    //
+    // Both degenerates below are "no filter", and they are what keeps
+    // this a no-op off the console: an unnamed viewer (offscreen /
+    // headless) and a canvas nobody put into fidelity mode. A standalone
+    // HudCanvas in a test therefore paints every binding it was given,
+    // exactly as before this block existed.
+    const bool panelView = consoleFidelity_ && !overviewMode_;
+    const QString viewDisplay =
+        panelView ? (previewOutputName_.isEmpty() ? primaryOutputName()
+                                                  : previewOutputName_)
+                  : QString();
+
     for (int i = 0; i < subSlots_.size(); ++i) {
         subRects_[i] = QRectF();
         const SubSlot &sub = subSlots_[i];
         if (!sub.src)
-            continue;
+            continue;   // an unresolved row: no box, keeps the index space
         // v1.0.0: the overview draws ONLY the windows configured for its
         // display. The box is not laid out at all, so it is not painted
         // and not hit-testable either — a window that is not part of
@@ -757,6 +1112,69 @@ QVector<HudCanvas::SubWindowPaintInfo> HudCanvas::layoutSubWindows(
         // short-circuit discipline as the paint gate: with
         // overviewMode_ false this is one comparison against a false.
         if (overviewMode_ && !overviewDrawsSub(i))
+            continue;
+        // THE PANEL VIEW'S OWN TWO CLAUSES, same discipline, same place.
+        // Skipping the layout is what buys paint + hit-test + the wall
+        // overlap pass from one condition; a box filtered here leaves an
+        // empty subRects_[i], so the press handler and subWindowWall()
+        // see nothing to click and nothing to dodge.
+        if (panelView) {
+            // `d.panel === state.view` — this panel's windows only.
+            // The overview is exempt: it is the cross-panel picture.
+            if (mhw::isPanelIndex(selected_)
+                && sub.parentSlot != selected_)
+                continue;
+            // `resolveOutput(w) === state.display` — windowOutputName()
+            // already answers own → parent → primary, so this is the
+            // SAME chain the #window-count predicate resolves with.
+            if (!viewDisplay.isEmpty()
+                && windowOutputName(-1, i) != viewDisplay)
+                continue;
+        }
+        // v1.0.0: THE PROTOTYPE'S `visible`, CONSUMED. reference.html:442
+        // filters `w.visible===false` out of visibleWindows(), and the
+        // consequence is not "draw it faintly" — the window simply is not
+        // on the board. Skipping the layout is the one gate that buys
+        // all three properties the contract names: nothing is appended
+        // so nothing is PAINTED; subRects_[i] keeps the empty rect the
+        // resize above just wrote, so nothing is HIT-TESTABLE (both the
+        // press handler and the overview arm test
+        // `subRects_[i].contains`); and the box never reaches
+        // subWindowWall()'s overlap pass either.
+        //
+        // FIDELITY-GATED, like every other v1.0.0 branch in this file:
+        // a canvas nobody put into fidelity mode lays out every binding
+        // it was given, exactly as before this field existed.
+        //
+        // Note the contrast with `enabled` in the same struct: an
+        // ENABLED-false window is drawn as the prototype's
+        // `.hidden-window` placeholder, a VISIBLE-false window is not
+        // drawn at all.
+        if (consoleFidelity_ && !sub.visible)
+            continue;
+
+        // ── v1.0.0 integration (stage A / O2 review ①) ──────────────────
+        // THE PANEL MASTER TAKES ITS CHILDREN WITH IT. reference.html:442
+        // drops a window from visibleWindows() when EITHER the window's
+        // own `visible` OR its `panel.visible` is false — the predicate is
+        // one filter over one list, so a hidden panel cannot leave its
+        // split windows on the board while the mother is gone. This is
+        // the Split half of the same rule the four-slot arm gets for free
+        // (line ~2175 gates the whole panel body).
+        //
+        // WHY THE GATE LIVES HERE AND NOT IN THE PAINT LOOP. This
+        // function is the ONE place that fills `subRects_`, and an empty
+        // rect is what makes a box un-hittable in the press handler and
+        // the overview arm. Putting the test in paint only would draw the
+        // exclusion and leave the click target behind; putting it here
+        // buys layout + paint + hit-test + subWindowWall() from a single
+        // comparison, and a restore (setPanelWindowVisible(i, true)) is
+        // just this branch not being taken — the margins, the output and
+        // the pixmap are untouched by a hide, so the window comes back
+        // exactly where it was.
+        if (consoleFidelity_
+            && (sub.parentSlot < 0 || sub.parentSlot >= mhw::kPanelCount
+                || !panelVisible_[sub.parentSlot]))
             continue;
 
         // THE CONTRACT, READ NOT GUESSED. The box's extent is the
@@ -833,11 +1251,78 @@ QSize HudCanvas::sizeHint() const
     const qreal ar = phys.height() / qreal(phys.width());
     const int w = qRound(820 * (zoom_ > 1.0 ? zoom_ : 1.0));
     const int h = qRound(w * ar) + kHeader + kFooter;
+    if (consoleFidelity_) {
+        // THE NATURAL WIDTH OF THE FIDELITY BOARD, so a shell sizing
+        // itself from this hint gets a board at its CSS cap rather than
+        // one squeezed to 820-28. Landscape reaches 1050 at avail 1050;
+        // portrait only reaches 560 at avail 1166.67, because its cap is
+        // a FRACTION of the viewport first (min(48%, 560px)) — so the
+        // two hints are genuinely different numbers and neither is
+        // reusable for the other.
+        const qreal naturalW = isPortrait(phys)
+            ? kBoardMaxWidthPortrait / kBoardPortraitFraction
+            : kBoardMaxWidthLandscape;
+        const qreal scaled =
+            std::max(820.0, naturalW + 2.0 * kBoardPadX)
+                * (zoom_ > 1.0 ? zoom_ : 1.0);
+        const int fw = qRound(scaled);
+        return QSize(fw, std::max(360, fidelityHeightForWidth(fw)));
+    }
     return QSize(w, std::max(360, h));
+}
+
+// v1.0.0: the fidelity board's height at a given widget width, and the
+// ONE spelling of the `.board` width rule. `.board-viewport` is
+// `padding:12px 14px 0` and `.board` caps its own width, so the height
+// is NOT `width * physAR` — it is `(width - 28) capped, times physAR`,
+// and past the cap the extra widget width is simply empty ground on
+// either side, which is what `justify-content:center` does with room it
+// does not need.
+//
+// The cap differs by orientation, exactly as the CSS does:
+//     landscape  width:min(100%, 1050px)   aspect-ratio:16/9
+//     portrait   width:min(48%,   560px)   aspect-ratio:9/16
+// but the ASPECT RATIO is read from the real output rather than from
+// either literal, because the two literals are only correct for the
+// prototype's two demo displays. `min-height:220px` is the portrait
+// arm's, and it is the one number that can make the board TALLER than
+// its aspect ratio — so it is applied to the height, after the ratio,
+// and never to the width.
+//
+// NATURAL OVERFLOW, NOT A SQUEEZED BOARD. The frozen page lets the root
+// grow rather than shrinking the board to fit a 1000px viewport:
+// measured at 1600x1000 DPR1 the body margin is 0, the root scrollbar
+// takes 15px of width, and the root height comes out 1134.9375 for the
+// landscape display and 1742.3125 for the portrait one — the board
+// never gives up a pixel of its 1050x590.625 / 560x995.546875. This
+// function is what lets a Qt container do the same: it answers the
+// height the board NEEDS at this width, so a QScrollArea sized from
+// sizeHint()/heightForWidth() grows the widget and scrolls instead of
+// compressing the board and calling the squeezed result a match. The
+// shell's root scroll is the consumer; this file only supplies the
+// numbers.
+//
+// Both sizeHint() and heightForWidth() call this. The fidelity flag
+// changes the answer, so the flag setter has to call updateGeometry()
+// for the QScrollArea to notice.
+int HudCanvas::fidelityHeightForWidth(int width) const
+{
+    const QSize phys = previewScreenInfo().physical;
+    const qreal ar = physicalAspect(phys);
+    const qreal availW = std::max(0.0, width - 2.0 * kBoardPadX);
+    const qreal boardW = isPortrait(phys)
+        ? std::min(availW * kBoardPortraitFraction, kBoardMaxWidthPortrait)
+        : std::min(availW, kBoardMaxWidthLandscape);
+    const qreal boardH = isPortrait(phys)
+        ? std::max(boardW * ar, kBoardPortraitMinHeight)
+        : boardW * ar;
+    return qRound(kBoardPadTop + boardH);
 }
 
 int HudCanvas::heightForWidth(int width) const
 {
+    if (consoleFidelity_)
+        return std::max(360, fidelityHeightForWidth(width));
     const QSize phys = previewScreenInfo().physical;
     const qreal ar = phys.height() / qreal(phys.width());
     return std::max(360, qRound(width * ar) + kHeader + kFooter);
@@ -860,6 +1345,60 @@ QString HudCanvas::screenLabel() const
     return QStringLiteral("%1 × %2  ·  %3").arg(r.physical.width())
                                             .arg(r.physical.height())
                                             .arg(suffix);
+}
+
+// v1.0.0: `.board-label`, composed the way reference.html:475 composes
+// it — `labelDisplay(state.display) + ' · logical coordinate space'` —
+// where labelDisplay is the display's own name, its geometry, and the
+// prototype's rotation marker on a portrait output (DISPLAYS[id].zh is
+// 「HDMI-A-1 · 1080×1920 (旋转)」). The shape is the one the console's
+// SCREEN dropdown already builds in control_panel.cpp, so the two lists
+// of displays read the same; the one difference is the SPACE before the
+// marker, which the HTML has and the dropdown's string concatenation
+// drops — the frozen file is the authority here.
+//
+// THE SUFFIX IS VERBATIM, INCLUDING THAT IT IS ENGLISH. The frozen JS
+// hardcodes the string and does NOT route it through `t()`, so the
+// prototype's own zh-CN console prints "· logical coordinate space"
+// too. Transcribing it as-is is the fidelity answer; a translated
+// version of a string the reference never translates would be an
+// invention, and there is no i18n key for it in console.json to read
+// instead (adding one would mean touching src/resources, which is
+// outside this task's file allowlist).
+//
+// An empty output name falls through the same chain the rest of this
+// file uses: the live preview screen, then the primary, then the
+// string-table's 「主屏」.
+QString HudCanvas::fidelityBoardLabel() const
+{
+    const auto &r = previewScreenInfo();
+    QString out = previewOutputName_;
+    if (out.isEmpty())
+        out = primaryOutputName();
+    if (out.isEmpty())
+        out = mh::tr(QStringLiteral("console.canvas.primary"));   // i18n
+    QString label = QStringLiteral("%1 · %2×%3")
+                        .arg(out)
+                        // ── v1.0.0 integration (stage A / O2 review ③) ──
+                        // LOGICAL, NOT PHYSICAL. Every other coordinate
+                        // in this console — the #screen-select dropdown's
+                        // `o.geometry`, the X/Y spins, the margins the
+                        // board lays out from — is Qt's logical size, and
+                        // `Result::physical` is documented as "logical ×
+                        // dpr" (screen_query.h:57). On a dpr=2 screen the
+                        // physical spelling printed 5120×2880 beside a
+                        // dropdown saying 2560×1440 for the SAME output,
+                        // which is the same class of defect as a coordinate
+                        // space named in the wrong unit.
+                        .arg(r.logical.width())
+                        .arg(r.logical.height());
+    // And the rotation test follows the same size, for the same reason:
+    // "portrait" is a property of the frame the user is looking at, and
+    // the user is looking at the logical one.
+    if (isPortrait(r.logical))
+        label += QStringLiteral(" ")
+                 + mh::tr(QStringLiteral("console.proto.screen.rot"));
+    return label + QStringLiteral(" · logical coordinate space");
 }
 
 // v0.15: the screen-resolution rule, spelled ONCE and parameterised by
@@ -1077,7 +1616,18 @@ QString HudCanvas::windowOutputName(int panelIndex, int subIndex) const
         src = slots_[panelIndex].src;
         if (!src)
             return {};
-        return src->outputName();
+        // v1.0.0 (OUTPUT-OWNERSHIP-FIX): NO EARLY RETURN HERE ANY MORE.
+        // This branch used to `return src->outputName()` raw, so a base
+        // panel that follows primary answered "" while the window model
+        // behind #window-count answered `resolveWindowOutput(own, "",
+        // primary)` = the primary's NAME. Two spellings of one fact, and
+        // they only ever agreed because the console happened to persist
+        // an output for every mother. The fall-through below is the SAME
+        // chain the sub-window arm takes and mhw::resolveWindowOutput()
+        // takes: own → parent → primary, spelled once.
+        // Deliberately not re-labelled: for a mother the "parent" step
+        // reads back its own outputName, which is exactly the own step,
+        // so the chain collapses to own → primary for free.
     } else {
         return {};
     }
@@ -1363,29 +1913,52 @@ void HudCanvas::paintEvent(QPaintEvent *)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setRenderHint(QPainter::TextAntialiasing, true);
-    p.fillRect(rect(), QColor(6, 8, 10));
+    // v1.0.0: THE GROUND. In fidelity mode the canvas stands for
+    // `.board-viewport`, which sits on `.stage-body`'s `--page` — the
+    // one board-adjacent colour that DOES follow the console theme. The
+    // legacy field is the old prototype's #06080a blue-black, and the
+    // frozen HTML contains no such colour anywhere.
+    p.fillRect(rect(), consoleFidelity_ ? boardPageGround()
+                                        : QColor(6, 8, 10));
 
     for (int i = 0; i < mhw::kPanelCount; ++i)
         slots_[i].lastTarget_ = QRectF();
 
-    // --- header ---
-    QFont headFont(QStringLiteral("Chakra Petch"), 11, QFont::Medium);
-    headFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.5);
-    p.setFont(headFont);
-    p.setPen(QColor(140, 145, 147));
-    const auto &si = previewScreenInfo();
-    const QString head = mh::tr(QStringLiteral("console.canvas.header"))
-        .arg(si.physical.width())
-        .arg(si.physical.height())
-        .arg(si.logical.width())
-        .arg(si.logical.height())
-        .arg(QString::number(si.dpr, 'f', 2))
-        .arg(screen_query::sourceLabel(si.source));
-    p.drawText(QRectF(22, 14, width() - 44, 22),
-               Qt::AlignLeft | Qt::AlignVCenter, head);
+    // v1.0.0: has the board actually got a window on it? `.board-empty`
+    // fires on `visibleWindows().length === 0` and the frozen JS does
+    // not care which view the board is in, so this counts every box the
+    // two arms below paint — including the mother panels a Single or an
+    // overview board draws, and EXCLUDING anything a window's own
+    // `visible:false` took out of layoutSubWindows().
+    bool paintedAnyWindow = false;
 
-    p.setPen(QColor(60, 64, 66));
-    p.drawLine(22, 38, width() - 22, 38);
+    const auto &si = previewScreenInfo();
+
+    // --- header ---
+    //
+    // v1.0.0: NOT PART OF THE FROZEN BOARD. `.board-viewport` holds
+    // `.board` and nothing else; this resolution strip and its rule
+    // belong to the old prototype's stage, which the fidelity path does
+    // not reproduce. The board's own caption is `.board-label`, painted
+    // inside the frame further down.
+    if (!consoleFidelity_) {
+        QFont headFont(QStringLiteral("Chakra Petch"), 11, QFont::Medium);
+        headFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.5);
+        p.setFont(headFont);
+        p.setPen(QColor(140, 145, 147));
+        const QString head = mh::tr(QStringLiteral("console.canvas.header"))
+            .arg(si.physical.width())
+            .arg(si.physical.height())
+            .arg(si.logical.width())
+            .arg(si.logical.height())
+            .arg(QString::number(si.dpr, 'f', 2))
+            .arg(screen_query::sourceLabel(si.source));
+        p.drawText(QRectF(22, 14, width() - 44, 22),
+                   Qt::AlignLeft | Qt::AlignVCenter, head);
+
+        p.setPen(QColor(60, 64, 66));
+        p.drawLine(22, 38, width() - 22, 38);
+    }
 
     // --- screen frame ---
     // v1.0.0: ask screenFrame() instead of repeating the arithmetic.
@@ -1400,12 +1973,138 @@ void HudCanvas::paintEvent(QPaintEvent *)
     // The symptom that made it visible: both DP-1 (2560x1440) and
     // HDMI-A-1 (1080x1920) produced a frame taller than wide, so the
     // portrait display looked correct and hid the landscape one's bug.
+    //
+    // v1.0.0 (fidelity): screenFrame() is now the ONE place the two
+    // fitting rules live — `.board`'s width cap plus the output's own
+    // aspect ratio, or the legacy 22/46/-22/-kFooter fit. Same function,
+    // so the box and the drag still convert through one mapping.
     const QSize phys = si.physical;
     QSize logical = si.logical;
     QRectF frame;
     qreal fit = 0.0;
     screenFrame(frame, fit, logical);
 
+    // `.board.editing` toggles on `state.editing && state.view!=='overview'`
+    // (reference.html:474), which is NOT the same predicate the legacy
+    // arm below reads. The legacy arm keeps its bare `editing_` so the
+    // default path's pixels do not move; the fidelity arm uses this.
+    const bool boardEditing = editing_ && !overviewMode_;
+
+    if (consoleFidelity_) {
+        // ─── `.board`, transcribed layer by layer ─────────────────────
+        //
+        // Painted in the CSS's own order, because the three pieces of
+        // box-shadow overlap in a specific way and getting the order
+        // wrong makes the border sit on the wrong side of the ring:
+        //
+        //   1. `box-shadow:0 0 0 1px <ring>`   the OUTER ring, one pixel
+        //      OUTSIDE the border box.
+        //   2. `background:var(--board)`        the ground, covering the
+        //      whole border box.
+        //   3. `box-shadow:inset 0 0 0 12px <band>` a 12px band INSIDE
+        //      the border, painted over the ground.
+        //   4. `border:1px solid <line>`        the hairline, in the
+        //      outermost pixel of the border box.
+        //
+        // The ring and the band are the one thing Qt has no built-in
+        // for: a box-shadow. Both are donuts — two rects in one
+        // OddEvenFill path — which is the same shape, filled with a
+        // translucent colour over what is already on the board. The
+        // band's result over `--board` is what the browser would compute
+        // (20,20,20) at rest; doing it with alpha rather than as a
+        // pre-blended colour keeps the editing state's warm band honest
+        // too.
+        const QColor ringColor = boardEditing ? boardClay()
+                                              : QColor(255, 255, 255, 8);
+        // NOTE, and it is worth the parenthesis: the INSET band is a
+        // hardcoded rgba(217,119,87,.06) in the CSS, NOT var(--clay).
+        // In the light theme the border and the ring go to #9c4623 while
+        // the band stays warm orange at 6% — so these are two colours,
+        // not one repeated.
+        const QColor bandColor = boardEditing
+            ? QColor(217, 119, 87, 15)      // rgba(217,119,87,.06)
+            : QColor(255, 255, 255, 4);     // rgba(255,255,255,.015)
+
+        p.save();
+        p.setPen(Qt::NoPen);
+        {
+            QPainterPath ring;
+            ring.addRect(frame.adjusted(-kBoardRingWidth, -kBoardRingWidth,
+                                        kBoardRingWidth, kBoardRingWidth));
+            ring.addRect(frame);
+            p.fillPath(ring, ringColor);
+        }
+        p.fillRect(frame, boardGround());
+        {
+            QPainterPath band;
+            band.addRect(frame);
+            band.addRect(frame.adjusted(kBoardInset, kBoardInset,
+                                        -kBoardInset, -kBoardInset));
+            p.fillPath(band, bandColor);
+        }
+
+        // ─── `.board.editing::before` — the 5% x 5% lattice ───────────
+        //
+        // `inset:12px` puts it on exactly the rect the band frames;
+        // `opacity:.28` multiplies the line's rgba(255,255,255,.08) down
+        // to a 6/255 alpha, which is resolved once at the top of the
+        // file rather than through QPainter::setOpacity — a flat alpha
+        // is what the browser ends up painting, and it avoids the
+        // save/restore a per-line opacity would need.
+        //
+        // `background-size:5% 5%` makes the grid 20 columns by 20 rows
+        // of the INSET rect, not of the frame: the percentages resolve
+        // against the ::before element's own box, which `inset:12px` has
+        // already shrunk. Walking an integer cell index rather than
+        // accumulating `+= cell` is what keeps the twentieth line from
+        // landing a few hundredths of a pixel past the right edge.
+        if (boardEditing) {
+            const QRectF g = frame.adjusted(kBoardInset, kBoardInset,
+                                            -kBoardInset, -kBoardInset);
+            const QColor gridLine(255, 255, 255, kBoardGridLineAlphaInt);
+            p.setPen(QPen(gridLine, 1));
+            for (int i = 0; i < kBoardGridCells; ++i) {
+                // +0.5: a CSS 1px background line at position t occupies
+                // the device pixel [t, t+1], and a 1px QPainter pen is
+                // CENTRED on its coordinate — so the pen has to sit half
+                // a pixel further right/down than the CSS line starts,
+                // or the hairline is smeared across two pixels.
+                const qreal x =
+                    g.left() + g.width() * i / kBoardGridCells + 0.5;
+                p.drawLine(QPointF(x, g.top()), QPointF(x, g.bottom()));
+                const qreal y =
+                    g.top() + g.height() * i / kBoardGridCells + 0.5;
+                p.drawLine(QPointF(g.left(), y), QPointF(g.right(), y));
+            }
+        }
+
+        // The hairline. `adjusted(0.5, 0.5, -0.5, -0.5)` puts a 1px pen
+        // exactly inside the frame's outer pixel — the cell a CSS border
+        // occupies — instead of straddling the edge and painting a
+        // two-tone smear. screenFrame() already rounded the frame to
+        // whole pixels for precisely this.
+        p.setPen(QPen(boardEditing ? boardClay() : boardLine(), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(frame.adjusted(0.5, 0.5, -0.5, -0.5));
+        p.restore();
+
+        // ─── `.board-label` ───────────────────────────────────────────
+        //
+        // `top:12px; left:14px` of the BOARD, mono 10px, `--board-fg-3`,
+        // `letter-spacing:.04em` (0.4px at 10px), `pointer-events:none`
+        // — which in a canvas means it is painted last among the chrome
+        // and takes no part in hit-testing, exactly as below.
+        p.save();
+        QFont labelFont = cardMonoFont(kBoardMonoPt);
+        labelFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.4);
+        p.setFont(labelFont);
+        p.setPen(QColor(0x87, 0x86, 0x7f));   // --board-fg-3
+        p.drawText(QRectF(frame.left() + 14.0, frame.top() + 12.0,
+                          std::max(0.0, frame.width() - 28.0), 16.0),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   fidelityBoardLabel());
+        p.restore();
+    } else {
     QLinearGradient bg(frame.topLeft(), frame.bottomRight());
     bg.setColorAt(0,    QColor(34, 50, 42));
     bg.setColorAt(0.45, QColor(15, 22, 22));
@@ -1422,7 +2121,11 @@ void HudCanvas::paintEvent(QPaintEvent *)
     p.setPen(QPen(editing_ ? QColor(217, 119, 87) : QColor(76, 76, 69), 1));
     p.drawRect(frame);
 
-    if (showSafeArea_) {
+    // v1.0.0: the safe-area rectangle has no counterpart in the frozen
+    // board — `.board-viewport` contains `.board` and nothing else. It
+    // is gated off in fidelity mode and left exactly where it was for
+    // the default path.
+    if (showSafeArea_ && !consoleFidelity_) {
         p.setPen(QPen(QColor(255, 255, 255, 28), 1, Qt::DashLine));
         p.drawRect(frame.adjusted(frame.width() * .055, frame.height() * .055,
                                   -frame.width() * .055, -frame.height() * .055));
@@ -1463,7 +2166,15 @@ void HudCanvas::paintEvent(QPaintEvent *)
         }
     }
 
-    if (showGrid_) {
+    // v1.0.0: GATED OFF IN FIDELITY MODE, all three of these. The
+    // frozen `.board` has a lattice but it is `.board.editing::before`'s
+    // 5% x 5% at inset 12 / opacity .28 — a different cell size, a
+    // different inset and a different alpha from the 80-logical-pixel
+    // draft below, which is painted above as the fidelity board's own
+    // lattice. The centre crosshair and the scale ruler have no
+    // counterpart in the frozen HTML at all. None of them is deleted,
+    // because the default path's pixels are the 12 baselines' contract.
+    if (showGrid_ && !consoleFidelity_) {
         p.setPen(QPen(QColor(255, 255, 255, 33), 1, Qt::DashLine));
         p.drawLine(QPointF(frame.left(),  frame.center().y()),
                    QPointF(frame.right(), frame.center().y()));
@@ -1487,6 +2198,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
                    Qt::AlignHCenter | Qt::AlignVCenter,
                    QString::number(px));
     }
+    }   // end of the legacy (non-fidelity) chrome arm
 
     // --- panels ---
     //
@@ -1535,31 +2247,97 @@ void HudCanvas::paintEvent(QPaintEvent *)
                       lr.height() * fit);
     };
 
-    // THE ONE MOTHER PANEL THE SPLIT STILL DRAWS. Pets, index 3, is
-    // the only base panel with no split table, so it has no sub-window
-    // to be drawn by and the overlay mounts it in both modes — see the
-    // v0.16 note above. `kPetsPanel` is the spelling, not a literal:
-    // panel_accent.h and panel_sections.h both key off the same slot
-    // order, and a literal here is how the three would drift apart.
-    // v1.0.0: AND THE OVERVIEW DRAWS ALL OF THEM. The overview is "every
-    // window on one display, read-only" — the mother panels ARE part of
-    // that picture in Split (the user may have left some panels
-    // un-split), so the gate is `subSlots_.isEmpty() || overviewMode_`
-    // rather than `subSlots_.isEmpty()`. Written as a SHORT-CIRCUIT so
-    // the default path is bit-for-bit what it was: with overviewMode_
-    // false the expression is the old condition and not one extra
-    // instruction is executed. That identity is what keeps
-    // console_split_sync_tests' and damage_rows_window_tests'
-    // canvas->grab() pixel assertions green.
+    // v1.0.0: THE PROTOTYPE'S BOARD, AS THE CONSOLE'S OWN STATE.
     //
-    // WHICH mothers actually get painted is then narrowed by
-    // overviewDrawsPanel() — the overview draws only the windows
-    // configured for its display, and only those with something to
-    // show (see the note on that function about the Split mask).
-    const bool drawMothers = subSlots_.isEmpty() || overviewMode_;
+    // drawMothers answers "does the four-slot arm draw at all", and it is
+    // `subSlots_.isEmpty()` — the v1.0.0 spelling added `|| overviewMode_`
+    // so the overview could show base panels too. OUTPUT-OWNERSHIP-FIX
+    // (C3/P3) takes that back: in Split the window model behind
+    // #window-count is the ELEVEN SUB-WINDOWS (buildWindowStates() has no
+    // mother row there), so a base panel the overview painted was a box
+    // nobody could count — measured on a private two-output fixture as
+    // 7 boxes against a chip of 6, the extra one being a mother. The
+    // invariant this board must keep is "the chip is the number of boxes
+    // you can see", and it is cheaper to draw what the model knows than
+    // to invent a second model. In Single the model rows ARE the four
+    // mothers, so drawMothers is true and nothing changes there.
+    //
+    // v1.0.0 (OUTPUT-CONTRACT-COMPLETION): AND THE ONE MOTHER THAT IS IN
+    // THE MODEL EVEN UNDER SPLIT — pets. PetDamageSection has no split
+    // table, so buildWindowStates() emits exactly one real row for it in
+    // a Rise Split scope (subIndex -1) and none under World; the gate
+    // below therefore names the panel and never the view, and the two
+    // arms agree because both read the same list. The old spelling's
+    // `|| overviewMode_` was a second, competing model: it kept the pets
+    // box OFF the overview (which now counts it) and left it ON every
+    // panel view (which counted it nowhere, the model having no row).
+    const bool drawMothers = subSlots_.isEmpty();
+    // v1.0.0 (OUTPUT-OWNERSHIP-FIX, C3): the PANEL VIEW's own filter.
+    // reference.html:442 applies `resolveOutput(w) === state.display` in
+    // BOTH views — it is not an overview-only rule — and Qt's board used
+    // to apply it only under overviewMode_, so a panel view painted all
+    // eleven split boxes while the chip counted the six on this display.
+    // Two clauses, both reference.html:442's own:
+    //
+    //   display  → windowOutputName() === state.display (the viewer)
+    //   scope    → d.panel === state.view (this panel only; the overview
+    //              is exempt, and the overview's own gate is above)
+    //
+    // Two deliberate degenerates keep the DEFAULT path byte-identical:
+    // an unnamed viewer (offscreen / headless, where primaryOutputName()
+    // is "" too) means "no display filter", and a canvas nobody put into
+    // fidelity mode is not the console's board and gets no view scope —
+    // which is what keeps every standalone HudCanvas test painting what
+    // it bound.
+    const bool panelView = consoleFidelity_ && !overviewMode_;
+    const QString viewDisplay =
+        panelView ? (previewOutputName_.isEmpty() ? primaryOutputName()
+                                                  : previewOutputName_)
+                  : QString();
     for (int i = 0; i < mhw::kPanelCount; ++i) {
-        if (!drawMothers && i != kPetsPanel) continue;
+        if (!drawMothers) {
+            // Split: only the pets base panel has no split table, so only
+            // it still belongs to the four-slot arm — and since
+            // buildWindowStates() now carries that one real row (subIndex
+            // -1) it is drawn in the OVERVIEW as well, which is why there
+            // is no overviewMode_ test here. The old `|| overviewMode_`
+            // spelled a second model: it kept the pets box off the
+            // overview (which counts it now) while leaving it on every
+            // panel view (which counted it nowhere, the model having no
+            // row). Which views show this panel is the model's answer:
+            // overviewDrawsPanel below, and the panelView scope next to
+            // it.
+            if (i != kPetsPanel) continue;
+        }
+        // v1.0.0: the panel's OWN `visible`, consumed the way the
+        // sub-window arm consumes its window's — the body is skipped, so
+        // `lastTarget_` keeps the empty rect reset at the top of this
+        // function and the panel is neither painted nor hit-testable.
+        // It is deliberately NOT folded into the `!bound || !present`
+        // guard two lines down: those are two different facts ("nobody
+        // told us about this panel" / "the game does not have it"), and
+        // merging the predicates is the exact move that once segfaulted
+        // the Split paint on an unbound canvas.
+        if (consoleFidelity_ && !panelVisible_[i]) continue;
         if (overviewMode_ && !overviewDrawsPanel(i)) continue;
+        // `d.panel === state.view`, THE FOUR-SLOT HALF. reference.html:
+        // 442 applies it to ONE list that contains mother rows too, so in
+        // the panel view this arm paints the SELECTED panel's window and
+        // no other — the same clause layoutSubWindows() gives the sub
+        // boxes and the same one the chip's scope applies to the model.
+        // All three read `selected_`, so a panel outside the view is
+        // neither painted, nor hittable (lastTarget_ stays empty), nor
+        // counted. Fidelity-gated twice over: panelView is false off the
+        // console, and without fidelity `selected_` is not a view.
+        if (panelView && mhw::isPanelIndex(selected_) && i != selected_)
+            continue;
+        // The panel view's display clause. In Single the model row and
+        // the painted box are the same panel, so this and the chip's
+        // `outputResolved === screenName` are the same comparison —
+        // windowOutputName() is resolveWindowOutput() for a mother since
+        // the early return in it was removed.
+        if (panelView && !viewDisplay.isEmpty()
+            && windowOutputName(i) != viewDisplay) continue;
         if (!slots_[i].bound || !slots_[i].present) continue;
         const Slot &s = slots_[i];
         const qreal z = std::max(0.1, s.src->scale());
@@ -1610,6 +2388,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
         }
 
         slots_[i].lastTarget_ = target;
+        paintedAnyWindow = true;
     }
 
     // --- v0.14: the split's sub-windows ---
@@ -1626,8 +2405,10 @@ void HudCanvas::paintEvent(QPaintEvent *)
     if (!subSlots_.isEmpty()) {
         const QVector<SubWindowPaintInfo> boxes =
             layoutSubWindows(fit, frame.topLeft(), logical);
-        for (const SubWindowPaintInfo &info : boxes)
+        for (const SubWindowPaintInfo &info : boxes) {
             paintSubWindowBox(info, p);
+            paintedAnyWindow = true;
+        }
 
         // ─── v1.0.0: the board's empty state ───────────────────────────
         //
@@ -1660,7 +2441,16 @@ void HudCanvas::paintEvent(QPaintEvent *)
         // align-items:center;justify-content:center} places it: the
         // board is the frame here, so the text block is centred in the
         // frame with the prototype's 20px padding.
-        if (boxes.isEmpty()) {
+        //
+        // v1.0.0: FIDELITY MODE SKIPS THIS ARM ENTIRELY. The frozen
+        // `.board-empty` is a different typographic block (a serif
+        // `<strong>` over a mono span, 24px of padding, no 340px cap)
+        // and the frozen JS fires it on `visibleWindows().length === 0`
+        // regardless of view mode — which Single mode reaches too, and
+        // this arm cannot see. `!consoleFidelity_` keeps the legacy
+        // spelling byte-identical for the default path and hands the
+        // fidelity path to the arm below.
+        if (boxes.isEmpty() && !consoleFidelity_) {
             const bool overview = overviewMode_;
             const QString titleKey = overview
                 ? QStringLiteral("console.proto.board.empty.overview")
@@ -1706,7 +2496,78 @@ void HudCanvas::paintEvent(QPaintEvent *)
         }
     }
 
+    // ─── v1.0.0: `.board-empty`, the FROZEN spelling ────────────────────
+    //
+    // reference.html:205-206 and 477:
+    //     .board-empty { inset:0; place-content:center; text-align:center;
+    //                    color:--board-fg-2; font:11px var(--mono);
+    //                    padding:24px }
+    //     .board-empty strong { color:--board-fg; font:15px var(--serif);
+    //                           margin-bottom:6px }
+    //     <div class="board-empty"><div><strong>TITLE</strong><span>SUB
+    //                                      </span></div></div>
+    //
+    // So the TITLE is the serif one and the SUB is the mono one — the
+    // opposite way round from the legacy arm above, which drew both in
+    // the mono face and put the brighter colour on the title's smaller
+    // sibling. `place-content:center` is the whole block centred, not
+    // two independently centred lines, hence one height computation and
+    // the 6px gap between them.
+    //
+    // WHEN IT FIRES: `visibleWindows().length === 0`, which the frozen
+    // JS applies in every view — including Single, where the four mother
+    // panels are normally the picture. `paintedAnyWindow` is the Qt
+    // spelling of "is there anything on this board", so a board whose
+    // only window is hidden by setSubWindowVisible() correctly reads as
+    // empty rather than as a blank rectangle.
+    if (consoleFidelity_ && !paintedAnyWindow) {
+        const bool overview = overviewMode_;
+        const QString title = mh::tr(overview
+            ? QStringLiteral("console.proto.board.empty.overview")
+            : QStringLiteral("console.proto.board.empty.panel"));
+        const QString sub = mh::tr(overview
+            ? QStringLiteral("console.proto.board.empty.overview.sub")
+            : QStringLiteral("console.proto.board.empty.panel.sub"));
+        const qreal maxTextW =
+            std::max(0.0, frame.width() - 2.0 * kBoardEmptyPad);
+        if (maxTextW > 40.0) {
+            const QFont titleFont(QStringLiteral("serif"), kBoardEmptyTitlePt);
+            const QFont subFont = cardMonoFont(kBoardMonoPt);
+            const QFontMetrics tfm(titleFont);
+            const QFontMetrics sfm(subFont);
+            const qreal titleH = tfm.height();
+            const qreal subH = sfm.height();
+            const qreal blockH = titleH + kBoardEmptyGap + subH;
+            qreal top = frame.center().y() - blockH / 2.0;
+            // `inset:0` plus `padding:24px` means the block can never
+            // start closer than 24px to the board's edge; the centre is
+            // still the anchor whenever it fits.
+            if (top < frame.top() + kBoardEmptyPad)
+                top = frame.top() + kBoardEmptyPad;
+            p.save();
+            p.setFont(titleFont);
+            p.setPen(QColor(0xe9, 0xe7, 0xde));   // --board-fg
+            p.drawText(QRectF(frame.left() + kBoardEmptyPad, top,
+                              maxTextW, titleH),
+                       Qt::AlignHCenter | Qt::AlignVCenter,
+                       tfm.elidedText(title, Qt::ElideRight, int(maxTextW)));
+            p.setFont(subFont);
+            p.setPen(QColor(0xad, 0xab, 0xa1));   // --board-fg-2
+            p.drawText(QRectF(frame.left() + kBoardEmptyPad,
+                              top + titleH + kBoardEmptyGap,
+                              maxTextW, subH),
+                       Qt::AlignHCenter | Qt::AlignVCenter,
+                       sfm.elidedText(sub, Qt::ElideRight, int(maxTextW)));
+            p.restore();
+        }
+    }
+
     // --- footer ---
+    // v1.0.0: GATED OFF IN FIDELITY MODE for the same reason the header
+    // is — the frozen `.board-viewport` has no footer strip. The
+    // zoom/screen readout it carried still exists as the console's own
+    // stagebar, which is a separate widget.
+    if (!consoleFidelity_) {
     p.setPen(QColor(60, 64, 66));
     p.drawLine(22, height() - 30, width() - 22, height() - 30);
     QFont footFont(QStringLiteral("Chakra Petch"), 9, QFont::Medium);
@@ -1729,6 +2590,7 @@ void HudCanvas::paintEvent(QPaintEvent *)
                mh::tr(QStringLiteral("console.canvas.footer_right"))
                    .arg(screenLabel())
                    .arg(QString::number(zoom_, 'f', 1)));
+    }   // end of the legacy (non-fidelity) footer strip
 }
 
 // ─── v0.14: the split's sub-windows ────────────────────────────────────
@@ -1748,28 +2610,159 @@ void HudCanvas::paintEvent(QPaintEvent *)
 void HudCanvas::paintSubWindowBox(const SubWindowPaintInfo &info,
                                  QPainter &p) const
 {
-    // ─── v1.0.0 sa-B: the window card ──────────────────────────────────
+    // ─── v1.0.0: THE REAL PANEL, NOT A STAND-IN FOR IT ────────────────
     //
-    // WHEN THE WINDOW IS BOUND, IT IS DRAWN AS THE PROTOTYPE'S CARD.
+    // A bound sub-window's content IS the window's own rendered surface,
+    // and the console already hands it to us: setSubWindowPixmap()
+    // receives the offscreen QWidget render of that Panel (see
+    // control_panel.cpp's renderSplitWindow — repaint, then blit into a
+    // pixmap with the panel's own opacity already composited in).
     //
-    // The prototype's board draws every window as a `.win` card — three
-    // rows, an accent border, a soft shadow when selected — and that card
-    // IS the preview's content. The Qt canvas already has the window's
-    // real rendered pixmap for a bound window, so the card is drawn FIRST
-    // (its frame, header, bars and footer) and the pixmap is composited
-    // INSIDE the card's content area, below the header and above the
-    // footer. That is what makes the console read as the prototype's
-    // board while still showing the user the real panel they configured.
+    // So the window's box is painted as
     //
-    // WHEN THE WINDOW IS NOT BOUND, the old dashed-frame-plus-title box
-    // stays exactly as it was: an unbound row is a row whose window did
-    // not resolve, and the old vocabulary ("this is a preview, not the
-    // thing itself") is the honest one for it. The two paths are chosen
-    // by `src`, which is the same fact the pixmap arm below already keys
-    // off — no new state.
-    const PanelSource *src = (info.index >= 0 && info.index < subSlots_.size())
-                                 ? subSlots_[info.index].src
+    //     the pixmap, at the box's full extent
+    //     + the prototype's .board-window chrome on top of it
+    //
+    // and NOTHING ELSE. No three grey bars: those were the prototype's
+    // stand-in for "this window has content", drawn as the v1.0.0
+    // card's body, and the card path then returned before the pixmap
+    // arm ever ran — so a bound window drew three grey bars and its own
+    // real pixels stayed invisible. The user rejected the bars
+    // explicitly; they are a placeholder for content that is already in
+    // hand, and this closes the early return that was hiding it.
+    //
+    // NO SECOND SCALING. The pixmap is already the surface at the
+    // window's own scale (Panel::paintEvent composites scale+opacity, so
+    // the pixmap carries per-pixel alpha and no extra opacity is
+    // multiplied here either — the same discipline the four-slot arm's
+    // pixmap path documents). It is drawn into `info.rect`, the box the
+    // layout pass computed from THIS window's corner + margins +
+    // contentSize, which is the same rectangle every consumer agrees
+    // on. Multiplying by PanelSource::scale() again would shrink a
+    // 2.5x window to a quarter of its box.
+    //
+    // WHAT STILL DRAWS: only the chrome the HTML puts on .board-window —
+    // the border (dashed while editing), the selection outline, and the
+    // clip that keeps the pixmap inside a 3px-radius box. The parent's
+    // accent colour still identifies which panel the window left.
+    //
+    // UNBOUND ROWS KEEP THE OLD PATH. A row whose window did not resolve
+    // has no pixmap, and the dashed frame plus title is the honest
+    // vocabulary for "there is nothing here yet".
+    const int idx = info.index;
+    // A window WITH a pixmap is a window the console resolved, and its
+    // pixels are the content — full stop. `enabled` is NOT part of this
+    // test: it is the HTML's .hidden-window state (the window exists and
+    // is dimmed), not "there is no content", and treating it as the
+    // latter is what put three grey bars back over a real panel.
+    const bool hasPixmap =
+        (idx >= 0 && idx < subSlots_.size()
+         && !subSlots_[idx].pixmap.isNull());
+    const bool hidden = hasPixmap && !subSlots_[idx].enabled;
+    const PanelSource *src = (idx >= 0 && idx < subSlots_.size())
+                                 ? subSlots_[idx].src
                                  : nullptr;
+
+    // The parent's own colour. The split's whole visual claim is "these
+    // boxes left that panel", and the parent's accent is how the preview
+    // says it without a second legend.
+    QColor accent = mhw::panel_accent::forSlot(info.parentSlot);
+
+    if (hasPixmap) {
+        // .hidden-window — opacity .28, border --rust, greyscale. The
+        // prototype's own spelling, and it is a DIM, not a removal: the
+        // window is still there, still outlined, still clickable.
+        if (hidden) {
+            p.save();
+            p.setOpacity(0.28);
+        }
+        // v1.0.0: THE BOARD-WINDOW BACKFILL IS ONLY FOR AN OPAQUE
+        // PIXMAP. The prototype's `.board-window` background
+        // rgba(19,19,18,.98) exists so a window with NO content of its
+        // own reads as a surface; a window that DOES have content
+        // paints that content over it, which is what the probe saw go
+        // wrong — a fully transparent QPixmap(500,200) composited onto
+        // the near-black backfill instead of onto the board, so the
+        // window read #ff141413 where the empty board read #ff1c2924.
+        //
+        // So the fill is skipped when the bound pixmap carries an
+        // alpha channel (Format_ARGB32 / Format_ARGB32_Premultiplied,
+        // or a mask attached by hasAlphaChannel()). Then the panel's
+        // OWN translucent pixels composite onto the board underneath,
+        // which is the whole point of Panel::paintEvent baking opacity
+        // into per-pixel alpha (see the "NO SECOND SCALING" note above
+        // — the same alpha is drawn here, just not buried).
+        //
+        // AN OPAQUE PIXMAP KEEPS THE FILL. It cannot change a pixel —
+        // its own opaque pixels cover the fill entirely — so the
+        // existing real-Panel path is bit-for-bit what it was, which
+        // is what PASS 1 ("source pixmap reaches board") pins.
+        const bool pixmapHasAlpha =
+            subSlots_[idx].pixmap.hasAlphaChannel()
+            || subSlots_[idx].pixmap.hasAlpha();
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QPainterPath clip;
+        clip.addRoundedRect(info.rect, 3, 3);   // the prototype's 3px
+        p.setClipPath(clip);
+        if (!pixmapHasAlpha)
+            p.fillPath(clip, QColor(19, 19, 18, 250));
+        p.drawPixmap(info.rect, subSlots_[idx].pixmap,
+                     subSlots_[idx].pixmap.rect());
+        p.restore();
+
+        // ── the border: .board-window, 1px rgba(224,138,108,.75) ──────
+        //
+        // Drawn OUTSIDE the clip above so the edge stays a crisp 1px
+        // rather than half of it. A hidden window's border is --rust
+        // instead, per .hidden-window.
+        p.save();
+        p.setPen(QPen(hidden ? QColor(176, 74, 63) : QColor(224, 138, 108, 191),
+                      1.0,
+                      editing_ ? Qt::DashLine : Qt::SolidLine));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(info.rect.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
+        p.restore();
+        if (hidden)
+            p.restore();   // the opacity above
+
+        // ── .selected: 2px --clay-light + the ring ────────────────────
+        //
+        // The prototype's selected window is 2px solid --clay-light
+        // (#e39a7e) with a 2px ring of rgba(217,119,87,.35) outside it.
+        // Drawn on top of the pixmap, never under it, so the selection
+        // is readable no matter what the panel painted.
+        //
+        // v1.0.0: THE BORDER IS THE TOKEN, THE RING IS NOT. Both are
+        // literal in the prototype except the border, which is
+        // `var(--clay-light)` and therefore DOES move between themes
+        // (#e39a7e dark → #b85c38 light). The ring is a bare
+        // rgba(217,119,87,.35) in both themes and the resting 1px
+        // .board-window border is a bare rgba(224,138,108,.75) in both,
+        // so neither reads the palette. The probe's two-theme grab saw
+        // 0 differing pixels with the border pinned; routing it through
+        // boardClayLight() is what makes the switch visible.
+        if (info.selected) {
+            p.save();
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(QPen(QColor(217, 119, 87, 89), 2.0));   // the ring
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(info.rect.adjusted(-2, -2, 2, 2), 5, 5);
+            p.setPen(QPen(boardClayLight(), 2.0));           // --clay-light
+            p.drawRoundedRect(info.rect.adjusted(1, 1, -1, -1), 2, 2);
+            p.restore();
+        }
+        return;
+    }
+
+    // ── an unbound row: the old box, unchanged ────────────────────────
+    //
+    // Kept for a row whose window did not resolve — no pixmap was ever
+    // pushed for it, so there is no content to show and the dashed
+    // frame plus title is the honest vocabulary for it. `src` is null
+    // there by construction (setSubWindowBindings drops null sources),
+    // so the card path that used to run for bound windows can no longer
+    // shadow this one.
     if (src) {
         WindowCardPaintInfo card;
         // .win-name — the window's short handle. winName() is the
@@ -1778,7 +2771,7 @@ void HudCanvas::paintSubWindowBox(const SubWindowPaintInfo &info,
         // with the word the HTML board would print, from one table
         // rather than a second hand-written list. It falls back to the
         // geometry pass's title when the index does not resolve.
-        card.name = winName(info.parentSlot, info.index);
+        card.name = winName(info.parentSlot, idx);
         if (card.name.isEmpty())
             card.name = info.title;
         card.scale = std::max(0.05, src->scale());
@@ -1801,42 +2794,22 @@ void HudCanvas::paintSubWindowBox(const SubWindowPaintInfo &info,
         card.panelLine = QStringLiteral("%1 · %2/%3")
                              .arg(panelName(info.parentSlot))
                              .arg(parentRowCount > 0
-                                      ? subSlots_[info.index].tableRow + 1 : 1)
+                                      ? subSlots_[idx].tableRow + 1 : 1)
                              .arg(parentRowCount > 0 ? parentRowCount : 1);
         // .board.editing — the dashed border the prototype draws while
         // the board is in edit mode. `editing()` is the flag setEditing()
         // owns; the card only reads it, so there is one writer.
         card.editing = editing();
         paintWindowCard(info, card, p);
-    }
-
-    // THE PARENT'S OWN COLOUR. The split's whole visual claim is "these
-    // boxes left that panel", and the parent's accent is how the preview
-    // says it without a second legend.
-    QColor accent = mhw::panel_accent::forSlot(info.parentSlot);
-
-    // WHEN THE CARD IS DRAWN, IT IS THE WHOLE BOX.
-    //
-    // The pixmap, the dashed frame, the title above and the drag tag
-    // below are the OLD box's vocabulary, and every one of them would
-    // paint over the card: the pixmap covers all three rows, the dashed
-    // frame doubles the card's border, and the two labels sit outside a
-    // box that already names itself. So the card path returns here and
-    // the old path is left exactly as it was for an unbound row.
-    if (src)
         return;
-
-    // The box's own rendered pixmap, when the host pushed one. Drawn
-    // first so the frame lands on top of it.
-    if (info.index >= 0 && info.index < subSlots_.size()
-        && !subSlots_[info.index].pixmap.isNull()
-        && subSlots_[info.index].enabled) {
-        p.save();
-        p.drawPixmap(info.rect, subSlots_[info.index].pixmap,
-                     subSlots_[info.index].pixmap.rect());
-        p.restore();
     }
 
+    // ── neither: the row never resolved at all ────────────────────────
+    //
+    // No pixmap and no PanelSource — the binding was null, so
+    // setSubWindowBindings dropped it and this box only exists because
+    // the layout pass reserved its index. The dashed frame and title are
+    // the placeholder state, exactly as before.
     accent.setAlpha(150);
     p.save();
     p.setPen(QPen(accent, 1, Qt::DashLine));
@@ -2129,6 +3102,26 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
         }
         return;   // empty space: no drag, no selection change
     }
+
+    // v1.0.0: SELECTING IS NOT EDITING. The prototype lets a click pick
+    // the window the inspector describes in EVERY view state — that is
+    // how the rail, the inspector and the board agree on "which window
+    // am I looking at" — and only the DRAG half of the gesture is an
+    // edit-mode verb. So a non-editing board keeps its hit-test, its
+    // selection and its subWindowSelected signal exactly as they were,
+    // and skips only the four lines that start the drag.
+    //
+    // OVERVIEW: NOTHING CHANGES. The overview arm above already returns
+    // before this point on every hit, so an overview click can never
+    // leave the overview or enter editing. That is the HTML's
+    // 「总览为只读查看」 and it stays true because the gate below is
+    // reached, not because a new branch was added ahead of it.
+    //
+    // THE GATE IS ONE BOOLEAN READ PER GESTURE rather than a branch in
+    // each of the two drag arms below — the same discipline the overview
+    // read-only rule uses, for the same reason: one chance to be right
+    // beats three.
+    const bool canDrag = editing_;
     // v0.14: IN SPLIT MODE THE SUB-WINDOWS ARE THE ONLY HIT TARGETS.
     // The mother panels are not drawn, so their boxes must not be
     // hit-testable either — a click that landed on empty space and moved
@@ -2156,11 +3149,17 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
             if (i < subRects_.size() && subRects_[i].contains(e->position())) {
                 const bool changed = (subSelected_ != i);
                 subSelected_ = i;
-                subDragging_ = true;
-                subDragIndex_ = i;
-                subDragStartMouse_ = e->position().toPoint();
-                subDragStartMargins_ = subSlots_[i].src->margins();
-                setCursor(Qt::ClosedHandCursor);
+                // v1.0.0: the drag half, gated. Selection and the signal
+                // are above and unconditional; these four lines are the
+                // part that writes margins, so they are the part that
+                // waits for edit mode.
+                if (canDrag) {
+                    subDragging_ = true;
+                    subDragIndex_ = i;
+                    subDragStartMouse_ = e->position().toPoint();
+                    subDragStartMargins_ = subSlots_[i].src->margins();
+                    setCursor(Qt::ClosedHandCursor);
+                }
                 if (changed)
                     emit subWindowSelected(i);
                 update();
@@ -2185,12 +3184,15 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
                 update();
                 emit panelSelected(i);
             }
-            // Start drag
-            dragging_ = true;
-            dragIndex_ = i;
-            dragStartMouse_ = e->position().toPoint();
-            dragStartMargins_ = slots_[i].src->margins();
-            setCursor(Qt::ClosedHandCursor);
+            // Start drag — v1.0.0: gated, exactly as the sub-window arm
+            // above. Selection is not a write; this is.
+            if (canDrag) {
+                dragging_ = true;
+                dragIndex_ = i;
+                dragStartMouse_ = e->position().toPoint();
+                dragStartMargins_ = slots_[i].src->margins();
+                setCursor(Qt::ClosedHandCursor);
+            }
             return;
         }
     }
@@ -2208,9 +3210,71 @@ void HudCanvas::screenFrame(QRectF &frame, qreal &fit, QSize &logical) const
 {
     const auto &si = previewScreenInfo();
     logical = si.logical;
-    const QRectF avail = QRectF(rect()).adjusted(22, 46, -22, -kFooter);
     const QSize phys = si.physical;
     const qreal physAR = phys.height() / qreal(phys.width());
+
+    // ─── v1.0.0: THE FIDELITY BOARD, `.board` + `.board-viewport` ──────
+    //
+    // A different fitting rule from the legacy arm below, and the reason
+    // it is a branch inside this function rather than a second function:
+    // paintEvent, mouseMoveEvent, mouseReleaseEvent and keyPressEvent
+    // all resolve the frame through HERE. One arm means the box the user
+    // sees and the coordinate a drag converts through cannot drift
+    // apart, which is the property that function's own comment claims.
+    //
+    // The rule, from the CSS:
+    //   `.board-viewport { padding:12px 14px 0; align-items:center;
+    //                       justify-content:center; overflow:auto }`
+    //   `.board          { width:min(100%,1050px); aspect-ratio:16/9 }`
+    //   `.board.portrait { width:min(48%,560px);   aspect-ratio:9/16 }`
+    //
+    // So: shrink the widget by the viewport padding, cap the width by
+    // the orientation's constant, derive the height from the OUTPUT'S
+    // aspect ratio (not from a hardcoded 16/9 — those two literals are
+    // only correct for the prototype's two demo displays, and this
+    // canvas must describe whatever the user actually has plugged in).
+    //
+    // ONE DELIBERATE DEVIATION, and it is a fix rather than a
+    // shortcut. CSS `align-items:center` on an `overflow:auto` container
+    // clips the TOP of an over-tall child and makes it unscrollable —
+    // a long-standing flexbox behaviour, and one the audit's own
+    // LIMITATIONS.json records as a browser artefact rather than a
+    // design. Clamping the top to the viewport instead costs nothing
+    // when the board fits (the clamp never fires) and stops the board
+    // from losing its upper edge when it does not.
+    //
+    // The size is ROUNDED TO WHOLE PIXELS on purpose: a 1px border on a
+    // fractional rect is a two-pixel smear in Qt, and the fidelity board
+    // is a flat rectangle with a hairline — every sub-pixel on its edge
+    // is visible. The rounding costs at most half a logical pixel of
+    // aspect ratio and it buys an exact border.
+    if (consoleFidelity_) {
+        const QRectF avail =
+            QRectF(rect()).adjusted(kBoardPadX, kBoardPadTop, -kBoardPadX, 0.0);
+        const bool portrait = isPortrait(phys);
+        const qreal ar = physicalAspect(phys);
+        const qreal availW = std::max(0.0, avail.width());
+        const qreal boardW = portrait
+            ? std::min(availW * kBoardPortraitFraction, kBoardMaxWidthPortrait)
+            : std::min(availW, kBoardMaxWidthLandscape);
+        const qreal boardH = portrait
+            ? std::max(boardW * ar, kBoardPortraitMinHeight)
+            : boardW * ar;
+
+        const qreal cx = avail.center().x();
+        qreal top = avail.center().y() - boardH / 2.0;
+        if (top < avail.top())
+            top = avail.top();
+        frame = QRectF(QPointF(qRound(cx - boardW / 2.0), qRound(top)),
+                       QSizeF(qRound(boardW), qRound(boardH)));
+        fit = ((logical.width() <= 0 || logical.height() <= 0))
+            ? 0.0
+            : std::min(frame.width() / logical.width(),
+                       frame.height() / logical.height());
+        return;
+    }
+
+    const QRectF avail = QRectF(rect()).adjusted(22, 46, -22, -kFooter);
 
     QSizeF screen(avail.width(), avail.width() * physAR);
     if (screen.height() > avail.height())
@@ -2233,7 +3297,53 @@ void HudCanvas::mouseMoveEvent(QMouseEvent *e)
     // write real margins. One branch here is the belt to that braces.
     if (overviewMode_)
         return;
+    // v1.0.0: AND NEITHER DOES A NON-EDITING BOARD. The prototype's
+    //     if(state.editing && state.view!=='overview') setupDrag();
+    // is the whole rule: dragging is an EDIT-mode verb, and a board that
+    // is merely being inspected must not move windows under a stray
+    // mouse-down. `editing_` is read here as well as in the press
+    // handler because a mode toggle mid-gesture (Esc while the button is
+    // down, or the console leaving the overview) must stop the write on
+    // the next motion rather than finish it — the press already
+    // validated the mode once, and this is what makes that validation
+    // still true on the second and tenth motion.
+    //
+    // Nothing is cleared here: a release still lands in
+    // mouseReleaseEvent and clears the cursor and both flags, so a
+    // gesture that is refused mid-flight ends in a consistent state.
+    if (!editing_)
+        return;
     if (subDragging_ && subDragIndex_ >= 0) {
+        // ── v1.0.0 integration (stage A / O2 review ②) ──────────────────
+        // THE VISIBILITY GUARD THE KEYBOARD ARM ALREADY HAS (see
+        // :3255/:3266 — the arrow-key nudge refuses to move a window that
+        // is not on the board). The mouse arm was the one path with no
+        // such test: hide the window (or its whole panel) while the button
+        // was down and every subsequent motion kept writing margins for a
+        // box nobody can see, so the window drifted off behind the
+        // user's back and reappeared somewhere they never put it.
+        //
+        // WHY A RETURN AND NOT A CANCEL. Mirrors the keyboard arm exactly:
+        // the gesture state stays, the writes stop. A release still lands
+        // in mouseReleaseEvent and clears the flags, so refusing a motion
+        // mid-flight leaves the same consistent state the keyboard's
+        // refusal does — and re-showing the window resumes from the same
+        // start point rather than teleporting it by the distance the user
+        // moved while it was hidden.
+        //
+        // FIDELITY-GATED like every other visibility read in this file: a
+        // canvas nobody put into fidelity mode has consoleFidelity_ false
+        // and never reaches this test, so its drag semantics are the ones
+        // it always had.
+        if (consoleFidelity_ && subDragIndex_ < subSlots_.size()) {
+            const SubSlot &dragged = subSlots_[subDragIndex_];
+            if (!dragged.visible)
+                return;
+            if (dragged.parentSlot < 0
+                || dragged.parentSlot >= mhw::kPanelCount
+                || !panelVisible_[dragged.parentSlot])
+                return;
+        }
         QRectF frame;
         qreal fit = 0.0;
         QSize logical;
@@ -2249,6 +3359,14 @@ void HudCanvas::mouseMoveEvent(QMouseEvent *e)
         return;
     }
     if (!dragging_ || dragIndex_ < 0) return;
+    // ── v1.0.0 integration (stage A / O2 review ②), the mother half ─────
+    // The keyboard nudge already refuses a hidden panel (:3266); the
+    // mouse arm is the same write through a different gesture and needs
+    // the same refusal. Bound-check first, because `dragging_` can
+    // outlive a setLayoutMode() that emptied the slot vector.
+    if (consoleFidelity_
+        && (dragIndex_ >= mhw::kPanelCount || !panelVisible_[dragIndex_]))
+        return;
     QRectF frame;
     qreal fit = 0.0;
     QSize logical;
@@ -2288,6 +3406,20 @@ void HudCanvas::keyPressEvent(QKeyEvent *e)
         QWidget::keyPressEvent(e);
         return;
     }
+    // v1.0.0: AND NEITHER DOES A NON-EDITING BOARD. The prototype's
+    //     if(state.editing && state.selected && state.view!=='overview'
+    //        && ['ArrowUp',…].includes(e.key))
+    // is the whole rule: a nudge is an edit-mode verb, and a keypress
+    // that lands while the user is merely inspecting the board must not
+    // move a window. Forwarding to the base class keeps the arrow keys
+    // doing what Qt does with them when a QScrollArea owns the viewport
+    // (scrolling), which is exactly what the overview arm does above —
+    // so "not editing" and "overview" now read the same way, and the
+    // one behaviour that changed is the missing write.
+    if (!editing_) {
+        QWidget::keyPressEvent(e);
+        return;
+    }
     // v0.14: the arrow keys move whichever window is selected, in that
     // window's own mode. A sub-window selected in Split nudges by
     // subWindowMoved(); a base panel selected in Single nudges by
@@ -2313,12 +3445,27 @@ void HudCanvas::keyPressEvent(QKeyEvent *e)
     }
     if (!subSlots_.isEmpty() && subSelected_ >= 0
         && subSelected_ < subSlots_.size() && subSlots_[subSelected_].src) {
+        // v1.0.0: A HIDDEN WINDOW DOES NOT MOVE. The pointer path
+        // cannot reach one at all — layoutSubWindows() left its rect
+        // empty, so no press lands in it — but the keyboard path works
+        // off `subSelected_`, and a hide deliberately does NOT clear
+        // that (a hide/show round trip must leave the user's selection
+        // exactly where they left it). Without this guard the arrow keys
+        // would write real margins for a window that is not on the
+        // board: a change nobody can see from the console and nobody can
+        // undo from it either.
+        if (consoleFidelity_ && !subSlots_[subSelected_].visible) return;
         subDragStartMargins_ = subSlots_[subSelected_].src->margins();
         emit subWindowMoved(subSelected_,
                             movedSubMargins(subSelected_, dx, dy));
         return;
     }
     if (!slots_[selected_].bound) return;
+    // v1.0.0: same guard for a base panel hidden by
+    // setPanelWindowVisible(). It cannot be clicked either, but
+    // setSelectedPanel() is a console-driven setter that does not go
+    // through the hit test, so the key path needs its own check.
+    if (consoleFidelity_ && !panelVisible_[selected_]) return;
     dragStartMargins_ = slots_[selected_].src->margins();
     emit panelMoved(selected_, movedMargins(selected_, dx, dy));
 }

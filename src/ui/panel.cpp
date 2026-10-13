@@ -3,6 +3,14 @@
 #include "panel_accent.h"
 #include "panel_settings_game.h"
 #include "panel_sizing.h"
+// ─── v1.0.0 integration (stage A): the `winVisible` key's own home ─────
+// loadConfig() reads the console's per-window mount intent with THIS
+// file's spelling of the key and THIS file's polarity. Including the
+// header rather than repeating "winVisible" as a literal here is the
+// whole point: one constant, one default, one reader of the polarity.
+// (The reverse direction — console_fidelity_windows.cpp including
+// panel.h — is the .cpp only, so there is no include cycle.)
+#include "console_fidelity_windows.h"
 
 #include <LayerShellQt/Window>
 
@@ -609,6 +617,32 @@ void Panel::loadConfig()
     // output name (eDP-1 / DP-1 / HDMI-A-1 …), so the value is also
     // what wlr-randr / kscreen-doctor would print.
     outputName_ = s.value(QStringLiteral("outputName")).toString();
+
+    // ─── v1.0.0 integration (stage A): THE MISSING READER ───────────────
+    //
+    // mhw::writeWindowVisible() has been writing `winVisible` into this
+    // exact group all along and nothing consumed it, so a window the user
+    // hid from the console mounted again on the next launch. This is the
+    // read, inside the same beginGroup/endGroup every other key here uses:
+    //
+    //   absent → true (visible). The honest default, and the state that
+    //            must stay byte-identical to a run before this line
+    //            existed — no row, no behaviour change.
+    //   false  → hidden.
+    //   anything else → true. `toBool()` on a non-bool is false, and a
+    //            hand-edited row must not hide a window; the helper can
+    //            only ever write absent or `false`, so "anything else"
+    //            is out-of-band and the safe reading of it is default.
+    //
+    // One polarity, one constant, one default — all three owned by
+    // console_fidelity_windows.{h,cpp} and included at the top of this
+    // file rather than re-spelled. NOT QWidget::isVisible(), which is a
+    // runtime fact (see the member's own note in panel.h), and NOT a new
+    // store: this is the same key the checkbox writes, read by the code
+    // that mounts the surface.
+    windowVisibleIntent_ =
+        s.value(mhw::windowVisibleSettingsKey(), true).toBool();
+
     s.endGroup();
 
     scale_ = std::clamp(scale_, kMinScale, kMaxScale);
@@ -960,7 +994,29 @@ void Panel::setVisible(bool visible)
     // corner, it should remove the layer-shell surface entirely. The
     // section mask is a separate axis (each sub independently visible /
     // hidden) — the master gate is strictly above that.
-    if (!panelEnabled_ && visible)
+    //
+    // ─── v1.0.0 integration (stage A): THE SECOND TERM ──────────────────
+    // windowVisibleIntent_ is the console's per-window switch, read from
+    // `winVisible` in loadConfig(). Same shape, same meaning ("this
+    // window does not mount"), a DIFFERENT axis: the master switch is
+    // argv + the console's eye per PANEL, this one is one row per WINDOW
+    // written by 显示该窗口. Both are ANDed into the single mount seam
+    // here rather than fanned out across the ~15 setVisible()/show()
+    // call sites in main.cpp — one gate, one place to read it, and a new
+    // process that opens panels.ini with `winVisible=false` in this
+    // group never reaches show_helper() at all.
+    //
+    // WHY NOT `!isVisible()`. isVisible() is the runtime answer (no data
+    // yet, not asked for yet, master off) and would make this gate read
+    // "already hidden" as "the user hid it", re-writing its own decision
+    // into itself. The intent is a member loaded once, exactly like
+    // panelEnabled_, and both are re-read only by loadConfig().
+    //
+    // KEY ABSENT → true → the gate is exactly the pre-change expression,
+    // so a config without the row behaves, pixel for pixel and call for
+    // call, as it did before. Hiding still works: the gate only rejects
+    // `visible == true`.
+    if ((!panelEnabled_ || !windowVisibleIntent_) && visible)
         return;
 
     // Hide on first hide is fine; show without activating is the

@@ -48,8 +48,11 @@ sudo ./install-deps.sh      # one-time: Qt 6 + layer-shell-qt
 ./monster-control           # `monster-control` after install.sh
 ```
 
-The panels appear over the game. The console is where panels and their sections
-are switched on/off, positioned, and assigned to a display.
+The console provides a display overview, per-group views and a three-column
+window inspector. The topbar display selector changes only what you view; the
+inspector target selector changes where the selected window belongs. Preview
+content is demo data; Save writes the active game × layout scope. Theme and
+language controls are in Settings. See [the console guide](docs/CONSOLE.md).
 
 The player window has two shapes, chosen at launch: `--layout single` (the
 default, one panel) or `--layout split` (the debuff/buff capsules in their own

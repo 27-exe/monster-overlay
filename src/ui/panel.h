@@ -233,6 +233,14 @@ public:
     // section mask.
     void setPanelEnabled(bool on);
     [[nodiscard]] bool panelEnabled() const { return panelEnabled_; }
+    // ─── v1.0.0 integration (stage A): the mount intent, readable ───────
+    // The value loadConfig() read for `winVisible`, for tests and for
+    // anything that has to tell "the user hid this window" from "the
+    // master switch is off" apart. No setter on purpose: the intent is
+    // only ever read back from the ini (that is the contract — a NEW
+    // process honouring a key an OLD process wrote), and exposing a
+    // second writer is how two spellings of one fact come into being.
+    [[nodiscard]] bool windowVisibleIntent() const { return windowVisibleIntent_; }
 
     // ─── chrome (background + accent stripe + border) ───────────────────
     //
@@ -900,6 +908,29 @@ private:
     // matching namespace in panel_sections.h (PlayerSection / ...).
     uint32_t sectionMask_{0xFFFFFFFFu};
     bool panelEnabled_{true};
+    // ─── v1.0.0 integration (stage A): the per-window mount intent ──────
+    //
+    // THE FOURTH AXIS, and the one that used to have a writer with no
+    // reader. The console's 显示该窗口 checkbox writes `winVisible=false`
+    // into this panel's OWN group (mhw::writeWindowVisible, same
+    // panels.ini, same group loadConfig() already reads) — and nothing
+    // read it back, so a window the user hid came back on the next
+    // launch. This member is that reader.
+    //
+    // NOT isVisible(). QWidget::isVisible() answers "is a surface mapped
+    // right now", which is false for a panel the game has no data for,
+    // false before the first show() and false for a panel main.cpp has
+    // not asked for yet — it is a runtime fact, and the whole point of
+    // the removed `visible` key (see the note in saveConfig()) was that
+    // a runtime fact is the wrong thing to persist as intent. So the
+    // intent lives in its own member, defaulted TRUE, and the ONLY two
+    // writers are loadConfig() (from the ini) and the default.
+    //
+    // TRUE == "the user has not hidden this window". The key's polarity
+    // is the helper's: absent means visible, `false` means hidden — one
+    // polarity, spelled in console_fidelity_windows.cpp, read here with
+    // the same default.
+    bool windowVisibleIntent_{true};
     // Chrome on/off — see setChromeVisible(). Default true is what makes
     // this change a no-op for the four shipped panels.
     bool chromeVisible_{true};

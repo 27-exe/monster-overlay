@@ -11,6 +11,30 @@
 
 ---
 
+## 原生控制台：视图状态与窗口配置分离
+
+用户流程见 [CONSOLE.md](CONSOLE.md)。控制台沿用 `mhw-ui` 中的真实 Panel
+离屏绘制，并非把 HTML 嵌入 Qt；覆盖层入口与默认 Panel 绘制不因控制台外壳改变。
+
+- `control_panel.cpp` 的 `buildWindowStates()` 汇总当前游戏 × 布局的窗口；Split
+  的行来自实际拆分绑定，Rise 伙伴没有拆分表，使用真实母 Panel 的一行。
+- `console_fidelity_windows.{h,cpp}` 定义窗口归属/显示谓词及显隐持久化；
+  `hud_canvas.cpp` 同时对布局、绘制和命中应用当前查看屏与分组过滤。
+- viewer 是纯表现状态；窗口有效归属为 own → parent → primary。`leaveOverview()`
+  在控制台层保持当前 viewer，保留裸 HudCanvas 原有退出恢复语义。不要把 viewer
+  塞回窗口的限位 fallback。
+- `window_layout_geometry.h` 负责逻辑坐标与锚点边距转换；输入、拖动和保存使用
+  窗口有效目标屏，而非查看屏。`ConsoleLayoutStore` 保存的是控制台自身布局/缩放。
+- `RootScrollArea` 接收页面自然高度；CanvasScrollArea 向上传播画布 HfW，
+  PaneBudgetSplitter 提供页面预算。它们不持有游戏窗口配置，不能替用户改归属或位置。
+- Inspector 操作只写选中实例；同组分区操作仍使用所属面板的 section bit。设置弹窗
+  的主题/语言是独立按钮组，模态关闭与重开不复用已销毁控件。
+
+回归入口：`console-output-ownership-tests`（具名双屏、导航、编辑限位与存盘）、
+`console-integration-seams-tests`（选择/显隐/坐标/模态）、
+`console-root-scroll-tests`（页面滚动机制）及既有 snapshot 测试。离线验证须明确
+排除 live-game 观测探针，不能把排除项写成已通过。
+
 ## 0. 如何读这份文档
 
 | 你想做的事 | 先读 |

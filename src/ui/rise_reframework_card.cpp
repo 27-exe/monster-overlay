@@ -160,7 +160,13 @@ void RiseReframeworkCard::build(QWidget *contentParent, QVBoxLayout *inspectorLa
 
 void RiseReframeworkCard::refresh()
 {
-    if (!card_)
+    // A REAL test now. card_ is a QPointer (rise_reframework_card.h): the
+    // settings dialog this card was built into is a stack QDialog, so
+    // after exec() returns its children - every handle below - are
+    // deleted while the owner's 1500 ms tick keeps calling us. When
+    // card_ is null the card is not on any screen, and every other
+    // handle is its child, so the answer is the same for all of them.
+    if (card_.isNull())
         return;
 
     const bool riseSelected = owner_->currentGame() == mhw::GameId::Rise;

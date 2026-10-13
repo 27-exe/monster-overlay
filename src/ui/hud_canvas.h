@@ -312,8 +312,129 @@ public:
     {
         return subRects_;
     }
+
+    // ─── v1.0.0 (OUTPUT-CONTRACT-COMPLETION): the four-slot arm's own ────
+    // boxes, by panel index, in CANVAS pixels — the mother half of
+    // subWindowRects(). One entry per slot, sized mhw::kPanelCount, and
+    // an EMPTY rect is exactly what the paint left for a panel it did
+    // not draw (every panel's lastTarget_ is reset at the top of
+    // paintEvent, so a skipped panel keeps the empty one). That makes
+    // "which windows did this frame actually paint" answerable from the
+    // rects rather than from a screenshot, which is what lets a test
+    // assert chip == painted boxes across BOTH arms of the board — the
+    // sub-window one above and this one — instead of comparing the chip
+    // to a sub-window count that was never the whole picture in Single,
+    // or in the Rise Split overview's pets row.
+    //
+    // READ-ONLY, and it exposes no algorithm: the rectangles come from
+    // the same paint pass the click handler hit-tests, so a box that is
+    // not painted here is not clickable either.
+    [[nodiscard]] QVector<QRectF> motherWindowRects() const;
     // Same for the drag highlight. -1 when nothing is selected.
     [[nodiscard]] int selectedSubWindow() const { return subSelected_; }
+
+    // ─── v1.0.0: the console writes the selection back ──────────────
+    //
+    // Until now the selection had exactly ONE writer: a press inside a
+    // sub-window's box (mousePressEvent, which emits subWindowSelected).
+    // The console's inspector is the other direction — the user picks a
+    // window in the rail or the inspector list and the board has to
+    // highlight the same one — and that direction did not exist, so a
+    // selection made anywhere but on the board left the board drawing
+    // the previous ring while the inspector described another window.
+    //
+    // This is that write, and it is the only public way to set it.
+    //
+    // IT DOES NOT EMIT subWindowSelected. That signal already means "the
+    // user selected this ON THE CANVAS", and a setter that echoed it
+    // would let the console's own handler call straight back in — the
+    // inspector/board ping-pong this pair exists to avoid. The setter
+    // writes the state and schedules the repaint; the mouse path stays
+    // the only emitter, so keyboard/Inspector/mouse cannot form a loop.
+    //
+    // BOUNDS. -1 clears, which is what the console sends when the
+    // inspector has nothing selected. Any other value that is not a live
+    // index — below -1, or at/above subWindowCount() — ALSO clears
+    // rather than being ignored: a stale index is exactly what a rebuilt
+    // binding list leaves behind, and a selection pointing past the end
+    // of the vector would let the drag and arrow-key paths act on a
+    // window that no longer exists. Clearing is the safe answer, and it
+    // is why setSubWindowBindings() drops an out-of-range selection too.
+    //
+    // The no-op guard is the one every other setter here uses: a console
+    // that pushes the same selection on every refresh must not schedule
+    // a repaint each time. Works in every view state — the overview
+    // selects for the inspector exactly as the prototype does.
+    void setSelectedSubWindow(int index);
+
+    // ─── v1.0.0: THE CONSOLE-FIDELITY BOARD ────────────────────────────
+    //
+    // `reference.html` is the frozen authority for what the console's
+    // board looks like, and until this flag existed the canvas painted
+    // the OLD prototype's stage: a #06080a field, a ruler, a header
+    // strip, a footer strip and a safe-area rectangle. None of those
+    // exist in the frozen HTML — `.board` is a `#101010` rectangle with
+    // a `1px --board-line` border, an inset 12px band, a 10px mono label
+    // and, in edit mode, a 5%×5% lattice. That is what this flag turns
+    // on.
+    //
+    // DEFAULT FALSE, AND THE DEFAULT PATH IS UNTOUCHED. Every fidelity
+    // branch below is written as a short-circuit on a false member, so a
+    // canvas nobody put into fidelity mode paints exactly what it
+    // painted before this flag existed — that is the guarantee the 12
+    // Single-mode baselines and the two canvas->grab() suites rest on,
+    // and it is why the old chrome is GATED OFF rather than deleted.
+    //
+    // ONLY ControlPanel turns it on. The flag is deliberately not read
+    // from settings, not wired to the stagebar, and not consumed by the
+    // overlay: it is a paint/geometry switch for the console's board and
+    // nothing else.
+    void setConsoleFidelityMode(bool on);
+    [[nodiscard]] bool consoleFidelityMode() const { return consoleFidelity_; }
+
+    // ─── v1.0.0: WINDOW VISIBILITY — the prototype's `.visible` ────────
+    //
+    // NOT THE SAME THING AS `enabled`. `SubSlot::enabled` / `Slot::enabled`
+    // mean "every section of this window is off", and the board answers
+    // that with the prototype's `.hidden-window` placeholder (opacity
+    // .28, a `--rust` border, the word `hidden` in place of the body) —
+    // a window that is DRAWN AS HIDDEN. `visible` is the other knob: the
+    // prototype drops the window out of `visibleWindows()` altogether
+    // (reference.html:442), so it is not laid out, not painted and not
+    // hit-testable, and the board looks exactly as it would if the
+    // window did not exist.
+    //
+    // DEFAULT TRUE. A console that never calls these two setters paints
+    // every window it was given, which is the pre-1.0.0 behaviour and
+    // the reason these can be added without touching a single baseline.
+    //
+    // UNKNOWN INDEX IS A SAFE NO-OP — in both directions. The setter
+    // never grows `subSlots_` (growing would renumber every later
+    // binding, which is the same trap setSubWindowPixmap() documents);
+    // the getter answers `true` — the default — for an index that is not
+    // a live window, so a stale index reads as "visible" rather than
+    // crashing or inventing a hidden state.
+    //
+    // CONSUMPTION IS FIDELITY-GATED, exactly like the chrome it lives
+    // inside. A non-fidelity canvas keeps its pre-1.0.0 semantics
+    // byte-for-byte no matter what the shell pushes.
+    //
+    // HIDING WRITES NOTHING. The window's source keeps its margins, its
+    // output and its sections; showing it again re-lays it out from the
+    // source it always had. The only canvas state a hide can disturb is
+    // the arrow-key nudge, which refuses to move a hidden window rather
+    // than clearing `subSelected_` — so a hide/show round trip leaves
+    // the selection exactly where the user left it.
+    //
+    // REBINDING RESETS. setSubWindowBindings() rebuilds `subSlots_` from
+    // scratch, and visibility is per-binding state that the new list does
+    // not carry — so every window comes back visible. See the setter's
+    // own note: the shell must re-push visibility after a rebind.
+    void setSubWindowVisible(int index, bool visible);
+    [[nodiscard]] bool subWindowVisible(int index) const;
+    // The same pair for the four base panels, addressed by panel index.
+    void setPanelWindowVisible(int panelIndex, bool visible);
+    [[nodiscard]] bool panelWindowVisible(int panelIndex) const;
 
     QSize sizeHint() const override;
     bool hasHeightForWidth() const override { return zoom_ <= 1.0; }
@@ -487,6 +608,21 @@ private:
         const PanelSource *src{nullptr};
         QPixmap pixmap;
         bool enabled{true};
+        // v1.0.0: THE PROTOTYPE'S `visible`, NOT ANOTHER `enabled`.
+        // enabled == false means "every section is off" and the board
+        // draws the `.hidden-window` placeholder; visible == false means
+        // the window is dropped out of `visibleWindows()` entirely
+        // (reference.html:442) — not laid out, not painted, not
+        // hit-testable. Default true, so a binding list nobody has
+        // filtered behaves exactly as it did before this field existed.
+        //
+        // Owned by the CANVAS, not by the binding: setSubWindowBindings()
+        // rebuilds this vector wholesale and a fresh SubSlot is visible,
+        // so a rebind resets the filter and the shell has to push it
+        // again. That is a deliberate choice — carrying a per-INDEX
+        // visibility across a rebind would apply window A's filter to
+        // whatever window the shell happens to put at A's slot next.
+        bool visible{true};
         // Which of the four base panels this window was carved out of,
         // so the preview can paint it in that panel's accent colour and
         // prove the derivation (see buildSubWindowSources' doc comment).
@@ -562,6 +698,21 @@ private:
     // logical→canvas mapping the four-slot arm established.
     QVector<SubWindowPaintInfo> layoutSubWindows(
         qreal fit, const QPointF &frameTopLeft, const QSize &logical);
+
+    // v1.0.0: THE BOARD'S OWN HEIGHT, at a given widget width. The
+    // fidelity board is not "whatever the screen's aspect ratio fills":
+    // it is `.board`, which caps its width and carries a 12px viewport
+    // pad on top, so the height has to follow the WIDTH rule and not the
+    // other way round. Spelled once and used by both sizeHint() and
+    // heightForWidth(), because the two disagreeing is exactly how the
+    // frame collapsed into a horizontal band in v0.11.4 (see the note on
+    // sizeHint()).
+    [[nodiscard]] int fidelityHeightForWidth(int width) const;
+
+    // v1.0.0: the `.board-label` line, composed the way
+    // reference.html:475 composes it — the display's own label, then
+    // " · logical coordinate space".
+    [[nodiscard]] QString fidelityBoardLabel() const;
 
     // ─── drag state (v0.14) ────────────────────────────────────────────
     //
@@ -665,6 +816,13 @@ private:
     void rebuildScreenCache() const;
 
     std::array<Slot, mhw::kPanelCount> slots_{};
+    // v1.0.0: the four base panels' own `visible` (see the public pair).
+    // A plain C array rather than a QVector so the length is the compile
+    // time constant it must be — an initializer that lists four `true`s
+    // stops the build if `mhw::kPanelCount` ever stops being four,
+    // which is the same guard `static_assert(kAccents.size() == ...)`
+    // buys at the top of the .cpp.
+    bool panelVisible_[mhw::kPanelCount] = {true, true, true, true};
     // v0.13: the split's sub-windows. EMPTY in Single mode — that
     // emptiness is the whole pixel-identity guarantee (see the comment
     // on the public API above). Sized and filled by setSubWindowSources(),
@@ -707,6 +865,12 @@ private:
     bool overviewMode_{false};
     QString overviewScreen_;
     QString savedPreviewOutput_;
+
+    // v1.0.0: paint the FROZEN prototype's board instead of the old
+    // prototype's stage. False by default, so every branch reading it is
+    // a short-circuit — see the public setter's note for why the old
+    // chrome is gated off rather than deleted.
+    bool consoleFidelity_{false};
 
     // v0.11.4: per-instance screen cache. Was two function-level statics
     // inside previewScreenInfo() — built once per PROCESS, so a monitor

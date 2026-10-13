@@ -160,6 +160,7 @@
 #include <QPushButton>
 #include <QScreen>
 #include <QSettings>
+#include <QMetaObject>
 #include <QStackedWidget>
 #include <QTextStream>
 #include <QTemporaryDir>
@@ -177,6 +178,7 @@
 #define protected public
 #include "ui/panel_settings_game.h"
 #include "ui/control_panel.h"
+#include "ui/hud_canvas.h"
 #include "ui/panel.h"
 #undef private
 #undef protected
@@ -361,89 +363,114 @@ void seedSplitPlayerEmpty(const QString &home)
 {
     clearIni(home);
     QSettings s(iniPath(home), QSettings::IniFormat);
-    s.beginGroup(splitGroup(QStringLiteral("player")));
+    s.beginGroup(splitGroup(QStringLiteral("player-mantles")));
     s.setValue(QStringLiteral("outputName"), QString());
     s.endGroup();
     s.sync();
 }
 
 
-// ─── the SCREEN dropdown, driven the way a user drives it ────────────
+// ─── the SCREEN control, driven the way a user drives it ───────────
 //
-// There is one combo per inspector page, and all four live in the console
-// at once — inside a QStackedWidget, one page per panel, of which only the
-// current one is visible. findChildren() is the public path — the same
-// lookup split_console_layout_persistence_tests.cpp uses for the rail
-// buttons — so this drives the real widget, not a back door.
+// v1.0.0: THE OLD INSPECTOR PAGE IS NO LONGER ON SCREEN, so this file
+// must not drive it. The console's visible 目标显示器 control is the
+// selected WINDOW's `metaOutput` combo in the three-column inspector
+// (reference.html:491: one <select id="meta-output"> per selected
+// window). Three real steps get there, in the order a user takes them:
 //
-// The page is selected the way the user selects it: selectPanel(i) moves
-// inspectorStack_'s index, and the NAV buttons are the public handle on
-// that. The PLAYER page is index 0 and it is the panel under test — it is
-// the panel whose output buildOverlayArgv() spells as --output, and the
-// one the reporter's file points at.
+//   1. the rail's PLAYER nav card (findChild("navPlayer"), the same
+//      public lookup split_console_layout_persistence_tests.cpp uses for
+//      the rail buttons) — the console's own panel selection;
+//   2. a click on the player's box on the board: `panelSelected` in
+//      Single (the mother panel IS the window there) and
+//      `subWindowSelected` in Split (the panel has no window row of its
+//      own in split mode — the prototype lists only the split windows,
+//      reference.html:432 defs()). The signal is invoked through
+//      QMetaObject, which is exactly the delivery the console's slot
+//      sees from a real mouse press, without needing a pixel position
+//      the offscreen platform would have to guess;
+//   3. the one and only output combo that is VISIBLE,
+//      findChild("metaOutput").
 //
-// The combo is identified by its ENTRIES rather than by an objectName,
-// because buildInspector() gives the output combo none. Its first entry
-// is always "<PRIMARY>" with empty userData, and the rest are the
-// attached outputs' names as userData — which is exactly the shape a user
-// sees and picks from. The layoutCombo_ is excluded by objectName so the
-// Single/Split selector, whose entries also carry empty userData, is
-// never mistaken for a screen picker.
-//
-// WHY THE PAGE MATTERS, MEASURED: findChildren<QComboBox*>() returns all
-// five combos in child order, and only the LAST of the four screen
-// pickers is the player's — the four inspector pages are added to the
-// stack in slot order but their widgets are constructed later. Taking the
-// first match silently drove the PETS dropdown, whose write lands in
-// [world/split/pet-damage] and satisfies no assertion here.
+// The combo is still identified by its ENTRIES as well as its name,
+// because the check has to fail loudly if the shape ever changes: its
+// first entry is the empty-userData `follow` (跟随所属面板) and the rest
+// carry the attached outputs' names as userData.
 QComboBox *findPlayerScreenCombo(ControlPanel &cp)
 {
-    // The inspector stack. inspectorStack_ is private, so it is found by
-    // the one fact that identifies it from outside: it is the console's
-    // only QStackedWidget, and it holds the four inspector pages.
-    QStackedWidget *stack = cp.findChild<QStackedWidget *>();
-    if (!stack)
-        return nullptr;
-
-    // Move to the PLAYER page (index 0) the way selectPanel(0) does, so
-    // the combo returned below belongs to the panel under test. The nav
-    // button's own click() would do the same thing and also touch the
-    // canvas; setting the stack's index directly is the smaller public
-    // action with the same effect on which page's combo we read.
-    stack->setCurrentIndex(0);
-    pumpEvents();
-
-    QWidget *page = stack->currentWidget();
-    if (!page)
-        return nullptr;
-
-    for (QComboBox *c : page->findChildren<QComboBox *>()) {
-        if (!c || c->count() < 2)
-            continue;
-        // The layoutCombo_ also carries empty userData on both entries,
-        // so it must be excluded by name or it is mistaken for a picker
-        // whose first entry means "<PRIMARY>".
-        if (c->objectName() == QStringLiteral("layoutCombo"))
-            continue;
-        bool hasPrimary = false;
-        bool hasOther = false;
-        for (int i = 0; i < c->count(); ++i) {
-            const QString d = c->itemData(i).toString();
-            if (d.isEmpty())
-                hasPrimary = true;
-            if (d == QLatin1String(kOtherName))
-                hasOther = true;
+    // 1. the nav card.
+    for (QPushButton *button : cp.findChildren<QPushButton *>()) {
+        if (button->objectName() == QStringLiteral("navPlayer")) {
+            button->click();
+            pumpEvents();
+            break;
         }
-        if (hasPrimary && hasOther)
-            return c;
     }
-    return nullptr;
+
+    HudCanvas *canvas = cp.findChild<HudCanvas *>();
+    if (!canvas)
+        return nullptr;
+
+    // 2. the click. Which box the player panel HAS depends on the mode,
+    //    and the model is the one place that answers that question.
+    // WHICH player window: the one this file's assertions are about —
+    // player-mantles — when the split host built it, and otherwise the
+    // first player row (Single has exactly one, the mother panel).
+    const mhw::WindowList windows = cp.buildWindowStates();
+    int chosen = -1;
+    for (int i = 0; i < windows.size(); ++i) {
+        const mhw::WindowState &w = windows[i];
+        if (w.key != QLatin1String("player")
+            && !w.key.startsWith(QLatin1String("player-")))
+            continue;
+        if (w.key == QLatin1String("player-mantles")) {
+            chosen = i;
+            break;
+        }
+        if (chosen < 0)
+            chosen = i;
+    }
+    bool clicked = false;
+    for (int i = 0; i < windows.size() && chosen >= 0; ++i) {
+        if (i != chosen)
+            continue;
+        const mhw::WindowState &w = windows[i];
+        if (w.subIndex >= 0) {
+            QMetaObject::invokeMethod(canvas, "subWindowSelected",
+                                      Qt::DirectConnection,
+                                      Q_ARG(int, w.subIndex));
+        } else {
+            QMetaObject::invokeMethod(canvas, "panelSelected",
+                                      Qt::DirectConnection,
+                                      Q_ARG(int, w.panelIndex));
+        }
+        clicked = true;
+        break;
+    }
+    pumpEvents();
+    if (!clicked) {
+        // No player window in this scope at all (a World console has no
+        // pets panel; a scope with everything hidden has no rows) — the
+        // caller decides what that means.
+        return nullptr;
+    }
+
+    // 3. the visible combo.
+    QComboBox *combo = cp.findChild<QComboBox *>(QStringLiteral("metaOutput"));
+    if (!combo || !combo->isVisible() || combo->count() < 2)
+        return nullptr;
+    bool hasPrimary = false;
+    bool hasOther = false;
+    for (int i = 0; i < combo->count(); ++i) {
+        const QString d = combo->itemData(i).toString();
+        if (d.isEmpty())
+            hasPrimary = true;
+        if (d == QLatin1String(kOtherName))
+            hasOther = true;
+    }
+    return (hasPrimary && hasOther) ? combo : nullptr;
 }
 
-// Pick one entry by its userData — the output name — exactly as a user
-// picks it from the dropdown. setCurrentIndex() emits
-// currentIndexChanged, which is the signal buildInspector() connected the
-// handler to; nothing about this call is special, which is the point.
 void pickOutput(QComboBox *combo, const QString &outputName)
 {
     if (!combo)
@@ -712,6 +739,7 @@ int main(int argc, char *argv[])
             // on disk immediately, before any exit path runs.
             pickOutput(c3, QString::fromLatin1(kOtherName));
 
+
             // THE CONSOLE'S OWN WRITE — THE LAUNCH PATH, spelled out
             // through saveBeforeLaunch() rather than through the loop it
             // calls. That distinction is the whole point: the scope pair
@@ -726,7 +754,7 @@ int main(int argc, char *argv[])
             // reads. Spelled out in full so a write into world/single/player
             // cannot satisfy it.
             checkQ(iniValue(home.path(),
-                            splitGroup(QStringLiteral("player")),
+                            splitGroup(QStringLiteral("player-mantles")),
                             QStringLiteral("outputName")),
                    QString::fromLatin1(kOtherName),
                    "THE PICK REACHES [world/split/player] — the group the "
@@ -766,7 +794,7 @@ int main(int argc, char *argv[])
             pickOutput(c4, QString::fromLatin1(kOtherName));
             saveBeforeLaunchPath(cp4);
             checkQ(iniValue(home.path(),
-                            splitGroup(QStringLiteral("player")),
+                            splitGroup(QStringLiteral("player-mantles")),
                             QStringLiteral("outputName")),
                    QString::fromLatin1(kOtherName),
                    "pick 1 (DP-1) lands in the split group");
@@ -777,7 +805,7 @@ int main(int argc, char *argv[])
             pickOutput(c4, QString::fromLatin1(kPrimaryName));
             saveBeforeLaunchPath(cp4);
             checkQ(iniValue(home.path(),
-                            splitGroup(QStringLiteral("player")),
+                            splitGroup(QStringLiteral("player-mantles")),
                             QStringLiteral("outputName")),
                    QString::fromLatin1(kPrimaryName),
                    "pick 2 (HDMI-A-1) REPLACES it in the split group — no "
@@ -788,7 +816,7 @@ int main(int argc, char *argv[])
             pickOutput(c4, QString::fromLatin1(kOtherName));
             saveBeforeLaunchPath(cp4);
             checkQ(iniValue(home.path(),
-                            splitGroup(QStringLiteral("player")),
+                            splitGroup(QStringLiteral("player-mantles")),
                             QStringLiteral("outputName")),
                    QString::fromLatin1(kOtherName),
                    "pick 3 (back to DP-1) lands again — the reporter's "
@@ -831,21 +859,28 @@ int main(int argc, char *argv[])
               "and the split sub-windows were written too — the save loop "
               "covers [world/split/*] as a whole, not only the mothers");
 
+        // v1.0.0: THE PICK IS A WINDOW'S PICK. The console's visible
+        // output control is the selected window's 目标显示器 (metaOutput),
+        // so the value lands on the window the user clicked — and in
+        // split mode that window is the split sub-window, whose OWN
+        // output wins over the parent's in the resolve chain
+        // (mhw::resolveWindowOutput: own → parent → primary).
         checkQ(iniValue(home.path(),
                         splitGroup(QStringLiteral("player-mantles")),
                         QStringLiteral("outputName")),
-               QString(),
-               "a split sub-window carries NO output of its own — its "
-               "screen is inherited from the parent at overlay startup, so "
-               "a console that pre-filled it would take that decision away");
+               QString::fromLatin1(kOtherName),
+               "the split sub-window carries the pick itself");
 
-        // The parent, which is the one that must carry the pick.
+        // AND THE PARENT IS LEFT ALONE: the window resolved its OWN
+        // screen, so the panel's row stays whatever it was rather than
+        // silently acquiring a second, competing answer that a child
+        // following its parent would then inherit.
         checkQ(iniValue(home.path(),
                         splitGroup(QStringLiteral("player")),
                         QStringLiteral("outputName")),
-               QString::fromLatin1(kOtherName),
-               "the parent [world/split/player] carries it — the value "
-               "inheritParentOutput() hands down to the eleven");
+               QString(),
+               "the parent [world/split/player] is untouched — the window "
+               "resolved its own screen, so the panel's row stays empty");
     }
 
     // ── 6b. THE MODE SWITCH, WHICH IS WHERE THE BUG BIT ──────────────
@@ -917,7 +952,7 @@ int main(int argc, char *argv[])
             // reads, because that is the mode the user made the pick in
             // and the mode the conf still names for the next launch.
             checkQ(iniValue(home.path(),
-                            splitGroup(QStringLiteral("player")),
+                            splitGroup(QStringLiteral("player-mantles")),
                             QStringLiteral("outputName")),
                    QString::fromLatin1(kOtherName),
                    "a pick made in SPLIT mode survives the mode switch into "
@@ -959,7 +994,7 @@ int main(int argc, char *argv[])
         closeEventPath(cp7);
 
         checkQ(iniValue(home.path(),
-                        splitGroup(QStringLiteral("player")),
+                        splitGroup(QStringLiteral("player-mantles")),
                         QStringLiteral("outputName")),
                QString::fromLatin1(kOtherName),
                "and a pick survives the console being CLOSED into "
@@ -1023,7 +1058,7 @@ int main(int argc, char *argv[])
         // And it must NOT be in the split group, which no overlay running
         // this conf will ever read.
         checkQ(iniValue(home.path(),
-                        splitGroup(QStringLiteral("player")),
+                        splitGroup(QStringLiteral("player-mantles")),
                         QStringLiteral("outputName")),
                QString(),
                "and NOT in [world/split/player] — a value written there is "
@@ -1054,7 +1089,7 @@ int main(int argc, char *argv[])
                "on the CLOSE path the pick lands in [world/single/player]");
 
         checkQ(iniValue(home.path(),
-                        splitGroup(QStringLiteral("player")),
+                        splitGroup(QStringLiteral("player-mantles")),
                         QStringLiteral("outputName")),
                QString(),
                "and not in [world/split/player] — the close writes the "
@@ -1076,6 +1111,8 @@ int main(int argc, char *argv[])
         mhw::setPanelSettingsGame(mhw::GameId::World);
         mhw::setPanelSettingsLayout(
             mhw::PlayerSection::PlayerLayoutMode::Split);
+        // NOT the window the pick lands on: this one is about the scope
+        // GLOBALS' own spelling, so it stays on the panel's group name.
         checkQ(splitGroup(QStringLiteral("player")),
                QLatin1String("world/split/player"),
                "the scope globals, stated in the exits' order, address "
@@ -1159,7 +1196,7 @@ int main(int argc, char *argv[])
                     wrongDomain);
 
         checkQ(iniValue(home.path(),
-                        splitGroup(QStringLiteral("player")),
+                        splitGroup(QStringLiteral("player-mantles")),
                         QStringLiteral("outputName")),
                QString::fromLatin1(kOtherName),
                "and the pick is still in the domain the overlay reads");
@@ -1265,7 +1302,7 @@ int main(int argc, char *argv[])
             sd.endGroup();
             // The split domain — the one this console is in, and the one
             // the overlay reads — names the primary.
-            sd.beginGroup(splitGroup(QStringLiteral("player")));
+            sd.beginGroup(splitGroup(QStringLiteral("player-mantles")));
             sd.setValue(QStringLiteral("outputName"),
                         QString::fromLatin1(kPrimaryName));
             sd.endGroup();
@@ -1320,7 +1357,7 @@ int main(int argc, char *argv[])
             // it, because that IS the member.
             saveBeforeLaunchPath(cpC);
             checkQ(iniValue(home.path(),
-                            splitGroup(QStringLiteral("player")),
+                            splitGroup(QStringLiteral("player-mantles")),
                             QStringLiteral("outputName")),
                    QString::fromLatin1(kPrimaryName),
                    "and the console writes that same HDMI-A-1 into the split "

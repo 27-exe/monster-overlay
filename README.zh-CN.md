@@ -45,7 +45,9 @@ sudo ./install-deps.sh      # 一次性:Qt 6 + layer-shell-qt
 ./monster-control           # 跑过 install.sh 后直接 `monster-control`
 ```
 
-三块面板会浮在游戏之上。面板与其子项的开关、位置、所在屏幕,都在控制台里设置。
+控制台包含显示器总览、分组视图与三列窗口检查器。顶栏显示器选择只切换查看屏，
+检查器的目标显示器改变选中窗口归属；预览是演示内容，保存会写入当前游戏 × 布局
+作用域。主题与语言在设置中切换，详见[控制台指南](docs/CONSOLE.md)。
 
 玩家窗口有两种形态，启动时二选一：`--layout single`（默认，一块面板）或
 `--layout split`（debuff/buff 胶囊独立成窗）。两种形态的完整说明，以及

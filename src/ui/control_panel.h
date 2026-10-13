@@ -12,6 +12,12 @@
 // translation unit — only into the header, where it is used.
 #include "ui/panel_sections.h"
 
+// v1.0.0 fidelity port: the window model. A header-only struct plus a
+// handful of free functions in console_fidelity_windows.cpp; including
+// it here costs one small TU (already in mhw-ui) and keeps the model's
+// contract next to the members that hold its state.
+#include "ui/console_fidelity_windows.h"
+
 #include <QMainWindow>
 #include <QPointer>
 #include <QSlider>
@@ -33,6 +39,8 @@ class QFrame;
 class QLabel;
 class QPushButton;
 class QStackedWidget;
+class QVBoxLayout;
+class QPlainTextEdit;
 class QWidget;
 class Panel;
 class PlayerPanel;
@@ -77,6 +85,15 @@ public:
     Q_PROPERTY(int stagePaneHeight READ stagePaneHeight WRITE setStagePaneHeight)
     int stagePaneHeight() const;
     void setStagePaneHeight(int h);
+    // v1.0.0 (O1): the stage pane, addressed by NAME rather than by a
+    // splitter index spelled out at five call sites. The stage moved from
+    // index 1 to index 0 when the prototype's stage-on-top layout was
+    // adopted, and one call site left behind collapses the wrong pane.
+    // See the definitions in the .cpp for the full contract — including
+    // why the splitter's live height is stagePaneSize() and not the
+    // Q_PROPERTY's stagePaneHeight().
+    [[nodiscard]] QWidget *stagePane() const;
+    [[nodiscard]] int stagePaneSize() const;
 
     explicit ControlPanel(QWidget *parent = nullptr);
     ~ControlPanel() override;
@@ -259,13 +276,108 @@ private:
     // answer arrives — so this reads a cached fact rather than scanning
     // /proc a second time on the same tick.
     void refreshInstanceCombo();
+    // ─── v1.0.0 fidelity port: the window model ──────────────────────────
+    //
+    // The prototype's inspector addresses ONE window — the selected one —
+    // and the canvas, the rail, the export payload and the eye toggles all
+    // read or write the same list. These four methods are the whole model:
+    //
+    //   buildWindowStates()   the live list for the scope in force
+    //   selectedWindow()      the one row the inspector describes
+    //   selectWindow()        the write-back, from the canvas or the rail
+    //   refreshWindowModel()  rebuild + push into canvas + inspector
+    //
+    // They are members rather than free functions because they read
+    // splitPreview_ / ctl_ / layoutModeInForce_ / currentGame() — four
+    // pieces of state that a file-local table would have to mirror.
+    // ─── end v1.0.0 window model ───────────────────────────────────────
+    // v1.0.0 (O1): THE FOUR MODEL METHODS ARE PUBLIC. They are the one
+    // answer to "which windows does this scope have / which one is
+    // selected", and the tests that pin the visible behaviour (the
+    // console's structure test and the scope-persistence test) must be
+    // able to ask that question without reaching through a hidden
+    // widget — which is precisely the trap those two files used to fall
+    // into. The writers (selectWindow / refreshWindowModel) come along
+    // for symmetry: they are the canvas's own entry points and are
+    // already reachable through the canvas signals.
+public:
+    [[nodiscard]] mhw::WindowList buildWindowStates() const;
+    [[nodiscard]] mhw::WindowState selectedWindow() const;
+    void selectWindow(int panelIndex, int subIndex);
+    void refreshWindowModel();
+    // ─── v1.0.0 integration (stage A): the visibility filter ────────────
+    // Pushes buildWindowStates()' `visiblePersisted` into the canvas's
+    // two visibility setters (setSubWindowVisible for a split window,
+    // setPanelWindowVisible for a mother). PUBLIC because the contract is
+    // "every bind / render / refresh re-pushes it" and a test has to be
+    // able to prove the push happened after a rebinding, which reset the
+    // canvas side back to its default of true. Pure read → write; it
+    // never touches panels.ini, never touches panelEnabled (a different
+    // axis with a different consumer) and is safe to call at any time —
+    // an empty model means "every live binding is visible", which is the
+    // canvas's own default, so calling it before anything is bound is a
+    // no-op rather than a bug.
+    void pushWindowVisibility();
+private:
+    // The inspector's three columns, rebuilt for the selected window.
+    void buildInspectorForSelection();
+    // Builds the three columns' widgets into the drawer's frame. Called
+    // once from the ctor; buildInspectorForSelection() fills them.
+    void buildWindowInspectorFace(QWidget *parent, QVBoxLayout *parentLayout);
+    // (D) the stage's shell-head: sub line, screen chip, window count.
+    void refreshStageHead();
+    // (B) drop the WINDOW half of the selection (keeps the panel slot).
+    void clearWindowSelection();
+    // (C) one section checkbox of the selected window: writes the owning
+    // PANEL's mask (a sub-window's sections are its panel's bits) and
+    // re-renders that panel.
+    bool toggleSelectedWindowSection(uint32_t bit, bool on);
+    // (C) the whole per-selection column: object title, coordinate note,
+    // section rows and count. Called by the refill and by the one trHook
+    // that refreshes live text on a language flip.
+    void refreshGroupColumn();
+    // Writes the selected window's position from the inspector's two spin
+    // boxes. Returns false when there is no selection, so the caller can
+    // report "nothing selected" rather than writing into a stale window.
+    bool applySelectedWindowPosition();
+    // Writes the selected window's target display. Empty `outputName`
+    // means "follow the parent panel", which is the prototype's `follow`
+    // entry and the chain default (own → parent → primary). The write
+    // lands on the SELECTED window's own Panel — a split sub-window
+    // included — never on its mother; see the definition for the four
+    // pieces of evidence.
+    bool applySelectedWindowOutput(const QString &outputName);
+    bool applySelectedWindowScale(qreal scale);
+    bool applySelectedWindowOpacity(qreal opacity);
+    // The per-window visibility switch — the SECOND axis, independent of
+    // Panel::panelEnabled() (see the model header for why they differ).
+    bool applySelectedWindowVisible(bool on);
     // v0.7.1: dedicated narrow column for the World/Rise game selector.
     // Returns a QWidget the caller parents to the horizontal QSplitter
     // on the left edge of the window; the existing rail sits to its
     // right and keeps its HUD OBJECTS / WORKSPACE rows unchanged.
     QWidget *buildGameColumn();
-    void selectPanel(int idx);
+    void selectPanel(int idx, bool fromNav = true);
+    // The topbar's title/subtitle pair. `.topbar-title` is a two-line
+    // block whose copy follows the VIEW (overview → 显示器总览, a panel
+    // view → 「玩家面板」), so it is a function of the selection rather
+    // than a frozen string: this refreshes both lines from live state.
+    void refreshTopbarTitle();
+    // The draft's SCOPE RESET. Switching the game or the layout mode
+    // rewrites `state.view='overview'` and `state.selected=null`
+    // (reference.html:332 / :334) and, for the layout switch,
+    // `state.editing=false`. IMPLEMENTATION-PLAN §O1 states the same
+    // rule: 切 game/mode → overview / null / nonedit. `alsoExitEditing`
+    // is the game path's own distinction (that handler does not touch
+    // `state.editing` in the draft).
+    void resetViewStateAfterScopeChange(bool alsoExitEditing);
     void updatePanelSummary(int idx);
+    // The sidebar's eye — reference.html's `<button class="eye"
+    // data-toggle-panel=…>` (line 300-303). It is ONE state with the
+    // inspector's master chip (the chip is what maskFor() gates on), so
+    // this toggles the chip rather than a second flag that could
+    // disagree with it.
+    void togglePanelVisible(int idx);
     void switchGame(mhw::GameId game);
     // v0.11: View half of the old launchOverlay() — persists the user's
     // current mask + per-panel appearance to disk, builds argv, and hands
@@ -493,7 +605,8 @@ private:
     // THE SIDEBAR BRAND (three lines, as the prototype spells them):
     //   .eyebrow   "MONSTER CONTROL"  mono 10.5px uppercase --fg3
     //   h1         "Monster Control 控制台"  12.5px --fg
-    //   .side-note "非真实连接 · 不会修改 panels.ini 或任何配置文件"
+    //   .side-note explains that the preview is demo content and Save writes
+    //   the current game × layout scope.
     // The eyebrow is a NEW widget (the old rail had only brand + brandSub);
     // railBrandSub_ is reused for the third line and keeps its objectName
     // so control_l2_smoke's locale-chip assertion still finds a widget
@@ -563,9 +676,167 @@ private:
     //   running "模拟运行中 · PID {p}"   ← the overlay IS running
     // The only REAL data in any of them is mhw::detectGame()'s process
     // detection; the rest is the prototype's demo copy.
+    // ─── v1.0.0 fidelity port: the toast ────────────────────────────────
+    //
+    // The prototype's `.toast` is how every action reports itself: the
+    // rail's eye says 面板已显示 / 面板已隐藏, the layout segment says
+    // 已切换为分块作用域, the display picker says 当前查看屏幕：DP-1.
+    // It is a transient line at the bottom centre, 2.2s, and it is the
+    // ONLY feedback the prototype's buttons have — no QMessageBox, no
+    // status bar. Qt's console has no equivalent: its buttons were
+    // silent, which is why a user could not tell a working control from
+    // a no-op.
+    //
+    // WHY IT IS A MEMBER AND NOT A FILE-LOCAL STATIC. The four entries
+    // that raise it (help / reset / settings / export, plus the eye and
+    // the display picker) are all member functions, and a static would
+    // have to be reached through a lookup table. One member, one owner,
+    // destroyed with the window.
+    //
+    // WHY IT IS A QLABEL AND NOT A QDialog. A dialog steals focus and
+    // blocks; the prototype's toast does neither. It is a frameless,
+    // mouse-transparent label parented to the central widget, raised
+    // above the splitters, and it disappears on a timer — so a click on
+    // the board is never swallowed by it.
+    //
+    // ─── end v1.0.0 toast ─────────────────────────────────────────────
+    QLabel *toast_ = nullptr;
+    QTimer *toastTimer_ = nullptr;
+    // The export dialog's text box, owned by the dialog and null while it
+    // is closed. refreshExportPayload() and the copy/download handlers
+    // both reach it through this pointer, and both guard on it.
+    QPlainTextEdit *exportText_ = nullptr;
+
+    void showToast(const QString &key, const QStringList &args = {});
+    void openHelpDialog();
+    void openSettingsDialog();
+    void openExportDialog();
+    void resetPrototypeScope();
+    void checkForUpdates();
+    void refreshExportPayload();
+    // The theme switch, spelled once so the stage bar's chip and the
+    // settings dialog's dark/light pair cannot drift apart. See the
+    // definition for the four steps and why the canvas is repainted last.
+    void applyThemeChange();
+
+    // The statusline, so an action's outcome can also land where the
+    // prototype's status line lives.
     QLabel *statusline_ = nullptr;
     QLabel *statusDot_ = nullptr;
     QLabel *statusRun_ = nullptr;
+
+    // ─── v1.0.0 fidelity port: the selected-window state ────────────────
+    //
+    // THE PROTOTYPE'S OWN ADDRESS, not the shell's. `state.selected` is a
+    // WINDOW key — "player-status", "monster-identity", "player" — and the
+    // inspector describes whatever it names. The Qt console addressed a
+    // PANEL SLOT (selectedPanel_, 0..3), which is why its inspector could
+    // only ever describe a mother panel and had nothing to say about a
+    // split sub-window.
+    //
+    // selectedPanel_ STAYS AND KEEPS ITS MEANING: it is which of the four
+    // panels the inspector's mask rows / appearance sliders belong to, and
+    // four test files drive the layout through it. What is added here is
+    // the second axis — the window inside that panel — with -1 meaning
+    // "the mother panel itself" so a Single console needs no special case.
+    //
+    // WHY A PAIR AND NOT A STRING KEY. The canvas's selection is an INDEX
+    // (subWindowSelected carries a position in the bindings vector), and
+    // an index pair maps onto the model's rows with no lookup. The key is
+    // derived when it is needed (the export payload, the settings scope)
+    // rather than stored, so a rebuilt host's shifted indices cannot
+    // leave a stale string behind.
+    int selectedSubWindow_ = -1;   // -1 = the mother panel of selectedPanel_
+    // The inspector's own widgets for the selected window. Null until
+    // buildInspectorForSelection() has run; every accessor guards.
+    QSpinBox *winPosX_ = nullptr;
+    QSpinBox *winPosY_ = nullptr;
+    QComboBox *winOutput_ = nullptr;
+    QSlider *winScale_ = nullptr;
+    QSlider *winOpacity_ = nullptr;
+    QLabel  *winScaleValue_ = nullptr;
+    QLabel  *winOpacityValue_ = nullptr;
+    QCheckBox *winVisible_ = nullptr;
+    // The inspector's own face (built by buildWindowInspectorFace): the
+    // selection chip in the head, the per-window group column and the
+    // preview box. The chip and the two column frames are filled on
+    // selection; the group column's contents are rebuilt each time
+    // because the sibling list is per-window.
+    QLabel *selectionChip_ = nullptr;
+    // The head's `.sub` line and the content's empty state — both are
+    // functions of the SELECTION (reference.html:486 rewrites them in
+    // renderInspector), so they need to be reachable after construction.
+    QLabel *inspectorHeadSub_ = nullptr;
+    // The content half of the face: the scroll box that carries the three
+    // columns, and the `.empty-inspector` block that REPLACES it while
+    // nothing is selected (reference.html:486 swaps innerHTML for one or
+    // the other). QWidget* for both so the header needs no QScrollArea
+    // declaration.
+    QWidget *contentScrollHost_ = nullptr;
+    QWidget *inspectorEmpty_ = nullptr;
+    // The topbar's `.topbar-title` pair — the two lines the shell's
+    // toolbar never had. Kept as members because their text follows the
+    // view (refreshTopbarTitle()), so a rail click has to be able to
+    // reach them after construction.
+    QLabel *topbarTitle_ = nullptr;
+    QLabel *topbarSubtitle_ = nullptr;
+    QPushButton *topExportBtn_ = nullptr;
+    // True while no saved consoleSplitter state exists, so the FIRST
+    // resize can lay the two panes out at the prototype's 2fr : 1fr
+    // instead of at Qt's sizeHint ratio. Cleared the moment it runs.
+    bool pendingStageRatioDefault_ = false;
+    // Set only while that one setSizes() is on the stack. QSplitter
+    // emits splitterMoved for a programmatic setSizes() too (the note on
+    // the splitterMoved lambda says so from its own animation frames),
+    // and the slot it reaches PERSISTS ui/splitter — a derived default
+    // must not be written back as if the user had chosen it, so the
+    // slot returns on this flag instead.
+    bool applyingStageRatioDefault_ = false;
+    QFrame *windowGroupCol_ = nullptr;
+    QFrame *windowPreviewCol_ = nullptr;
+    QLabel *windowPreviewBox_ = nullptr;
+    // ── v1.0.0 (C): the per-selection column's own widgets ─────────────
+    // `.object-title` (window name + "panel · resolved output"), the
+    // coordinate `.note` under the position fields, the `on/total`
+    // count above the section list, and the host frame the section rows
+    // are rebuilt into.
+    QLabel *winObjectTitleName_ = nullptr;
+    QLabel *winObjectTitleMeta_ = nullptr;
+    QLabel *winPosNote_ = nullptr;
+    QLabel *winContentCount_ = nullptr;
+    QFrame *windowSectionListHost_ = nullptr;
+    // Encodes which window the section rows in the host were built for
+    // (panel * 1000 + subIndex, -1 = none), so a refill that follows a
+    // mask change only re-checks the rows instead of deleting the
+    // SectionRow that is emitting its own toggled() signal.
+    int groupSectionKey_ = -1;
+    // True while refreshWindowModel() is writing into those widgets, so
+    // the valueChanged handlers can tell a programmatic refill from a
+    // user edit. A signal blocker would do the same job per widget; one
+    // flag covers the whole refill and is what the "do not steal a
+    // focused input's value" rule needs (see the position handler).
+    bool windowModelRefilling_ = false;
+
+    // -- v1.0.0 (D): the stage's .shell-head -----------------------------
+    // reference.html:325-328 -- h2 + sub on the left, a growing gap, then
+    // the screen chip and the window-count chip. Members (not locals) so
+    // refreshStageHead() can rewrite them whenever the display or the
+    // window list changes.
+    QLabel *stageTitle_ = nullptr;
+    QLabel *stageSub_ = nullptr;
+    QLabel *stageScreenChip_ = nullptr;
+    QLabel *stageWindowCountChip_ = nullptr;
+
+    // -- v1.0.0 (B): WINDOW selection is a separate axis from the PANEL --
+    // selectedPanel_/selectedSubWindow_ describe "which row of which
+    // panel" and are ALSO read as the old stack's page index, so they
+    // could not answer "is a window selected?" -- selecting panel 0 (the
+    // ctor does, and so does every rail click) looked exactly like a user
+    // clicking the player panel's box. This flag is set ONLY by
+    // selectWindow()/clearWindowSelection(); selectedWindow() is invalid
+    // while it is false.
+    bool windowSelectionActive_ = false;
+
     // The demo state in force, mirrored from demoStateCombo_ so the
     // status line can be rewritten without a combo lookup. 0 = live,
     // 1 = offline, 2 = noData — the combo's index order.

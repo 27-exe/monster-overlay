@@ -48,15 +48,27 @@
 #include "ui/panel_sections.h"
 #include "ui/panel_player_split_layout.h"
 #include "ui/panel_source.h"
+#include "ui/ui_theme.h"
 
 #include <QApplication>
 #include <QColor>
 #include <QCoreApplication>
 #include <QDir>
+#include <QGuiApplication>
+#include <QImage>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QPixmap>
+#include <QRgb>
+#include <QRect>
+#include <QRectF>
+#include <QScreen>
+#include <QSize>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -525,6 +537,684 @@ void testSubWindowPixmapPlumbing()
 
 } // namespace
 
+// ─── §7. v1.0.0: THE CONSOLE-FIDELITY BOARD ──────────────────────────────
+//
+// The frozen `reference.html` is the only authority for what the
+// console's board looks like, and this section pins the five things the
+// flag `setConsoleFidelityMode()` turns on: the board's ground, its
+// border and inset band, its width cap and aspect ratio, its lattice in
+// the edit state, and the two window-visibility filters it consumes.
+//
+// IT ALSO PINS THE NEGATIVE. The hard boundary for this whole change is
+// that a canvas nobody put into fidelity mode paints exactly what it
+// painted before the flag existed, and the assertions below check that
+// directly (round-trip pixel identity, and "the legacy colours are
+// absent from the fidelity canvas") rather than trusting that every
+// branch is a short-circuit.
+//
+// MEASURED, NOT RECOMPUTED. Every geometry assertion reads the frame
+// back OUT of the rendered pixels — the border hairline is the only
+// thing on the board painted in --board-line at rest and the only thing
+// painted in --clay while editing, so its extreme pixels ARE the frame.
+// Recomputing `min(width-28, 1050)` from the widget size and comparing
+// it to itself would prove nothing; measuring means the assertions hold
+// whatever screen the offscreen platform reports, and it is the same
+// number the user sees.
+namespace {
+
+// A PanelSource whose every number is under the test's control. The
+// file's earlier sections drive a REAL Panel through PanelSourceAdapter
+// — right for a drag test, wrong here: these checks are about the
+// board's own chrome, and a live Panel brings a live theme, a live
+// layout mode and a live persisted margin with it.
+struct StubSource final : PanelSource
+{
+    Corner c{Corner::TopLeft};
+    QMargins m{120, 90, 0, 0};
+    QSize content{420, 160};
+    double z{1.0};
+    // `false` for the four base panels the single-mode board draws, and
+    // `true` for a split sub-window. The canvas gates the mother panel's
+    // hit-test target on this (hud_canvas.cpp's "the base panel's blocks
+    // have moved into sub-windows"), so a base panel that answered true
+    // would be painted but never clickable — which would quietly break
+    // the panel-filter checks below.
+    bool sub{true};
+    Corner corner() const override { return c; }
+    QMargins margins() const override { return m; }
+    QSize contentSize() const override { return content; }
+    double scale() const override { return z; }
+    bool isSubWindow() const override { return sub; }
+};
+
+// The tokens, spelled out. Duplicated from hud_canvas.cpp on purpose —
+// a test that imports the implementation's constants cannot notice the
+// implementation drifting from the HTML, and the HTML's own values are
+// short enough to write twice.
+const QColor kPageGroundDark(0x18, 0x18, 0x16);   // --page, dark
+const QColor kBoardGround(0x10, 0x10, 0x10);      // --board
+const QColor kBoardLine(0x2e, 0x2e, 0x2a);        // --board-line
+const QColor kBoardClayDark(0xd9, 0x77, 0x57);    // --clay, dark
+const QColor kBoardClayLight(0x9c, 0x46, 0x23);   // --clay, light
+const QColor kLegacyGround(6, 8, 10);             // the old stage's field
+const QColor kLegacyFrameBright(34, 50, 42);      // its gradient's top stop
+
+int countExact(const QImage &img, const QColor &c)
+{
+    const QRgb want = c.rgb();
+    int n = 0;
+    for (int y = 0; y < img.height(); ++y)
+        for (int x = 0; x < img.width(); ++x)
+            if (img.pixel(x, y) == want)
+                ++n;
+    return n;
+}
+
+// The border rectangle, read back off the pixels.
+QRect frameFromBorder(const QImage &img, const QColor &line)
+{
+    const QRgb want = line.rgb();
+    int l = img.width(), t = img.height(), r = -1, b = -1;
+    for (int y = 0; y < img.height(); ++y) {
+        for (int x = 0; x < img.width(); ++x) {
+            if (img.pixel(x, y) != want)
+                continue;
+            l = qMin(l, x); r = qMax(r, x);
+            t = qMin(t, y); b = qMax(b, y);
+        }
+    }
+    if (r < 0)
+        return {};
+    return QRect(QPoint(l, t), QPoint(r, b));
+}
+
+// Where the lattice lines actually landed on one scanline: the centres
+// of every run of non-ground pixels. Returning CENTRES rather than raw
+// hits means a line the painter straddled across two pixels still reads
+// as one line, which is what the browser would show too.
+std::vector<qreal> gridLineCentres(const QImage &img, int y, int x0, int x1,
+                                   const QColor &ground)
+{
+    const QRgb g = ground.rgb();
+    std::vector<qreal> out;
+    int runStart = -1;
+    for (int x = x0; x <= x1; ++x) {
+        const bool hit = img.pixel(x, y) != g;
+        if (hit && runStart < 0)
+            runStart = x;
+        if (!hit && runStart >= 0) {
+            out.push_back((runStart + x - 1) / 2.0);
+            runStart = -1;
+        }
+    }
+    if (runStart >= 0)
+        out.push_back((runStart + x1) / 2.0);
+    return out;
+}
+
+// ── the traffic the canvas reacts to ───────────────────────────────────
+//
+// Delivered with sendEvent rather than through a real window system: the
+// canvas does not care whether a press came from a device, and
+// synthesising it keeps these checks runnable on the offscreen platform
+// with no window grab or focus dance.
+void pump()
+{
+    for (int i = 0; i < 4; ++i)
+        QCoreApplication::processEvents();
+}
+
+void mouse(QWidget *w, QEvent::Type type, QPointF pos,
+           Qt::MouseButton button, Qt::MouseButtons buttons)
+{
+    QMouseEvent e(type, pos, pos, button, buttons, Qt::NoModifier);
+    QApplication::sendEvent(w, &e);
+    pump();
+}
+
+void key(QWidget *w, int k, Qt::KeyboardModifiers mods = Qt::NoModifier)
+{
+    QKeyEvent e(QEvent::KeyPress, k, mods);
+    QApplication::sendEvent(w, &e);
+    pump();
+}
+
+// How much of the test pixmap actually reached the canvas.
+//
+// THE THRESHOLDS ARE DELIBERATELY LOOSE, and the reason is the canvas's
+// own selection dimming: a mother panel that is not the selected one is
+// drawn at 55% opacity (hud_canvas.cpp's `selDim`), so a solid magenta
+// arrives as (140,0,140) rather than (255,0,255). Counting only the full
+// strength colour would report exactly ONE panel on a board that is
+// showing four — which is how these thresholds were chosen.
+int countMagenta(const QImage &img)
+{
+    int n = 0;
+    for (int y = 0; y < img.height(); ++y) {
+        for (int x = 0; x < img.width(); ++x) {
+            const QRgb px = img.pixel(x, y);
+            const int r = qRed(px), g = qGreen(px), b = qBlue(px);
+            if (r > 100 && g < 40 && qAbs(r - b) < 10)
+                ++n;
+        }
+    }
+    return n;
+}
+
+// The viewport padding `.board-viewport` declares: 12px top, 14px each
+// side, 0 bottom.
+constexpr int kFidPadX = 14;
+constexpr int kFidPadTop = 12;
+constexpr qreal kFidCapLandscape = 1050.0;
+
+void sectionFidelityBoard()
+{
+    std::printf("\n=== §7 console-fidelity board ===\n");
+    const QColor magenta(255, 0, 255);
+    QPixmap magentaPm(QSize(200, 80));
+    magentaPm.fill(magenta);
+
+    // ── 7.1 the flag itself, and the round trip ─────────────────────────
+    setUiTheme(true);
+    // TALL ENOUGH that the board fits. The offscreen platform reports a
+    // small square screen, and `.board` is width-driven — so a 820px
+    // canvas would clip a board taller than itself and the height
+    // assertions below would be measuring the clip, not the mapping.
+    HudCanvas c;
+    c.resize(1180, 1400);
+    c.show();
+    pump();
+    const int cw = c.rect().width();
+    const int ch = c.rect().height();
+    // The output the board describes. The canvas resolves an EMPTY
+    // preview screen to the primary, so the primary's geometry is the
+    // number the board is being asked to reproduce — and it is reached
+    // through the public screen API rather than through the canvas's
+    // own private resolver.
+    const QScreen *qs = QGuiApplication::primaryScreen();
+    check(qs != nullptr, "the offscreen platform reports a screen");
+    const QSize phys = qs ? qs->size() : QSize(1600, 1200);
+    const qreal ar = phys.height() / qreal(phys.width());
+    const int capW = qRound(kFidCapLandscape);
+    const int expW = qMin(cw - 2 * kFidPadX, capW);
+    const int expH = qRound(expW * ar);
+
+    check(!c.consoleFidelityMode(),
+          "the fidelity flag defaults to false on a fresh canvas");
+
+    const QImage legacy = c.grab().toImage();
+    c.setConsoleFidelityMode(true);
+    pump();
+    const QImage fid = c.grab().toImage();
+    c.setConsoleFidelityMode(false);
+    pump();
+    const QImage restored = c.grab().toImage();
+    check(legacy != fid, "fidelity on repaints a different board");
+    check(legacy == restored,
+          "fidelity off restores the legacy canvas pixel for pixel");
+
+    // ── 7.2 what the fidelity board replaced ───────────────────────────
+    check(legacy.pixelColor(0, 0) == kLegacyGround,
+          "the legacy canvas is #06080a at its corner");
+    check(fid.pixelColor(0, 0) == kPageGroundDark,
+          "the fidelity canvas is --page at its corner");
+    check(countExact(fid, kLegacyGround) == 0,
+          "the fidelity board contains no #06080a ground at all");
+    check(countExact(fid, kLegacyFrameBright) == 0,
+          "and no trace of the legacy frame's green gradient either");
+    check(countExact(fid, kBoardGround) > 0,
+          "the fidelity board contains --board #101010");
+
+    // ── 7.3 the frame: cap, aspect ratio, centring ─────────────────────
+    c.setConsoleFidelityMode(true);
+    pump();
+    const QImage fidOn = c.grab().toImage();
+    const QRect fr = frameFromBorder(fidOn, kBoardLine);
+    std::printf("   screen %dx%d (ar %.5f)  canvas %dx%d\n"
+                "   measured frame (%d,%d) %dx%d   expected %dx%d\n",
+                phys.width(), phys.height(), ar, cw, ch,
+                fr.left(), fr.top(), fr.width(), fr.height(), expW, expH);
+    check(!fr.isEmpty(), "the fidelity board's hairline is --board-line");
+    check(fr.width() == expW,
+          "board width is min(padded viewport, 1050) — the CSS cap holds");
+    check(fr.height() == expH,
+          "board height is its own width times the OUTPUT's aspect ratio");
+    check(std::abs(fr.height() / qreal(fr.width()) - ar) < 0.004,
+          "board aspect ratio equals the output's, not a hardcoded 16:9");
+    check(fr.left() == qRound((cw - expW) / 2.0),
+          "board is horizontally centred in the 14px-padded viewport");
+    check(std::abs(fr.center().y() - (kFidPadTop + (ch - kFidPadTop) / 2.0))
+              <= 1.0,
+          "board is vertically centred in the viewport once its 12px pad");
+    check(fr.top() >= kFidPadTop,
+          "and never starts above that 12px pad");
+
+    // Below the cap the board must follow the widget.
+    {
+        HudCanvas narrow;
+        narrow.resize(560, 400);
+        narrow.setConsoleFidelityMode(true);
+        narrow.show();
+        pump();
+        const QRect fr2 =
+            frameFromBorder(narrow.grab().toImage(), kBoardLine);
+        check(fr2.width() == qMin(narrow.rect().width() - 2 * kFidPadX,
+                                  capW),
+              "below the cap the board width follows the widget");
+        check(fr2.top() == kFidPadTop,
+              "and the board still keeps its 12px top pad");
+    }
+
+    // ── 7.4 the inset band, and the NATURAL-OVERFLOW contract ──────────
+    // `.board { box-shadow: inset 0 0 0 12px rgba(255,255,255,.015) }` —
+    // a 12px neutral wash INSIDE the border, over the board ground.
+    const QColor band = fidOn.pixelColor(fr.left() + 5, fr.center().y());
+    const QColor inner = fidOn.pixelColor(fr.left() + 14, fr.center().y());
+    check(band.red() == band.green() && band.green() == band.blue()
+              && band.red() > kBoardGround.red() && band.red() < 40,
+          "the resting inset band is a light neutral wash over --board");
+    check(inner == kBoardGround,
+          "inside the 12px band the board is plain --board #101010");
+
+    // THE POINT OF THE WHOLE GEOMETRY: the board never shrinks to fit.
+    // The frozen page lets the ROOT grow — measured at a 1600x1000
+    // viewport it comes out 1134.9375 tall for the landscape display and
+    // 1742.3125 for the portrait one, with the board still exactly
+    // 1050x590.625 / 560x995.546875. So a widget shorter than the board
+    // must keep the board at its CSS size and lose only the part it
+    // cannot show, rather than compressing the board and calling that a
+    // match — and the height the container needs is handed to it by
+    // sizeHint() / heightForWidth() below.
+    {
+        HudCanvas squeezed;
+        squeezed.resize(cw, 420);
+        squeezed.setConsoleFidelityMode(true);
+        squeezed.show();
+        pump();
+        const QRect frS =
+            frameFromBorder(squeezed.grab().toImage(), kBoardLine);
+        check(frS.width() == expW,
+              "a widget shorter than the board does NOT shrink the board "
+              "— the CSS width survives and the container must scroll");
+        check(frS.top() == kFidPadTop,
+              "and the board keeps its top edge instead of clipping it");
+        check(c.heightForWidth(cw) == kFidPadTop + expH,
+              "heightForWidth hands the container the height the board "
+              "actually needs at this width");
+        check(c.sizeHint() == QSize(capW + 2 * kFidPadX, kFidPadTop + expH),
+              "sizeHint is the natural size of the board plus its pad");
+    }
+
+    // ── 7.5 the edit state: border, ring, band, lattice ────────────────
+    setUiTheme(true);
+    pump();
+    {
+        HudCanvas e;
+        e.resize(1180, 820);
+        e.setConsoleFidelityMode(true);
+        e.setEditing(true);
+        e.show();
+        pump();
+        const QImage dark = e.grab().toImage();
+        // `box-shadow:0 0 0 1px var(--clay)` puts a SECOND clay ring one
+        // pixel OUTSIDE the border, so the clay pixels on an editing
+        // board span the border plus the ring — 1052 not 1050 — and that
+        // is itself the assertion. `fed.left()+1` is the border.
+        const QRect fed = frameFromBorder(dark, kBoardClayDark);
+        std::printf("   dark edit frame (%d,%d) %dx%d\n",
+                    fed.left(), fed.top(), fed.width(), fed.height());
+        check(fed.width() == expW + 2,
+              "the outer ring is exactly 1px beyond the border on both "
+              "sides (0 0 0 1px var(--clay))");
+        check(dark.pixelColor(fed.left(), fed.center().y())
+                  == kBoardClayDark,
+              "that outermost pixel is --clay — the ring, not the border");
+        check(frameFromBorder(dark, kBoardLine).isEmpty(),
+              "in the edit state no --board-line is left anywhere — the "
+              "border itself went to --clay");
+        // THE SUBTLETY: the inset band is a hardcoded rgba(217,119,87,.06)
+        // in the CSS, NOT var(--clay) — so it stays warm even when the
+        // theme has moved --clay to #9c4623.
+        const QColor eband =
+            dark.pixelColor(fed.left() + 6, fed.center().y());
+        check(eband.red() > eband.green() && eband.green() > eband.blue(),
+              "the edit-mode inset band is warm — rgba(217,119,87,.06), "
+              "a literal rather than var(--clay)");
+        check(eband != kBoardClayDark,
+              "and it is NOT simply the border colour reused");
+
+        // The lattice: `inset:12px`, `opacity:.28`, `background-size:5% 5%`
+        // → 20 lines across the INSET rect, at a 6/255 alpha.
+        // `fed` spans the ring, so the board itself starts one pixel in.
+        const int bl = fed.left() + 1, bt = fed.top() + 1;
+        const QRect g(bl + kFidPadTop, bt + kFidPadTop,
+                      fed.width() - 2 - 2 * kFidPadTop,
+                      fed.height() - 2 - 2 * kFidPadTop);
+        const int scanY = g.top() + 20;   // below the label, above centre
+        const std::vector<qreal> lines =
+            gridLineCentres(dark, scanY, g.left(), g.right(), kBoardGround);
+        check(lines.size() >= 19 && lines.size() <= 21,
+              "the edit lattice paints 20 lines across the inset rect");
+        int maxRed = 0;
+        for (int x = g.left(); x <= g.right(); ++x)
+            maxRed = qMax(maxRed, dark.pixelColor(x, scanY).red());
+        check(maxRed <= kBoardGround.red() + 8,
+              "the lattice line is a ~6/255 wash — rgba(255,255,255,.08) "
+              "at opacity .28, not a full-strength line");
+        if (lines.size() >= 2) {
+            const qreal pitch = g.width() / 20.0;
+            qreal worst = 0;
+            for (size_t i = 1; i < lines.size(); ++i)
+                worst = std::max(worst,
+                                 std::abs((lines[i] - lines[i - 1]) - pitch));
+            check(worst <= 1.0,
+                  "the lattice pitch is 5% of the inset rect, and it "
+                  "stays 5% to the last cell");
+        } else {
+            check(false, "the lattice pitch is 5% of the inset rect");
+        }
+
+        // The SAME board in the light theme: --clay is #9c4623 there, and
+        // the border must follow it.
+        setUiTheme(false);
+        pump();
+        HudCanvas l;
+        l.resize(1180, 820);
+        l.setConsoleFidelityMode(true);
+        l.setEditing(true);
+        l.show();
+        pump();
+        const QImage light = l.grab().toImage();
+        const QRect fl = frameFromBorder(light, kBoardClayLight);
+        std::printf("   light edit frame (%d,%d) %dx%d\n",
+                    fl.left(), fl.top(), fl.width(), fl.height());
+        check(!fl.isEmpty() && fl.width() == expW + 2,
+              "edit-mode border follows --clay into the light theme "
+              "(#9c4623), ring and all");
+        check(frameFromBorder(light, kBoardClayDark).isEmpty(),
+              "and the light board contains no dark-theme clay at all");
+
+        // Editing must not move a single window.
+        StubSource s0;
+        s0.m = QMargins(60, 50, 0, 0);
+        HudCanvas em;
+        em.resize(1180, 820);
+        em.show();
+        pump();
+        em.setLayoutMode(mhw::PlayerSection::PlayerLayoutMode::Split);
+        QVector<HudCanvas::SubWindowBinding> bind0{{&s0, 0, 0}};
+        em.setSubWindowBindings(bind0);
+        em.setConsoleFidelityMode(true);
+        pump();
+        const QRectF before = em.subWindowRects().at(0);
+        em.setEditing(true);
+        pump();
+        em.setEditing(false);
+        pump();
+        check(em.subWindowRects().at(0) == before,
+              "entering and leaving edit mode moves no window");
+    }
+    setUiTheme(true);
+    pump();
+
+    // ── 7.6 window visibility: geometry, hit test, keys, round trip ────
+    {
+        StubSource s0, s1;
+        s0.m = QMargins(120, 90, 0, 0);
+        s1.m = QMargins(700, 480, 0, 0);
+        HudCanvas v;
+        v.resize(1180, 820);
+        v.show();
+        pump();
+        v.setLayoutMode(mhw::PlayerSection::PlayerLayoutMode::Split);
+        QVector<HudCanvas::SubWindowBinding> binds{{&s0, 0, 0}, {&s1, 0, 1}};
+        v.setSubWindowBindings(binds);
+        v.setSubWindowPixmap(0, magentaPm, true);
+        v.setSubWindowPixmap(1, magentaPm, true);
+        v.setConsoleFidelityMode(true);
+        pump();
+        check(v.subWindowVisible(0) && v.subWindowVisible(1),
+              "both windows start visible");
+        const QVector<QRectF> both = v.subWindowRects();
+        check(both.size() == 2 && !both[0].isEmpty() && !both[1].isEmpty(),
+              "both windows are laid out before any hide");
+
+        // The hit test is measured through the SIGNAL, not through the
+        // selection: a click on empty space deliberately does NOT clear
+        // an existing selection (mousePressEvent's non-overview arm only
+        // ever sets one), so `selectedSubWindow()` cannot tell "the press
+        // missed everything" from "the press landed here again".
+        // subWindowSelected fires only from a press inside a box, which
+        // makes its count the honest probe.
+        int selectedSignals = 0;
+        QObject::connect(&v, &HudCanvas::subWindowSelected,
+                         [&selectedSignals](int) { ++selectedSignals; });
+
+        // Click the second one first, so the test below has a selection
+        // to lose.
+        mouse(&v, QEvent::MouseButtonPress, both[1].center(),
+              Qt::LeftButton, Qt::LeftButton);
+        mouse(&v, QEvent::MouseButtonRelease, both[1].center(),
+              Qt::LeftButton, Qt::MouseButtons());
+        check(v.selectedSubWindow() == 1 && selectedSignals == 1,
+              "a click selects the second window while it is visible");
+
+        v.setSubWindowVisible(1, false);
+        pump();
+        const QVector<QRectF> oneHidden = v.subWindowRects();
+        check(!v.subWindowVisible(1), "setSubWindowVisible(1,false) sticks");
+        check(oneHidden[1].isEmpty(),
+              "a hidden window is not laid out at all");
+        check(oneHidden[0] == both[0],
+              "hiding one window does not move its neighbour");
+        check(v.selectedSubWindow() == 1,
+              "a hide does not rewrite the selection");
+
+        // The keyboard path.
+        v.setEditing(true);
+        const QMargins keyBefore = s1.m;
+        mouse(&v, QEvent::MouseButtonPress, both[0].center(),
+              Qt::LeftButton, Qt::LeftButton);
+        mouse(&v, QEvent::MouseButtonRelease, both[0].center(),
+              Qt::LeftButton, Qt::MouseButtons());
+        v.setSelectedSubWindow(1);
+        key(&v, Qt::Key_Right);
+        check(s1.m == keyBefore,
+              "a hidden window does not move on the arrow keys");
+        v.setEditing(false);
+
+        // The hit test.
+        v.setSelectedSubWindow(1);
+        const int beforePress = selectedSignals;
+        mouse(&v, QEvent::MouseButtonPress, both[1].center(),
+              Qt::LeftButton, Qt::LeftButton);
+        mouse(&v, QEvent::MouseButtonRelease, both[1].center(),
+              Qt::LeftButton, Qt::MouseButtons());
+        std::printf("   press at (%.0f,%.0f) -> signals %d->%d, selected=%d\n",
+                    both[1].center().x(), both[1].center().y(),
+                    beforePress, selectedSignals, v.selectedSubWindow());
+        check(selectedSignals == beforePress,
+              "a hidden window is not hit-testable — the press that used "
+              "to select it now lands on empty space");
+        // And the press path still WORKS, so the check above is not
+        // passing because something upstream stopped delivering events.
+        mouse(&v, QEvent::MouseButtonPress, both[0].center(),
+              Qt::LeftButton, Qt::LeftButton);
+        mouse(&v, QEvent::MouseButtonRelease, both[0].center(),
+              Qt::LeftButton, Qt::MouseButtons());
+        check(selectedSignals == beforePress + 1 && v.selectedSubWindow() == 0,
+              "the same press on the VISIBLE window still selects it");
+
+        // Restore, and nothing about the window was rewritten.
+        v.setSubWindowVisible(1, true);
+        pump();
+        check(v.subWindowRects().at(1) == both[1],
+              "restoring visibility re-lays the window out at the "
+              "same box");
+        check(s1.margins() == QMargins(700, 480, 0, 0)
+                  && s1.corner() == Corner::TopLeft
+                  && s1.contentSize() == QSize(420, 160)
+                  && s1.scale() == 1.0,
+              "hide/restore rewrites nothing in the window's own source");
+        check(v.subWindowRects().at(0) == both[0],
+              "and still does not move its neighbour");
+
+        // Unknown index, both directions.
+        const int n = v.subWindowCount();
+        v.setSubWindowVisible(n, false);
+        v.setSubWindowVisible(-1, false);
+        v.setSubWindowVisible(n + 40, false);
+        check(v.subWindowCount() == n,
+              "an out-of-range index never grows the binding list");
+        check(v.subWindowVisible(n) && v.subWindowVisible(-1),
+              "and an out-of-range index reads as the DEFAULT, visible");
+
+        // Consumption is fidelity-gated.
+        v.setSubWindowVisible(1, false);
+        v.setConsoleFidelityMode(false);
+        pump();
+        check(!v.subWindowRects().at(1).isEmpty(),
+              "outside fidelity mode the flag is stored and not consumed");
+        v.setConsoleFidelityMode(true);
+        pump();
+        check(v.subWindowRects().at(1).isEmpty(),
+              "and is consumed again the moment fidelity comes back");
+
+        // A rebind resets it — the documented convention.
+        v.setSubWindowBindings(binds);
+        pump();
+        check(v.subWindowVisible(0) && v.subWindowVisible(1),
+              "a rebind resets visibility to the default, visible — the "
+              "shell has to push its filter again");
+    }
+
+    // ── 7.7 the panel filter: one display's worth of windows ───────────
+    {
+        HudCanvas p;
+        p.resize(1180, 820);
+        p.show();
+        pump();
+        // The four mother panels, painted the way the console paints
+        // them: bound to a source, a real pixmap per slot, enabled.
+        // Single mode is what shows them (drawMothers is "no
+        // sub-windows"), and what this block is measuring is the board's
+        // OWN display filter — one display's worth of windows — not the
+        // split.
+        //
+        // IN THE OVERVIEW, AND THAT IS NOT A DETAIL. v1.0.0's panel
+        // view narrows the four-slot arm to `d.panel === state.view`
+        // (the same clause reference.html:442 applies to the ONE list
+        // visibleWindows() builds), so on a panel-view board only the
+        // SELECTED panel is painted — four independent show/hide
+        // observations are exactly what the cross-panel overview is
+        // for. Left in the panel view this block would have measured
+        // the scope instead of the visibility flag: hiding panel 1
+        // while panel 0 is selected changes no pixel, and every
+        // assertion below it goes vacuous or red.
+        //
+        // One SOURCE PER PANEL, and each at a different place — four
+        // panels sharing one margin would stack on the same pixels, and
+        // hiding one of four overlapping pictures would leave the count
+        // of magenta pixels exactly where it was.
+        StubSource mothers[mhw::kPanelCount];
+        for (int i = 0; i < mhw::kPanelCount; ++i) {
+            mothers[i].sub = false;
+            mothers[i].m = QMargins(10, 10 + 190 * i, 0, 0);
+            p.bindPanel(i, &mothers[i]);
+            p.setPanelPixmap(i, magentaPm, true);
+        }
+        p.setOverview(true);
+        p.setConsoleFidelityMode(true);
+        pump();
+        const int all = countMagenta(p.grab().toImage());
+        check(all > 0, "the single-mode fidelity board draws the panels");
+        {
+            int painted = 0;
+            for (const QRectF &r : p.motherWindowRects())
+                if (!r.isEmpty())
+                    ++painted;
+            check(painted == mhw::kPanelCount,
+                  "…all four of them, each with a painted box to hit");
+            std::printf("    painted mothers: %d of %d\n", painted,
+                        mhw::kPanelCount);
+        }
+        p.setPanelWindowVisible(1, false);
+        pump();
+        const int oneFewer = countMagenta(p.grab().toImage());
+        check(oneFewer < all,
+              "hiding a panel takes its picture off the board");
+        for (int i = 0; i < mhw::kPanelCount; ++i)
+            p.setPanelWindowVisible(i, false);
+        pump();
+        check(countMagenta(p.grab().toImage()) == 0,
+              "hiding every panel empties the board");
+        for (int i = 0; i < mhw::kPanelCount; ++i)
+            p.setPanelWindowVisible(i, true);
+        pump();
+        check(countMagenta(p.grab().toImage()) == all,
+              "restoring every panel brings the board back exactly");
+        check(p.panelWindowVisible(-1) && p.panelWindowVisible(4),
+              "an unknown panel index reads as visible");
+        p.setPanelWindowVisible(-1, false);
+        p.setPanelWindowVisible(4, false);
+        pump();
+        check(countMagenta(p.grab().toImage()) == all,
+              "and writing one is a safe no-op");
+
+        // The empty state, structurally: with everything hidden the
+        // frozen board is still a board — its ground is intact and the
+        // legacy field never comes back.
+        for (int i = 0; i < mhw::kPanelCount; ++i)
+            p.setPanelWindowVisible(i, false);
+        pump();
+        const QImage empty = p.grab().toImage();
+        const QRect fre = frameFromBorder(empty, kBoardLine);
+        check(!fre.isEmpty(),
+              "the empty board still draws its frozen chrome");
+        check(empty.pixelColor(0, 0) == kPageGroundDark,
+              "the empty board still sits on --page");
+        check(countExact(empty, kLegacyGround) == 0,
+              "and the empty state does not resurrect the legacy field");
+    }
+
+    // ── 7.8 the REAL pixmap still composites over the fidelity board ───
+    {
+        StubSource ps;
+        ps.m = QMargins(40, 40, 0, 0);
+        ps.content = QSize(300, 120);
+        HudCanvas pc, ctrl;
+        for (HudCanvas *h : {&pc, &ctrl}) {
+            h->resize(1180, 820);
+            h->show();
+        }
+        pump();
+        pc.setLayoutMode(mhw::PlayerSection::PlayerLayoutMode::Split);
+        QVector<HudCanvas::SubWindowBinding> one{{&ps, 0, 0}};
+        pc.setSubWindowBindings(one);
+        pc.setConsoleFidelityMode(true);
+        ctrl.setConsoleFidelityMode(true);
+        pump();
+        QPixmap solid(ps.contentSize());
+        solid.fill(magenta);
+        pc.setSubWindowPixmap(0, solid, true);
+        pump();
+        const QRectF box = pc.subWindowRects().at(0);
+        const QPoint ctr = box.center().toPoint();
+        check(pc.grab().toImage().pixelColor(ctr) == magenta,
+              "a real sub-window pixmap reaches the fidelity board");
+        QPixmap clear(ps.contentSize());
+        clear.fill(Qt::transparent);
+        pc.setSubWindowPixmap(0, clear, true);
+        pump();
+        check(pc.grab().toImage().pixel(ctr)
+                  == ctrl.grab().toImage().pixel(ctr),
+              "a transparent pixmap leaves the fidelity board's own "
+              "pixel showing through — the compositing path is unchanged");
+    }
+}
+
+} // namespace
+
 int main(int argc, char *argv[])
 {
     // Panel::settings() is a fixed IniFormat/UserScope QSettings
@@ -551,6 +1241,7 @@ int main(int argc, char *argv[])
     testSubWindowCountMatchesTableRows();
     testSubWindowSizesComeFromTheWindow();
     testSubWindowPixmapPlumbing();
+    sectionFidelityBoard();
 
     std::printf("\n%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

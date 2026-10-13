@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <QFrame>
+#include <QLabel>
+#include <QPushButton>
+#include <QPointer>
 #include <QString>
 
-class QFrame;
-class QLabel;
-class QPushButton;
 class QVBoxLayout;
 class QWidget;
 class ControlPanel;
@@ -76,14 +77,29 @@ private:
 
     // Widget handles — the nine that used to hang off ControlPanel. The card
     // is their only reader.
-    QFrame     *card_              = nullptr;
-    QLabel     *statusLabel_       = nullptr;
-    QPushButton *installButton_     = nullptr;
-    QPushButton *removeLuaButton_   = nullptr;
-    QLabel     *menuStateLabel_    = nullptr;
-    QPushButton *menuStateFixButton_    = nullptr;
-    QPushButton *menuStateRestoreButton_ = nullptr;
-    QPushButton *removeFrameworkButton_ = nullptr;
+    //
+    // QPOINTER, AND THE WHOLE REASON IS openSettingsDialog(). The settings
+    // dialog is a STACK QDialog (control_panel.cpp: openSettingsDialog)
+    // that outlives build() but not exec(): the card is built into it,
+    // exec() returns, the dialog's destructor runs and every handle here
+    // becomes a dangling raw pointer — while riseReframeworkRefreshTimer_
+    // keeps calling refresh() every 1500 ms. The old `if (!card_) return`
+    // was a null check against a freed address, i.e. no check at all.
+    //
+    // QPointer watches the QObject: when the dialog deletes its children
+    // the pointer self-clears, and refresh()'s card_ test becomes a real
+    // "is the card still on screen" question. Every other handle is a
+    // CHILD of card_ (the card's own layout owns them), so card_.isNull()
+    // is also the proof that they are gone; they are QPointer too so a
+    // future re-parent cannot silently resurrect the raw-pointer bug.
+    QPointer<QFrame>     card_;
+    QPointer<QLabel>     statusLabel_;
+    QPointer<QPushButton> installButton_;
+    QPointer<QPushButton> removeLuaButton_;
+    QPointer<QLabel>     menuStateLabel_;
+    QPointer<QPushButton> menuStateFixButton_;
+    QPointer<QPushButton> menuStateRestoreButton_;
+    QPointer<QPushButton> removeFrameworkButton_;
 
     // Result of the last refresh()'s locator call: the Steam install dir.
     // Kept because every request path gates on it.

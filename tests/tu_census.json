@@ -304,6 +304,26 @@
       ],
       "symbols": 7
     },
+    "src/ui/console_fidelity_windows.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "console-fidelity-windows-tests"
+      ],
+      "refs": [
+        "console-fidelity-windows-tests"
+      ],
+      "symbols": 8
+    },
+    "src/ui/console_root_scroll.cpp": {
+      "class": "INDIRECT",
+      "compiled_by": [
+        "console-root-scroll-tests"
+      ],
+      "refs": [
+        "console-root-scroll-tests"
+      ],
+      "symbols": 10
+    },
     "src/ui/control_panel.cpp": {
       "class": "INDIRECT",
       "compiled_by": [],

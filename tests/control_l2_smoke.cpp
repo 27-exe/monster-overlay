@@ -471,7 +471,7 @@ int main(int argc, char *argv[])
         // about locale: the note is translated, so it flips with the chip.
         // The version is no longer asserted HERE because it is no longer
         // rendered HERE.
-        if (brandSub->text() != QStringLiteral("非真实连接 · 不会修改 panels.ini 或任何配置文件")) {
+        if (brandSub->text() != QStringLiteral("控制台 · 预览为演示内容；「保存」会写入当前「游戏 × 布局」作用域的配置文件")) {
             fprintf(stderr, "FAIL: expected zh copy before the switch, got '%s'\n",
                     qPrintable(brandSub->text()));
             return 10;
@@ -501,7 +501,7 @@ int main(int argc, char *argv[])
         // v1.0.0: the prototype's `notreal` note again, in English. The
         // version string this used to carry lives in the settings dialog's
         // About section now.
-        if (brandSub->text() != QStringLiteral("Not a real connection · does not modify panels.ini or any config file")) {
+        if (brandSub->text() != QStringLiteral("Console · the preview is demo content; Save writes the configuration for the current game x layout scope")) {
             fprintf(stderr, "FAIL: chip click did not retranslate ('%s')\n",
                     qPrintable(brandSub->text()));
             return 11;
@@ -534,7 +534,7 @@ int main(int argc, char *argv[])
 
         clickChip();   // en-US -> zh-CN
         // v1.0.0: the prototype's `notreal` note, back in Chinese.
-        if (brandSub->text() != QStringLiteral("非真实连接 · 不会修改 panels.ini 或任何配置文件")) {
+        if (brandSub->text() != QStringLiteral("控制台 · 预览为演示内容；「保存」会写入当前「游戏 × 布局」作用域的配置文件")) {
             fprintf(stderr, "FAIL: second click did not restore zh copy ('%s')\n",
                     qPrintable(brandSub->text()));
             return 13;
@@ -575,7 +575,7 @@ int main(int argc, char *argv[])
         // v1.0.0: same carrier as above — the prototype's `notreal` note.
         // The point of this check is that an explicit locale beats a stale
         // conf, and a translated note proves the chrome followed it.
-        if (!brandSub || brandSub->text() != QStringLiteral("非真实连接 · 不会修改 panels.ini 或任何配置文件")) {
+        if (!brandSub || brandSub->text() != QStringLiteral("控制台 · 预览为演示内容；「保存」会写入当前「游戏 × 布局」作用域的配置文件")) {
             fprintf(stderr, "FAIL: console chrome did not stay on the explicit locale ('%s')\n",
                     brandSub ? qPrintable(brandSub->text()) : "railBrandSub missing");
             return 16;

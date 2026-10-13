@@ -28,15 +28,21 @@ rather than spawning a second overlay.
 
 ## 3. The control console
 
+The native console workflow and its persistence boundaries are described in
+[CONSOLE.md](CONSOLE.md). Preview data is demo content; saved window settings
+are real. Overview is read-only; choose a group before editing. The topbar
+display is a viewer, independent of a window's target output.
+
 | Element | What it does |
 |---|---|
 | panel cards (player / monster / damage / pets) | master switch plus per-section switches; the preview updates as you toggle |
 | `START` / `STOP` | starts / stops `monster-overlay`; the console hides while it runs and returns when it exits |
-| `ENTER EDIT` | same as START, but with `--edit` |
-| preview canvas | click to select a panel, drag to move it, arrow keys nudge 10 px (Shift = 50 px); `Ctrl`+wheel zooms the canvas itself, not the panels |
-| display selector | which output the panels are placed on |
-| `中文 | EN` chip | switches the UI language; the overlay follows within ~1 s |
-| theme chip | light or dark console theme |
+| Edit Layout | edits the console preview without launching an overlay child |
+| preview canvas | selects a window; in edit mode drag or nudge it by 1 logical px (Shift = 10); `Ctrl`+wheel zooms the canvas |
+| topbar display selector | changes the viewed output only |
+| inspector target display | changes the selected window's output; Follow resolves own → parent → primary |
+| Settings: 中文 / English | switches UI language; the running overlay follows the saved locale |
+| Settings: theme | light or dark console theme |
 | `WORLD` / `RISE` buttons | which title the overlay is started against; also hot-swaps a running overlay's target game |
 | detect badge | scans `/proc` every 5 s and names the running Monster Hunter process (green = matches the selection, amber = mismatch, grey = none) |
 | `1` `2` `3` `4` | select the player / monster / damage / pets card |
@@ -157,7 +163,7 @@ The precedence, in the order it stops mattering:
    reported as invalid and falls back to the plain default.
 2. `--split-player-strip` — the deprecated alias; it only speaks when
    `--layout=` is absent.
-3. A saved setting (none is written by the console today) — a hand-mangled
+3. The saved `layout=` setting (written by the console layout segments) — a hand-mangled
    row is never allowed to pick a window topology you did not ask for.
 4. The default: one big window.
 

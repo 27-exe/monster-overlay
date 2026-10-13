@@ -17,7 +17,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Widgets Svg)
+find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Widgets Svg Network)
 find_package(LayerShellQt REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -230,6 +230,23 @@ target_compile_options(game-world PRIVATE -Wall -Wextra -Wpedantic)
 add_library(mhw-ui STATIC
     src/ui/control_panel.cpp
     src/ui/control_panel.h
+    # v1.0.0 fidelity port (root scroll): the shell's page-scroll
+    # container. One QScrollArea subclass whose only job is to keep the
+    # content layer at its own natural height (read back from the
+    # layout, never hardcoded) so a root taller than the window scrolls
+    # the way reference.html's does — including the 15px of width the
+    # page's scrollbar costs, which the QSS already spells.
+    src/ui/console_root_scroll.cpp
+    src/ui/console_root_scroll.h
+    # v1.0.0 fidelity port: the console's window model — the prototype's
+    # `state.scopes[...].windows[]` as a derived view over the live
+    # Panels, plus the per-window visibility key and the
+    # own→parent→primary output chain. A separate TU on purpose:
+    # control_panel.cpp is 6,900 lines and the model is read by three
+    # surfaces (canvas, inspector, export), so it gets its own file
+    # rather than being one more block in the biggest one.
+    src/ui/console_fidelity_windows.cpp
+    src/ui/console_fidelity_windows.h
     src/ui/control_panel_styles.cpp
     src/ui/control_panel_styles.h
     src/ui/rise_reframework_card.cpp
@@ -380,6 +397,13 @@ target_link_libraries(mhw-ui PUBLIC
     Qt6::Gui
     Qt6::Widgets
     Qt6::Svg
+    # v1.0.0: the console's 检查更新 entry. It really asks GitHub for the
+    # latest release (see ControlPanel::checkForUpdates) rather than
+    # printing the prototype's fake 已是最新版本, and QNetworkAccessManager
+    # is the only Qt API that can. Network is linked here rather than in a
+    # helper TU because the request lives in control_panel.cpp itself —
+    # which is the one file this wave owns.
+    Qt6::Network
     LayerShellQt::Interface
     monster-core
     game-rise
@@ -1612,6 +1636,12 @@ add_executable(world-severable-scan-tests
         Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
     target_include_directories(split-output-clamp-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # qpa/qwindowsysteminterface.h — this test now installs the reporter's
+    # two fake outputs itself (OUTPUT-OWNERSHIP-DECISION.md: the chain
+    # assertion is meaningless on one screen). Same private-include root
+    # main-output-wiring-tests takes.
+    target_include_directories(split-output-clamp-tests PRIVATE
+        ${_QT6_GUI_PRIVATE_INCLUDE_DIR})
     target_compile_options(split-output-clamp-tests PRIVATE
         -Wall -Wextra -Wpedantic)
     add_test(NAME split-output-clamp-tests COMMAND split-output-clamp-tests)
@@ -1927,6 +1957,186 @@ add_executable(world-severable-scan-tests
     target_include_directories(console-text-helpers-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(console-text-helpers-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME console-text-helpers-tests COMMAND console-text-helpers-tests)
+
+    # v1.0.0 O1: the window model's own TU, and the zero-reference-gate's
+    # "write the test" answer rather than an EXEMPT row or a snapshot bump.
+    # src/ui/console_fidelity_windows.cpp is the port's new translation unit
+    # (the chain resolver, the display label and the winVisible switch), and
+    # it was reachable from NO ctest target — the gate's own failure message
+    # named it by path. It is compiled DIRECTLY here, not through mhw-ui, so
+    # the census records `compiled_by` and not merely `refs`: the difference
+    # the gate's doc block calls out between "compiled and called" and
+    # "compiled and ignored".
+    #
+    # Needs only QtCore + QtGui + QtWidgets headers: console_fidelity_windows
+    # .cpp includes ui/panel.h (QMainWindow) but calls nothing out of the
+    # class, and the whole module's only I/O is the QSettings handle it
+    # builds itself. The test redirects that handle with QSettings::setPath
+    # into a QTemporaryDir under TMPDIR before anything opens panels.ini, so
+    # it cannot read or write the user's real file.
+    add_executable(console-fidelity-windows-tests
+        tests/console_fidelity_windows_tests.cpp
+        src/ui/console_fidelity_windows.cpp
+        src/ui/console_fidelity_windows.h
+        src/resources/resources.qrc
+    )
+    target_link_libraries(console-fidelity-windows-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(console-fidelity-windows-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-fidelity-windows-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-fidelity-windows-tests
+             COMMAND console-fidelity-windows-tests)
+    set_tests_properties(console-fidelity-windows-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # v1.0.0 (O1): THE CONSOLE'S MAIN-WINDOW STRUCTURE — the visible
+    # inspector (A), the "no selection until the user picks one" rule (B),
+    # the real per-section counts and their switches (C) and the stage's
+    # shell head (D). It builds the whole GUI shell (mhw-ui + the two game
+    # modules, like monster-control-rise-rf-smoke) because every rule is
+    # about widgets the user can see, and it redirects XDG_CONFIG_HOME into
+    # a QTemporaryDir so panels.ini is never touched.
+    add_executable(console-inspector-fidelity-tests
+        tests/console_inspector_fidelity_tests.cpp
+        src/resources/resources.qrc
+        assets/icons.qrc
+    )
+    target_link_libraries(console-inspector-fidelity-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+        LayerShellQt::Interface
+        monster-core
+        game-rise
+        game-world
+        mhw-ui
+    )
+    target_include_directories(console-inspector-fidelity-tests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-inspector-fidelity-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-inspector-fidelity-tests
+             COMMAND console-inspector-fidelity-tests)
+    set_tests_properties(console-inspector-fidelity-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # v1.0.0 integration (stages A + the O2 review items): THE WIRING.
+    # Console-fidelity mode applied to the shell's own canvas, the
+    # `winVisible` row pushed into the canvas AND honoured by the process
+    # that mounts the surface (Panel::setVisible) across all four
+    # settings domains, the #window-count predicate, and the view/display
+    # state contract read AFTER real QMouseEvent deliveries (a board click
+    # keeps the overview open and the viewer put; a rail click is the only
+    # thing that moves the view). Builds the whole GUI shell like
+    # console-inspector-fidelity-tests, and redirects XDG_CONFIG_HOME into
+    # a QTemporaryDir BEFORE QApplication so the hide/show round trip it
+    # performs on purpose never touches the developer's panels.ini.
+    add_executable(console-integration-seams-tests
+        tests/console_integration_seams_tests.cpp
+        src/resources/resources.qrc
+        assets/icons.qrc
+    )
+    target_link_libraries(console-integration-seams-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+        LayerShellQt::Interface
+        monster-core
+        game-rise
+        game-world
+        mhw-ui
+    )
+    target_include_directories(console-integration-seams-tests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-integration-seams-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-integration-seams-tests
+             COMMAND console-integration-seams-tests)
+    set_tests_properties(console-integration-seams-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # ── v1.0.0 fidelity (root scroll): THE PAGE SCROLLS, THE BOARD DOES
+    # NOT SHRINK — and this is the test of that mechanism itself.
+    #
+    # The frozen 27-file candidate this round builds on already SHIPS
+    # src/ui/console_root_scroll.{h,cpp} (the shell's root QScrollArea,
+    # whose minimum-height contract is what lets the page grow past the
+    # window), but nothing exercised it: no test target compiled the TU,
+    # and the zero-reference census did not list it — `zero-reference-
+    # gate` failed on exactly that one entry. So the test is NEW, and it
+    # compiles the source directly (NOT through mhw-ui): the four
+    # assertions are about a QScrollArea and a layout, so pulling in the
+    # whole console would only add ways for the test to fail for reasons
+    # that are not the mechanism.
+    #
+    # What it pins, each a measured behaviour of the class and none of
+    # them a number copied out of the prototype: the content's minimum
+    # height is its own layout hint (so a taller page scrolls instead of
+    # being squeezed); the content width tracks the VIEWPORT, scrollbar
+    # included; a page shorter than the viewport is not padded up; and
+    # the state recovers in both directions — page shrinks, window grows.
+    add_executable(console-root-scroll-tests
+        tests/console_root_scroll_tests.cpp
+        src/ui/console_root_scroll.cpp
+    )
+    target_link_libraries(console-root-scroll-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets)
+    target_include_directories(console-root-scroll-tests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-root-scroll-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-root-scroll-tests
+             COMMAND console-root-scroll-tests)
+    set_tests_properties(console-root-scroll-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # ─── OUTPUT-OWNERSHIP-FIX: the viewer is presentation only ───────────
+    #
+    # reference.html:421 resolves a window's display as
+    # `own → panels[win.panel].output → primary`; :513's #display-select
+    # only writes `state.display`. The Qt console broke that in four
+    # places (see OUTPUT-OWNERSHIP-REVIEW.md): the SCREEN dropdown pushed
+    # the VIEWER into every split window's clamp, the stage chips went
+    # stale on a switch, the panel view painted every panel's boxes while
+    # the chip counted one display's worth, and the overview painted a
+    # base panel the window model has no row for.
+    #
+    # NONE of that is observable on one screen — "the display I am
+    # looking at" and "the display this window lives on" are the same
+    # string by accident — so this target injects the reporter's own
+    # two-monitor topology through Qt's QPA seam (DP-1 2560x1440 plus a
+    # PORTRAIT HDMI-A-1 1080x1920 as primary), exactly as
+    # main-output-wiring-tests and console-scope-persistence-tests do,
+    # and drives the REAL widgets: the screenCombo's currentIndexChanged,
+    # the sidebar's nav cards, 400 real QKeyEvents and the console's own
+    # saveAllSplitAndBaseWindows().
+    #
+    # HOME and XDG_CONFIG_HOME point at a QTemporaryDir set before
+    # QApplication exists, so the developer's panels.ini is never opened.
+    add_executable(console-output-ownership-tests
+        tests/console_output_ownership_tests.cpp
+        src/resources/resources.qrc
+        assets/icons.qrc
+    )
+    target_link_libraries(console-output-ownership-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+        LayerShellQt::Interface
+        monster-core
+        game-rise
+        game-world
+        mhw-ui
+    )
+    target_include_directories(console-output-ownership-tests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # qpa/qwindowsysteminterface.h — the screen-injection seam. Private
+    # headers, same include root main-output-wiring-tests takes.
+    target_include_directories(console-output-ownership-tests PRIVATE
+        ${_QT6_GUI_PRIVATE_INCLUDE_DIR})
+    target_compile_options(console-output-ownership-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-output-ownership-tests
+             COMMAND console-output-ownership-tests)
+    set_tests_properties(console-output-ownership-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
 
     # The player panel's sharpness gauge
     # (drawPlayerSharpnessBar / playerSharpnessBarTotalWidth) — the third
