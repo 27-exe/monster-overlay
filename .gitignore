@@ -17,8 +17,14 @@ docs/plans/
 web/spike.html
 src/spike_web.cpp
 
-# Release artifacts — produced by the local release-v0.7.5/ script and
-# uploaded to GitHub Releases, never committed back into the repo:
+# Internal engineering notes — the architecture map and the sizing tables
+# are for the people working on the code, not for the users downloading a
+# release. Kept in the working tree, deliberately not published:
+docs/ARCHITECTURE.md
+docs/SIZING.md
+
+# Release artifacts — produced by packaging/build-release.sh and uploaded to
+# GitHub Releases, never committed back into the repo:
 release-*/
 *.tar.gz
 
