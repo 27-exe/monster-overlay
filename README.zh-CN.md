@@ -6,7 +6,7 @@
 游戏进程的内存,把玩家 / 怪物 / 伤害面板绘制在游戏画面上 —— 不注入 DLL、
 不修改游戏文件。
 
-![任务中](assets/screenshots/03-in-quest.png)
+![任务中](assets/screenshots/03-in-quest.jpg)
 ![控制台](assets/screenshots/01-control-console.png)
 
 ## 已知问题
@@ -19,8 +19,9 @@
 
 - x86_64 Linux,Wayland 会话 + 支持 layer-shell 的合成器(KDE Plasma、
   Hyprland、niri、sway 等)
-- Qt 6.11 或更高(Widgets、Svg),**并且要带上私有 QtGui 头** —— 大多数发行版
-  把私有头单独放在一个 `-private-` 包里,见下文[非 Arch 的 Qt 6.11](#非-arch-的-qt-611)
+- **随包二进制需要 Qt 6.12 运行时**（基于它构建;更旧的 Qt 会在加载时报缺少符号）。
+  从源码构建则需要 Qt 6.11 或更高(Widgets、Svg),**并且要带上私有 QtGui 头** ——
+  大多数发行版把私有头单独放在一个 `-private-` 包里,见下文[非 Arch 的 Qt 6.11](#非-arch-的-qt-611)
 - `layer-shell-qt`
 - Arch 上执行一次 `sudo ./install-deps.sh`,以上全部装好
 - Steam,推荐 **GE-Proton 10-34**(其他 Proton 9+ 也可)
@@ -30,8 +31,8 @@
 ## 安装
 
 ```bash
-tar -xzf monster-overlay-v1.0.0-linux-x86_64.tar.gz
-cd monster-overlay-v1.0.0-linux-x86_64
+tar -xzf monster-overlay-v1.1.5-linux-x86_64.tar.gz
+cd monster-overlay-v1.1.5-linux-x86_64
 sudo ./install-deps.sh      # 一次性:Qt 6 + layer-shell-qt
 ./install.sh                # 可选:装到 ~/.local/bin 与 XDG 数据目录
 ```
@@ -46,12 +47,18 @@ sudo ./install-deps.sh      # 一次性:Qt 6 + layer-shell-qt
 ```
 
 控制台包含显示器总览、分组视图与三列窗口检查器。顶栏显示器选择只切换查看屏，
-检查器的目标显示器改变选中窗口归属；预览是演示内容，保存会写入当前游戏 × 布局
-作用域。主题与语言在设置中切换，详见[控制台指南](docs/CONSOLE.md)。
+检查器的目标显示器改变选中窗口归属；预览是演示内容，改动在关闭控制台时写入当前游戏 × 布局
+作用域。设置是紧凑可滚动弹窗；显示器示例支持可见缩放/复位，详情使用原尺寸
+HUD 图像并允许滚动查看。离线显示器归属临时回退到在线主屏，不重置外接屏布局。
+详见[控制台指南](docs/CONSOLE.md)。
 
-玩家窗口有两种形态，启动时二选一：`--layout single`（默认，一块面板）或
-`--layout split`（debuff/buff 胶囊独立成窗）。两种形态的完整说明，以及
-已废弃的 `--split-player-strip` 别名，见
+玩家窗口有三种形态，启动时选择：`--layout single`（默认，一块面板）、
+`--layout split`（各分区组独立成窗）或 `--layout mixed`（逐窗口决定：一部分分组
+留在主面板内，其余独立成窗）。用 `--detached-windows player-bars,damage-share`
+指定哪些独立，或把选择存进 `monster-overlay.conf` 的 `layout.windows.<game>=` 行；
+没有保存过清单时，`mixed` 从与 `split` 相同的"全部分离"开始，你再逐个并回。
+`--print-layout-plan` 可输出解析后的拓扑 JSON 后退出，不写任何配置。三种形态的
+完整说明，以及已废弃的 `--split-player-strip` 别名，见
 [docs/USAGE.zh-CN.md §6.1](docs/USAGE.zh-CN.md)。
 
 ### 快捷键(悬浮窗)
@@ -108,7 +115,7 @@ sudo sysctl kernel.yama.ptrace_scope=0            # 临时,系统级
 ```bash
 cmake -S . -B build
 cmake --build build -j"$(nproc)"
-ctest --test-dir build          # 17 个套件中 7 个需要游戏在跑,会跳过
+ctest --test-dir build --output-on-failure  # 实机观测探针另需运行游戏
 ./build/monster-overlay         # 在仓库根目录运行:地图从 data/ 解析
 ```
 

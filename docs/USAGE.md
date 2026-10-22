@@ -38,7 +38,8 @@ display is a viewer, independent of a window's target output.
 | panel cards (player / monster / damage / pets) | master switch plus per-section switches; the preview updates as you toggle |
 | `START` / `STOP` | starts / stops `monster-overlay`; the console hides while it runs and returns when it exits |
 | Edit Layout | edits the console preview without launching an overlay child |
-| preview canvas | selects a window; in edit mode drag or nudge it by 1 logical px (Shift = 10); `Ctrl`+wheel zooms the canvas |
+| preview canvas | selects a window; in edit mode drag or nudge by 1 logical px (Shift = 10); `−`/`+` or Ctrl+wheel zooms 50–400%, `1:1` resets |
+| HUD detail | opens fitted to its pane, with its own preview zoom (`−` / `+` / `Actual size` 1:1) independent of the window's real scale; opacity changes refresh the source image immediately |
 | topbar display selector | changes the viewed output only |
 | inspector target display | changes the selected window's output; Follow resolves own → parent → primary |
 | Settings: 中文 / English | switches UI language; the running overlay follows the saved locale |
@@ -112,7 +113,9 @@ signal to look into that row, not as a picture that failed to appear.
 | `--game auto\|world\|rise` | which game to read (default `auto`) |
 | `--poll <ms>` | polling interval, default 250 |
 | `--locale <code>` | UI locale for this run (`zh-CN`, `en-US`) |
-| `--layout single\|split` | window topology: one big player panel (`single`, the default) or the player debuff/buff capsules in their own window (`split`) — see §6.1 below |
+| `--layout single\|split\|mixed` | window topology (§6.1): one big player panel (`single`, the default), the section groups each in their own window (`split`), or a per-window choice (`mixed`) |
+| `--detached-windows <keys>` | with `layout=mixed`: which windows run as their own windows; every other key merges back into its parent panel. Keys: `player-status`, `player-mantles`, `player-wirebug`, `player-bars`, `player-weapon`, `player-info`, `monster-identity`, `monster-conditions`, `damage-share`, `damage-chart`, `damage-rows`. An explicit empty value merges everything |
+| `--print-layout-plan` | print the resolved topology as JSON (mode, source, detached keys, the `mothers` array's masks + mount gates, per-window enable gates) and exit; writes no config |
 | `--edit` | edit mode (§4) |
 | `--mask-player\|monster\|damage\|pets <hex32>` | per-section visibility; the console passes these |
 | `--no-player\|no-monster\|no-damage\|no-pets` | hide a whole panel |
@@ -123,24 +126,37 @@ signal to look into that row, not as a picture that failed to appear.
 `world` / `rise` forces one reader instead. `--no-pets` only matters in Rise:
 World never mounts the pet-damage surface regardless of the flag.
 
-### 6.1 Two layouts: one panel or several small ones
+### 6.1 Three layouts: one panel, several, or a per-window choice
 
-The player window topology is a two-way switch, and v0.12 is where the two
-sides got their own name:
+The player window topology has three sides, and v0.12 is where the first two
+got their own name:
 
 | Mode | What you get |
 |---|---|
 | `--layout single` | **one big panel** holding every player block. The default, and pixel-for-pixel what every version before v0.12 drew |
-| `--layout split` | the player **debuff / buff capsules move into their own window**, separately positionable, scalable and hideable |
+| `--layout split` | the section groups **move into their own windows**, separately positionable, scalable and hideable |
+| `--layout mixed` | **a per-window choice**: the keys you list stay their own windows, everything else merges back into its parent panel |
 
 ```bash
-./monster-overlay --layout split     # capsules get their own window
+./monster-overlay --layout split     # every group gets its own window
 ./monster-overlay                    # same as --layout single: one panel
+./monster-overlay --layout mixed --detached-windows player-bars,damage-share
+                                     # only those two are separate; the rest are
+                                     # drawn by their parent panel
 ```
 
-Both modes keep every block you toggled on. In `split` the capsules simply
-leave the player panel and appear as a second window — they are drawn by
-exactly one of the two windows, never both, so nothing duplicates and nothing
+For `mixed`, the same choice can be saved so it survives a restart — put it in
+`monster-overlay.conf` as `layout.windows.world=` / `layout.windows.rise=`
+(one row per game, so the two games cannot overwrite each other). A missing
+row means "everything detached", which is the same view `split` gives; an
+explicitly empty row means "everything merged". `--detached-windows` on the
+command line outranks the row, and `--print-layout-plan` shows which of the
+three the current invocation resolved to — useful for checking a
+hand-edited config without starting the overlay at all.
+
+All three modes keep every block you toggled on. In `split` and `mixed` each
+block moves out of its parent panel into its own window — it is drawn by
+exactly one of the two surfaces, never both, so nothing duplicates and nothing
 is dropped. Each window is positioned on its own during edit mode (§4) and
 keeps its own position, scale, opacity, output and visibility in
 `panels.ini`, under the settings key `player-status`.
@@ -177,6 +193,9 @@ Everything above is a startup decision. The console still passes the same
 | `--locale <code>` | UI locale for this run |
 | `--light` | light theme |
 | `--snap <file>` | render the console to a PNG and exit |
+| `--snap-select=<panel>,<sub>` | with `--snap`: select a window first, so the inspector is captured filled (sub `-1` = the parent panel) |
+| `--snap-scroll=<start/end>` | with `--snap`: scroll the inspector's content box to the top or the end before the grab |
+| `--snap-dialog=<help/settings/export>` | with `--snap`: photograph that modal instead of the console window (the grab runs inside the modal's own event loop) |
 | `--print-locale` | print the resolved locale and source, then exit |
 | `--print-screen-info` | print the detected outputs, then exit |
 | `--version` / `--help`, `-v` / `-h` | print the version / usage and exit (no window) |
@@ -195,8 +214,8 @@ Everything above is a startup decision. The console still passes the same
 
 | Path | Written by | Contents |
 |---|---|---|
-| `~/.config/monster-overlay/monster-overlay.conf` | console | `player=` / `monster=` / `damage=` / `pets=` masks (hex32), plus `locale=` once you pick a language; unrelated lines are preserved |
-| `~/.config/monster-overlay/panels.ini` | overlay | per-panel geometry: one group per panel (`player`, `monster`, `dps`, `pet-damage`, and in `--layout split` the player strip as `player-status`), each with `ml`/`mt`/`mr`/`mb` margins, `scale`, `opacity`, `bgAlpha`, `outputName`, `visible` |
+| `~/.config/monster-overlay/monster-overlay.conf` | console | `player=` / `monster=` / `damage=` / `pets=` masks (hex32), plus `locale=` once you pick a language; the chosen layout writes `layout=` (`single` is not written) and under `mixed` two extra rows `layout.windows.world=` / `layout.windows.rise=` record which windows are detached; unrelated lines are preserved |
+| `~/.config/monster-overlay/panels.ini` | overlay | per-panel geometry: one group for each parent panel (`player`, `monster`, `dps`, `pet-damage`), plus one group per detached sub-window under `split` and `mixed` (`player-status`, `player-bars`, `player-mantles`, `player-wirebug`, `player-weapon`, `player-info`, `monster-identity`, `monster-conditions`, `damage-share`, `damage-chart`, `damage-rows`), each with `ml`/`mt`/`mr`/`mb` margins, `scale`, `opacity`, `bgAlpha`, `outputName`, `visible` |
 | `~/monster-doctor-<timestamp>.txt` | doctor | the diagnostic report |
 
 The console also keeps its own window geometry, window state, splitter sizes and
@@ -344,8 +363,9 @@ belong to a named hunter keeps its producer label instead.
 and returns focus to the console.
 
 **Console**: `1`/`2`/`3`/`4` select the player / monster / damage / pets card,
-`Ctrl`+wheel zooms the preview canvas, `←→↑↓` move the selected panel in the
-canvas (10 px, `Shift` = 50 px).
+`Ctrl`+wheel (or `−`/`+`) zooms the display example 50–400%, `←→↑↓` move the
+selected panel in the canvas (1 logical px, `Shift` = 10 — the overlay's edit
+mode above is 10/50).
 
 ### 12.1 What each window supports
 

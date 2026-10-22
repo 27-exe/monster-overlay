@@ -6,7 +6,7 @@ A Wayland HUD overlay for **Monster Hunter: World** and **Monster Hunter Rise**.
 It draws player, monster and damage panels over the game by reading the running
 process from the outside — no DLL injection, no game files touched.
 
-![In quest](assets/screenshots/03-in-quest.png)
+![In quest](assets/screenshots/03-in-quest.jpg)
 ![Control console](assets/screenshots/05-control-console-en.png)
 
 ## Known limitations
@@ -20,7 +20,9 @@ process from the outside — no DLL injection, no game files touched.
 
 - x86_64 Linux, Wayland session with a layer-shell compositor (KDE Plasma,
   Hyprland, niri, sway, …)
-- Qt 6.11 or newer (Widgets, Svg) **including its private QtGui headers** —
+- **Qt 6.12** runtime for the bundled binaries (they are built against it;
+  an older Qt fails at load time with missing symbols). Building from
+  source needs Qt 6.11 or newer **including its private QtGui headers** —
   most distributions ship those in a separate `-private-` package, see
   [Qt 6.11 outside Arch](#qt-611-outside-arch) below
 - `layer-shell-qt`
@@ -33,8 +35,8 @@ process from the outside — no DLL injection, no game files touched.
 ## Install
 
 ```bash
-tar -xzf monster-overlay-v1.0.0-linux-x86_64.tar.gz
-cd monster-overlay-v1.0.0-linux-x86_64
+tar -xzf monster-overlay-v1.1.5-linux-x86_64.tar.gz
+cd monster-overlay-v1.1.5-linux-x86_64
 sudo ./install-deps.sh      # one-time: Qt 6 + layer-shell-qt
 ./install.sh                # optional: installs to ~/.local/bin + XDG data dir
 ```
@@ -51,12 +53,23 @@ sudo ./install-deps.sh      # one-time: Qt 6 + layer-shell-qt
 The console provides a display overview, per-group views and a three-column
 window inspector. The topbar display selector changes only what you view; the
 inspector target selector changes where the selected window belongs. Preview
-content is demo data; Save writes the active game × layout scope. Theme and
-language controls are in Settings. See [the console guide](docs/CONSOLE.md).
+content is demo data; changes are written when the console closes. Theme and
+language controls are in a compact, scrollable Settings dialog. The display
+preview has visible zoom/reset controls; the inspector shows a native-resolution,
+scrollable HUD image. Offline output assignments temporarily fall back to the
+live primary without resetting saved external-screen layouts. See
+[the console guide](docs/CONSOLE.md).
 
-The player window has two shapes, chosen at launch: `--layout single` (the
-default, one panel) or `--layout split` (the debuff/buff capsules in their own
-window). See [docs/USAGE.md §6.1](docs/USAGE.md) for both, and for the
+The player window has three shapes, chosen at launch: `--layout single` (the
+default, one panel), `--layout split` (the section groups each get their own
+window), or `--layout mixed` — per window, some sections stay merged into the
+parent panel while the rest become their own windows. Pick them with
+`--detached-windows player-bars,damage-share`, or save the choice in the
+`layout.windows.<game>=` row of `monster-overlay.conf`; with no list saved,
+`mixed` starts from the same all-detached view `split` gives and you merge
+back what you want. `--print-layout-plan` prints the resolved topology as JSON
+and exits without writing any config. See
+[docs/USAGE.md §6.1](docs/USAGE.md) for all three, and for the
 deprecated `--split-player-strip` alias.
 
 ### Keyboard shortcuts (overlay)
@@ -119,7 +132,7 @@ account data or game memory are collected.
 ```bash
 cmake -S . -B build
 cmake --build build -j"$(nproc)"
-ctest --test-dir build          # 7 of 17 suites need a running game and skip
+ctest --test-dir build --output-on-failure  # live-game probes require a running game
 ./build/monster-overlay         # run from the repo: maps resolve from data/
 ```
 

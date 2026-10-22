@@ -34,7 +34,8 @@ sudo ./install-deps.sh      # Arch 上只需执行一次：Qt 6 + layer-shell-qt
 | 面板卡片（玩家 / 怪物 / 伤害 / 随从） | 总开关加各分区开关，切换时预览实时更新 |
 | `START` / `STOP` | 启动 / 停止 `monster-overlay`；运行时控制台隐藏，退出后自动回来 |
 | 编辑布局 | 在控制台预览中编辑，不启动覆盖层子进程 |
-| 预览画布 | 点击选择窗口；编辑模式下拖动或方向键微调 1 逻辑像素（Shift 为 10）；`Ctrl`+滚轮缩放画布 |
+| 预览画布 | 点击选择窗口；编辑模式下拖动或方向键微调 1 逻辑像素（Shift 为 10）；`−`/`+` 或 `Ctrl`+滚轮缩放示例 50–400%，`1:1` 复位 |
+| 当前内容状态 | 默认适应窗口即可看全内容，另有独立的预览缩放（`−` / `+` / `实际大小` 1:1），与真实窗口的缩放互不影响；透明度变化立即更新图源 |
 | 顶栏显示器 | 只切换查看屏，不修改窗口归属 |
 | 检查器目标显示器 | 修改选中窗口归属；跟随按 own → parent → primary 解析 |
 | 设置：中文 / English | 切换界面语言；运行中的覆盖层跟随保存的语言 |
@@ -100,7 +101,9 @@ OnDemand，合成器才被要求激活该 surface）。在覆盖层里方向键�
 | `--poll <ms>` | 轮询间隔，默认 250 |
 | `--locale <code>` | 本次运行的界面语言（`zh-CN`、`en-US`） |
 | `--edit` | 编辑模式（见 §4） |
-| `--layout single\|split` | 窗口形态：玩家面板合成一块（`single`，默认）还是把玩家 debuff/buff 胶囊拆成独立窗口（`split`）—— 见下面 §6.1 |
+| `--layout single\|split\|mixed` | 窗口形态：玩家面板合成一块（`single`，默认）、各分区组独立成窗（`split`），或逐窗口决定（`mixed`）—— 见下面 §6.1 |
+| `--detached-windows <keys>` | 配合 `layout=mixed`：哪些窗口独立成窗，其余键并回所属主面板。键名：`player-status`、`player-mantles`、`player-wirebug`、`player-bars`、`player-weapon`、`player-info`、`monster-identity`、`monster-conditions`、`damage-share`、`damage-chart`、`damage-rows`。显式空值 = 全部并回 |
+| `--print-layout-plan` | 输出解析后的拓扑 JSON（模式、来源、独立键、`mothers` 数组里各主面板的掩码与挂载门、逐窗口启用门）后退出；不写任何配置 |
 | `--mask-player\|monster\|damage\|pets <hex32>` | 各分区可见性；由控制台传入 |
 | `--no-player\|no-monster\|no-damage\|no-pets` | 隐藏整个面板 |
 | `--output-player\|monster\|damage\|pets <name>` | 把某个面板固定到指定 `QScreen`（留空 = 跟随系统主屏）；由控制台传入 |
@@ -110,22 +113,32 @@ OnDemand，合成器才被要求激活该 surface）。在覆盖层里方向键�
 为 `world` / `rise` 则强制使用指定 reader。`--no-pets` 只对 Rise 有意义：
 World 无论带不带该参数都不会挂载随从伤害面板。
 
-### 6.1 两种窗口形态：一块大面板，还是几块小窗口
+### 6.1 三种窗口形态：一块大面板、几块小窗口，或逐窗口决定
 
-玩家窗口的形态是个二选一的开关，v0.12 才把两边正式命名：
+玩家窗口的形态有三种，v0.12 先把前两种正式命名：
 
 | 形态 | 得到什么 |
 |---|---|
 | `--layout single` | **一块大面板**，装下所有玩家分区。默认值，且与 v0.12 之前每一版逐像素一致 |
-| `--layout split` | 玩家的 **debuff / buff 胶囊移进自己的窗口**，可单独定位、缩放、隐藏 |
+| `--layout split` | 各分区组 **移进自己的窗口**，可单独定位、缩放、隐藏 |
+| `--layout mixed` | **逐窗口决定**：你列出的键保持独立成窗，其余并回所属主面板 |
 
 ```bash
-./monster-overlay --layout split     # 胶囊独立成窗
+./monster-overlay --layout split     # 每个分组独立成窗
 ./monster-overlay                    # 等价于 --layout single：一块面板
+./monster-overlay --layout mixed --detached-windows player-bars,damage-share
+                                     # 只有这两个独立，其余由主面板绘制
 ```
 
-两种形态下，你开着的分区一个都不少。`split` 只是让胶囊离开玩家面板、
-变成第二个窗口 —— 每一块内容由两个窗口中的**恰好一个**绘制，既不会重复、
+`mixed` 的这个选择可以存下来，重启后仍然生效——写进
+`monster-overlay.conf` 的 `layout.windows.world=` / `layout.windows.rise=`
+（每个游戏一行，两个游戏互不覆盖）。行不存在 = 全部分离（与 `split` 所见相同）；
+显式空行 = 全部合并。命令行上的 `--detached-windows` 优先于该行，
+`--print-layout-plan` 会显示本次实际解析成三者中的哪一个——手工改过配置后
+想核对、又不想启动悬浮窗时用它。
+
+三种形态下，你开着的分区一个都不少。在 `split` 与 `mixed` 里，每一块内容
+离开主面板进入自己的窗口，由两个面中的**恰好一个**绘制，既不会重复、
 也不会丢失。每个窗口在编辑模式（§4）里单独调整位置，并各自把位置、缩放、
 不透明度、所在屏幕和可见性写进 `panels.ini`，对应的 settingsKey 是
 `player-status`。
@@ -158,6 +171,9 @@ World 无论带不带该参数都不会挂载随从伤害面板。
 | `--locale <code>` | 本次运行的界面语言 |
 | `--light` | 浅色主题 |
 | `--snap <file>` | 把控制台渲染成 PNG 后退出 |
+| `--snap-select=<面板>,<子窗>` | 配合 `--snap`：抓图前先选中一个窗口，让检查器以填充状态入镜（子窗写 `-1` 表示主面板） |
+| `--snap-scroll=<start/end>` | 配合 `--snap`：抓图前把检查器内容区滚到顶部（`start`）或底部（`end`） |
+| `--snap-dialog=<help/settings/export>` | 配合 `--snap`：改为拍摄帮助 / 设置 / 导出模态窗，而不是控制台窗口（抓图发生在该模态自己的事件循环里） |
 | `--print-locale` | 打印最终语言及其来源，然后退出 |
 | `--print-screen-info` | 打印检测到的显示器，然后退出 |
 | `--version` / `--help`，`-v` / `-h` | 打印版本 / 用法后退出（不打开窗口） |
@@ -176,8 +192,8 @@ World 无论带不带该参数都不会挂载随从伤害面板。
 
 | 路径 | 写入方 | 内容 |
 |---|---|---|
-| `~/.config/monster-overlay/monster-overlay.conf` | 控制台 | `player=` / `monster=` / `damage=` / `pets=` 掩码（hex32），选定语言后写入 `locale=`；无关行会被保留 |
-| `~/.config/monster-overlay/panels.ini` | 覆盖层 | 各面板几何信息：每个面板一组（`player`、`monster`、`dps`、`pet-damage`；`--layout split` 下另有玩家胶囊条 `player-status`），含 `ml`/`mt`/`mr`/`mb` 边距、`scale`、`opacity`、`bgAlpha`、`outputName`、`visible` |
+| `~/.config/monster-overlay/monster-overlay.conf` | 控制台 | `player=` / `monster=` / `damage=` / `pets=` 掩码（hex32），选定语言后写入 `locale=`，所选布局写 `layout=`（`single` 不写）；`mixed` 下另有 `layout.windows.world=` / `layout.windows.rise=` 两行记录哪些窗口独立。无关行会被保留 |
+| `~/.config/monster-overlay/panels.ini` | 覆盖层 | 各面板几何信息：四个主面板各一组（`player`、`monster`、`dps`、`pet-damage`），`split` 与 `mixed` 下每个独立子窗再各一组（`player-status`、`player-bars`、`player-mantles`、`player-wirebug`、`player-weapon`、`player-info`、`monster-identity`、`monster-conditions`、`damage-share`、`damage-chart`、`damage-rows`），含 `ml`/`mt`/`mr`/`mb` 边距、`scale`、`opacity`、`bgAlpha`、`outputName`、`visible` |
 | `~/monster-doctor-<时间戳>.txt` | doctor | 诊断报告 |
 
 控制台还会把自己的窗口几何、窗口状态、分栏宽度和画布缩放保存在 Qt 默认
@@ -308,7 +324,8 @@ Palico / Palamute / Unknown）。覆盖层再用 reader 已有的队伍名册判
 还给控制台。
 
 **控制台**：`1`/`2`/`3`/`4` 选中玩家 / 怪物 / 伤害 / 随从卡片，`Ctrl`+滚轮
-缩放预览画布，`←→↑↓` 在画布中移动选中面板（10 px，Shift 为 50 px）。
+（或 `−`/`+`）缩放示例 50–400%，`←→↑↓` 在画布中移动选中面板（1 逻辑像素，
+Shift 为 10 —— 上面覆盖层编辑模式的 10/50 不适用于这里）。
 
 ### 12.1 每个窗口支持什么
 
