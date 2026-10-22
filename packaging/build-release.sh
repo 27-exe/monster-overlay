@@ -39,13 +39,21 @@ for exe in monster-overlay monster-control monster-doctor; do
 done
 
 rm -rf "$STAGE"
-mkdir -p "$STAGE"/{data,reframework/autorun,third_party/REFramework}
+mkdir -p "$STAGE"/{data,reframework/autorun,third_party/REFramework,third_party/licenses}
 
 install -m 755 "${BUILD}/monster-overlay" "${BUILD}/monster-control" \
                 "${BUILD}/monster-doctor" "$STAGE/"
 install -m 644 "${REPO}"/data/*.map "$STAGE/data/"
 install -m 644 "${REPO}"/reframework/*.lua "$STAGE/reframework/autorun/"
 install -m 644 "${REPO}/LICENSE" "${REPO}/NOTICE" "$STAGE/"
+# Embedded icons and fonts still require their notices in binary releases.
+install -m 644 "${REPO}/assets/icons/LICENSE" \
+    "$STAGE/third_party/licenses/MHW_Icons_SVG-MIT.txt"
+install -m 644 "${REPO}/assets/fonts/OFL.txt" \
+    "$STAGE/third_party/licenses/WorkSans-OFL.txt"
+install -m 644 "${REPO}/LICENSES/ChakraPetch-OFL.txt" \
+    "$STAGE/third_party/licenses/ChakraPetch-OFL.txt"
+install -m 644 "${REPO}/assets/NOTICE.md" "$STAGE/third_party/ASSET-NOTICE.md"
 install -m 755 "${REPO}/packaging/install-deps.sh" "${REPO}/packaging/install.sh" "$STAGE/"
 install -m 644 "${REPO}/packaging/README.md" "${REPO}/packaging/README.zh-CN.md" "$STAGE/"
 

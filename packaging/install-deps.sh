@@ -8,12 +8,14 @@ set -euo pipefail
 if command -v pacman >/dev/null 2>&1; then
     sudo pacman -S --needed --noconfirm \
         qt6-base \
+        qt6-svg \
         qt6-declarative \
         qt6-wayland \
         layer-shell-qt
     echo "OK: Qt 6 + layer-shell-qt installed."
 else
     echo "This installer only knows Arch. On other distros, install:"
-    echo "  - Qt 6.11+ (qtbase, qtdeclarative, qtwayland)"
+    echo "  - Qt 6.12 (qtbase, qtsvg, qtdeclarative, qtwayland)"
+    echo "  - libstdc++ providing CXXABI_1.3.15 (GCC 14+) and glibc 2.34+"
     echo "  - layer-shell-qt (KDE's Qt wrapper around zwlr_layer_shell_1)"
 fi

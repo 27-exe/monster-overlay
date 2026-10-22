@@ -22,7 +22,8 @@
 - **随包二进制需要 Qt 6.12 运行时**（基于它构建;更旧的 Qt 会在加载时报缺少符号）。
   从源码构建则需要 Qt 6.11 或更高(Widgets、Svg),**并且要带上私有 QtGui 头** ——
   大多数发行版把私有头单独放在一个 `-private-` 包里,见下文[非 Arch 的 Qt 6.11](#非-arch-的-qt-611)
-- `layer-shell-qt`
+- `layer-shell-qt`；随包二进制另需 glibc 2.34+ 与提供 `CXXABI_1.3.15` 的
+  libstdc++（GCC 14+ 运行时）
 - Arch 上执行一次 `sudo ./install-deps.sh`,以上全部装好
 - Steam,推荐 **GE-Proton 10-34**(其他 Proton 9+ 也可)
 - 不需要 mod,默认不需要任何特殊权限。世界范畴零额外依赖;崛起的伤害

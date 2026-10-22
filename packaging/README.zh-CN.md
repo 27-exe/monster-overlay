@@ -9,10 +9,10 @@ Linux 原生 HUD 覆盖层,支持 **怪物猎人:世界** 与 **怪物猎人:崛
 - x86_64 Linux,Wayland 会话 + 支持 layer-shell 的合成器(KDE Plasma、
   Hyprland、niri、sway 等)。**不支持 X11。**
 - **Steam + GE-Proton 10-34**(推荐;Proton 11 系列同样可用)
-- **Qt 6.12**(Core/Gui/Widgets/Svg)、**glibc 2.34+**、**GCC 13+** 运行时,
-  以及 `layer-shell-qt`。随包二进制基于 Qt 6.12 构建,在更旧的 Qt 上会在
-  加载时报缺少符号。Arch 等滚动发行版满足此要求;Debian trixie、Ubuntu
-  24.04 及更早版本不满足。`./install-deps.sh` 仅处理 Arch 的 Qt 依赖。
+- **Qt 6.12**(Core/Gui/Widgets/Svg)、**glibc 2.34+** 与 `layer-shell-qt`。
+  C++ 运行时须提供 **CXXABI_1.3.15**（GCC 14 或更高版本的 libstdc++）。
+  旧版 Qt 或 libstdc++ 会在加载时报缺少符号。`./install-deps.sh` 仅处理 Arch 的
+  运行依赖。
 
 读取游戏内存通常开箱可用:Steam 会把游戏放进由你拥有的 user namespace,
 满足内核的 ptrace 检查。万一读取被拒,覆盖层会自己报出原因,两种解法:
@@ -36,7 +36,7 @@ cd monster-overlay-v1.1.5-linux-x86_64
 跑 `./install.sh`。
 
 界面首次运行跟随桌面语言(默认英文;系统 locale 为 `zh*` 时用中文)。
-控制台的 `中文 | EN` chip 会把选择固定下来,之后以保存值为准,直到你再次修改。
+在 **设置 → 语言** 中修改后会记住选择,之后以保存值为准。
 
 ### 控制台
 

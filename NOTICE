@@ -15,14 +15,23 @@ assets/icons/Tools/, assets/icons/Traps/ are sourced from:
     https://github.com/OthelloRhin/MHW_Icons_SVG
     licensed under the MIT License.
 
-A copy of the MIT text is included as assets/icons/LICENSE (or see
-upstream). The original XAML resources from HunterPie
-(assets/icons/Abnormalities.*, the ICON_* PNG-style icons) were
-replaced by the equivalent OthelloRhin SVG files where applicable.
+The MIT text is included as assets/icons/LICENSE in the source tree and
+third_party/licenses/MHW_Icons_SVG-MIT.txt in binary packages. The original
+XAML resources from HunterPie (assets/icons/Abnormalities.*, the ICON_*
+PNG-style icons) were replaced by the equivalent OthelloRhin SVG files
+where applicable.
 
-This product includes WorkSans (https://github.com/weiweihuanghuang/
-Work-Sans), licensed under the SIL Open Font License, Version 1.1.
-A copy of the OFL text is included as assets/fonts/OFL.txt.
+This product includes Work Sans (https://github.com/weiweihuanghuang/
+Work-Sans), copyright 2019 The Work Sans Project Authors, licensed under
+the SIL Open Font License, Version 1.1. The full notice is included as
+assets/fonts/OFL.txt in the source tree and
+third_party/licenses/WorkSans-OFL.txt in binary packages.
+
+This product also includes Chakra Petch, copyright 2018 The Chakra Petch
+Project Authors (https://github.com/m4rc1e/Chakra-Petch.git), licensed
+under the SIL Open Font License, Version 1.1. The full notice is included
+as LICENSES/ChakraPetch-OFL.txt in the source tree and
+third_party/licenses/ChakraPetch-OFL.txt in binary packages.
 
 The noise texture (assets/charts/alligator_noise_512x512.jpg) is
 adapted from HunterPie's Assets/Textures/ under the same Apache-2.0
@@ -33,10 +42,16 @@ The original HunterPie project is at:
 The original MHW_Icons_SVG project is at:
   https://github.com/OthelloRhin/MHW_Icons_SVG
 
-What we do NOT use:
-- Anything extracted from the MHW game binary at runtime. The "em" and
-  "em*" path strings in memory are read as data, never as image sources.
-- Anything derived from MHW game assets (Capcom EULA forbids).
+Monster icon PNGs in assets/icons/Monsters/ are obtained from the
+HunterPie CDN (https://cdn.hunterpie.com/Assets/Monsters/Icons/).
+Monster Hunter names and artwork belong to Capcom. Naming the CDN as
+the source does not assert that HunterPie owns or licenses the artwork;
+this project grants no rights in those third-party images. See
+assets/NOTICE.md in the source tree or third_party/ASSET-NOTICE.md in
+binary packages for the asset provenance statement.
+
+No images are extracted from the running game. The "em" and "em*" paths
+read from memory are used as data, not as image sources.
 
 Conversion script archived at:
   tools/archive/xaml2svg.py (kept for reference only; no longer used

@@ -25,7 +25,8 @@ process from the outside — no DLL injection, no game files touched.
   source needs Qt 6.11 or newer **including its private QtGui headers** —
   most distributions ship those in a separate `-private-` package, see
   [Qt 6.11 outside Arch](#qt-611-outside-arch) below
-- `layer-shell-qt`
+- `layer-shell-qt`; the prebuilt binaries also need glibc 2.34+ and libstdc++
+  providing `CXXABI_1.3.15` (GCC 14+ runtime)
 - `sudo ./install-deps.sh` installs all of it on Arch, once
 - Steam, with **GE-Proton 10-34** recommended (other Proton 9+ builds work)
 - No mods and no special permissions. World needs nothing else at all;

@@ -9,12 +9,10 @@ layer-shell), reading the game's memory from outside the process.
 - x86_64 Linux, Wayland session with a layer-shell compositor (KDE Plasma,
   Hyprland, niri, sway, …). **X11 is not supported.**
 - **Steam + GE-Proton 10-34** (recommended; the Proton 11 family also works)
-- **Qt 6.12** (Core/Gui/Widgets/Svg), **glibc 2.34+**, **GCC 13+** runtime, and
-  `layer-shell-qt`. The shipped binaries were built against Qt 6.12; on an
-  older Qt they fail to load, with the dynamic linker reporting the missing
-  symbols. Arch (and other rolling releases) have this; Debian trixie,
-  Ubuntu 24.04 and anything older do not. `./install-deps.sh` installs the
-  Qt packages on Arch only.
+- **Qt 6.12** (Core/Gui/Widgets/Svg), **glibc 2.34+**, and `layer-shell-qt`.
+  The C++ runtime must provide **CXXABI_1.3.15** (libstdc++ from GCC 14 or newer).
+  Older Qt or libstdc++ versions fail at load time with missing symbols.
+  `./install-deps.sh` installs runtime dependencies on Arch only.
 
 Reading the game's memory normally works as-is: Steam launches the game inside
 a user namespace owned by you, which satisfies the kernel's ptrace check. If a
@@ -24,8 +22,7 @@ file is replaced) or `sudo sysctl kernel.yama.ptrace_scope=0` (temporary).
 
 **World needs nothing else.** Rise's damage panel additionally needs the
 REFramework Lua producer shipped in `reframework/autorun/` — the console
-installs it for you (see §2). Needs **Qt 6.11**, glibc 2.34+ and GCC 13+
-(see the version note below).
+installs it for you (see §2).
 
 ## 2. Start it
 
@@ -41,8 +38,8 @@ console's top bar. `./install.sh` additionally copies the binaries to
 `~/.local/bin` and the maps to `~/.local/share/monster-overlay/data`.
 
 The UI follows your desktop language on first run (English; Chinese when the
-system locale is `zh*`). The `中文 | EN` chip pins a choice — after that the
-saved value wins until you change it.
+system locale is `zh*`). Change it under **Settings → Language**; the saved
+choice takes precedence on later launches.
 
 ### The console
 
