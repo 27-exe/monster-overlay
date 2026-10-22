@@ -113,6 +113,8 @@ public:
     virtual ~PanelSource() = default;
     virtual Corner corner() const = 0;
     virtual QMargins margins() const = 0;
+    // Runtime placement may clamp an offline output without rewriting intent.
+    virtual QMargins presentationMargins() const { return margins(); }
     virtual QSize contentSize() const = 0;
     virtual double scale() const = 0;
     virtual double opacity() const { return 1.0; }
@@ -174,6 +176,7 @@ public:
     explicit PanelSourceAdapter(const Panel *p);
     Corner corner() const override;
     QMargins margins() const override;
+    QMargins presentationMargins() const override;
     QSize contentSize() const override;
     double scale() const override;
     double opacity() const override;

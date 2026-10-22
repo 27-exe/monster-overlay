@@ -823,6 +823,137 @@ int main(int argc, char **argv)
     }
 
     // ==================================================================
+    // 5. THE MIXED SCOPE SEED — an explicit entry copies, a load does not
+    // ==================================================================
+    //
+    // Mixed is the fifth domain ([world/mixed/…], [rise/mixed/…]) and the
+    // only one whose WINDOW LIST is per user: each row of the three split
+    // tables is either its own window or merged back into its mother
+    // panel (ui/window_layout_plan.h). A user entering it must start from
+    // the layout they already have, not from factory defaults — and the
+    // layout they have is the one their CURRENT topology already stored.
+    //
+    // What is pinned here, one user-visible consequence each:
+    //   * a missing [world/mixed/<window>] key is seeded from the domain
+    //     the user was in;
+    //   * an EXISTING mixed key is authoritative (their own drag);
+    //   * the source domain and the other game are read-only;
+    //   * a second explicit entry is a no-op — no marker key is written;
+    //   * opening the file (every Panel does, at startup) seeds nothing.
+    {
+        const auto W_MX = mhw::PlayerSection::PlayerLayoutMode::Mixed;
+        QTemporaryDir home;
+        if (!home.isValid()) {
+            std::fprintf(stderr, "FATAL: no temp dir\n");
+            return 2;
+        }
+        qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
+        const QString path = iniPath(home);
+
+        check(writeRaw(path,
+                       QStringLiteral("[world/split/player-bars]\n"
+                                      "ml=100\nscale=3\nmt=5\n\n"
+                                      "[world/split/player]\n"
+                                      "scale=2\nminW=40\n\n"
+                                      "[world/mixed/player-bars]\n"
+                                      "ml=999\n\n"
+                                      "[rise/split/player-bars]\n"
+                                      "ml=777\n\n"
+                                      "[rise/mixed/player-bars]\n"
+                                      "ml=888\n")),
+              "seed all four domains around one missing world/mixed key");
+
+        setScope(mhw::GameId::World, W_SP);
+        QSettings s = openSettings(path);
+        check(!s.contains(
+                  QStringLiteral("world/mixed/player/scale")),
+              "READ-ONLY LOAD: opening the file seeds no world/mixed key");
+
+        check(mhw::ensureMixedPanelSettingsScope(
+                  s, mhw::GameId::World, W_SP),
+              "the first explicit entry to Mixed reports that it seeded");
+
+        check(readKey(s, QStringLiteral("world/mixed/player-bars"),
+                      QStringLiteral("ml")) == QStringLiteral("999"),
+              "an EXISTING mixed value is never overwritten",
+              readKey(s, QStringLiteral("world/mixed/player-bars"),
+                      QStringLiteral("ml")));
+        check(readKey(s, QStringLiteral("world/mixed/player-bars"),
+                      QStringLiteral("scale")) == QStringLiteral("3"),
+              "a missing mixed key is seeded from the split domain",
+              readKey(s, QStringLiteral("world/mixed/player-bars"),
+                      QStringLiteral("scale")));
+        check(readKey(s, QStringLiteral("world/mixed/player-bars"),
+                      QStringLiteral("mt")) == QStringLiteral("5"),
+              "every parameter of the section is seeded, not just one",
+              readKey(s, QStringLiteral("world/mixed/player-bars"),
+                      QStringLiteral("mt")));
+        check(readKey(s, QStringLiteral("world/mixed/player"),
+                      QStringLiteral("scale")) == QStringLiteral("2")
+                  && readKey(s, QStringLiteral("world/mixed/player"),
+                             QStringLiteral("minW"))
+                         == QStringLiteral("40"),
+              "the mother panel's section is seeded with its parameters");
+        check(readKey(s, QStringLiteral("world/split/player-bars"),
+                      QStringLiteral("ml")) == QStringLiteral("100"),
+              "the split domain is READ, never written");
+        check(readKey(s, QStringLiteral("rise/mixed/player-bars"),
+                      QStringLiteral("ml")) == QStringLiteral("888"),
+              "the other game's own mixed value is untouched");
+        check(!s.contains(
+                  QStringLiteral("rise/mixed/player")),
+              "and world's seed never reaches rise",
+              readKey(s, QStringLiteral("rise/mixed/player"),
+                      QStringLiteral("scale")));
+        check(readKey(s, QStringLiteral("rise/split/player-bars"),
+                      QStringLiteral("ml")) == QStringLiteral("777"),
+              "rise's split domain is untouched");
+
+        // The user drags the window in Mixed, then enters Mixed again
+        // (a second click, a restart, a second process): nothing moves.
+        s.setValue(QStringLiteral("world/mixed/player-bars/scale"), 17);
+        s.sync();
+        check(!mhw::ensureMixedPanelSettingsScope(s, mhw::GameId::World,
+                                                  W_SP),
+              "the second explicit entry seeds nothing (idempotent, and "
+              "no marker key is written)");
+        check(readKey(s, QStringLiteral("world/mixed/player-bars"),
+                      QStringLiteral("scale")) == QStringLiteral("17"),
+              "the user's post-seed edit survives the second entry");
+
+        check(!mhw::ensureMixedPanelSettingsScope(s, mhw::GameId::World,
+                                                  W_MX),
+              "entering Mixed while already in Mixed is a no-op");
+    }
+
+    // 5b. SINGLE is a legal source too — the user may come from either
+    // quick preset — and it reaches the same Mixed domain.
+    {
+        QTemporaryDir home;
+        if (!home.isValid()) {
+            std::fprintf(stderr, "FATAL: no temp dir\n");
+            return 2;
+        }
+        qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
+        const QString path = iniPath(home);
+
+        check(writeRaw(path,
+                       QStringLiteral("[world/single/player-wirebug]\n"
+                                      "ml=55\n")),
+              "seed a single-domain file");
+        setScope(mhw::GameId::World, W_S);
+        QSettings s = openSettings(path);
+        check(mhw::ensureMixedPanelSettingsScope(s, mhw::GameId::World,
+                                                 W_S),
+              "Single is a legal source domain");
+        check(readKey(s, QStringLiteral("world/mixed/player-wirebug"),
+                      QStringLiteral("ml")) == QStringLiteral("55"),
+              "and its values land in world/mixed",
+              readKey(s, QStringLiteral("world/mixed/player-wirebug"),
+                      QStringLiteral("ml")));
+    }
+
+    // ==================================================================
     // SUMMARY
     // ==================================================================
     std::printf("\n%d checks, %d failure(s)\n", checks, failures);
@@ -841,6 +972,11 @@ int main(int argc, char **argv)
                 "  3d. Drop the 'already scoped' guard: the user's edited\n"
                 "      value is overwritten by the legacy section.\n"
                 "  4. Delete the split arm of setPanelEnabled() in\n"
-                "     src/main.cpp: PlayerPanel mounts an empty frame.\n");
+                "     src/main.cpp: PlayerPanel mounts an empty frame.\n"
+                "  5. Make ensureMixedPanelSettingsScope() overwrite\n"
+                "     instead of fill: the user's edited\n"
+                "     '[world/mixed/player-bars] scale' goes back to the\n"
+                "     split value, and the 'existing mixed value is never\n"
+                "     overwritten' check fails.\n");
     return failures == 0 ? 0 : 1;
 }

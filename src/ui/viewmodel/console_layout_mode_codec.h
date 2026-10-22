@@ -90,16 +90,43 @@ inline constexpr char kConsoleLayoutRowKey[] = "layout";
 // resolveStartupLayoutMode() needs.
 //
 // `source` is Conf when and only when the row was present AND parsed as
-// Split. That is not a loss of generality: the resolver's conf arm
-// (PlayerLayoutSource::Conf) is a yes/no question ("did anything usable
-// come out of it"), and the only usable value a `layout=` row can carry
-// that is worth handing upstream is Split — Single is what the resolver
-// already returns for every other source, so distinguishing
-// "row said single" from "no row" would buy nothing and would need the
-// Default arm to grow a case it cannot act on.
+// Split or Mixed. `mode` carries WHICH of the two the row stated.
+//
+// It carries the mode because the two-argument entry is GONE. That overload
+// hard-coded Split for every Conf row, and that hard-code is what let one
+// console save rewrite a hand-edited `layout=mixed` into `layout=split`
+// (the full story sits at panel_sections.h:892). Callers now hand over the
+// whole row.
+//
+// A row that says `single` continues to report Default (nothing usable):
+// `layout=single` must not become a Conf row that a later chain reads back as
+// a deliberate choice. The console never writes that row — Single is the
+// default and it serializes as nothing — so one that exists can only mislead.
 struct ConsoleLayoutConfRow {
     PlayerLayoutSource source{PlayerLayoutSource::Default};
+    PlayerSection::PlayerLayoutMode mode{
+        PlayerSection::PlayerLayoutMode::Single};
 };
+
+// A.2 — THE CONSOLE'S OWN ROW, THROUGH THE SHARED CHAIN.
+//
+// resolveStartupLayoutMode() lives in ui/panel_sections.h, which cannot
+// name ConsoleLayoutConfRow (this header defines it, one include
+// later). So the entry that takes the FULL parsed row belongs here,
+// where both types are visible: it forwards row.source and row.mode to
+// the three-argument form, which is now the ONLY form — a
+// `layout=mixed` row resolves to Mixed/Conf.
+//
+// This is NOT "additive over a legacy two-argument form". That overload was
+// deleted (panel_sections.h:892) and the decision table in
+// tests/player_layout_tests.cpp moved with it, gaining the Mixed rows whose
+// absence WAS the data-loss bug. Reading this comment as "an old chain still
+// exists somewhere" is how the bug would come back.
+[[nodiscard]] inline PlayerLayoutResolution resolveStartupLayoutMode(
+    const PlayerLayoutCliRequest &cli, const ConsoleLayoutConfRow &conf)
+{
+    return resolveStartupLayoutMode(cli, conf.source, conf.mode);
+}
 
 // Read the `layout=` row out of an already-read conf text.
 //
@@ -124,8 +151,12 @@ struct ConsoleLayoutConfRow {
         if (parseConsoleLayoutValue(
                 line.mid(static_cast<int>(sizeof(kConsoleLayoutRowKey))),
                 parsed)
-            && parsed == PlayerSection::PlayerLayoutMode::Split) {
-            return ConsoleLayoutConfRow{PlayerLayoutSource::Conf};
+            && (parsed == PlayerSection::PlayerLayoutMode::Split
+                || parsed == PlayerSection::PlayerLayoutMode::Mixed)) {
+            // FIRST USABLE ROW WINS and the scan keeps looking past
+            // unusable ones — the same shape as before v1.1.0, so
+            // `layout=single\nlayout=split\n` still lands on Split.
+            return ConsoleLayoutConfRow{PlayerLayoutSource::Conf, parsed};
         }
     }
     return {};
@@ -145,10 +176,14 @@ struct ConsoleLayoutConfRow {
 [[nodiscard]] inline QByteArray serializeConsoleLayoutRow(
     PlayerSection::PlayerLayoutMode mode) noexcept
 {
-    if (mode != PlayerSection::PlayerLayoutMode::Split)
+    if (mode == PlayerSection::PlayerLayoutMode::Single)
         return {};
+    // Split and Mixed both state their mode: neither is the default,
+    // and a Mixed run that wrote no row would come back as Single on
+    // the next read (the resolver's rule 3), i.e. lose the topology
+    // the user chose.
     return QByteArray(kConsoleLayoutRowKey) + '='
-           + QByteArray("split") + '\n';
+           + playerLayoutModeToString(mode).toLatin1() + '\n';
 }
 
 // The console's own UI choice -> the flag the child is given.
@@ -182,10 +217,12 @@ struct ConsoleLayoutConfRow {
     PlayerSection::PlayerLayoutMode mode) noexcept
 {
     QStringList args;
-    if (mode == PlayerSection::PlayerLayoutMode::Split)
+    if (mode == PlayerSection::PlayerLayoutMode::Split
+        || mode == PlayerSection::PlayerLayoutMode::Mixed)
         args << QStringLiteral("--")
              + QString::fromLatin1(kConsoleLayoutRowKey)
-             + QStringLiteral("=split");
+             + QLatin1Char('=')
+             + playerLayoutModeToString(mode);
     return args;
 }
 

@@ -68,6 +68,11 @@
 #include "ui/viewmodel/panel_mask_codec.h"
 #include "monster/target_selector.h"
 #include "reader_factory.h"
+// v1.0.1 mixed topology: the plan this run's window layout is DERIVED
+// from (which rows are detached, what each mother panel still draws,
+// which mother mounts). main.cpp does not compute any of that itself —
+// see the "window layout plan" block below.
+#include "ui/window_layout_plan.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
@@ -81,6 +86,7 @@
 #include <functional>
 #include <array>
 #include <memory>
+#include <optional>
 
 #include <cstdio>
 
@@ -98,6 +104,42 @@ void messageHandler(QtMsgType type, const QMessageLogContext &, const QString &m
     std::fprintf(stderr, "[%s] %s\n", prefix, qPrintable(msg));
     std::fflush(stderr);
 }
+
+namespace {
+
+// The two spellings --print-layout-plan and the startup log need and
+// that no production function answers: a GameId and a PlayerLayoutSource
+// as stable, non-localised ASCII tokens. Both switches are exhaustive on
+// purpose — a new enumerator must land here as a compile-visible case
+// rather than printing as "world".
+[[nodiscard]] const char *gameSlotName(mhw::GameId game)
+{
+    switch (game) {
+    case mhw::GameId::World: return "world";
+    case mhw::GameId::Rise:  return "rise";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] const char *layoutSourceName(mhw::PlayerLayoutSource source)
+{
+    switch (source) {
+    case mhw::PlayerLayoutSource::CliExplicit: return "cli";
+    case mhw::PlayerLayoutSource::CliCompatFlag: return "cli-compat";
+    case mhw::PlayerLayoutSource::Conf: return "conf";
+    case mhw::PlayerLayoutSource::Default: return "default";
+    }
+    return "unknown";
+}
+
+// 000001ff — eight digits, zero padded, lower case, the spelling every
+// mask in the log and in the JSON uses so two lines can be diffed by eye.
+[[nodiscard]] QString maskHex(uint32_t mask)
+{
+    return QStringLiteral("%1").arg(mask, 8, 16, QLatin1Char('0'));
+}
+
+} // namespace
 
 int main(int argc, char **argv)
 {
@@ -273,13 +315,57 @@ int main(int argc, char **argv)
     QCommandLineOption layoutOption(
         QStringLiteral("layout"),
         QStringLiteral("Player window topology: single (one panel, the "
-                       "default) or split (small windows per section "
-                       "group)"),
+                       "default), split (small windows per section "
+                       "group) or mixed (per-window: some sections "
+                       "merged into the mother panel, some detached, "
+                       "chosen with --detached-windows / the "
+                       "layout.windows.<game> conf row)"),
         QStringLiteral("layout"));
     QCommandLineOption splitPlayerStripOption(
         QStringLiteral("split-player-strip"),
         QStringLiteral("Deprecated alias for --layout split. The debuff/"
                        "buff capsules move into their own window."));
+    // v1.0.1: the Mixed topology's per-window override. A comma list of
+    // the eleven split-table row keys (player-bars, monster-identity, …).
+    //
+    // WHY IT IS ITS OWN OPTION AND NOT A SECOND --layout VALUE. The mode
+    // answers WHICH topology family this run is in; this answers WHICH
+    // ROWS of that family are detached, which is a per-window question
+    // with 2^11 answers. One enum value cannot carry it, and folding the
+    // list into --layout would make `--layout split --detached-windows`
+    // two spellings of one fact (the codec contract in
+    // ui/viewmodel/console_layout_mode_codec.h spells the mode alone).
+    //
+    // PRECEDENCE, spelled by resolveWindowLayoutPlan(): an EXPLICIT
+    // value here wins over the layout.windows.<game> conf row and over
+    // the mode default, in every mode — including an explicit empty
+    // list (`--detached-windows=`), which means "everything merged".
+    // An unparseable list does not win: the plan falls back to the mode
+    // default and the warning below says so, so a typo can never half
+    // apply (window_layout_plan.h's atomic parse rule).
+    QCommandLineOption detachedWindowsOption(
+        QStringLiteral("detached-windows"),
+        QStringLiteral("Comma list of window keys to run as their own "
+                       "windows (player-status, player-mantles, "
+                       "player-wirebug, player-bars, player-weapon, "
+                       "player-info, monster-identity, "
+                       "monster-conditions, damage-share, damage-chart, "
+                       "damage-rows). Empty value = every window merged "
+                       "into its mother panel."),
+        QStringLiteral("keys"));
+    // v1.0.1: print this run's resolved topology as JSON on stdout and
+    // exit, without constructing a single Panel. The answer is computed
+    // by the SAME block the live run uses (see the window layout plan
+    // section below), so it is a diagnosis of the real wiring rather
+    // than a second implementation that could drift from it — and it
+    // lets a user or a test read "which window mounts, with what mask"
+    // on a machine with no game, no screen and no layer-shell session.
+    QCommandLineOption printLayoutPlanOption(
+        QStringLiteral("print-layout-plan"),
+        QStringLiteral("Print the resolved window layout plan as JSON "
+                       "(game, mode, detached keys, mother masks and "
+                       "mount gates, per-window enable gates) and exit "
+                       "without creating any window."));
     // Target game selector. auto = scan /proc for a running Monster Hunter
     // process (see core/game_detector.h), world/rise = force a specific
     // reader. Lets the control console relaunch the overlay against the
@@ -342,6 +428,8 @@ int main(int argc, char **argv)
     parser.addOption(noPetsOption);
     parser.addOption(splitPlayerStripOption);
     parser.addOption(layoutOption);
+    parser.addOption(detachedWindowsOption);
+    parser.addOption(printLayoutPlanOption);
     parser.addOption(gameOption);
     parser.addOption(outputPlayerOption);
     parser.addOption(outputMonsterOption);
@@ -549,51 +637,27 @@ int main(int argc, char **argv)
             mhw::PlayerLayoutCliRequest{
                 parser.isSet(layoutOption), parser.value(layoutOption),
                 mhw::splitPlayerStripFlagSense(parser.isSet(splitPlayerStripOption))},
-            // PlayerLayoutConfRow is an alias for PlayerLayoutSource (see
-            // panel_sections.h), and parseConsoleLayoutRow returns the
-            // console's own row wrapper — so the source is what crosses
-            // over, not the struct.
-            mhw::parseConsoleLayoutRow(confMaskText).source);
+            // The WHOLE parsed row, not just its `source`. Passing
+            // `.source` is what made the overlay read a hand-edited
+            // `layout=mixed` as Split while the console read it as
+            // something else — the two processes then disagreed about the
+            // user's own configuration. The row carries the mode the codec
+            // actually parsed, so hand it over intact.
+            mhw::parseConsoleLayoutRow(confMaskText));
     // Single is the default and the pixel-identity guarantee: it resolves
     // maskPlayerForPanel to exactly maskPlayer, so every pre-v0.12 user gets
     // one big window and the baselines stay byte-identical.
     const mhw::PlayerSection::PlayerLayoutMode playerSplitLayoutMode =
         playerSplitLayout.mode;
-    const uint32_t maskPlayerForPanel = mhw::PlayerSection::playerPanelMaskFor(
-        playerSplitLayoutMode, maskPlayer);
-    // v0.12 third wave: the monster and damage panels derive their own the
-    // same way — the mask each PANEL receives is the user's mask minus the
-    // rows that moved out, so a block is drawn by exactly one surface.
-    //
-    // Without this the panel keeps every bit in Split mode and draws the
-    // HP bar and the stamina bar alongside the new windows that draw the
-    // same two bars. The Single arm of each *PanelMaskFor() is `return
-    // mask` verbatim, which is what keeps the ten single-mode baselines
-    // byte-identical.
-    const uint32_t maskMonsterForPanel =
-        mhw::monsterPanelMaskFor(playerSplitLayoutMode, maskMonster);
-    const uint32_t maskDamageForPanel =
-        mhw::damagePanelMaskFor(playerSplitLayoutMode, maskDamage);
-    if (playerSplitLayoutMode == mhw::PlayerSection::PlayerLayoutMode::Split) {
-        qInfo("v0.12 split: layout=split; %d player sub-window(s); player "
-              "mask %08x -> %08x; %d damage sub-window(s); damage mask "
-              "%08x -> %08x",
-              mhw::PlayerSection::kPlayerSplitTargetCount, maskPlayer,
-              maskPlayerForPanel,
-              mhw::DamageSplitSlot::kCount, maskDamage,
-              mhw::damagePanelMaskFor(mhw::PlayerSection::PlayerLayoutMode::Split,
-                                      maskDamage));
-        // v0.15: the damage half of that line is not decoration. The
-        // per-player roster used to be a console-preview window while
-        // DamagePanel kept drawing the rows itself, so the console and the
-        // overlay disagreed and the user saw a window one of them never
-        // mounted. Printing BOTH masks makes the handoff visible on a real
-        // run: if `damage mask` keeps a bit that no window claims, the same
-        // disagreement is back and the log will say so before a pixel is
-        // painted.
-    } else {
-        qInfo("v0.12 split: layout=single (default); player mask %08x", maskPlayer);
-    }
+    // The three mother-panel masks are NOT derived here any more: a
+    // mother panel's mask is `user mask & ~the rows this run's PLAN
+    // detached`, and the plan needs the target game (it reads
+    // layout.windows.<game>=), which is resolved further down. The whole
+    // derivation — plan, masks, mount gates, per-window enable gates and
+    // the one log line that reports them — moved into the single
+    // "window layout plan" block that follows the game resolution, so
+    // there is exactly one place in this file that answers "what is this
+    // run's topology".
 
     // Resolve the target game. auto scans for a running process; an
     // explicit world/rise forces the matching reader. Default to World
@@ -626,6 +690,262 @@ int main(int argc, char **argv)
     // hand-written zh string.
     QApplication::setApplicationDisplayName(
         QStringLiteral("Monster Overlay · %1").arg(mhw::gameDisplayName(gameId)));
+
+    // =====================================================================
+    // ---- THE WINDOW LAYOUT PLAN: THIS RUN'S ACTUAL TOPOLOGY ------------
+    // =====================================================================
+    //
+    // Everything below that answers "which windows exist, what does each
+    // mother panel still draw, which of them mounts" is derived HERE, once,
+    // from the mode + the target game + the conf + the command line — and
+    // nothing else in this file may re-derive it.
+    //
+    // WHAT THE OLD CODE DID, AND WHY IT COULD NOT SAY "MIXED". The three
+    // mother-panel masks were `*PanelMaskFor(mode, mask)` and the eleven
+    // enable gates were `mode == Split`. Both are two-valued questions, so
+    // a third mode could only fall into one of the two arms — and it fell
+    // into DIFFERENT arms in different places: player and monster walked
+    // the Single arm (mother keeps every bit) while damage walked the
+    // Split arm (mother keeps only OtherMembers), the three mount gates
+    // all said "mount" and the eleven window gates all said "do not". The
+    // result was a Mixed run that either painted the same block twice (in
+    // a mother AND in a window) or painted nothing at all.
+    //
+    // THE RULE, ONE LINE: a mother panel's mask is the user's own mask
+    // minus the claims of the rows THIS RUN detached — which is exactly
+    // WindowLayoutPlan::retainedMask(parent, userMask). For Single (empty
+    // plan) that is the user's mask verbatim and for Split (all rows
+    // detached) it is `mask & ~removedBits`, i.e. bit for bit what
+    // playerPanelMaskFor / monsterPanelMaskFor / damagePanelMaskFor
+    // answer today — those two topologies are untouched, and the plan
+    // tests pin the equality.
+    //
+    // cliKeys > layout.windows.<game>= > the mode default, per
+    // resolveWindowLayoutPlan(): Single reads no conf row at all (a saved
+    // Mixed list can never leak into --layout single), Mixed reads its own
+    // game's row only (World's list never reaches a Rise run), and an
+    // explicit --detached-windows wins in every mode.
+    const std::optional<QString> cliDetachedKeys = [&]() -> std::optional<QString> {
+        if (!parser.isSet(detachedWindowsOption))
+            return std::nullopt;
+        const QString raw = parser.value(detachedWindowsOption);
+        bool ok = false;
+        mhw::parseWindowLayoutPlan(raw, &ok);
+        if (!ok)
+            // TWO things are lost, and the old text named only the first:
+            // "using the mixed topology instead" read as if the run had
+            // chosen Mixed's own topology, when resolveWindowLayoutPlan()
+            // in fact lands on the mode DEFAULT because the explicit
+            // cliKeys short-circuit the conf read (window_layout_plan.h
+            // precedence rule 1). So this game's perfectly valid
+            // `layout.windows.<game>=` row is discarded too — say that, or
+            // the user looks for their saved list and cannot find why it
+            // never reached this run.
+            qWarning("Ignoring invalid --detached-windows list '%s' (known keys "
+                     "only, no duplicates, no empty tokens); the list is dropped "
+                     "AND the conf row %s is not read as a fallback either (an "
+                     "explicit --detached-windows outranks the file even when it "
+                     "fails to parse), so this run uses the %s mode default",
+                     qPrintable(raw),
+                     qPrintable(mhw::layoutWindowsRowKey(gameId)),
+                     qPrintable(mhw::playerLayoutModeToString(playerSplitLayoutMode)));
+        return raw;
+    }();
+    const mhw::WindowLayoutPlan layoutPlan = mhw::resolveWindowLayoutPlan(
+        gameId, playerSplitLayoutMode, confMaskText, cliDetachedKeys);
+
+    // ---- the three mother-panel masks ----------------------------------
+    // Retained = the user's toggles minus every row this plan detached
+    // from THAT parent. An unknown parent (pets) would return the mask
+    // untouched; there are three known parents here.
+    const uint32_t maskPlayerForPanel =
+        layoutPlan.retainedMask(mhw::kLayoutParentPlayer, maskPlayer);
+    const uint32_t maskMonsterForPanel =
+        layoutPlan.retainedMask(mhw::kLayoutParentMonster, maskMonster);
+    const uint32_t maskDamageForPanel =
+        layoutPlan.retainedMask(mhw::kLayoutParentDamage, maskDamage);
+
+    // ---- the three mount gates -----------------------------------------
+    // !flag && (the retained mask still has a BLOCK to draw || nothing was
+    // detached from this parent). The second arm is what keeps Single a
+    // single panel even when the user's mask is 0, and what stops a Split
+    // mother left holding only a filter bit (Tenderize, OtherMembers) from
+    // mounting an 18px empty frame. In Mixed it decides per mother: the
+    // panel that still owns a block mounts, the one that gave up all of
+    // them does not.
+    const bool playerMotherMounted = mhw::planMotherPanelEnabled(
+        layoutPlan, mhw::kLayoutParentPlayer, parser.isSet(noPlayerOption),
+        mhw::PlayerSection::playerPanelHasBlocks(maskPlayerForPanel));
+    const bool monsterMotherMounted = mhw::planMotherPanelEnabled(
+        layoutPlan, mhw::kLayoutParentMonster, parser.isSet(noMonsterOption),
+        mhw::MonsterSection::monsterPanelHasBlocks(maskMonsterForPanel));
+    const bool damageMotherMounted = mhw::planMotherPanelEnabled(
+        layoutPlan, mhw::kLayoutParentDamage, parser.isSet(noDamageOption),
+        mhw::DamageSection::damagePanelHasBlocks(maskDamageForPanel));
+
+    // ---- the eleven window enable gates --------------------------------
+    // One flag per REGISTRY row (kWindowLayoutRows), in registry order —
+    // the same order --print-layout-plan lists them in. In Single every
+    // flag is false (the eleven objects exist, none mounts), in Split
+    // every flag is true, and in Mixed they are the plan's own answer.
+    std::array<bool, mhw::kWindowLayoutRowCount> subWindowEnabled{};
+    bool parentHasSubWindow[mhw::kLayoutParentCount] = {false, false, false};
+    for (int i = 0; i < mhw::kWindowLayoutRowCount; ++i) {
+        const mhw::WindowLayoutRow &row = mhw::kWindowLayoutRows[i];
+        subWindowEnabled[static_cast<size_t>(i)] =
+            layoutPlan.detached(row.parentSlot, row.tableRow);
+        if (subWindowEnabled[static_cast<size_t>(i)]
+            && row.parentSlot >= 0 && row.parentSlot < mhw::kLayoutParentCount)
+            parentHasSubWindow[row.parentSlot] = true;
+    }
+    // "the split is on" for a parent = that parent has at least one
+    // detached window this run. These three gate the GROUPED work in the
+    // live loop (screen inheritance, edit-mode seeding, the per-tick
+    // drives, the config save) — each group's own body already checks
+    // panelEnabled() per window, so a Mixed run drives exactly the
+    // windows that are up and leaves the merged ones alone.
+    const bool playerSplitOn  = parentHasSubWindow[mhw::kLayoutParentPlayer];
+    const bool monsterSplitOn = parentHasSubWindow[mhw::kLayoutParentMonster];
+    const bool damageSplitOn  = parentHasSubWindow[mhw::kLayoutParentDamage];
+    const QStringList detachedKeys = layoutPlan.detachedKeys();
+
+    // ---- the truthful startup line -------------------------------------
+    // The old line printed "layout=single (default)" for a Mixed run and
+    // quoted a Split-mode damage mask it had not used to decide anything.
+    // This one prints the mode actually in force, where it came from, how
+    // many windows this run detached, and what each mother was handed
+    // next to the gate that decided whether it mounts.
+    qInfo("layout: mode=%s source=%s game=%s; %d/%d window(s) detached; "
+          "player mask %08x -> %08x mounted=%d; monster mask %08x -> %08x "
+          "mounted=%d; damage mask %08x -> %08x mounted=%d",
+          qPrintable(mhw::playerLayoutModeToString(playerSplitLayoutMode)),
+          layoutSourceName(playerSplitLayout.source), gameSlotName(gameId),
+          static_cast<int>(detachedKeys.size()), mhw::kWindowLayoutRowCount,
+          maskPlayer, maskPlayerForPanel, playerMotherMounted ? 1 : 0,
+          maskMonster, maskMonsterForPanel, monsterMotherMounted ? 1 : 0,
+          maskDamage, maskDamageForPanel, damageMotherMounted ? 1 : 0);
+    if (!detachedKeys.isEmpty())
+        qInfo("layout: detached windows: %s", qPrintable(detachedKeys.join(QLatin1Char(','))));
+
+    // ---- --print-layout-plan: the diagnosis, no window created ---------
+    // Emitted on STDOUT (the message handler sends every qInfo to stderr,
+    // so stdout carries this JSON and nothing else) and returned before
+    // the first Panel is constructed — before setPanelSettingsGame(), so
+    // a diagnostic run reads and writes no panels.ini and never seeds a
+    // settings domain. The values are the ones the live run uses; there
+    // is no second derivation here to drift from it.
+    if (parser.isSet(printLayoutPlanOption)) {
+        QString json = QStringLiteral("{\n");
+        json += QStringLiteral("  \"game\": \"%1\",\n").arg(gameSlotName(gameId));
+        json += QStringLiteral("  \"layout_mode\": \"%1\",\n")
+                    .arg(mhw::playerLayoutModeToString(playerSplitLayoutMode));
+        json += QStringLiteral("  \"layout_source\": \"%1\",\n")
+                    .arg(layoutSourceName(playerSplitLayout.source));
+        json += QStringLiteral("  \"layout_cli\": %1,\n")
+                    .arg(parser.isSet(layoutOption) ? QStringLiteral("true")
+                                                    : QStringLiteral("false"));
+        json += QStringLiteral("  \"user_masks\": [\"%1\", \"%2\", \"%3\"],\n")
+                    .arg(maskHex(maskPlayer), maskHex(maskMonster),
+                         maskHex(maskDamage));
+        json += QStringLiteral("  \"detached_keys\": [");
+        for (int i = 0; i < detachedKeys.size(); ++i) {
+            if (i)
+                json += QStringLiteral(", ");
+            json += QStringLiteral("\"%1\"").arg(detachedKeys.at(i));
+        }
+        json += QStringLiteral("],\n");
+        json += QStringLiteral("  \"detached_count\": %1,\n")
+                    .arg(detachedKeys.size());
+        json += QStringLiteral("  \"mothers\": [\n");
+        const struct { const char *name; int parent; uint32_t user;
+                       uint32_t kept; bool mounted; } mothers[] = {
+            {"player", mhw::kLayoutParentPlayer, maskPlayer,
+             maskPlayerForPanel, playerMotherMounted},
+            {"monster", mhw::kLayoutParentMonster, maskMonster,
+             maskMonsterForPanel, monsterMotherMounted},
+            {"damage", mhw::kLayoutParentDamage, maskDamage,
+             maskDamageForPanel, damageMotherMounted},
+        };
+        for (size_t i = 0; i < sizeof(mothers) / sizeof(mothers[0]); ++i) {
+            json += QStringLiteral("    {\"parent\": \"%1\", \"user_mask\": \"%2\", "
+                                   "\"mask\": \"%3\", \"mounted\": %4}%5\n")
+                        .arg(mothers[i].name)
+                        .arg(maskHex(mothers[i].user))
+                        .arg(maskHex(mothers[i].kept))
+                        .arg(mothers[i].mounted ? QStringLiteral("true")
+                                                : QStringLiteral("false"))
+                        .arg(i + 1 < sizeof(mothers) / sizeof(mothers[0])
+                                 ? QStringLiteral(",")
+                                 : QString());
+        }
+        json += QStringLiteral("  ],\n");
+        json += QStringLiteral("  \"sub_windows\": [\n");
+        for (int i = 0; i < mhw::kWindowLayoutRowCount; ++i) {
+            const mhw::WindowLayoutRow &row = mhw::kWindowLayoutRows[i];
+            const uint32_t claim = mhw::windowLayoutRowMask(row.parentSlot,
+                                                            row.tableRow);
+            const QString parentName =
+                row.parentSlot == mhw::kLayoutParentPlayer  ? QStringLiteral("player")
+              : row.parentSlot == mhw::kLayoutParentMonster ? QStringLiteral("monster")
+                                                            : QStringLiteral("damage");
+            json += QStringLiteral("    {\"key\": \"%1\", \"parent\": \"%2\", "
+                                   "\"table_row\": %3, \"claim\": \"%4\", "
+                                   "\"effective\": \"%5\", \"enabled\": %6}%7\n")
+                        .arg(QLatin1String(row.settingsKey))
+                        .arg(parentName)
+                        .arg(row.tableRow)
+                        .arg(maskHex(claim))
+                        .arg(maskHex(claim
+                                     & (row.parentSlot == mhw::kLayoutParentPlayer
+                                            ? maskPlayer
+                                            : row.parentSlot == mhw::kLayoutParentMonster
+                                                  ? maskMonster
+                                                  : maskDamage)))
+                        .arg(subWindowEnabled[static_cast<size_t>(i)]
+                                 ? QStringLiteral("true")
+                                 : QStringLiteral("false"))
+                        .arg(i + 1 < mhw::kWindowLayoutRowCount
+                                 ? QStringLiteral(",")
+                                 : QString());
+        }
+        json += QStringLiteral("  ]\n}\n");
+        std::printf("%s", qPrintable(json));
+        std::fflush(stdout);
+        return 0;
+    }
+
+    // ---- the Mixed scope seed, on EXPLICIT entry only -------------------
+    // panels.ini has five domains ([world/single], [world/split],
+    // [world/mixed], …) and Mixed is the one whose WINDOW GEOMETRY is per
+    // user: a user who has never been in Mixed has no [world/mixed/…]
+    // keys, and every panel would open at the factory default instead of
+    // where they already keep that window. ensureMixedPanelSettingsScope()
+    // copies the missing keys from the domain this run CAME from.
+    //
+    // "EXPLICIT ENTRY" is the whole condition, and it is the reason this
+    // is guarded by parser.isSet(layoutOption) rather than by the mode:
+    // a read-only load (a conf row that already says `layout=mixed`, or a
+    // plain launch in Single/Split) must never seed anything — the
+    // trigger is the user asking for Mixed right now, which is exactly
+    // the doc'd contract in panel_settings_game.h. The SOURCE domain is
+    // the mode this run would have resolved to without the flag, so
+    // `--layout=mixed` against a `layout=split` conf copies from split,
+    // and a conf that already says mixed (or no conf at all) resolves
+    // source=mixed/single and the function is a no-op / seeds from
+    // single respectively.
+    //
+    // --print-layout-plan returned above: a diagnosis never writes.
+    if (parser.isSet(layoutOption)
+        && playerSplitLayoutMode == mhw::PlayerSection::PlayerLayoutMode::Mixed) {
+        const mhw::PlayerLayoutResolution mixedSource =
+            mhw::resolveStartupLayoutMode(
+                mhw::PlayerLayoutCliRequest{
+                    false, QString(),
+                    mhw::splitPlayerStripFlagSense(
+                        parser.isSet(splitPlayerStripOption))},
+                mhw::parseConsoleLayoutRow(confMaskText));
+        mhw::ensureMixedPanelSettingsScope(gameId, mixedSource.mode);
+    }
 
     // v0.14: the panels' layout namespace is per game AND per layout
     // mode. Every panel's settings section is now
@@ -872,11 +1192,15 @@ int main(int argc, char **argv)
     // (panel.cpp's setVisible returns early for a disabled panel), so
     // this is the switch that stops an empty frame from existing at
     // all rather than hiding it after it has been created and shown.
-    playerPanel.setPanelEnabled(!parser.isSet(noPlayerOption)
-                                && (playerSplitLayoutMode
-                                        != mhw::PlayerSection::PlayerLayoutMode::Split
-                                    || mhw::PlayerSection::playerPanelHasBlocks(
-                                           maskPlayerForPanel)));
+    // v1.0.1: THE DECISION MOVED. All three mounts are now answered by
+    // mhw::planMotherPanelEnabled() once, in the window layout plan block
+    // above: `!flag && (retained mask has a block || nothing was detached
+    // from this parent)`. The old spelling here — `mode != Split ||
+    // hasBlocks` — is a two-valued question, and for Mixed it walked the
+    // "not Split" arm and mounted ALL THREE mothers while the plan says
+    // which of them still owns anything. Same second arm, third mode, one
+    // implementation shared with the console preview and the tests.
+    playerPanel.setPanelEnabled(playerMotherMounted);
     // v0.16: monsterPanelHasBlocks / damagePanelHasBlocks, not `!= 0`.
     // MonsterPanel's split-mode mask is MonsterSection::Tenderize and
     // DamagePanel's is DamageSection::OtherMembers — both are live
@@ -892,16 +1216,8 @@ int main(int argc, char **argv)
     // to startup so the surface is never created rather than hidden
     // afterwards. The two cannot drift: both call the same predicate on
     // the same derived mask.
-    monsterPanel.setPanelEnabled(!parser.isSet(noMonsterOption)
-                                 && (playerSplitLayoutMode
-                                         != mhw::PlayerSection::PlayerLayoutMode::Split
-                                     || mhw::monsterPanelHasBlocks(
-                                            maskMonsterForPanel)));
-    damagePanel.setPanelEnabled(!parser.isSet(noDamageOption)
-                                && (playerSplitLayoutMode
-                                        != mhw::PlayerSection::PlayerLayoutMode::Split
-                                    || mhw::damagePanelHasBlocks(
-                                           maskDamageForPanel)));
+    monsterPanel.setPanelEnabled(monsterMotherMounted);
+    damagePanel.setPanelEnabled(damageMotherMounted);
     // v0.10.1: the pet damage surface is Rise-only. World never mounts it,
     // regardless of --mask-pets / --no-pets; the console hides the matching
     // controls in World mode for the same reason.
@@ -938,47 +1254,66 @@ int main(int argc, char **argv)
     // ::OtherPets, which filter rows rather than the window.
     petDamagePanel.setPanelEnabled(!parser.isSet(noPetsOption));
 
-    // v0.12: THE MASTER GATES for the whole split — one predicate, four
-    // windows, and this is the single place the default path is decided.
-    // With the switch off (the default) each window's panelEnabled_ is
-    // false, so Panel::setVisible() returns early at panel.cpp:355
-    // ("!panelEnabled_ && visible -> return") for EVERY caller forever,
-    // including the live loop's setVisible() below. Each window therefore
-    // never mounts a layer-shell surface, never paints, and is
-    // indistinguishable from not existing at all — while still not
-    // needing a conditional lifetime.
+    // v1.0.1: THE ELEVEN PER-WINDOW GATES.
     //
-    // The gate is the LAYOUT MODE and nothing else, so the split is one
-    // user decision: it is not derivable from the section mask, which
-    // would let `--mask-player 0` silently change window topology.
+    // They used to be three shared bools written as `mode == Split`, so a
+    // Mixed run could only get "none of them" or "all of them" — and got
+    // "none", against three mothers that all mounted and all kept their
+    // blocks: eleven never-mounted windows sitting next to mothers that
+    // still drew the very content those windows exist for. Each window
+    // now answers for ITSELF from the one plan this run resolved above,
+    // the same object the three mother masks and the three mount gates
+    // read, so there is no second topology decision in this file.
     //
-    // Each of the four compounds with its own two gates on top, all three
-    // of which must be crossed before a single pixel appears:
-    //   1. this line             (the switch)
+    // Single still lights none of them (an empty plan detaches nothing,
+    // so the eleven objects exist and never mount — the conditional
+    // lifetime the split already relies on), Split still lights all
+    // eleven (an all-detached plan), and Mixed lights exactly the set
+    // the conf row / --detached-windows asked for.
+    //
+    // The three compounds below each keep their own two gates on top,
+    // all three of which must be crossed before a single pixel appears:
+    //   1. this line             (the plan's per-window answer)
     //   2. setSectionMask        (the user's own per-section toggles)
     //   3. hasVisibleContent()   (HunterPie's "no data, no window")
     //
-    // Extending to a fifth window: one line here, one row in
-    // kPlayerSplitTargets, one PlayerSplitSlot alias. Nothing else.
-    const bool playerSplitOn = playerSplitLayoutMode
-        == mhw::PlayerSection::PlayerLayoutMode::Split;
-    // v0.12 third wave: the same master gate for the monster and damage
-    // windows. ONE predicate per panel — the mode is a property of the
-    // layout, not of the panel, so three panels in one mode share one
-    // bool rather than each re-deriving it.
-    const bool monsterSplitOn = playerSplitOn;
-    const bool damageSplitOn = playerSplitOn;
-    playerStatusStripPanel.setPanelEnabled(playerSplitOn);
-    playerBarsStripPanel.setPanelEnabled(playerSplitOn);
-    playerMantlesStripPanel.setPanelEnabled(playerSplitOn);
-    playerWirebugStripPanel.setPanelEnabled(playerSplitOn);
-    playerWeaponStripPanel.setPanelEnabled(playerSplitOn);
-    monsterIdentityStripPanel.setPanelEnabled(monsterSplitOn);
-    monsterConditionsStripPanel.setPanelEnabled(monsterSplitOn);
-    damageShareStripPanel.setPanelEnabled(damageSplitOn);
-    damageChartStripPanel.setPanelEnabled(damageSplitOn);
-    damageRowsStripPanel.setPanelEnabled(damageSplitOn);
-    playerInfoStripPanel.setPanelEnabled(playerSplitOn);
+    // Extending to a twelfth window: one line here, one row in
+    // kPlayerSplitTargets, one PlayerSplitSlot alias — and one registry
+    // row in window_layout_plan.h, which is what makes it a window a
+    // plan can detach at all.
+    playerStatusStripPanel.setPanelEnabled(
+        layoutPlan.detached(mhw::kLayoutParentPlayer,
+                            mhw::PlayerSection::PlayerSplitSlot::Status));
+    playerBarsStripPanel.setPanelEnabled(
+        layoutPlan.detached(mhw::kLayoutParentPlayer,
+                            mhw::PlayerSection::PlayerSplitSlot::Bars));
+    playerMantlesStripPanel.setPanelEnabled(
+        layoutPlan.detached(mhw::kLayoutParentPlayer,
+                            mhw::PlayerSection::PlayerSplitSlot::Mantles));
+    playerWirebugStripPanel.setPanelEnabled(
+        layoutPlan.detached(mhw::kLayoutParentPlayer,
+                            mhw::PlayerSection::PlayerSplitSlot::Wirebug));
+    playerWeaponStripPanel.setPanelEnabled(
+        layoutPlan.detached(mhw::kLayoutParentPlayer,
+                            mhw::PlayerSection::PlayerSplitSlot::Weapon));
+    playerInfoStripPanel.setPanelEnabled(
+        layoutPlan.detached(mhw::kLayoutParentPlayer,
+                            mhw::PlayerSection::PlayerSplitSlot::Info));
+    monsterIdentityStripPanel.setPanelEnabled(
+        layoutPlan.detached(mhw::kLayoutParentMonster,
+                            mhw::MonsterSplitSlot::Identity));
+    monsterConditionsStripPanel.setPanelEnabled(
+        layoutPlan.detached(mhw::kLayoutParentMonster,
+                            mhw::MonsterSplitSlot::Conditions));
+    damageShareStripPanel.setPanelEnabled(
+        layoutPlan.detached(mhw::kLayoutParentDamage,
+                            mhw::DamageSplitSlot::Share));
+    damageChartStripPanel.setPanelEnabled(
+        layoutPlan.detached(mhw::kLayoutParentDamage,
+                            mhw::DamageSplitSlot::Chart));
+    damageRowsStripPanel.setPanelEnabled(
+        layoutPlan.detached(mhw::kLayoutParentDamage,
+                            mhw::DamageSplitSlot::Rows));
 
 
     // v0.8: CLI --output-* overrides whatever the persisted panels.ini
@@ -1173,12 +1508,30 @@ int main(int argc, char **argv)
         return QString();
     };
 
-    // Gated on the switch, the same way the windows' own construction
-    // effects are: in Single mode the eleven objects exist but nothing
-    // mounts, and setOutputName() calls applyGeometry() — which would
-    // spend eleven layer-shell property pushes on windows that will
-    // never be shown.
-    if (playerSplitOn) {
+    // Gated PER ROW, not on one shared switch.
+    //
+    // This used to read `if (playerSplitOn)`, which on HEAD was an equivalent
+    // spelling of "any of them": monsterSplitOn and damageSplitOn were
+    // assigned playerSplitOn's own value, so a single gate covered all three
+    // groups. Mixed is exactly what breaks that identity —
+    // `--layout mixed --detached-windows monster-identity` leaves
+    // playerSplitOn false while monsterSplitOn is true — and the whole block
+    // was then skipped, so a monster window that IS running as its own window
+    // kept the primary while its mother panel sat on the screen the user had
+    // pinned. (audit-mixed-topology D-1; the exit-time flush in main()'s tail
+    // had the same shape, see the note there.)
+    //
+    // The reason the gate exists at all is that setOutputName() calls
+    // applyGeometry(), which spends a layer-shell property push on a window
+    // that will never be shown — a per-SURFACE cost, so the gate has to be
+    // per surface as well. Every call below is therefore taken only when the
+    // plan says that window is actually running as its own window. Single
+    // matches HEAD by construction (nothing is detached), Split matches HEAD
+    // by construction (everything is), and Mixed inherits for exactly the
+    // windows it detaches.
+    const bool anyWindowDetached = playerSplitOn || monsterSplitOn
+                                 || damageSplitOn;
+    if (anyWindowDetached) {
         // Tier 2, resolved ONCE before any sub-window is touched: the
         // first mother panel in this layout that names an attached
         // screen. Empty when no mother panel names one, in which case
@@ -1197,17 +1550,45 @@ int main(int argc, char **argv)
         const QString layoutOutput =
             inheritLayoutOutput(mothers, int(sizeof(mothers) / sizeof(mothers[0])));
 
-        inheritParentOutput(&playerStatusStripPanel, &playerPanel);
-        inheritParentOutput(&playerBarsStripPanel, &playerPanel);
-        inheritParentOutput(&playerMantlesStripPanel, &playerPanel);
-        inheritParentOutput(&playerWirebugStripPanel, &playerPanel);
-        inheritParentOutput(&playerWeaponStripPanel, &playerPanel);
-        inheritParentOutput(&playerInfoStripPanel, &playerPanel);
-        inheritParentOutput(&monsterIdentityStripPanel, &monsterPanel);
-        inheritParentOutput(&monsterConditionsStripPanel, &monsterPanel);
-        inheritParentOutput(&damageShareStripPanel, &damagePanel);
-        inheritParentOutput(&damageChartStripPanel, &damagePanel);
-        inheritParentOutput(&damageRowsStripPanel, &damagePanel);
+        // One table, BOTH tiers: the eleven windows in registry order, each
+        // paired with its own mother panel and its own row in the plan. The
+        // pairing used to be spelled out twice — the explicit calls here and
+        // a second bare array in the tier-2 loop — which is two places for a
+        // window and its mother to drift apart.
+        struct SubRow {
+            Panel *sub;
+            const Panel *mother;
+            int parentSlot;
+            int tableRow;
+        };
+        const SubRow rows[] = {
+            {&playerStatusStripPanel, &playerPanel, mhw::kLayoutParentPlayer,
+             mhw::PlayerSection::PlayerSplitSlot::Status},
+            {&playerBarsStripPanel, &playerPanel, mhw::kLayoutParentPlayer,
+             mhw::PlayerSection::PlayerSplitSlot::Bars},
+            {&playerMantlesStripPanel, &playerPanel, mhw::kLayoutParentPlayer,
+             mhw::PlayerSection::PlayerSplitSlot::Mantles},
+            {&playerWirebugStripPanel, &playerPanel, mhw::kLayoutParentPlayer,
+             mhw::PlayerSection::PlayerSplitSlot::Wirebug},
+            {&playerWeaponStripPanel, &playerPanel, mhw::kLayoutParentPlayer,
+             mhw::PlayerSection::PlayerSplitSlot::Weapon},
+            {&playerInfoStripPanel, &playerPanel, mhw::kLayoutParentPlayer,
+             mhw::PlayerSection::PlayerSplitSlot::Info},
+            {&monsterIdentityStripPanel, &monsterPanel,
+             mhw::kLayoutParentMonster, mhw::MonsterSplitSlot::Identity},
+            {&monsterConditionsStripPanel, &monsterPanel,
+             mhw::kLayoutParentMonster, mhw::MonsterSplitSlot::Conditions},
+            {&damageShareStripPanel, &damagePanel, mhw::kLayoutParentDamage,
+             mhw::DamageSplitSlot::Share},
+            {&damageChartStripPanel, &damagePanel, mhw::kLayoutParentDamage,
+             mhw::DamageSplitSlot::Chart},
+            {&damageRowsStripPanel, &damagePanel, mhw::kLayoutParentDamage,
+             mhw::DamageSplitSlot::Rows},
+        };
+        for (const SubRow &r : rows) {
+            if (layoutPlan.detached(r.parentSlot, r.tableRow))
+                inheritParentOutput(r.sub, r.mother);
+        }
 
         // Tier 2, applied only to what tier 1 left behind. The guard is
         // what keeps this a FALLBACK and not an override: a sub-window
@@ -1215,21 +1596,11 @@ int main(int argc, char **argv)
         // one that had a key of its own. When layoutOutput is empty
         // there is nothing to do and the loop is a no-op.
         if (!layoutOutput.isEmpty()) {
-            for (Panel *sub : {
-                     (Panel *)&playerStatusStripPanel,
-                     (Panel *)&playerBarsStripPanel,
-                     (Panel *)&playerMantlesStripPanel,
-                     (Panel *)&playerWirebugStripPanel,
-                     (Panel *)&playerWeaponStripPanel,
-                     (Panel *)&playerInfoStripPanel,
-                     (Panel *)&monsterIdentityStripPanel,
-                     (Panel *)&monsterConditionsStripPanel,
-                     (Panel *)&damageShareStripPanel,
-                     (Panel *)&damageChartStripPanel,
-                     (Panel *)&damageRowsStripPanel,
-                 }) {
-                if (sub && sub->outputName().isEmpty())
-                    sub->setOutputName(layoutOutput, false);
+            for (const SubRow &r : rows) {
+                if (!layoutPlan.detached(r.parentSlot, r.tableRow))
+                    continue;
+                if (r.sub && r.sub->outputName().isEmpty())
+                    r.sub->setOutputName(layoutOutput, false);
             }
         }
     }
@@ -1844,7 +2215,27 @@ int main(int argc, char **argv)
             // state once primed; live snapshots must not erase that preview.
             const bool keepDamageDemo = skipUpdate(damagePanel);
             const bool keepPetDemo = skipUpdate(petDamagePanel);
-            if (!keepDamageDemo || !keepPetDemo) {
+            // ── v1.1.4: THE STRIPS OWN THEIR DEMO STATE, NOT THE MOTHER'S ──
+            // These three used to be guarded by keepDamageDemo — the MOTHER's
+            // demo flag — and the mother does not always paint. In Mixed with
+            // every damage row detached, damagePanelHasBlocks() answers false,
+            // the mother never mounts, so its demo is never primed and
+            // keepDamageDemo stays false FOR THE WHOLE SESSION. Every tick
+            // then fed the three strips the empty `feedLost` snapshot and the
+            // mount half below hid them on hasVisibleContent(): the user's
+            // 「崛起下,启动悬浮窗编辑的话,伤害统计那个窗会自动隐藏」.
+            //
+            // The World arm has always guarded each strip with its own
+            // skipUpdate() (see keepShareDemo/keepChartDemo/keepRowsDemo at
+            // the end of this callback); the Rise arm now answers the same
+            // question about the same three objects. A strip that primed its
+            // own demo keeps it; a strip that has not is fed the live snapshot
+            // exactly as before.
+            const bool keepShareDemo = skipUpdate(damageShareStripPanel);
+            const bool keepChartDemo = skipUpdate(damageChartStripPanel);
+            const bool keepRowsDemo = skipUpdate(damageRowsStripPanel);
+            if (!keepDamageDemo || !keepPetDemo
+                || !keepShareDemo || !keepChartDemo || !keepRowsDemo) {
                 const mhw::RiseDamageReader *newestReader = nullptr;
                 // Report the most informative failure, not simply the first
                 // one. A Missing feed is the least interesting verdict (a
@@ -1921,19 +2312,25 @@ int main(int argc, char **argv)
                     // damage surface anywhere on screen. World split was
                     // fixed by exactly this drive; Rise was never given it.
                     //
-                    // The demo guard is the same keepXDemo shape the mother
-                    // and pets use one line up, so an --edit launch keeps its
-                    // seeded rows instead of being overwritten by an empty
-                    // feed.
+                    // The demo guard is per strip — the same keepXDemo shape
+                    // the mother and pets use one line up, so an --edit launch
+                    // keeps its seeded rows instead of being overwritten by an
+                    // empty feed. v1.1.4 CORRECTS what this comment always
+                    // claimed: the code used to guard all three with the
+                    // MOTHER's flag, so an --edit launch kept its rows only
+                    // while the mother happened to be mounted.
                     if (damageSplitOn) {
-                        if (!keepDamageDemo) {
+                        // v1.1.4: per-strip guards, not keepDamageDemo — the
+                        // mother may never paint (see the flags' note above).
+                        if (!keepShareDemo)
                             damageShareStripPanel.updateRiseDamage(
                                 damageSnapshot);
+                        if (!keepChartDemo)
                             damageChartStripPanel.updateRiseDamage(
                                 damageSnapshot);
+                        if (!keepRowsDemo)
                             damageRowsStripPanel.updateRiseDamage(
                                 damageSnapshot);
-                        }
                     }
                 } else {
                     const auto feedError = diagnosticReader->lastError();
@@ -1969,11 +2366,14 @@ int main(int argc, char **argv)
                     // the success path would leave Rise + split showing the
                     // previous quest's DPS whenever the feed drops.
                     if (damageSplitOn) {
-                        if (!keepDamageDemo) {
+                        // v1.1.4: per-strip guards here too, for the same
+                        // reason as the success path above.
+                        if (!keepShareDemo)
                             damageShareStripPanel.updateRiseDamage(feedLost);
+                        if (!keepChartDemo)
                             damageChartStripPanel.updateRiseDamage(feedLost);
+                        if (!keepRowsDemo)
                             damageRowsStripPanel.updateRiseDamage(feedLost);
-                        }
                     }
                 }
             }
@@ -2175,7 +2575,17 @@ int main(int argc, char **argv)
         // was never shown (a mantle window in a Rise session) still has a
         // draggable position the user never touched, and writing it makes
         // the next launch find the same numbers the previous one saved.
-        if (playerSplitOn) {
+        //
+        // "The switch" is now ANY group having detached windows, not
+        // playerSplitOn alone (audit-mixed-topology D-2). The two were the
+        // same statement on HEAD, where all three group flags held one value;
+        // Mixed is what separates them. Note this gate is deliberately COARSE
+        // where the output-inheritance block above is per-row: the paragraph
+        // just above is exactly why it WANTS the never-shown windows
+        // included, so narrowing it to the detached rows would defeat it. What
+        // it must not do is skip the flush wholesale because the player group
+        // has no detached window while the monster group does.
+        if (anyWindowDetached) {
             playerStatusStripPanel.saveConfig();
             playerBarsStripPanel.saveConfig();
             playerMantlesStripPanel.saveConfig();

@@ -223,6 +223,56 @@ int main(int argc, char **argv)
               "storing `true`");
     }
 
+    // ── the LEGACY `visible` row, which older builds wrote ──────────────
+    //
+    // Measured on a real user's panels.ini: `[<scope>] visible=true` is
+    // present, `winVisible` is absent. The reader used to ask only for
+    // `winVisible`, never saw that row, and answered the default TRUE — so
+    // with a legacy `visible=false` (the user HID the window) the inspector
+    // checkbox showed it as shown and ticking it back off could not stick.
+    // The two keys also carry opposite polarities: this one is "true = shown",
+    // the current one is "absent = shown, false = hidden".
+    {
+        const QString legacyScope = QStringLiteral("legacyScope");
+        const QString legacyKey   = QStringLiteral("legacyKey");
+        QSettings ini(QSettings::IniFormat, QSettings::UserScope,
+                      QStringLiteral("monster-overlay"),
+                      QStringLiteral("panels"));
+        ini.beginGroup(legacyScope);
+        ini.setValue(QStringLiteral("visible"), false);   // old build: hidden
+        ini.endGroup();
+        ini.sync();
+
+        check(!mhw::readWindowVisible(legacyScope, legacyKey),
+              "legacy visible=false reads as HIDDEN (the old key's polarity "
+              "is applied, not the new one's)");
+
+        ini.beginGroup(legacyScope);
+        ini.setValue(QStringLiteral("visible"), true);    // old build: shown
+        ini.endGroup();
+        ini.sync();
+        check(mhw::readWindowVisible(legacyScope, legacyKey),
+              "legacy visible=true reads as SHOWN");
+
+        // PRECEDENCE: once the current key exists it is the only answer, even
+        // when the legacy row disagrees. A window the user hid with the modern
+        // control must stay hidden even if a stale `visible=true` survives.
+        mhw::writeWindowVisible(legacyScope, legacyKey, false);
+        ini.beginGroup(legacyScope);
+        ini.setValue(QStringLiteral("visible"), true);
+        ini.endGroup();
+        ini.sync();
+        check(!mhw::readWindowVisible(legacyScope, legacyKey),
+              "winVisible=false beats a legacy visible=true (precedence)");
+
+        // A read must not rewrite the user's file.
+        ini.beginGroup(legacyScope);
+        const bool legacyRowStillThere = ini.contains(QStringLiteral("visible"));
+        ini.endGroup();
+        check(legacyRowStillThere,
+              "reading a legacy row does not delete or rewrite it");
+    }
+
     // The "no spurious key" rule from the other side: asking to show a
     // window that was never hidden must not create the row in the first
     // place, so a console that never touches the switch writes nothing.

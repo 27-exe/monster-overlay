@@ -127,6 +127,65 @@ public:
     int  lockWidth() const { return lockW_; }
     int  lockHeight() const { return lockH_; }
 
+    // kMaxMinSize lives with the protected key handlers, so the console's
+    // spin ranges ask for the same ceiling through here rather than
+    // repeating the literal 4096 (and drifting from it).
+    static constexpr int maxDialValue() { return kMaxMinSize; }
+
+    /* ── 验收项5 (B 第1阶段): THE SAME DIALS, SET TO AN EXACT VALUE ────────
+       The console's capability rows show numbers (最小宽 356 / 固定宽 0 /
+       列数 3), and a number that is typed has to LAND on that number. The
+       keyboard implementations below are deltas, so these wrappers do the
+       arithmetic here and then hand the delta to the SAME protected
+       functions the keys call — same clamp, same `configTouched_` dirty
+       stamp, same update(), and no second copy of any rule. The
+       keyboard path itself is untouched.
+
+       setColumnsTo() steps by kColumnsStep instead of passing a delta,
+       for the reason loadConfig()'s read-back says out loud: the six
+       nudgeColumns() implementations do not agree on what a delta
+       MEANS, but every one of them agrees on a step. No progress means
+       the clamp is the answer, so the loop stops rather than spins.
+
+       restoreAutoSize() is 恢复自动尺寸: both floors and both locks
+       cleared (0 is "absent" for all four) and the content size
+       re-applied, which is exactly the size half of resetToDefaults()
+       minus the factory reset of everything else.
+       ── end 验收项5: exact setters ── */
+    void setExactMinWidth(int w) { nudgeMinWidth(w - minW_); }
+    void setExactMinHeight(int h) { nudgeMinHeight(h - minH_); }
+    void setExactLockWidth(int w) { setLockWidth(w); }
+    void setExactLockHeight(int h) { setLockHeight(h); }
+    void setColumnsTo(int target)
+    {
+        if (!supportsColumns())
+            return;
+        for (int guard = 0; guard < 64 && columns() != target; ++guard) {
+            const int before = columns();
+            nudgeColumns(target > columns() ? kColumnsStep : -kColumnsStep);
+            if (columns() == before)
+                break;   // clamped: the target is unreachable, keep the clamp
+        }
+    }
+    void restoreAutoSize()
+    {
+        setExactMinWidth(0);
+        setExactMinHeight(0);
+        setExactLockWidth(0);
+        setExactLockHeight(0);
+        if (logicalSize_.isValid())
+            setContentSize(logicalSize_.width(), logicalSize_.height());
+        update();
+    }
+    // The `columns` row's writer. A dial that only exists in memory is a
+    // dial the next launch will not see, and saveAppearance() deliberately
+    // does not carry this key (it is the appearance half), so the
+    // console's 列数 row calls this. saveConfig() keeps its own inline
+    // stanza — same value, same group, the redundancy the note there
+    // already blesses — because it is already inside its own
+    // beginGroup() and a nested one would write to the wrong path.
+    void persistColumns();
+
     // `subWindowIndex` is the window's row in its parent's split table, or
     // 0 for a base panel. It has to arrive HERE rather than through a
     // setter because loadConfig() runs inside this constructor, and the

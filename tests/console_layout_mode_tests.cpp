@@ -101,9 +101,12 @@ using Resolution = mhw::PlayerLayoutResolution;
 // priority test below tells you what that broke.
 Resolution resolveAsConsoleDoes(const QString &confText)
 {
+    // v1.1.0: the console passes the WHOLE parsed row, not `.source`.
+    // Passing `.source` is what made `layout=mixed` resolve to Split and let
+    // one save rewrite the user's file.
     return mhw::resolveStartupLayoutMode(
         mhw::PlayerLayoutCliRequest{},
-        mhw::parseConsoleLayoutRow(confText).source);
+        mhw::parseConsoleLayoutRow(confText));
 }
 
 bool hasFlag(const QStringList &args, const QString &flag)
@@ -251,7 +254,7 @@ void test_priorityChain()
         mhw::resolveStartupLayoutMode(
             mhw::PlayerLayoutCliRequest{/*given=*/true, QStringLiteral("split"),
                                         Mode::Single},
-            Source::Default);
+            mhw::parseConsoleLayoutRow(QStringLiteral("layout=split")));
     check(cliSplitOverConf.mode == Mode::Split,
           "an explicit --layout=split wins over the conf arm");
     check(cliSplitOverConf.source == Source::CliExplicit,
@@ -261,7 +264,7 @@ void test_priorityChain()
         mhw::resolveStartupLayoutMode(
             mhw::PlayerLayoutCliRequest{/*given=*/true,
                                         QStringLiteral("single"), Mode::Split},
-            Source::Conf);
+            mhw::parseConsoleLayoutRow(QStringLiteral("layout=split")));
     check(cliSingleOverConf.mode == Mode::Single,
           "an explicit --layout=single wins over a conf layout=split "
           "row — the override the console must never be able to block");
@@ -283,7 +286,7 @@ void test_priorityChain()
         mhw::resolveStartupLayoutMode(
             mhw::PlayerLayoutCliRequest{/*given=*/true,
                                         QStringLiteral("banana"), Mode::Split},
-            Source::Conf);
+            mhw::parseConsoleLayoutRow(QStringLiteral("layout=split")));
     check(malformed.mode == Mode::Single,
           "a malformed --layout= resolves Single (never the conf row)");
     check(malformed.source == Source::Default,
@@ -295,7 +298,7 @@ void test_priorityChain()
         mhw::resolveStartupLayoutMode(
             mhw::PlayerLayoutCliRequest{/*given=*/false, QString(),
                                         Mode::Split},
-            Source::Default);
+            mhw::parseConsoleLayoutRow(QString()));
     check(compatFlag.mode == Mode::Split
               && compatFlag.source == Source::CliCompatFlag,
           "--split-player-strip still wins over a conf row");
@@ -547,6 +550,123 @@ void test_flagAndRoundTrip()
           "the scan keeps looking)");
 }
 
+// =====================================================================
+// E. MIXED — the row, the chain and the flag
+// =====================================================================
+//
+// The three contracts above were written when `layout=` could say
+// nothing but split, so every assertion in them names Split. Mixed
+// exercises the SAME three pieces of logic and can fail in three ways
+// they do not cover: the row not being written (the console would
+// rewrite it on every save), the shared chain reading it as Split (the
+// data-loss bug whose fix is the deleted two-argument overload), and the
+// child's parser never seeing it (the argv spelling mistake, which for
+// split was caught by a round trip and for mixed was never written).
+//
+// MUTATION: make serializeConsoleLayoutRow() return "" for Mixed (as it
+// does for Single), or make parseConsoleLayoutRow() accept only Split,
+// or make consoleLayoutArgv() emit `layout=mixed` without the dashes —
+// one check below fails per mutation.
+void test_mixedRowChainAndFlag()
+{
+    std::printf("E. mixed: the row, the shared chain and the flag\n");
+
+    // E1. The console WRITES Mixed — the row that one save used to
+    //     silently downgrade to split.
+    checkQ(QString::fromLatin1(mhw::serializeConsoleLayoutRow(Mode::Mixed)),
+           QStringLiteral("layout=mixed\n"),
+           "serializeConsoleLayoutRow(mixed) writes layout=mixed");
+
+    // E2. And the console's own call shape READS it back as Mixed, with
+    //     Conf as the source (a saved choice, not a default).
+    const Resolution mixed = resolveAsConsoleDoes(
+        QStringLiteral("player=1ff\nlocale=zh-CN\nlayout=mixed\n"));
+    check(mixed.mode == Mode::Mixed,
+          "layout=mixed resolves to MIXED through the console's real "
+          "call — not Split (the audit's rewrite), not Single");
+    check(mixed.source == Source::Conf,
+          "and the source is Conf, so a second console start keeps it");
+
+    // E3. First usable row wins, and `single` is not usable — so a file
+    //     that carries the default AND the choice still answers the
+    //     choice, in either order.
+    check(resolveAsConsoleDoes(QStringLiteral("layout=single\nlayout=mixed\n"))
+                  .mode == Mode::Mixed,
+          "an unusable first row does not shadow layout=mixed");
+    check(resolveAsConsoleDoes(QStringLiteral("layout=mixed\nlayout=split\n"))
+                  .mode == Mode::Mixed,
+          "and layout=mixed wins as the first usable row");
+
+    // E4. The CHILD's parser round trip, the check that caught split's
+    //     argv bug: consoleLayoutArgv(Mixed) must arrive at
+    //     QCommandLineParser as an OPTION with the value "mixed".
+    const QStringList mixedArgv = mhw::consoleLayoutArgv(Mode::Mixed);
+    check(mixedArgv == QStringList({QStringLiteral("--layout=mixed")}),
+          "mixed passes exactly --layout=mixed, dashes included");
+    check(!mixedArgv.contains(QStringLiteral("layout=mixed")),
+          "and not the bare conf spelling, which parses as a positional");
+
+    QCommandLineParser parser;
+    QCommandLineOption layoutOption(
+        QStringLiteral("layout"), QStringLiteral("Startup layout mode."),
+        QStringLiteral("mode"));
+    parser.addOption(layoutOption);
+    parser.addOption(QCommandLineOption(
+        QStringLiteral("game"), QStringLiteral("Game."),
+        QStringLiteral("id")));
+    const QStringList childArgv = QStringList()
+        << QStringLiteral("--mask-player=1ff")
+        << QStringLiteral("--game=world")
+        << mixedArgv;
+    if (parser.parse(childArgv)) {
+        check(parser.isSet(layoutOption),
+              "the child's parser sees --layout for mixed too");
+        check(parser.value(layoutOption) == QStringLiteral("mixed"),
+              "and it reads back as \"mixed\" — the value "
+              "parsePlayerLayoutMode() accepts");
+    } else {
+        check(false, "the child's parser accepts the mixed argv");
+    }
+
+    // E5. The chain, with the CLI arm LIVE — the part the console
+    //     cannot reach but main.cpp can, because --layout=mixed on the
+    //     command line is how a run enters Mixed without a saved row.
+    const mhw::PlayerLayoutCliRequest cliMixed{
+        true, QStringLiteral("mixed"),
+        Mode::Single};
+    const Resolution cliWins = mhw::resolveStartupLayoutMode(
+        cliMixed, mhw::parseConsoleLayoutRow(QStringLiteral("layout=split\n")));
+    check(cliWins.mode == Mode::Mixed && cliWins.source == Source::CliExplicit,
+          "--layout=mixed beats a saved layout=split, and the chain says "
+          "the COMMAND LINE is where it came from");
+
+    const mhw::PlayerLayoutCliRequest cliSplit{
+        true, QStringLiteral("split"), Mode::Single};
+    const Resolution confLoses = mhw::resolveStartupLayoutMode(
+        cliSplit, mhw::parseConsoleLayoutRow(QStringLiteral("layout=mixed\n")));
+    check(confLoses.mode == Mode::Split,
+          "an explicit --layout=split still beats a saved layout=mixed");
+
+    // A malformed --layout must NOT be rescued by the saved Mixed row —
+    // the same rule that keeps a typo'd flag from silently inheriting a
+    // stale conf, stated for the mode nobody wrote the rule for.
+    const mhw::PlayerLayoutCliRequest cliBad{
+        true, QStringLiteral("mixedx"), Mode::Single};
+    const Resolution notRescued = mhw::resolveStartupLayoutMode(
+        cliBad, mhw::parseConsoleLayoutRow(QStringLiteral("layout=mixed\n")));
+    check(notRescued.mode == Mode::Single
+              && notRescued.source == Source::Default,
+          "a malformed --layout does not fall through to layout=mixed "
+          "(given-but-unreadable resolves to the default)");
+
+    // And the compat alias still cannot SAY mixed: it is a boolean, and
+    // a boolean that could select Mixed would make `--split-player-strip`
+    // change topology the user never asked to change.
+    check(mhw::splitPlayerStripFlagSense(true) == Mode::Split
+              && mhw::splitPlayerStripFlagSense(false) == Mode::Single,
+          "--split-player-strip still answers only split or single");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -562,6 +682,7 @@ int main(int argc, char **argv)
     test_priorityChain();
     test_repeatedSavesDoNotStackTheRow();
     test_flagAndRoundTrip();
+    test_mixedRowChainAndFlag();
 
     std::printf("=======================================================\n");
     std::printf("%d checks, %d failures\n", checks, failures);

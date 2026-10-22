@@ -466,6 +466,52 @@ int main()
             checkTrue(!inRiseArm("damageShareStripPanel.update(damageSnap)"),
                   "v1.0.0: the Rise arm does not also run the World "
                   "GameSnapshot drive — the two arms feed different data");
+
+            // ── v1.1.4: THE DEMO GUARD MUST BE THE STRIP'S OWN ──────────
+            // The user's report, verbatim: 「崛起下,启动悬浮窗编辑的话,
+            // 伤害统计那个窗会自动隐藏」. All three strips used to be
+            // guarded by `keepDamageDemo` — skipUpdate(damagePanel), the
+            // MOTHER's demo flag. In Mixed with every damage row detached
+            // the mother never mounts, never paints, never primes its demo,
+            // so that flag stayed false for the whole session and every
+            // tick fed the strips the empty `feedLost` snapshot: their own
+            // demo, seeded on their own first paint, was cleared one tick
+            // later and hasVisibleContent() hid them.
+            //
+            // The check is "the guard naming THIS window precedes ITS OWN
+            // feed call", because that is the one thing the old code got
+            // wrong while looking perfectly reasonable: one flag, three
+            // windows, and the flag was read off a fourth object.
+            const auto guardedBy = [&](std::string_view feed,
+                                       std::string_view guard) {
+                const auto at = mainSource.find(feed, riseArm);
+                if (at == std::string::npos || at >= worldArm)
+                    return false;
+                // The guard is the nearest `if (!…)` before the call, and it
+                // must sit close enough to be THIS call's guard rather than
+                // some earlier statement's.
+                const auto from = (at > 240) ? at - 240 : std::size_t(0);
+                const auto g = mainSource.rfind(guard, at);
+                return g != std::string::npos && g < at && g >= from;
+            };
+            checkTrue(guardedBy("damageShareStripPanel.updateRiseDamage(feedLost)",
+                               "if(!keepShareDemo)"),
+                  "v1.1.4: the share window's demo is guarded by ITS OWN "
+                  "flag — the mother's flag stayed false whenever the "
+                  "mother is not mounted, and the window auto-hid");
+            checkTrue(guardedBy("damageChartStripPanel.updateRiseDamage(feedLost)",
+                               "if(!keepChartDemo)"),
+                  "v1.1.4: the chart window's demo is guarded by its own flag");
+            checkTrue(guardedBy("damageRowsStripPanel.updateRiseDamage(feedLost)",
+                               "if(!keepRowsDemo)"),
+                  "v1.1.4: the rows window's demo is guarded by its own flag");
+            checkTrue(inRiseArm("skipUpdate(damageShareStripPanel)"),
+                  "v1.1.4: and each flag is derived from the window it "
+                  "protects, not from the mother panel");
+            checkTrue(inRiseArm("skipUpdate(damageChartStripPanel)"),
+                  "v1.1.4: chart flag derives from the chart window");
+            checkTrue(inRiseArm("skipUpdate(damageRowsStripPanel)"),
+                  "v1.1.4: rows flag derives from the rows window");
         }
     }
 

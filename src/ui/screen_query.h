@@ -136,4 +136,41 @@ QString sourceLabel(Source s);
 // here is what LayerShellQt::Window::setScreen() will match against.
 QList<OutputInfo> listOutputs();
 
+// v1.0.1: THE one spelling of "which output does this name mean right
+// now" for the console/canvas hot paths (drag handlers call it per
+// mouse-move event).
+//
+// Contract, in order:
+//   1. `requested` names an output Qt has RIGHT NOW  -> return
+//      `requested` verbatim. Identity is preserved byte for byte; this
+//      is the user's stored intent and nothing normalises it.
+//   2. `requested` is empty OR names an output that is not attached
+//      (undocked / slept / renamed) -> return the live Qt primary's
+//      name, i.e. QGuiApplication::primaryScreen()->name(), falling to
+//      the FIRST live screen with a non-empty name when Qt reports no
+//      primary (offscreen, mid-hotplug). This is the "missing DP ->
+//      内屏" rule: the window mounts somewhere real, the stored intent
+//      is untouched.
+//   3. Qt knows about no outputs at all -> QString() , deterministically.
+//      Empty in, empty out; no guessing, no synthetic names.
+//
+// Deliberately IDENTITY-only and compositor-blind:
+//   * it reads QGuiApplication::screens() and NOTHING else — no
+//     hyprctl / xrandr / wlr-randr / kscreen-doctor, no
+//     screen_query::detect(). detect() answers a PHYSICAL question
+//     (size, DPR) and may shell out with a 2 s timeout; that is fine
+//     once per screen change and fatal per drag event, which is why the
+//     two are kept in separate functions.
+//   * names come from QScreen::name() only. listOutputs() may synthesise
+//     a `screen@x,y` label for a nameless screen; this function never
+//     does — an identity a compositor cannot match is worse than none.
+//
+// The two-argument overload is the TEST OVERRIDE seam: tests pass the
+// list they want (including the empty list, which no real
+// QGuiApplication ever produces) instead of injecting QPA screens.
+// Callers in production use the one-argument form.
+[[nodiscard]] QString effectiveOutputName(const QString &requested);
+[[nodiscard]] QString effectiveOutputName(const QString &requested,
+                                          const QList<OutputInfo> &live);
+
 } // namespace screen_query

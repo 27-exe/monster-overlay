@@ -71,6 +71,27 @@ public:
     // content's event filter so a LayoutRequest re-reads the budget.
     void setRootWidget(QWidget *content);
 
+    // ── THE CONSOLE'S OWN MODE ─────────────────────────────────────────
+    // false = the PAGE FITS THE WINDOW: the content layer's minimum
+    // height stops being its PREFERRED height (the mode above, where the
+    // page grows past the viewport and the whole shell scrolls) and
+    // becomes the layout's own floor — `minimumSizeHint()`, the height
+    // below which the splitters cannot compress their panes any further.
+    //
+    // Why the floor and not zero: QScrollArea with widgetResizable(true)
+    // resizes the content to the viewport and only an EXPLICIT minimum
+    // can push it past that (that is the whole mechanism the natural
+    // height above uses). Stating the floor keeps that push where it is
+    // still honest — a window smaller than the console's own minimum
+    // still scrolls, because nothing else can give the pane its height
+    // back — while every normal window lays the content out exactly once
+    // at its own size. The result is the shell behaviour the console
+    // asks for: the top bar and the sidebar stay put and resize with the
+    // window, and only the stage and the drawer (which own QScrollAreas
+    // of their own) scroll.
+    void setPageScrollEnabled(bool on);
+    [[nodiscard]] bool pageScrollEnabled() const { return pageScroll_; }
+
     // The height the content is currently asking for. Exposed for the
     // probe and for tests; it is the same number syncNaturalHeight()
     // applies, and it is a READ of the layout, not a stored constant.
@@ -83,6 +104,7 @@ protected:
 private:
     void syncNaturalHeight();
     bool syncing_ = false;
+    bool pageScroll_ = true;
 };
 
 } // namespace mhw

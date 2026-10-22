@@ -221,10 +221,22 @@ public:
     // 「这个窗口配置上属于哪块屏」—— 原型 resolveScreen() 的规则：
     // 窗口自己的 outputName → 所属母面板的 outputName → 主屏。
     //
-    // 刻意不走 boundOutputName()：那条链在第三步回落
-    // previewOutputName_（canvas 当前预览哪块屏，视图状态），而总览要
-    // 回答的是配置事实。按视图状态过滤会自我循环 —— 用户切到 DP-1 看
-    // 总览，跟面板的 outputName 没有半点关系。
+    // v1.1.0: this comment used to say boundOutputName() was deliberately
+    // NOT used here because that chain "falls back to previewOutputName_
+    // (the canvas's preview screen, i.e. view state)". That was true when
+    // it was written and is true no longer: v1.0.1 (#8) moved
+    // boundOutputName()'s third step to the PRIMARY, so the two functions
+    // now walk the same own → parent → primary chain and cannot disagree.
+    // The split is kept anyway — the reason is now the first two steps and
+    // the extra fallback, not step three:
+    //   * boundOutputName() additionally consults the source's
+    //     previewFallbackOutput(), which the console pushes for a split
+    //     window (the parent's output, or the primary's name), so it is the
+    //     right answer for MEASURING and dragging;
+    //   * windowOutputName() answers the配置事实 for the overview filter,
+    //     where the pushed preview fallback must not participate.
+    // Do not "simplify" one into the other on the strength of the old
+    // comment: they agree on step three, not on step two.
     //
     // `subIndex` 是 subSlots_ 的下标；负数（默认）问母面板 0..3。
     // 返回空串表示「跟随主屏」。
@@ -295,8 +307,58 @@ public:
     // v0.5 zoom: 1.0 = fit-to-widget (default). >1 enlarges the
     // screen frame beyond the viewport; the parent QScrollArea
     // provides scrollbars. Ctrl+wheel adjusts in 0.1 steps.
+    // v1.0.1 (#5): screenFrame()/fidelityHeightForWidth() consume the
+    // same zoom, so the FRAME itself and the scroll child's minimum
+    // geometry both scale — once, never z² — and zoom<1 shrinks the
+    // frame inside the still-viewport-sized widget.
     void setZoom(qreal z);
     qreal zoom() const { return zoom_; }
+
+    // ─── v1.0.1 (#9): FIXED-VIEWPORT MODE ──────────────────────────────
+    //
+    // THE DEFECT IT EXISTS FOR. Outside this mode zoom>1 fixes the
+    // widget to sizeHint()*zoom (see setZoom's first arm), so the
+    // canvas's natural size IS a function of zoom: a bare page measured
+    // 1078×1062 at zoom 1 and 2156×2112 at zoom 2, and the console's
+    // 1400×760 scroll viewport's child grew 1398×758 → 2156×2112 with
+    // scroll ranges of 1368/772 — the PAGE, not the picture, got bigger.
+    //
+    // IN THIS MODE the widget's geometry is NOT a function of zoom:
+    // sizeHint()/heightForWidth() answer the zoom-1 numbers, no
+    // setFixedSize ever runs, and a user's splitter height survives
+    // every zoom step. What zoom changes instead is the INSIDE:
+    //
+    //   viewportContentSize()   the content extent the frame lives in
+    //                           (board + board padding, ≥ widget size)
+    //   viewportScrollRange()   content − viewport, clamped ≥ 0 per axis
+    //   setViewportScrollOffset / viewportScrollOffset()
+    //                           the pan inside the viewport, clamped to
+    //                           the range — so the big image can only
+    //                           scroll INSIDE the viewport, never grow
+    //                           it, and no HUD geometry is persisted.
+    //
+    // ONE TRANSFORM, STILL. screenFrame() remains the single mapping —
+    // it subtracts the scroll offset itself — so paint, hit-test and
+    // drag all consume the same offset frame and cannot drift.
+    //
+    // DEFAULT FALSE, and the false arm is the untouched legacy path
+    // (zoom>1 still fixes the widget to its zoomed hint). Only the
+    // console switches this on; the seam the console needs to wire
+    // scrollbars is viewportContentChanged/viewportScrollChanged below.
+    void setFixedViewportMode(bool on);
+    [[nodiscard]] bool fixedViewportMode() const { return fixedViewport_; }
+    // The content extent (logical widget pixels). Equals size() whenever
+    // there is nothing to scroll (fixed mode off, or zoom small enough
+    // that the frame fits).
+    [[nodiscard]] QSize viewportContentSize() const;
+    // max(0, content − viewport) per axis. QSize(0,0) when the mode is
+    // off — there is nothing to scroll.
+    [[nodiscard]] QSize viewportScrollRange() const;
+    [[nodiscard]] QPoint viewportScrollOffset() const { return viewportScrollOffset_; }
+    // Clamped to the range; a value outside it is WRITTEN CLAMPED, never
+    // ignored (a console pushing a stale offset must not desynchronise
+    // the scrollbar it is driving). No-op on an unchanged value.
+    void setViewportScrollOffset(QPoint offset);
 
     // ─── v0.14: the layout the last paint computed ─────────────────────
     //
@@ -391,6 +453,27 @@ public:
     // nothing else.
     void setConsoleFidelityMode(bool on);
     [[nodiscard]] bool consoleFidelityMode() const { return consoleFidelity_; }
+    void setTransparencyGuideEnabled(bool on) { transparencyGuide_ = on; update(); }
+
+    // ─── v1.0.1 (#10): the board label's RESOLUTION half can go ─────────
+    //
+    // fidelityBoardLabel() prints `output · W×H · logical coordinate
+    // space` inside the board (`.board-label`). The console's own top
+    // bar ALREADY carries the full display identity — its SCREEN
+    // dropdown is the same string shape — so inside the console the
+    // in-board copy is redundant, and this switch hides it.
+    //
+    // CONSOLE-ONLY, DEFAULT TRUE. The label only exists in fidelity
+    // mode (the legacy chrome arm never paints it), and the default
+    // keeps painting it, so every existing pixel baseline — fidelity
+    // and legacy — is untouched until the console opts in. Hiding is a
+    // PAINT-ONLY change: the label has no geometry role (it is
+    // pointer-events:none and takes no part in hit-testing), so frame,
+    // content size, scroll range and drag are all byte-identical either
+    // way. The top-bar display picker is the parent's; nothing here
+    // touches it.
+    void setFidelityBoardLabelVisible(bool visible);
+    [[nodiscard]] bool fidelityBoardLabelVisible() const { return boardLabelVisible_; }
 
     // ─── v1.0.0: WINDOW VISIBILITY — the prototype's `.visible` ────────
     //
@@ -437,7 +520,13 @@ public:
     [[nodiscard]] bool panelWindowVisible(int panelIndex) const;
 
     QSize sizeHint() const override;
-    bool hasHeightForWidth() const override { return zoom_ <= 1.0; }
+    // v1.0.1 (#9): fixed-viewport mode keeps the widget on the zoom-1
+    // height-for-width contract at EVERY zoom (the widget never grows),
+    // so the mode's answer is the zoom<=1 answer regardless of zoom_.
+    bool hasHeightForWidth() const override
+    {
+        return fixedViewport_ || zoom_ <= 1.0;
+    }
     int heightForWidth(int width) const override;
 
     // ─── v0.14 placement: the overlap-free wall ─────────────────────────
@@ -558,6 +647,14 @@ public:
 
 
 signals:
+    // v1.0.1 (#7): fires on EVERY user press inside a panel's painted
+    // rect — including a re-click on the already-selected /
+    // default-highlighted panel and, in Split, the pets box — so the
+    // console can always refill its property panel. Also fires in the
+    // overview (v1.0.0: a click selects so the inspector can show the
+    // window, and does nothing else). The no-loop guarantee lives on
+    // the other side: setSelectedPanel() never emits, so a console
+    // echo cannot come back as this signal.
     void panelSelected(int index);
     // Emitted during drag / keyboard nudge. `margins` is the
     // target QMargins in logical pixels, already clamped. The
@@ -576,6 +673,18 @@ signals:
     void subWindowSelected(int index);
     // v0.7.5: lets the console's ZOOM label/buttons track Ctrl+wheel.
     void zoomChanged(qreal zoom);
+    // v1.0.1 (#9): the fixed-viewport seam. viewportContentChanged
+    // fires when the CONTENT extent changes (zoom, fidelity flag,
+    // preview screen, widget resize) while the mode is on — the console
+    // re-derives its scrollbars from it — and viewportScrollChanged
+    // fires whenever the offset actually moves (setter, or a clamp after
+    // the content shrank). Neither exists as a behaviour outside fixed
+    // mode: the content signal is gated on the flag and the scroll
+    // signal only ever fires when the offset changes, which cannot
+    // happen while the range is 0.
+    void viewportContentChanged(QSize content);
+    void viewportScrollChanged(QPoint offset);
+
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -740,6 +849,33 @@ private:
     // conversion uses the exact mapping the box was painted with.
     void screenFrame(QRectF &frame, qreal &fit, QSize &logical) const;
 
+    // ─── v1.0.1 (#9): the fixed-viewport geometry, spelled once ─────────
+    //
+    // fidelityBoardSizeF() is the fidelity board's SIZE with zoom
+    // consumed exactly once — the widget-avail arm the legacy path uses
+    // (the widget carried the zoom for z>1 there) and the plain
+    // base×zoom arm fixed mode uses (the widget never carries it). One
+    // function so sizeHint's family, viewportContentSizeF() and
+    // screenFrame() cannot drift into a z².
+    [[nodiscard]] QSizeF fidelityBoardSizeF() const;
+    // The content extent the frame lives in: board + board padding in
+    // fidelity mode, fitted frame + chrome in the legacy arm, and the
+    // widget itself whenever there is nothing to scroll (mode off, or a
+    // zoom that still fits). NEVER smaller than size() — that is what
+    // keeps viewportScrollRange() ≥ 0 by construction.
+    [[nodiscard]] QSizeF viewportContentSizeF() const;
+    // Re-emits viewportContentChanged when the extent moved (fixed mode
+    // only) and re-clamps the scroll offset to the new range. Called
+    // from every state change that can move the extent: zoom, the
+    // fidelity flag, the preview screen, the mode itself, resize.
+    void refreshViewportMetrics();
+    void clampViewportScroll();
+    // Shared write path of the two public/私有 scroll entry points:
+    // applies an ALREADY-clamped offset, no-op on sameness, repaints,
+    // emits viewportScrollChanged.
+    void applyViewportScroll(QPoint offset);
+
+
     // v0.14: the sub-window twin of movedMargins(). A SEPARATE function
     // rather than an overload on the same name, because the two take
     // different index spaces and the overload set would make the wrong
@@ -774,13 +910,16 @@ private:
     const screen_query::Result &screenInfoForOutput(
             const QString &outputName) const;
 
-    // v0.15: the output a BOUND window is measured against, resolved by
-    // the same rule Panel::marginLimits() uses: the window's own
-    // outputName when it names one, else its preview-only fallback
-    // (what the console pushes into every split sub-window), else the
-    // primary. Null source, or an interface that cannot answer, yields
-    // previewOutputName_ — the behaviour this file had before the
-    // accessors existed, so nothing changes until they land.
+    // v0.15, revised v1.0.1 (#8): the output a BOUND window is measured
+    // against, on the ONE output chain: the window's own outputName,
+    // else its preview-only fallback (what the console pushes in — its
+    // parent panel's output or the primary's name), else the PRIMARY,
+    // through detail::effectiveOutputName (the stand-in for
+    // screen_query::effectiveOutputName while the runtime lane's
+    // function is still landing). Deliberately NOT previewOutputName_
+    // (the viewer) as the last step: a mother/child that follows lives
+    // where the chain puts it, and the viewer is a view state, not a
+    // location.
     [[nodiscard]] QString boundOutputName(const PanelSource *src) const;
 
     // v1.0.0: 「跟随主屏」的空串归一成一个真实输出名，让总览的窗口归属
@@ -871,6 +1010,22 @@ private:
     // a short-circuit — see the public setter's note for why the old
     // chrome is gated off rather than deleted.
     bool consoleFidelity_{false};
+    bool transparencyGuide_{false};
+    // v1.0.1 (#9): fixed-viewport mode + its pan. Both default to the
+    // legacy contract: mode off (zoom still fixes the widget above 1)
+    // and offset at the origin. viewportScrollOffset_ is only ever
+    // non-zero while fixedViewport_ is true — clampViewportScroll()
+    // zeroes it the moment the mode or the range goes away.
+    bool fixedViewport_{false};
+    QPoint viewportScrollOffset_{0, 0};
+    // Last extent emitted on viewportContentChanged, so a caller that
+    // re-pushes the same numbers sees no signal. -1,−1 = "nothing
+    // emitted yet", which can never equal a real (≥0) extent.
+    QSize notifiedContentSize_{-1, -1};
+    // v1.0.1 (#10): paint the .board-label line. TRUE by default — the
+    // label's historical presence — so the console opts INTO hiding it.
+    bool boardLabelVisible_{true};
+
 
     // v0.11.4: per-instance screen cache. Was two function-level statics
     // inside previewScreenInfo() — built once per PROCESS, so a monitor

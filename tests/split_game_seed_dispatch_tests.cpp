@@ -128,14 +128,22 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
 
     bool found = false;
-    const mhw::GameId asBuiltRise = seedOf(cp, "player-mantles", found);
-    check(found, "the console built a player-mantles split-preview window");
+    // v1.1.5: the tracked window is player-bars, not player-mantles. The
+    // mantles window used to be the sharpest probe (World initialiser,
+    // read under a Rise rail), but a Rise host no longer BUILDS it at all
+    // — the game filter removed the very surface the dead dispatch used
+    // to corrupt. player-bars is the same virtual dispatch on a window
+    // BOTH games mount, with its own per-game demo (raw stamina for Rise,
+    // bar-domain for World), so a dead setDemoGame() still answers World
+    // under a Rise rail and the assertion still dies exactly as before.
+    const mhw::GameId asBuiltRise = seedOf(cp, "player-bars", found);
+    check(found, "the console built a player-bars split-preview window");
     if (!found) {
         std::printf("\n== %d checks, %d failures ==\n", checks, failures);
         return failures == 0 ? 0 : 1;
     }
     check(asBuiltRise == mhw::GameId::Rise,
-          "as built under Rise, the mantles window is SEEDED FOR RISE — the "
+          "as built under Rise, the bars window is SEEDED FOR RISE — the "
           "host dispatched the rail's game into the window's own member");
 
     // ---- THE SWITCH THAT A DEAD DISPATCH CANNOT SURVIVE -----------------
@@ -144,7 +152,7 @@ int main(int argc, char *argv[])
     check(mhw::panelSettingsGame() == mhw::GameId::World,
           "the rail switch moved the NAMESPACE to World");
 
-    const mhw::GameId afterWorld = seedOf(cp, "player-mantles", found);
+    const mhw::GameId afterWorld = seedOf(cp, "player-bars", found);
     check(found && afterWorld == mhw::GameId::World,
           "and moved the SEED to World too — this is the assertion that "
           "dies if setDemoGame() is ever a no-op again, which is exactly "
@@ -153,7 +161,7 @@ int main(int argc, char *argv[])
     // ---- AND BACK, so it is not a one-way transition ---------------------
     clickGameBtn(cp, mhw::StringTable::instance().tr(
                          QStringLiteral("console.game.rise")));
-    const mhw::GameId afterRise = seedOf(cp, "player-mantles", found);
+    const mhw::GameId afterRise = seedOf(cp, "player-bars", found);
     check(found && afterRise == mhw::GameId::Rise,
           "switching back re-seeds for Rise — the dispatch is not a latched "
           "flag and the two directions are the same code");

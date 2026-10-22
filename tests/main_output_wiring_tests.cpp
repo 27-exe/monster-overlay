@@ -96,18 +96,26 @@
 #include "ui/panel_player_split_info.h"
 #include "ui/panel_sections.h"
 #include "ui/panel_settings_game.h"
+#include "ui/window_layout_plan.h"   // mhw::kWindowLayoutRowCount for §8
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QDir>
+#include <QDirIterator>
+#include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QMargins>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QScreen>
 #include <QSettings>
 #include <QString>
 #include <QTemporaryDir>
-#include <QDir>
-#include <QFile>
 
 // Qt's logging, for the §4 warning counter. qDebug/qWarning are
 // functions in QtGlobal, but QtMsgType and QMessageLogContext are the
@@ -697,6 +705,472 @@ int main(int argc, char *argv[])
         check(sub.outputName() == QLatin1String(kPrimaryName),
               "a LATER setOutputName() still overwrites the inherited one — "
               "--output-all reaches a sub-window that already inherited");
+    }
+
+    // ── 7. THE REAL BINARY'S TOPOLOGY, read from --print-layout-plan ──
+    //
+    // Sections 1-6 assert the RULE through the same calls main.cpp makes
+    // (a lambda it owns). This section asserts the RULE'S OUTPUT: it runs
+    // the built monster-overlay itself with the diagnostic flag and reads
+    // the JSON the production topology block writes, so "main.cpp feeds
+    // the plan to the panels" is checked in the binary rather than
+    // inferred from a test that calls the same headers.
+    //
+    // WHY IT IS SAFE TO RUN HERE: --print-layout-plan returns from main()
+    // BEFORE the first Panel is constructed and before
+    // setPanelSettingsGame(), so it opens no panels.ini and creates no
+    // window — §7a asserts that literally, by pointing the child at an
+    // empty XDG_CONFIG_HOME and checking it is still empty afterwards.
+    // main() above already pointed HOME and XDG_CONFIG_HOME at temp dirs,
+    // so nothing below can reach a real profile either.
+    {
+        const QString bin =
+            QCoreApplication::applicationDirPath()
+            + QStringLiteral("/monster-overlay");
+        QTemporaryDir childHome;
+        if (!childHome.isValid()) {
+            std::printf("  FAIL  no temp dir for the child\n");
+            ++failures;
+            ++checks;
+        }
+
+        struct PlanRun {
+            bool finished{false};
+            int  exitCode{-1};
+            QString out;
+            QString err;
+            QJsonObject doc;
+            bool parsed{false};
+        };
+        auto runPlan = [&](const QStringList &args) {
+            PlanRun r;
+            if (!QFile::exists(bin)) {
+                std::printf("  FAIL  the overlay binary is missing: %s\n",
+                            qPrintable(bin));
+                ++checks; ++failures;
+                return r;
+            }
+            QProcess p;
+            QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+            env.insert(QStringLiteral("XDG_CONFIG_HOME"),
+                       childHome.path());
+            env.insert(QStringLiteral("HOME"), childHome.path());
+            env.insert(QStringLiteral("QT_QPA_PLATFORM"),
+                       QStringLiteral("offscreen"));
+            p.setProcessEnvironment(env);
+            p.start(bin, args);
+            r.finished = p.waitForFinished(60000);
+            r.exitCode = r.finished ? p.exitCode() : -1;
+            r.out = QString::fromUtf8(p.readAllStandardOutput());
+            r.err = QString::fromUtf8(p.readAllStandardError());
+            QJsonParseError jsonErr {};
+            const QJsonDocument parsed =
+                QJsonDocument::fromJson(r.out.toUtf8(), &jsonErr);
+            r.parsed = (jsonErr.error == QJsonParseError::NoError)
+                && parsed.isObject();
+            r.doc = parsed.object();
+            ++checks;
+            if (!r.finished || r.exitCode != 0 || !r.parsed) {
+                ++failures;
+                std::printf("  FAIL  run: %s (finished=%d exit=%d parse=%d)\n",
+                            qPrintable(args.join(QLatin1Char(' '))),
+                            r.finished ? 1 : 0, r.exitCode, r.parsed ? 1 : 0);
+                std::printf("        stdout: %s\n", qPrintable(r.out.left(400)));
+                std::printf("        stderr: %s\n", qPrintable(r.err.left(400)));
+            }
+            return r;
+        };
+
+        const QStringList maskArgs = QStringList()
+            << QStringLiteral("--mask-player") << QStringLiteral("1ff")
+            << QStringLiteral("--mask-monster") << QStringLiteral("7f")
+            << QStringLiteral("--mask-damage") << QStringLiteral("0f");
+
+        auto motherMask = [](const QJsonObject &doc, const char *parent) {
+            const QJsonArray arr = doc.value(QStringLiteral("mothers")).toArray();
+            for (const QJsonValue &v : arr)
+                if (v.toObject().value(QStringLiteral("parent")).toString()
+                    == QLatin1String(parent))
+                    return v.toObject().value(QStringLiteral("mask")).toString();
+            return QString();
+        };
+        auto motherMounted = [](const QJsonObject &doc, const char *parent) {
+            const QJsonArray arr = doc.value(QStringLiteral("mothers")).toArray();
+            for (const QJsonValue &v : arr)
+                if (v.toObject().value(QStringLiteral("parent")).toString()
+                    == QLatin1String(parent))
+                    return v.toObject().value(QStringLiteral("mounted")).toBool();
+            return false;
+        };
+        auto enabledKeys = [](const QJsonObject &doc) {
+            QStringList keys;
+            const QJsonArray arr =
+                doc.value(QStringLiteral("sub_windows")).toArray();
+            for (const QJsonValue &v : arr) {
+                const QJsonObject w = v.toObject();
+                if (w.value(QStringLiteral("enabled")).toBool())
+                    keys.append(w.value(QStringLiteral("key")).toString());
+            }
+            return keys;
+        };
+        auto count = [](const QJsonObject &doc) {
+            return doc.value(QStringLiteral("detached_count")).toInt(-1);
+        };
+
+        // (1) SINGLE — the pixel-identity half: nothing detached, every
+        //     mother keeps the user's own mask and mounts, no window.
+        {
+            const PlanRun r = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("single")
+                << QStringLiteral("--game") << QStringLiteral("world")
+                << QStringLiteral("--print-layout-plan"));
+            check(r.parsed && r.doc.value(QStringLiteral("layout_mode"))
+                                 .toString() == QStringLiteral("single"),
+                  "binary: --layout single reports layout_mode=single "
+                  "(the flag the overlay has always accepted)");
+            check(count(r.doc) == 0,
+                  "binary/single: 0 detached windows");
+            check(motherMask(r.doc, "player") == QStringLiteral("000001ff")
+                      && motherMask(r.doc, "monster") == QStringLiteral("0000007f")
+                      && motherMask(r.doc, "damage") == QStringLiteral("0000000f"),
+                  "binary/single: every mother keeps the user's mask VERBATIM");
+            check(motherMounted(r.doc, "player")
+                      && motherMounted(r.doc, "monster")
+                      && motherMounted(r.doc, "damage"),
+                  "binary/single: all three mothers mount");
+            check(enabledKeys(r.doc).isEmpty(),
+                  "binary/single: no sub-window is enabled");
+        }
+
+        // (2) SPLIT — the same numbers the seed produced, now read from
+        //     the plan rather than from `mode == Split` at three sites.
+        {
+            const PlanRun r = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("split")
+                << QStringLiteral("--game") << QStringLiteral("world")
+                << QStringLiteral("--print-layout-plan"));
+            check(r.parsed && count(r.doc) == 11,
+                  "binary/split: all 11 windows detached");
+            check(motherMask(r.doc, "player") == QStringLiteral("00000000")
+                      && motherMask(r.doc, "monster") == QStringLiteral("00000020")
+                      && motherMask(r.doc, "damage") == QStringLiteral("00000008"),
+                  "binary/split: the seed mother masks, 00000000 / "
+                  "00000020 / 00000008 — unchanged by the plan wiring");
+            check(!motherMounted(r.doc, "player")
+                      && !motherMounted(r.doc, "monster")
+                      && !motherMounted(r.doc, "damage"),
+                  "binary/split: a mother left with only its filter bit "
+                  "does not mount");
+            check(enabledKeys(r.doc).size() == 11,
+                  "binary/split: all 11 sub-windows enabled");
+        }
+
+        // (3) MIXED, no --detached-windows: the mode default is the
+        //     all-detached fallback, so the answer must equal Split's —
+        //     and it must be MIXED's own mode name, not a silent
+        //     `layout=single (default)` (the D3 / log defect).
+        {
+            const PlanRun r = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("mixed")
+                << QStringLiteral("--game") << QStringLiteral("world")
+                << QStringLiteral("--print-layout-plan"));
+            check(r.parsed
+                      && r.doc.value(QStringLiteral("layout_mode")).toString()
+                             == QStringLiteral("mixed"),
+                  "binary/mixed: --layout mixed is ACCEPTED and reported as "
+                  "mixed (D3: it used to be swallowed into another arm)");
+            check(r.doc.value(QStringLiteral("layout_source")).toString()
+                      == QStringLiteral("cli"),
+                  "binary/mixed: the mode came from the command line");
+            check(count(r.doc) == 11,
+                  "binary/mixed default: all 11 rows detached");
+            check(motherMask(r.doc, "player") == QStringLiteral("00000000")
+                      && motherMask(r.doc, "monster") == QStringLiteral("00000020")
+                      && motherMask(r.doc, "damage") == QStringLiteral("00000008"),
+                  "binary/mixed default: the audit's expectation, "
+                  "00000000 / 00000020 / 00000008 (not 000001ff / "
+                  "0000007f / 00000008)");
+            check(r.err.contains(QStringLiteral("layout: mode=mixed"))
+                      && r.err.contains(QStringLiteral("11/11 window(s) detached")),
+                  "binary/mixed: the startup line reports the real mode and "
+                  "the real detached count");
+            check(!r.err.contains(QStringLiteral("layout=single")),
+                  "binary/mixed: the log no longer LIES with "
+                  "\"layout=single (default)\"");
+            // The defect itself, stated as the numbers: a mother that kept
+            // every block while all eleven windows were enabled is a
+            // double-draw. disjoint, by construction, for every parent.
+            const QStringList on = enabledKeys(r.doc);
+            check(on.size() == 11,
+                  "binary/mixed default: all 11 windows enabled, and the "
+                  "mothers above hold no block any of them draws");
+        }
+
+        // (4) MIXED with a partial --detached-windows: the per-window
+        //     topology a user actually asks for. Exactly those windows
+        //     are up, and only their parent's mask loses those bits.
+        {
+            const PlanRun r = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("mixed")
+                << QStringLiteral("--detached-windows")
+                << QStringLiteral("player-bars")
+                << QStringLiteral("--game") << QStringLiteral("world")
+                << QStringLiteral("--print-layout-plan"));
+            check(r.parsed && count(r.doc) == 1,
+                  "binary/mixed+keys: exactly one detached window");
+            check(enabledKeys(r.doc)
+                      == QStringList({QStringLiteral("player-bars")}),
+                  "binary/mixed+keys: the enabled window is the one asked "
+                  "for, and the other ten are merged (not mounted, not "
+                  "driven)");
+            // player-bars claims 1u<<3 = 00000008.
+            check(motherMask(r.doc, "player") == QStringLiteral("000001f7"),
+                  "binary/mixed+keys: the player mother keeps "
+                  "000001ff & ~00000008 = 000001f7 — the D5 rule, "
+                  "computed by the plan this run resolved");
+            check(motherMask(r.doc, "monster") == QStringLiteral("0000007f")
+                      && motherMask(r.doc, "damage") == QStringLiteral("0000000f"),
+                  "binary/mixed+keys: the OTHER two mothers are untouched — "
+                  "one window's plan cannot carve bits out of a sibling's "
+                  "panel");
+            check(motherMounted(r.doc, "player")
+                      && motherMounted(r.doc, "monster")
+                      && motherMounted(r.doc, "damage"),
+                  "binary/mixed+keys: all three mothers still have blocks "
+                  "and all three mount");
+        }
+
+        // (5) MIXED with an EXPLICIT EMPTY list: everything merged, which
+        //     is a topology a user can only state this way.
+        {
+            const PlanRun r = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("mixed")
+                << QStringLiteral("--detached-windows")
+                << QString()
+                << QStringLiteral("--game") << QStringLiteral("world")
+                << QStringLiteral("--print-layout-plan"));
+            check(r.parsed && count(r.doc) == 0,
+                  "binary/mixed --detached-windows=: every window merged "
+                  "(0 detached), not the all-detached mode default");
+            check(enabledKeys(r.doc).isEmpty(),
+                  "binary/mixed empty: no sub-window enabled");
+            check(motherMask(r.doc, "player") == QStringLiteral("000001ff"),
+                  "binary/mixed empty: the player mother draws every block "
+                  "itself");
+        }
+
+        // (6) An invalid list does not half-apply: the run falls back to
+        //     the mode default AND says so on stderr.
+        {
+            const PlanRun r = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("mixed")
+                << QStringLiteral("--detached-windows")
+                << QStringLiteral("player-bars,not-a-key")
+                << QStringLiteral("--game") << QStringLiteral("world")
+                << QStringLiteral("--print-layout-plan"));
+            check(r.parsed && count(r.doc) == 11,
+                  "binary/mixed bad keys: falls back to the mode default "
+                  "rather than applying half the list");
+            check(r.err.contains(
+                      QStringLiteral("Ignoring invalid --detached-windows")),
+                  "binary/mixed bad keys: and the warning names the option");
+            // B1 — the warning used to stop at "using the mixed topology
+            // instead", which is not what happens: the explicit cliKeys
+            // short-circuit the conf read, so this run ALSO discards the
+            // game's valid `layout.windows.<game>=` row and lands on the
+            // MODE DEFAULT. Both losses are now in the text, and §8 pins
+            // that second loss against a conf that really carries a row.
+            check(r.err.contains(QStringLiteral(
+                      "the conf row layout.windows.world is not read as a "
+                      "fallback")),
+                  "binary/mixed bad keys: the warning now says the conf "
+                  "row goes with it, not only \"using the mixed topology "
+                  "instead\"");
+            check(!r.err.contains(
+                      QStringLiteral("using the mixed topology instead")),
+                  "binary/mixed bad keys: the old phrasing is gone (it "
+                  "claimed a chosen topology where the run fell to the "
+                  "mode default)");
+        }
+
+        // §7a — a diagnostic run writes NOTHING. No panels.ini, no conf,
+        // no settings domain: the child returned before the first Panel.
+        {
+            QStringList top = QDir(childHome.path())
+                .entryList(QDir::AllEntries | QDir::Hidden | QDir::System);
+            top.removeAll(QStringLiteral("."));
+            top.removeAll(QStringLiteral(".."));
+            int nestedFiles = 0;
+            QDirIterator it(childHome.path(),
+                            QDir::Files | QDir::Hidden | QDir::System,
+                            QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                it.next();
+                ++nestedFiles;
+            }
+            check(top.isEmpty(),
+                  "§7a: --print-layout-plan created no entry at all in a "
+                  "fresh config home (no panels.ini, no conf, no domain)");
+            check(nestedFiles == 0,
+                  "§7a: and no file anywhere beneath it — the diagnostic "
+                  "returns before the first settings writer runs");
+        }
+
+        // (7) THE CONF ROW AND GAME ISOLATION, on the real reader: the
+        //     overlay's own monster-overlay.conf decides Mixed's list, one
+        //     row per game, and neither game can read the other's.
+        {
+            const QString dir = childHome.path()
+                + QStringLiteral("/monster-overlay");
+            QDir().mkpath(dir);
+            QFile conf(dir + QStringLiteral("/monster-overlay.conf"));
+            check(conf.open(QIODevice::WriteOnly | QIODevice::Text),
+                  "write the fixture conf the child will read");
+            conf.write("layout.windows.world=player-bars,monster-identity\n"
+                       "layout.windows.rise=player-info\n");
+            conf.close();
+
+            const PlanRun world = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("mixed")
+                << QStringLiteral("--game") << QStringLiteral("world")
+                << QStringLiteral("--print-layout-plan"));
+            check(world.parsed
+                      && enabledKeys(world.doc)
+                             == QStringList({QStringLiteral("player-bars"),
+                                             QStringLiteral("monster-identity")}),
+                  "conf row: World's Mixed run detaches exactly World's row");
+
+            const PlanRun rise = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("mixed")
+                << QStringLiteral("--game") << QStringLiteral("rise")
+                << QStringLiteral("--print-layout-plan"));
+            check(rise.parsed
+                      && enabledKeys(rise.doc)
+                             == QStringList({QStringLiteral("player-info")}),
+                  "conf row: Rise's run detaches RISE's row — the two games "
+                  "never share a topology");
+            check(world.parsed && rise.parsed
+                      && enabledKeys(world.doc) != enabledKeys(rise.doc),
+                  "conf row: and the two answers differ (the isolation "
+                  "assertion is not satisfied by coincidence)");
+
+            const PlanRun single = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("single")
+                << QStringLiteral("--game") << QStringLiteral("world")
+                << QStringLiteral("--print-layout-plan"));
+            check(single.parsed && count(single.doc) == 0,
+                  "conf row: --layout single never reads it (a saved Mixed "
+                  "list cannot leak into Single)");
+
+            const PlanRun cliWins = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("mixed")
+                << QStringLiteral("--detached-windows")
+                << QStringLiteral("player-info")
+                << QStringLiteral("--game") << QStringLiteral("world")
+                << QStringLiteral("--print-layout-plan"));
+            check(cliWins.parsed
+                      && enabledKeys(cliWins.doc)
+                             == QStringList({QStringLiteral("player-info")}),
+                  "conf row: --detached-windows still wins over it on the "
+                  "real command line");
+
+            // A Mixed run with a plan that detaches nothing must mount the
+            // mothers as Single does — same process, same gates.
+            const PlanRun merged = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("mixed")
+                << QStringLiteral("--detached-windows") << QString()
+                << QStringLiteral("--game") << QStringLiteral("rise")
+                << QStringLiteral("--print-layout-plan"));
+            check(merged.parsed && count(merged.doc) == 0
+                      && motherMounted(merged.doc, "player")
+                      && motherMounted(merged.doc, "monster")
+                      && motherMounted(merged.doc, "damage"),
+                  "mixed, all merged, in Rise: the three mothers mount "
+                  "with their own blocks (game isolation on the mask side "
+                  "too)");
+        }
+
+        // §8 — THE TWO FALLBACKS THAT USED TO BE SILENT / MISLEADING,
+        // asserted on the real binary (B1 above, B2 here).
+        //
+        // B1's claim is checked against a conf that REALLY carries a row:
+        // the warning says the conf row is not read as a fallback, so the
+        // run must actually land on the mode default (11 detached) rather
+        // than on the conf's one window. B2 is the mirror image — a row
+        // the user hand-edited and that never took effect must appear on
+        // stderr, while the usable row behind it must still win.
+        {
+            const QString dir = childHome.path()
+                + QStringLiteral("/monster-overlay");
+            QDir().mkpath(dir);
+            const auto writeConf = [&](const char *text) {
+                QFile conf(dir + QStringLiteral("/monster-overlay.conf"));
+                if (!conf.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                    std::printf("  FAIL  §8: cannot write the fixture conf\n");
+                    ++checks; ++failures;
+                    return;
+                }
+                conf.write(text);
+                conf.close();
+            };
+
+            // ---- B1: a valid conf row costs exactly nothing UNTIL the
+            // ---- command line is invalid, and then it costs everything.
+            writeConf("layout.windows.world=player-bars\n"
+                      "layout.windows.rise=\n");
+            const PlanRun b1 = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("mixed")
+                << QStringLiteral("--detached-windows")
+                << QStringLiteral("player-bars,not-a-key")
+                << QStringLiteral("--game") << QStringLiteral("world")
+                << QStringLiteral("--print-layout-plan"));
+            check(b1.parsed && count(b1.doc) == mhw::kWindowLayoutRowCount,
+                  "§8/B1: with an invalid --detached-windows list the valid "
+                  "conf row is DISCARDED too — the run falls to the mode "
+                  "default (11 detached), not to layout.windows.world's one "
+                  "window");
+            check(b1.err.contains(QStringLiteral(
+                      "the conf row layout.windows.world is not read as a "
+                      "fallback")),
+                  "§8/B1: and the warning says exactly that, so the "
+                  "consequence is visible on stderr");
+            check(!b1.err.contains(
+                      QStringLiteral("using the mixed topology instead")),
+                  "§8/B1: the old wording named a topology the run never "
+                  "chose");
+
+            // ---- B2: the unusable row warns ONCE, the usable row behind
+            // ---- it still wins, and a clean run stays quiet.
+            writeConf("layout.windows.world=not-a-key\n"
+                      "layout.windows.world=player-bars\n");
+            const PlanRun b2 = runPlan(QStringList(maskArgs)
+                << QStringLiteral("--layout") << QStringLiteral("mixed")
+                << QStringLiteral("--game") << QStringLiteral("world")
+                << QStringLiteral("--print-layout-plan"));
+            check(b2.parsed
+                      && enabledKeys(b2.doc)
+                             == QStringList({QStringLiteral("player-bars")}),
+                  "§8/B2: the scan still walks past the unusable row to the "
+                  "usable one (the read rule is unchanged)");
+            check(b2.err.contains(
+                      QStringLiteral("Ignoring invalid conf row")),
+                  "§8/B2: and the refused row is reported — a hand-edited "
+                  "line no longer dies silently");
+            check(b2.err.contains(
+                      QStringLiteral("layout.windows.world=not-a-key")),
+                  "§8/B2: the report quotes the exact line the user wrote");
+            check(!b2.err.contains(QStringLiteral(
+                      "Ignoring invalid conf row "
+                      "'layout.windows.world=player-bars'")),
+                  "§8/B2: the USABLE row is not reported (only refused "
+                  "lines are)");
+            check(b1.err.contains(
+                      QStringLiteral("Ignoring invalid conf row"))
+                      == false,
+                  "§8/B2: an invalid CLI list short-circuits the conf read, "
+                  "so the conf-side warning does NOT fire in that run "
+                  "(one run, one story)");
+        }
     }
 
     std::printf("\n== %d checks, %d failures ==\n", checks, failures);

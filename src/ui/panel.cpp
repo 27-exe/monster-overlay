@@ -782,6 +782,26 @@ void Panel::saveConfig()
     s.sync();
 }
 
+// ── 验收项5 (B 第1阶段): THE `columns` ROW'S WRITE ──────────────────────
+//
+// saveConfig() writes this key from inside its own beginGroup(), so it
+// cannot delegate here without nesting a second group (which would land
+// the value at the wrong path). This is the standalone spelling for the
+// ONE caller outside the edit-mode key path: the console's 列数 row.
+// Same guard, same value, same group as saveConfig()'s stanza — the two
+// write the identical value into the identical group, which is the
+// redundancy that note already licenses for the subclass overrides.
+void Panel::persistColumns()
+{
+    QSettings &s = settings();
+    s.beginGroup(scopedKey(key_));
+    const int columns = this->columns();
+    if (columns != 0)
+        s.setValue(QStringLiteral("columns"), columns);
+    s.endGroup();
+    s.sync();
+}
+
 void Panel::saveAppearance()
 {
     // Same one-reference rule as saveConfig(): this writes ~10 keys, and

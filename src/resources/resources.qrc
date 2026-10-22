@@ -9,5 +9,11 @@
         <file>i18n/en-US/console.json</file>
         <file>i18n/en-US/reader.json</file>
         <file>i18n/en-US/data.json</file>
+        <!-- The shipped default layout. The canonical copy lives in
+             data/default-layout.json (readable, diffable, one file to
+             edit); this aliases it in so the binary can answer
+             「出厂默认」 without a filesystem search that a user's CWD
+             could break. -->
+        <file alias="default-layout.json">../../data/default-layout.json</file>
     </qresource>
 </RCC>

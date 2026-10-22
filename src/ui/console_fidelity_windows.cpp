@@ -49,14 +49,35 @@ bool readWindowVisible(const QString &scope, const QString &key)
     // show, so the only two states this key can be in are "absent" (visible)
     // and "false" (hidden) — and `true` is the answer for everything else.
     //
-    // The first spelling of this read was `hidden = value(key,false).toBool();
-    // return !hidden`, which made the two halves disagree: the writer stored
-    // a false and the reader negated it back to visible, so a window the user
-    // had hidden read back as shown and the inspector checkbox never stuck.
-    // One polarity, spelled once: the stored value IS the answer.
-    const bool visible = s.value(windowVisibleSettingsKey(), true).toBool();
+    // THE LEGACY `visible` ROW IS READ, WITH ITS INVERTED POLARITY, AND ONLY
+    // WHEN `winVisible` IS ABSENT.
+    //
+    // Measured, not hypothesised: a configuration written by an older build
+    // carries `[<scope>] visible=true` (positive, present) while the current
+    // contract is "absent means visible, false means hidden". The read below
+    // only ever asked for `winVisible`, so it never saw that row, fell back to
+    // the default TRUE, and the inspector's 显示该窗口 checkbox showed a
+    // window as SHOWN — or, for `visible=false`, showed a window the user had
+    // hidden as visible and never let them tick it back off.
+    //
+    // The precedence is deliberate: `winVisible` is the contract the writer
+    // maintains, so once it exists it is the only answer. `visible` is read
+    // only as a migration path for files written before the rename, and it is
+    // read with its OWN polarity (true = shown) rather than this key's.
+    // Nothing is rewritten here: a read must not mutate the user's file.
+    if (s.contains(windowVisibleSettingsKey())) {
+        const bool visible = s.value(windowVisibleSettingsKey(), true).toBool();
+        s.endGroup();
+        return visible;
+    }
+    if (s.contains(QStringLiteral("visible"))) {
+        const bool legacyVisible = s.value(QStringLiteral("visible"), true)
+                                       .toBool();
+        s.endGroup();
+        return legacyVisible;
+    }
     s.endGroup();
-    return visible;
+    return true;
 }
 
 void writeWindowVisible(const QString &scope, const QString &key, bool on)

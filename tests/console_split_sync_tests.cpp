@@ -513,7 +513,10 @@ void testModeApplyMovesTheCanvas()
             const mhw::PlayerLayoutResolution readBack =
                 mhw::resolveStartupLayoutMode(
                     mhw::PlayerLayoutCliRequest{},
-                    mhw::parseConsoleLayoutRow(in.readAll()).source);
+                    // The whole row: this is the call shape main.cpp and
+                    // control_panel.cpp both use, and it is the one that makes
+                    // a written `layout=mixed` read back as Mixed.
+                    mhw::parseConsoleLayoutRow(in.readAll()));
             check(readBack.mode == mhw::PlayerSection::PlayerLayoutMode::Split,
                   "the conf the console just wrote resolves SPLIT through "
                   "the shared chain the overlay also calls",

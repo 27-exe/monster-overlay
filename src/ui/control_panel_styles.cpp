@@ -292,6 +292,18 @@ QLabel#railBrandSub{font-size:11px;color:@fg3;line-height:1.45;
 QLabel#sideLabel{font-family:@mono;font-size:10px;color:@fg3;
     letter-spacing:0.1em;text-transform:uppercase;background:transparent;}
 
+/* v1.1.4: the rail's read-only REFramework summary. It used to be three
+   plain lines floating on the rail with no container, which read as debug
+   output next to the card-styled sections around it. The text contract is
+   unchanged (one QLabel, `\n`-separated, pinned by control_reframework_
+   smoke); this gives it the same quiet card as the rail's neighbours —
+   surface, hairline, 6px radius, 8/10 padding — and the mono face the
+   other status readouts already use. */
+QWidget#riseReframeworkSide{background:@surface2;border:1px solid @line;
+    border-radius:@radius;padding:8px 10px;}
+QLabel#riseReframeworkSideStatus{font-family:@mono;font-size:10px;
+    color:@fg2;background:transparent;}
+
 /* `.game-switch` has NO frame in the HTML (reference.html:100): a plain
    2-column grid, gap 4. The prototype's seg skin on #gameGroup is gone. */
 QFrame#gameGroup{background:transparent;border:none;border-radius:7px;}
@@ -357,14 +369,18 @@ QLabel#autoDetect[state="gray"]{color:@fg3;}
 /* `.rail-actions button{min-height:28px;border:1px solid var(--line);
    background:transparent;border-radius:5px;color:var(--fg-3);
    font:10px var(--mono)}` + `:hover` → fg / line-strong (:131-132).
-   28 total - 2x1px = 26. #settingsBtn is the same face. */
-QPushButton#sideFootHelp,QPushButton#sideFootReset,
-QPushButton#sideFootSave,QPushButton#sideFootExport,QPushButton#settingsBtn{
+   28 total - 2x1px = 26. #settingsBtn is the same face.
+
+   v1.1.5: #sideFootReset and #sideFootSave dropped out of both selector
+   lists when their buttons were removed (重置演示 / 保存 — see
+   control_panel.cpp's foot). The remaining three keep the prototype's
+   face verbatim; the layout verbs (重置布局 / 全部重置 / 导入布局包)
+   carry their own rules below. */
+QPushButton#sideFootHelp,QPushButton#sideFootExport,QPushButton#settingsBtn{
     background:transparent;border:1px solid @line;border-radius:5px;
     color:@fg3;font-family:@mono;font-size:10px;min-height:26px;
     padding:0 6px;}
-QPushButton#sideFootHelp:hover,QPushButton#sideFootReset:hover,
-QPushButton#sideFootSave:hover,QPushButton#sideFootExport:hover,
+QPushButton#sideFootHelp:hover,QPushButton#sideFootExport:hover,
 QPushButton#settingsBtn:hover{color:@fg;border-color:@lineStrong;}
 
 /* ══ 2 · topbar ═════════════════════════════════════════════════════
@@ -448,8 +464,8 @@ QPushButton#enterEdit[on="true"]{
     background:@clay;border-color:@clay;color:@onClay;}
 QPushButton#enterEdit[on="true"]:hover{background:@clayLight;
     border-color:@clayLight;color:@onClay;}
-QPushButton#topExport{background:@surface2;color:@fg;
-    border-color:@lineStrong;}
+/* 第6条: the topbar's `#topExport` rule left with the button — the console
+   has ONE export entry now, the rail's `#sideFootExport`. */
 /* the settings dialog's own switch buttons carry :checked (the
    QButtonGroup is the wiring owner's) */
 QPushButton#themeAction:checked,QPushButton#localeAction:checked{
@@ -531,8 +547,23 @@ QLabel#inspectorHeadTitle{font-size:13px;font-weight:650;color:@fg;
 QLabel#inspectorHeadSub{font-family:@mono;font-size:10px;color:@fg3;
     background:transparent;}
 /* `.inspector-col{min-width:0}` (:214) — three transparent columns. */
-QFrame#inspectorMeta,QFrame#inspectorSections,
-QFrame#inspectorPreview{background:transparent;border:none;}
+QFrame#inspectorMeta,QFrame#inspectorSections{background:transparent;border:none;}
+/* v1.1.4: THE PREVIEW COLUMN GETS A CONTAINER. The user's own words:
+   「带边框的框之外,现在看起来像它独占整个右下角,应该加个框框来更美观」
+   — the bordered render is already tight to its content, but the COLUMN
+   around it was transparent, so a small box sat alone in the bottom-right
+   quadrant with no edge of its own. The left two columns stay transparent:
+   they are a scrolling form, not a framed object.
+
+   @surface2, NOT @surface, and that is measured rather than chosen: the
+   inspector's own host (QFrame#configHost) is @surface, so a card painted
+   @surface has an inner/outer contrast of exactly 1.00 — the "box" would
+   have been a 1px hairline and nothing else, which is the same invisibility
+   the report complained about wearing a different shape. @surface2 is what
+   the rail's cards (riseReframeworkSide) already sit on, and it also gives
+   the dark @board render a lighter plate to sit on instead of the page. */
+QFrame#inspectorPreview{background:@surface2;border:1px solid @line;
+    border-radius:@radius;}
 /* `.section-cap{color:var(--fg-3);font:10px var(--mono);
    text-transform:uppercase;letter-spacing:.08em}` (:215) */
 QLabel#sectionCap{font-family:@mono;font-size:10px;color:@fg3;
@@ -575,18 +606,56 @@ QComboBox#metaOutput{min-height:26px;max-width:none;}
 /* `.field input[type=range]{width:100%;accent-color:var(--clay)}` (:222)
    — Qt has no accent-color for sliders, so the track/handle are drawn
    in clay explicitly. */
+/* THE WIDGET GROUND. Two things paint a slider's own rect and BOTH are
+   silenced here:
+     1. `QWidget{background:@page}` (0 ids, 1 type, top of this sheet)
+        matches a QSlider exactly the way it matches a QLabel, so the
+        control needs its own ground rule — declared after that
+        QWidget rule, with `border:none` as well.
+     2. the disabled sub-control rules below, which — in the old
+        `QSlider:disabled::handle` spelling — overrode this rule for
+        BOTH states and left the grey @fg3 slab of acceptance item 3.
+        That is measured, not deduced: probe_poison sampled the slider
+        corner on Qt 6.12, and tests/slider_theme_regression_tests.cpp
+        re-proves the corner is the host ground in both themes.
+   No pseudo-state here, so the rule covers every state; the
+   state-gated companion that wins the palette contest sits after the
+   sub-control rules and must stay last. */
+QSlider{background:transparent;border:none;}
+QSlider:disabled{background:transparent;border:none;}
 QSlider::groove:horizontal{height:4px;background:@surface3;
     border-radius:2px;border:none;}
-QSlider::sub-page:horizontal{background:@clay;border-radius:2px;
+/* sub-page / add-page are capped at the groove's own 4px. Qt derives
+   them from the groove when one is declared, so this is belt and
+   braces: even if a future Qt change made them track the widget rect,
+   the fill can never grow into a full-height band. */
+QSlider::sub-page:horizontal{height:4px;background:@clay;border-radius:2px;
     border:none;}
-QSlider::add-page:horizontal{background:@line;border-radius:2px;
+QSlider::add-page:horizontal{height:4px;background:@line;border-radius:2px;
     border:none;}
 QSlider::handle:horizontal{width:14px;height:14px;margin:-5px 0;
     border-radius:7px;background:@clay;border:none;}
 QSlider::handle:horizontal:hover{background:@clayLight;}
-QSlider:disabled::groove:horizontal{background:@surface3;}
-QSlider:disabled::sub-page:horizontal{background:@line;}
-QSlider:disabled::handle:horizontal{background:@fg3;}
+/* DISABLED — measured on Qt 6.12, do NOT reorder these selectors
+   casually. The historical spelling `QSlider:disabled::handle:horizontal`
+   (pseudo BEFORE the subcontrol) feeds its `background` into the
+   widget's OWN palette for BOTH states: the ground of every slider in
+   the console became @fg3, i.e. the grey slab acceptance item 3
+   photographs, and it beat `QSlider{background:transparent}` no matter
+   where that rule was declared (probes probe_poison/probe_fix, ground
+   sampled at the slider corner). The `::subcontrol:horizontal:disabled`
+   spelling keeps the colour where it belongs — on the subcontrol — and
+   leaves the ground to the transparent rule above, while still painting
+   the disabled handle @fg3 and the disabled fill @line (proven by
+   tests/slider_theme_regression_tests.cpp pixel-sampling both themes).
+   The closing `:disabled:horizontal` rule is the state-gated winner of
+   the palette contest and must stay LAST. */
+QSlider::groove:horizontal:disabled{height:4px;background:@surface3;
+    border-radius:2px;border:none;}
+QSlider::sub-page:horizontal:disabled{height:4px;background:@line;
+    border-radius:2px;border:none;}
+QSlider::handle:horizontal:disabled{background:@fg3;border:none;}
+QSlider:disabled:horizontal{background:transparent;border:none;}
 /* `.check-line{color:var(--fg-2);font-size:11px}` (:224) with
    `accent-color:var(--clay)` (:225) — spelled as an explicit clay
    indicator because Qt draws no check glyph from accent-color. */

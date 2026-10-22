@@ -297,12 +297,21 @@ int main(int argc, char *argv[])
     // Measured without depending on where the cell happens to be: the
     // neighbour's position is read from the live window, the rail is
     // driven out and back, and the host is rebuilt twice. If skipping
-    // mantles had moved wirebug, the second host would place wirebug
+    // mantles had moved the neighbour, the second host would place it
     // somewhere else — and a difference, however it is spelled, is the
     // failure.
+    //
+    // v1.1.5: THE NEIGHBOUR IS player-bars, NOT player-wirebug. The wirebug
+    // window used to be the row right after mantles in the World host, and
+    // this section read it as "the unplaced neighbour". A World host no
+    // longer BUILDS a wirebug window at all (the game does not have that
+    // block — see SplitWindowPreviewHostImpl's game filter), so the
+    // neighbour is now the next row that does exist under World. The
+    // assertion's intent is untouched: one window's placed position must
+    // not move another's cell.
     {
         Panel *before = cp.splitPreviewWindow(
-            QStringLiteral("player-wirebug"));
+            QStringLiteral("player-bars"));
         check(before != nullptr, "the unplaced neighbour exists");
         if (before) {
             const int beforeLeft = before->margins().left();
@@ -322,7 +331,7 @@ int main(int argc, char *argv[])
                              QStringLiteral("console.game.world")));
 
             const Panel *after = cp.splitPreviewWindow(
-                QStringLiteral("player-wirebug"));
+                QStringLiteral("player-bars"));
             check(after != nullptr, "and it still exists after two rebuilds");
             check(after && after->margins().left() == beforeLeft
                        && after->margins().top() == beforeTop,

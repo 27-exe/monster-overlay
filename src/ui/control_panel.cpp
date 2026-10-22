@@ -1,6 +1,7 @@
 #include "control_panel.h"
 
 #include <array>
+#include <utility>
 #include <vector>
 
 #include "ui/panel.h"
@@ -87,6 +88,11 @@ inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(k
 #include <QPushButton>
 #include <QGroupBox>
 #include <QLabel>
+#include <QPointer>
+#include <QSizePolicy>
+// v1.1.1 (顶栏溢出): ControlPanel::resizeEvent re-decides the topbar's
+// wrap, so the event type is needed complete in this translation unit.
+#include <QResizeEvent>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QHBoxLayout>
@@ -380,7 +386,25 @@ constexpr int kRiseWallColumnShift = 1;
 
 class SplitWindowPreviewHostImpl {
 public:
-    SplitWindowPreviewHostImpl()
+    // `plan` selects WHICH windows this host owns.
+    //
+    //   nullptr  the legacy Split host: every row of kSplitWindowRows,
+    //            built exactly as before (the default, and the only value
+    //            syncSplitPreviewToCanvas() passes outside Mixed).
+    //   a plan    the Mixed host: only the rows this run's plan DETACHED.
+    //            A merged row is drawn inside its mother panel by the
+    //            board's four-slot arm, so giving it a slot of its own
+    //            here would be exactly the double-draw the plan exists
+    //            to prevent — one row of the group, one window on the
+    //            board, no third copy.
+    //
+    // The set therefore CANNOT be added to later (a plan change is a new
+    // host, not a mutation), which is what the "built once" note below
+    // still means: the entries never change, and the caller rebuilds
+    // rather than patching when the plan's detached set changes.
+    explicit SplitWindowPreviewHostImpl(
+        mhw::GameId game, const mhw::WindowLayoutPlan *plan = nullptr)
+        : game_(game)
     {
         // Built once: a Panel ctor is heavyweight (layer-shell surface +
         // QSettings) and the set never changes after construction, so
@@ -391,6 +415,48 @@ public:
         // the paths that only move. The set is appended once and never
         // detached again, so COW buys nothing here anyway.
         for (const SplitWindowRow &row : kSplitWindowRows) {
+            // Mixed: the plan is the truth about which of these rows this
+            // run mounts as its own window. (parentSlot, tableRow) is the
+            // same domain kWindowLayoutRows registers and
+            // WindowLayoutPlan::detached() indexes, so no key spelling is
+            // involved here — an unknown combination answers "merged",
+            // which is the safe direction (the row stays with its mother).
+            if (plan && !plan->detached(row.parentSlot, row.tableRow))
+                continue;
+            // v1.1.5: A ROW THE GAME DOES NOT HAVE IS NOT BUILT AT ALL.
+            //
+            // The user's report, verbatim: 「世界的时候有一个空的翔虫窗
+            // 口，崛起的时候有一个空的衣装窗口」. The host used to build
+            // all eleven rows for either game, and the v1.0.0 renderAll()
+            // formula (enabled = section count > 0) then answered
+            // "sections all off" for the wrong-game row — 翔虫's bit is
+            // masked out of panelSectionSchema(0, World) — so the canvas
+            // drew the `.hidden-window` placeholder: an empty frame where
+            // the live overlay mounts NOTHING (main.cpp gates every split
+            // window on hasVisibleContent(), and buildWirebugModel's
+            // World arm deliberately produces no data).
+            //
+            // So the console promised a window the overlay does not have
+            // — the console/overlay disagreement this file's header warns
+            // about, one layer down. The REGISTRY staying game-agnostic is
+            // correct (one table serves both games' plans, and
+            // --print-layout-plan reports all eleven for either game); a
+            // HOST is a different statement: it says "these are the
+            // windows this console mounts", and under the game in force
+            // the wrong-game row is not one of them. That is the same
+            // filter windowKeyInGame() already applies to the chips and
+            // the 窗口分组 block, and the same reason the pets panel has
+            // no sub row under World.
+            //
+            // own == 0 is NOT this case: a table row claiming no section
+            // is a build-time drift (renderAll()'s own comment says so),
+            // and skipping it here would hide that bug rather than let
+            // the wall report it.
+            const uint32_t own = splitWindowSections(row.parentSlot,
+                                                     row.tableRow);
+            if (own != 0
+                && (own & panelSectionSchema(row.parentSlot, game)) == 0)
+                continue;
             auto window = makeSplitWindow(row);
             if (!window)
                 continue;   // an unknown row: no window, not a crash
@@ -417,9 +483,13 @@ public:
         // pixels changing on the rail switch, with the host demonstrably
         // rebuilt underneath.
         //
-        // The windows are still built here, because everything else about
-        // them (the adapter, the demo seed, the section mask) does not depend
-        // on the game at construction time. Only the wall does.
+        // The windows are still built here — everything else about them
+        // (the adapter, the demo seed, the section mask) does not depend
+        // on the game at construction time, and the wall still does not.
+        // What DOES depend on the game is WHICH rows are built: a row the
+        // game in force does not have is skipped above, and the host is
+        // constructed per game by ensureBuilt(), so that filter and the
+        // wall's per-game column shift read the same value.
     }
 
     // Apply the overlap-free wall to every window that has not been
@@ -711,10 +781,19 @@ public:
             //
             // THE FORMULA IS buildWindowStates()'s, BYTE FOR BYTE:
             //     own  = the split table row's claim   (never the row number)
-            //     on   = own & parent's live mask & game-filtered schema
+            //     on   = own & THE WINDOW'S OWN live mask & game-filtered
+            //            schema   (`e.window` below, `sub` there)
             // and `on == 0` is exactly `w.sectionsOn == 0` in the model,
             // so the board's placeholder and the inspector's 「0 分区」
             // can never disagree.
+            //
+            // 实测缺陷3 (user-8): both halves used to name different
+            // objects. Here the mask is `e.window->sectionMask()` — the
+            // window's own Panel, fed by syncAll() with the user's mask —
+            // while buildWindowStates() read the MOTHER's mask, which in
+            // Mixed is plan.retainedMask() (every detached row stripped
+            // out). One window could then be drawn with two sections on
+            // while the model said 0/2.
             //
             // `own == 0` FALLBACK. A row that claims nothing means the
             // lookup table and kSplitWindowRows have drifted apart — a
@@ -731,6 +810,23 @@ public:
             const bool enabled = own == 0 ? true : countSectionBits(on) > 0;
             canvas->setSubWindowPixmap(static_cast<int>(i), pix, enabled);
         }
+    }
+
+    // 验收项4 (B 第1阶段): REPLAY EVERY SUB-WINDOW'S OWN COPY.
+    //
+    // retranslateUi() used to retranslate only the four mother panels,
+    // so a language flip left the split sub-windows painting the old
+    // locale until some later rebuild happened to repaint them. The
+    // windows here are ordinary Panels with their own retranslateUi()
+    // and their own trHooks, so the fix is to run exactly the same call
+    // on every entry — no rebuild (a rebuild would re-lay the wall and
+    // flatten whatever the user has dragged), no scope change, no
+    // geometry write.
+    void retranslateAll()
+    {
+        for (EntryImpl &e : entries_)
+            if (e.window)
+                e.window->retranslateUi();
     }
 
     // How many entries a given parent slot contributed. Used by the
@@ -920,7 +1016,19 @@ public:
         return impl_ ? impl_->bindings() : QVector<HudCanvas::SubWindowBinding>{};
     }
     // Passes the game down because the Impl lays its overlap-free wall after
-    // construction, and the wall needs to know which game it is placing.
+    // construction, and the wall needs to know which game it is placing —
+    // AND because the Impl builds only the rows that game has (v1.1.5: a
+    // World host has no 翔虫 window and a Rise host no 衣装 one), so the
+    // filter and the wall read the same value or they drift.
+    //
+    // `plan` (v1.1.3) says WHICH rows the host owns: null for Split —
+    // the whole table, byte-identical to before — and the plan in force
+    // for Mixed, which builds one window per DETACHED row. It is only
+    // read when the host is actually constructed: a plan change never
+    // reaches an existing host, because syncSplitPreviewToCanvas()
+    // rebuilds (reset + ensureBuilt) whenever the plan's signature
+    // differs, and silently re-filtering a live host would leave the
+    // canvas's raw PanelSourceAdapter pointers aimed at freed windows.
     //
     // THE ORDER IS THE WHOLE POINT. A host built by make_unique lays the
     // wall in its own constructor, at which moment no caller has been able
@@ -933,10 +1041,11 @@ public:
     // So: set the game, THEN lay the wall. The Idempotence guard inside
     // applyWall() keeps a second call from re-flattening what the user has
     // since dragged.
-    void ensureBuilt(mhw::GameId game)
+    void ensureBuilt(mhw::GameId game,
+                     const mhw::WindowLayoutPlan *plan = nullptr)
     {
         if (!impl_)
-            impl_ = std::make_unique<SplitWindowPreviewHostImpl>();
+            impl_ = std::make_unique<SplitWindowPreviewHostImpl>(game, plan);
         impl_->setGame(game);
         impl_->applyWall();
     }
@@ -950,6 +1059,14 @@ public:
     {
         if (impl_)
             impl_->renderAll(canvas);
+    }
+    // 验收项4: replay every sub-window's translated copy after a language
+    // flip. A no-op before ensureBuilt() has built the host — the same
+    // state in which syncAll()/renderAll() are no-ops.
+    void retranslateAll()
+    {
+        if (impl_)
+            impl_->retranslateAll();
     }
     [[nodiscard]] int countForParent(int parentSlot) const
     {
@@ -1023,14 +1140,29 @@ private:
 // first third, and the event filter that reads it lives between that and
 // the functions that toggle the overview — a declaration next to those
 // functions would be too late for the assignment.
-static QFrame *s_overviewNav = nullptr;
+//
+// QPOINTER, NOT A RAW POINTER, and the reason is the console's own test
+// suite (and any second instance in one process): these are FILE-LOCAL
+// pointers to WIDGETS OWNED BY ONE INSTANCE, so the instance that
+// assigned them can die while the pointer stays behind. Measured:
+// console-interaction-regression-tests builds a second ControlPanel to
+// re-read 显示该窗口 from a fresh console, and when that instance's
+// destructor ran, `s_overviewNav` still named ITS rail card — the next
+// switchGame() → selectPanel() → leaveOverview() then called
+// setProperty() on the freed frame and SIGSEGV'd inside
+// QObject::doSetProperty (gdb: leaveOverview → doSetProperty, the navCard
+// arm at :4719/:4753). QPointer nulls itself when the widget goes, and
+// every use below is already guarded by a null test — which is exactly
+// the "that instance is gone, say nothing" answer the single-instance
+// comment assumed it could never need.
+static QPointer<QFrame> s_overviewNav;
 
 // v1.0.0 (sa-D): the board's one-line caption (HTML `.board-hint`).
 // File-local for the same reason the nav card is — see the note above.
 // Written by enterOverview() / leaveOverview(), which own the view state
 // that decides whether the caption is shown at all; the panel-view and
 // edit-mode strings are the edit entry's to write into the same label.
-static QLabel *s_boardHint = nullptr;
+static QPointer<QLabel> s_boardHint;
 
 // v1.0.0: THE DISPLAY PICKER, AS A FILE-LOCAL POINTER.
 //
@@ -1056,7 +1188,7 @@ static QLabel *s_boardHint = nullptr;
 // the prototype draws between #screen-select and #panel-output, and the
 // reason its handler re-points the canvas without touching a single
 // Panel's outputName.
-static QComboBox *s_screenCombo = nullptr;
+static QPointer<QComboBox> s_screenCombo;
 
 static QComboBox *screenComboForOverview()
 {
@@ -1532,7 +1664,17 @@ void ControlPanel::adoptMotherPanels()
         // Section mask, from the same source loadMaskFromDisk() used. The
         // inspector's checkboxes are untouched by the swap, so this is the
         // authoritative current value rather than a cached one.
-        p->setSectionMask(ControlPanel::maskFor(ctl_[i]));
+        //
+        // v1.1.3: the RETAINED mask in Mixed (identity elsewhere), so a
+        // rebuilt mother cannot come back holding the rows it gave to its
+        // own windows — adoptMotherPanels() runs from switchGame() and
+        // resetPrototypeScope(), both of which can follow a plan change.
+        // rebuildAndRender() re-states the same value right after, but
+        // this line must be correct on its own: it is the first write to
+        // a brand-new Panel and an unfiltered one would be visible in the
+        // window between the swap and that render.
+        p->setSectionMask(
+            effectiveMotherMask(i, ControlPanel::maskFor(ctl_[i])));
         // Master visibility: the inspector chip, which is the only thing
         // that says whether the surface mounts at all.
         p->setPanelEnabled(ctl_[i].master && ctl_[i].master->isChecked());
@@ -1719,20 +1861,53 @@ public:
     [[nodiscard]] bool hasHeightForWidth() const override
     {
         const QWidget *w = widget();
-        return w && w->hasHeightForWidth();
+        if (!w)
+            return false;
+        // ── 验收项6 / 固定视口: THE BUDGET ALWAYS ANSWERS ───────────────
+        // With the fixed budget in force (the canvas is zoomed and we
+        // still hold its natural hint) WE own the answer, even though
+        // HudCanvas itself says "no HfW while zoomed". Saying false here
+        // would hand the stage the fallback path — a compressed pane
+        // sized from the zoomed hint — which is precisely the "stage 高度
+        // 随 zoom 顶大页面 / 缩放推动 stage 与 inspector" defect.
+        if (fixedBudget())
+            return true;
+        return w->hasHeightForWidth();
     }
 
     [[nodiscard]] int heightForWidth(int hfw) const override
     {
         const QWidget *w = widget();
-        if (!w || !w->hasHeightForWidth())
+        if (!w)
             return -1;
+        sampleNatural();
         const int inner = qMax(0, hfw - frameWidth() * 2);
+        if (fixedBudget()) {
+            auto *canvas = qobject_cast<HudCanvas *>(widget());
+            if (!canvas)
+                return -1;
+            /* ── 固定视口预算: ZOOM MOVES THE CONTENT, NOT THE BUDGET ──────
+               Below the natural width HudCanvas::heightForWidth() is
+               zoom-invariant by construction (fitWidth = availW/z and
+               then boardW = fitWidth*z cancel — hud_canvas.cpp's own
+               arithmetic), so the canvas's own function still gives the
+               RIGHT number without this file repeating any board maths.
+               Past the natural width the board is at its column cap, so
+               the height is flat: the natural height we sampled. Either
+               arm is a function of the container, never of zoom_.
+               ── end 固定视口预算: heightForWidth ── */
+            if (inner <= naturalHint_.width())
+                return canvas->heightForWidth(inner) + frameWidth() * 2;
+            return qMax(0, naturalHint_.height()) + frameWidth() * 2;
+        }
+        if (!w->hasHeightForWidth())
+            return -1;
         return w->heightForWidth(inner) + frameWidth() * 2;
     }
 
     [[nodiscard]] QSize sizeHint() const override
     {
+        sampleNatural();
         const QSize base = QScrollArea::sizeHint();
         auto *canvas = qobject_cast<HudCanvas*>(widget());
         if (!canvas || !canvas->consoleFidelityMode())
@@ -1749,6 +1924,21 @@ public:
         // own width (1078 landscape / 588 portrait), so the hint is the
         // same number heightForWidth(1336) answers, and the stage's hint
         // becomes 684.625-style arithmetic instead of a squeezed one.
+        //
+        // 固定视口预算: WHILE ZOOMED the baseline comes back instead of the
+        // canvas's (now zoom-scaled) hint, so the stage's height budget —
+        // and with it the user's dragged stageHeight — cannot move when
+        // the user zooms the board, and the parent layout above sees the
+        // SAME number before and after a zoom (which is why a zoom no
+        // longer triggers updateGeometry() on the pane at all). The canvas
+        // still grows INSIDE this scroll area: a scroll area's inner
+        // widget is sized from the WIDGET's own hint, not the scroll
+        // area's (measured on Qt 6.12 — an overridden sizeHint left a
+        // widgetResizable(false) child at its own 800x600 with working
+        // scrollbars), so zoom only ever changes the content and the
+        // scroll range.
+        if (fixedBudget())
+            return naturalHint_;
         return canvas->sizeHint();
     }
 
@@ -1781,6 +1971,29 @@ protected:
 
 private:
     QSize reportedHint_{-1, -1};
+    /* ── 固定视口预算: THE ZOOM-INDEPENDENT BASELINE ─────────────────────
+       naturalHint_ is the canvas's own hint as measured while it is NOT
+       zoomed (zoom() <= 1), re-sampled every time we are asked at that
+       state — so an orientation change while unzoomed updates it, and a
+       zoom afterwards cannot. It is mutable because every consumer is
+       const and sampling is a cache, not a mutation of the widget.
+       ── end 固定视口预算: baseline ── */
+    mutable QSize naturalHint_{-1, -1};
+
+    void sampleNatural() const
+    {
+        auto *canvas = qobject_cast<HudCanvas *>(widget());
+        if (canvas && canvas->zoom() <= 1.0)
+            naturalHint_ = canvas->sizeHint();
+    }
+
+    [[nodiscard]] bool fixedBudget() const
+    {
+        auto *canvas = qobject_cast<HudCanvas *>(widget());
+        return canvas && canvas->consoleFidelityMode()
+            && canvas->zoom() > 1.0 && naturalHint_.width() > 0
+            && naturalHint_.height() > 0;
+    }
 };
 
 // ─── v1.0.0 fidelity (budget seam): `.main`'s TWO ROWS, IN ONE NUMBER
@@ -2029,6 +2242,15 @@ ControlPanel::ControlPanel(QWidget *parent)
     brand->setObjectName("railBrand");
     auto *brandSub = new QLabel();
     brandSub->setObjectName("railBrandSub");
+    // v1.1.1 (顶栏溢出 / 同类缺陷): THE NOTE IS LONGER THAN THE RAIL, AND
+    // QLabel CLIPS. The user read the third brand line as `Console · the
+    // preview shows demo con` — a hard cut mid-word, in both locales,
+    // because the 232px column cannot hold a ~90-character sentence at
+    // 11px. The prototype's `.side-note` has no `white-space:nowrap`
+    // either: it wraps, on the 1.45 line-height the QSS below already
+    // carries for this exact label. So the fix is the CSS behaviour, not
+    // a shorter string and not an ellipsis invented for Qt.
+    brandSub->setWordWrap(true);
     // The version is substituted at runtime: writing it into the translation
     // string is how the console shipped "控制台 · 0.5" for four releases.
     trHook([brandSub] {
@@ -2316,7 +2538,31 @@ ControlPanel::ControlPanel(QWidget *parent)
        them up. The rail's READY badge and the stage-toggle button stay
        pinned above the scroll area — they are status, not navigation, and
        the prototype has no equivalent to remove.
+
+       v1.1.5: TWO OF THE PROTOTYPE'S OWN FIVE ARE GONE TOO. 重置演示
+       (reload this scope from disk) and 保存 (the write closeEvent()
+       already performs) were removed on the user's verdict that the foot
+       was redundant — what remains is 帮助 / 重置布局 / 全部重置 /
+       导入布局包 / 设置 / 导出布局, which is every distinct operation
+       the foot ever had.
        ── end sa-A: sidebar ── */
+
+    /* ── user-8: rail REFramework / Lua status summary ────────────────
+       A READ-ONLY block under the panel list: two or three short lines
+       saying whether REFramework is there and whether the overlay Lua is
+       there, so the player does not have to open the settings dialog to
+       find out. Labels only — the install / remove entry points stay on
+       the card (riseReframeworkCard in settings), because two entry
+       points for one operation is the duplication being removed elsewhere
+       in this console.
+
+       It is built by the card rather than inlined here so it answers from
+       the SAME locate + manager.status + menu-state read the card takes,
+       never from a second probe that could disagree with it. The card's
+       1500 ms tick (riseReframeworkRefreshTimer_, end of this file) is
+       what refreshes it; switchGame() hides it under World. */
+    scrollLayout->addSpacing(14);
+    riseCard_->buildSidebarSummary(scrollContent, scrollLayout);
 
     scrollLayout->addStretch(1);
     railScroll->setWidget(scrollContent);
@@ -2348,18 +2594,80 @@ ControlPanel::ControlPanel(QWidget *parent)
                 this, &ControlPanel::openHelpDialog);
         footRow->addWidget(helpBtn_);
 
-        resetDemoBtn_ = new QPushButton();
-        trSet(resetDemoBtn_, QStringLiteral("console.proto.reset"));
-        resetDemoBtn_->setObjectName(QStringLiteral("sideFootReset"));
-        resetDemoBtn_->setCursor(Qt::PointingHandCursor);
-        // The prototype's reset(): back to the scope's catalog defaults,
-        // NOT a delete of panels.ini. See resetPrototypeScope() for the
-        // scope comment — what it touches and what it deliberately does
-        // not is the whole reason this is safe to leave unconfirmed.
-        connect(resetDemoBtn_, &QPushButton::clicked,
-                this, &ControlPanel::resetPrototypeScope);
-        footRow->addWidget(resetDemoBtn_);
+        // v1.1.5: 重置布局 — the shipped default, applied to the group the
+        // rail has in front.
+        //
+        // IT IS THE ONLY 重置 IN THE FOOT. 重置演示 (the prototype's
+        // `reset()`: re-read this scope from disk, keep the file) sat here
+        // until the user's verdict 「重置演示跟保存没什么用」 — with a
+        // reset-to-shipped-default beside it, a reload-from-disk is a
+        // third spelling of "start over" that answers a question nobody
+        // asked, and two buttons with 重置 in the name is how a user
+        // clicks the wrong one. resetPrototypeScope() itself stays: the
+        // console_reset_scope suite calls it directly, and the function
+        // is the documented answer to "what does a reload touch".
+        //
+        // THEIR OWN ROW. Four buttons in the foot row clipped the two
+        // labels to 置布局 / 部重置 at the rail's ~230px width — a button
+        // whose caption is cut is a button whose caption must be guessed,
+        // and guessing between 重置布局 and 全部重置 is exactly what this
+        // placement was meant to prevent.
+        auto *footRow2 = new QHBoxLayout();
+        footRow2->setSpacing(8);
+        resetLayoutBtn_ = new QPushButton();
+        trSet(resetLayoutBtn_, QStringLiteral("console.proto.layout.reset"));
+        resetLayoutBtn_->setObjectName(QStringLiteral("sideFootResetLayout"));
+        resetLayoutBtn_->setCursor(Qt::PointingHandCursor);
+        connect(resetLayoutBtn_, &QPushButton::clicked, this, [this] {
+            const EditableSelection sel = currentEditableSelection();
+            resetLayoutToDefault(sel.panel ? sel.panelIndex : -1);
+        });
+        footRow2->addWidget(resetLayoutBtn_);
+
+        resetLayoutAllBtn_ = new QPushButton();
+        trSet(resetLayoutAllBtn_,
+              QStringLiteral("console.proto.layout.reset.all"));
+        resetLayoutAllBtn_->setObjectName(
+            QStringLiteral("sideFootResetAll"));
+        resetLayoutAllBtn_->setCursor(Qt::PointingHandCursor);
+        connect(resetLayoutAllBtn_, &QPushButton::clicked, this, [this] {
+            // The all-groups case asks first: it is the one action here
+            // that cannot be undone from inside the console.
+            QMessageBox box(QMessageBox::Warning,
+                            consoleText(QStringLiteral(
+                                "console.proto.layout.reset.all")),
+                            consoleText(QStringLiteral(
+                                "console.proto.layout.reset.all.confirm")),
+                            QMessageBox::Yes | QMessageBox::Cancel, this);
+            if (box.exec() != QMessageBox::Yes)
+                return;
+            resetLayoutToDefault(-1);
+        });
+        footRow2->addWidget(resetLayoutAllBtn_);
+
+        // v1.1.5: 导入布局包. The third of the three layout verbs (导出 /
+        // 重置 / 导入) — and the only one that opens a file picker, which
+        // is why it is the one button here that is named for where it
+        // takes you.
+        //
+        // ITS OWN ROW. Three four-character labels in the rail's ~230px
+        // crushed 导入布局 into overlapping glyphs; the foot has room for
+        // the row, and a button whose caption collides with itself is a
+        // caption the user has to guess at.
+        auto *footRow3 = new QHBoxLayout();
+        footRow3->setSpacing(8);
+        importLayoutBtn_ = new QPushButton();
+        trSet(importLayoutBtn_,
+              QStringLiteral("console.proto.layout.import.btn"));
+        importLayoutBtn_->setObjectName(QStringLiteral("sideFootImport"));
+        importLayoutBtn_->setCursor(Qt::PointingHandCursor);
+        connect(importLayoutBtn_, &QPushButton::clicked,
+                this, &ControlPanel::importLayoutPackage);
+        footRow3->addWidget(importLayoutBtn_);
+
         railLayout->addLayout(footRow);
+        railLayout->addLayout(footRow2);
+        railLayout->addLayout(footRow3);
 
         // 设置 keeps its own face: the prototype's settings entry is the
         // only outlined button in the foot, because it is the one that
@@ -2384,19 +2692,15 @@ ControlPanel::ControlPanel(QWidget *parent)
         auto *actionRow = new QHBoxLayout();
         actionRow->setContentsMargins(0, 0, 0, 0);
         actionRow->setSpacing(6);
-        saveBtn_ = new QPushButton();
-        trSet(saveBtn_, QStringLiteral("console.proto.save"));
-        saveBtn_->setObjectName(QStringLiteral("sideFootSave"));
-        saveBtn_->setCursor(Qt::PointingHandCursor);
-        connect(saveBtn_, &QPushButton::clicked, this, [this]{
-            // The same write closeEvent() performs, spelled out here
-            // because the prototype's SAVE is an explicit action rather
-            // than a side effect of dismissing the window.
-            saveMaskToDisk();
-            saveAllSplitAndBaseWindows();
-        });
-        actionRow->addWidget(saveBtn_);
 
+        // v1.1.5: 导出布局 IS THE ONLY ACTION BUTTON LEFT IN THIS ROW.
+        // The 保存 that sat beside it performed saveMaskToDisk() +
+        // saveAllSplitAndBaseWindows() — byte for byte the write
+        // closeEvent() already performs on every exit (and that
+        // saveBeforeLaunch() performs before the overlay relaunches), so
+        // the button was a second door to a room with one entrance. The
+        // user's verdict: 「保存没什么用」. The functions stay; only the
+        // duplicate door is gone.
         exportJsonBtn_ = new QPushButton();
         trSet(exportJsonBtn_, QStringLiteral("console.proto.export"));
         exportJsonBtn_->setObjectName(QStringLiteral("sideFootExport"));
@@ -2716,6 +3020,14 @@ ControlPanel::ControlPanel(QWidget *parent)
     zoomLabel_ = new QLabel();
     trHook([this]{ updateZoomLabel(); });
     zoomLabel_->setObjectName("stageToggleLabel");
+    // ── v1.0.1 (验收项5): THE RESET-TO-1:1 HALF OF THE ZOOM ENTRY ──────
+    // − / % / + are useless without a way back to the default. The
+    // caption is a bare ratio (1:1) — the same untranslated-symbol
+    // convention as the − and + buttons, so no new i18n key is needed.
+    zoomFitBtn_ = new QPushButton(QStringLiteral("1:1"));
+    zoomFitBtn_->setObjectName("stageToggle");
+    zoomFitBtn_->setFixedSize(26, 26);
+    zoomFitBtn_->setCursor(Qt::PointingHandCursor);
     // ── v1.0.0 (D): THE STAGE HEAD IS reference.html:325-328 ────────────
     //
     //   <div class="shell-head">
@@ -2739,6 +3051,13 @@ ControlPanel::ControlPanel(QWidget *parent)
     stageSub_ = new QLabel();
     stageSub_->setObjectName(QStringLiteral("stageSub"));
     stagebar->addWidget(stageSub_);
+    // Keep the interaction controls before the flexible gap: narrow
+    // compositor tiles must not clip zoom-in/reset off the right edge.
+    stagebar->addSpacing(6);
+    stagebar->addWidget(zoomOutBtn_);
+    stagebar->addWidget(zoomLabel_);
+    stagebar->addWidget(zoomInBtn_);
+    stagebar->addWidget(zoomFitBtn_);
     stagebar->addStretch(1);
     stageScreenChip_ = new QLabel();
     stageScreenChip_->setObjectName(QStringLiteral("stageScreenChip"));
@@ -2746,18 +3065,23 @@ ControlPanel::ControlPanel(QWidget *parent)
     stageWindowCountChip_ = new QLabel();
     stageWindowCountChip_->setObjectName(QStringLiteral("stageWindowCountChip"));
     stagebar->addWidget(stageWindowCountChip_);
+    // ── v1.0.1 (验收项5): THE ZOOM CONTROLS ARE VISIBLE AGAIN ──────────
+    // They were reparented to `stage` and hide()d ("the prototype has no
+    // such control"), so the only way to zoom was an undiscoverable
+    // Ctrl+wheel. They now occupy real slots in the same 48px head row
+    // (26px children, so the row's height budget is unchanged and
+    // nothing below — slider, inspector, canvas — is squeezed), and they
+    // drive the REAL board through HudCanvas::setZoom: zoomChanged is
+    // already connected to updateZoomLabel() further down.
     // The sub line and the count are live text (the display changes, the
     // window list changes, the language changes), so they are re-derived
     // rather than replayed.
     trHook([this]{ refreshStageHead(); });
 
-    for (QWidget *w : {static_cast<QWidget *>(zoomOutBtn_),
-                       static_cast<QWidget *>(zoomLabel_),
-                       static_cast<QWidget *>(zoomInBtn_),
-                       static_cast<QWidget *>(safeAreaBtn_)}) {
-        w->setParent(stage);
-        w->hide();
-    }
+    // v1.0.1: only safeAreaBtn_ (and gridBtn_ below) is still hidden
+    // preview-console scaffolding. The zoom trio lives in the stagebar.
+    safeAreaBtn_->setParent(stage);
+    safeAreaBtn_->hide();
     gridBtn_ = new QPushButton();
     trSet(gridBtn_, QStringLiteral("console.stage.grid"));
     gridBtn_->setObjectName("stageToggle");
@@ -2865,7 +3189,44 @@ ControlPanel::ControlPanel(QWidget *parent)
     // fidelity paint and no legacy frame is ever composited.
     canvas_ = new HudCanvas();
     canvas_->setConsoleFidelityMode(true);
+    canvas_->setTransparencyGuideEnabled(true);
+    // The console is the ONLY consumer that wants a fixed viewport: the stage
+    // area has a user-dragged height (ConsoleLayoutStore::stageHeight) that a
+    // zoom must not push around. Bare-canvas consumers keep the legacy
+    // contract (default false = heightForWidth drives sizeHint exactly as
+    // before), so this is opt-in rather than a global behaviour change.
+    canvas_->setFixedViewportMode(true);
+    // The stage already names the display, its size and the window count in
+    // chrome; the canvas' own top-left label repeated all three inside the
+    // picture. Only the console hides it — every other canvas keeps drawing.
+    canvas_->setFidelityBoardLabelVisible(false);
     canvas_->installEventFilter(this);
+    // ── 实测缺陷1 (the example area's own scroll range) ────────────────
+    // THE FLAG QSCROLLAREA ACTUALLY READS. HudCanvas already answers the
+    // height-for-width contract (hasHeightForWidth() is overridden at
+    // hud_canvas.h:526 and heightForWidth() at hud_canvas.cpp:1575 — the
+    // 16:9 + header/footer height the note below promises "still
+    // scrolls"), but QScrollArea::updateScrollSizes does not ask the
+    // widget: it asks `widget->layout() ? layout->hasHeightForWidth() :
+    // widget->sizePolicy().hasHeightForWidth()` (qscrollarea.cpp:158).
+    // The console's canvas has no layout and its size policy never
+    // carried the flag — setFixedViewportMode() above rebuilds the policy
+    // as plain Expanding/Expanding — so the scroll area resized the
+    // canvas to the VIEWPORT height on every layout pass: no range, no
+    // scrollbar, and a board taller than the pane (any square or
+    // portrait output; measured 800x800 → a ~950px board in a 532px
+    // pane) simply clipped. With the shell no longer scrolling the page
+    // (setPageScrollEnabled(false) above), that clip is what the user
+    // would see — so the example area is made scrollable here, which is
+    // the behaviour the note at canvasScroll has claimed all along.
+    //
+    // Setting it AFTER setFixedViewportMode(), not before: that call
+    // rewrites the policy, so anything earlier would be wiped.
+    {
+        QSizePolicy canvasPolicy = canvas_->sizePolicy();
+        canvasPolicy.setHeightForWidth(true);
+        canvas_->setSizePolicy(canvasPolicy);
+    }
     auto *canvasScroll = new CanvasScrollArea(canvas_);
     canvasScroll->setObjectName("canvasScroll");
     // v0.5.6: stage now owns the full window width, so let the canvas
@@ -2980,8 +3341,16 @@ ControlPanel::ControlPanel(QWidget *parent)
         Panel *p = panelAt(idx);
         if (!p) return;
         p->setMargins(m, /*persist=*/false);
-        rebuildAndRender(idx);
         updatePosLabel(idx);
+        // ── v1.0.1 (验收项4): A MOVE IS NOT CONTENT ─────────────────────
+        // 拖动事件里不再 rebuildAndRender()/refreshWindowModel()：那会
+        // 重建检查器与整组 widget，让拖动掉帧。面板画的内容没有变，只需要
+        // 画布重绘 + 位置读数；松手仍由 setMargins(persist=false) 交给
+        // closeEvent / saveBeforeLaunch 保存。
+        if (canvas_)
+            canvas_->update();
+        if (selectedSubWindow_ < 0 && selectedPanel_ == idx)
+            refreshSelectedWindowPositionFields();
     });
     // v0.14: a dragged SPLIT SUB-WINDOW writes into THAT window's own
     // QSettings section, not into one of the four base panels'. The
@@ -2999,7 +3368,13 @@ ControlPanel::ControlPanel(QWidget *parent)
             [this](int idx, QMargins m){
         if (!splitPreview_) return;
         if (!splitPreview_->setWindowMargins(idx, m)) return;
-        refreshSplitWindowPreviews();
+        // ── v1.0.1 (验收项4): 同一条规则 —— 窗口只是“移动了”，它画的
+        // 内容没变，所以拖动过程中不 rebuild 整组、不 refreshSplitWindowPreviews
+        // (那会重绑 bindings、重建 SectionRow)。画布按新 margins 重绘即可。
+        if (canvas_)
+            canvas_->update();
+        if (selectedSubWindow_ == idx)
+            refreshSelectedWindowPositionFields();
     });
     // Selection, so the footer can name the sub-window being dragged.
     //
@@ -3048,6 +3423,9 @@ ControlPanel::ControlPanel(QWidget *parent)
     });
     connect(zoomOutBtn_, &QPushButton::clicked, this, [this]{
         if (canvas_) canvas_->setZoom(canvas_->zoom() - 0.5);
+    });
+    connect(zoomFitBtn_, &QPushButton::clicked, this, [this]{
+        if (canvas_) canvas_->setZoom(1.0);   // zoomChanged → updateZoomLabel
     });
     connect(canvas_, &HudCanvas::zoomChanged, this, [this](qreal){
         updateZoomLabel();   // i18n: the format lives in one place
@@ -3129,82 +3507,24 @@ ControlPanel::ControlPanel(QWidget *parent)
        selected by default, because that is where the overview opens.
        ── end sa-A: topbar ── */
     if (screenCombo_) {
-        const auto outs = screen_query::listOutputs();
-        QString primaryName;
-        for (const auto &o : outs) {
-            if (o.name.isEmpty())
-                continue;      // Qt had not populated the name yet
-            if (o.name.startsWith(QStringLiteral("eDP-")))
-                continue;      // disabled — see the hook's note below
-            const bool portrait = o.geometry.height() > o.geometry.width();
-            QString label = QStringLiteral("%1 · %2×%3")
-                                .arg(o.name)
-                                .arg(o.geometry.width())
-                                .arg(o.geometry.height());
-            if (portrait)
-                label += mh::tr(QStringLiteral("console.proto.screen.rot"));
-            if (o.primary) {
-                label += mh::tr(QStringLiteral("console.inspector.primary_tag"));
-                primaryName = o.name;
-            }
-            screenCombo_->addItem(label, o.name);
+        // ONE FILL PATH, THREE CALLERS: the initial build, the language
+        // trHook below, and screen hotplug (验收项8). v1.0.1 drops the
+        // prototype's "eDP-1 is never listed" filter — that was demo
+        // table data, not a runtime contract, and on the user's machine
+        // (eDP-1 only) it left the combo with one placeholder entry.
+        // rebuildScreenCombo() only rewrites the COMBO (a view): it never
+        // writes any Panel's outputName, so a hotplug cannot move a window.
+        rebuildScreenCombo();
+        trHook([this]{ rebuildScreenCombo(); });
+        if (auto *app = qobject_cast<QGuiApplication *>(
+                QCoreApplication::instance())) {
+            connect(app, &QGuiApplication::screenAdded,
+                    this, [this](QScreen*){ rebuildScreenCombo(); });
+            connect(app, &QGuiApplication::screenRemoved,
+                    this, [this](QScreen*){ rebuildScreenCombo(); });
+            connect(app, &QGuiApplication::primaryScreenChanged,
+                    this, [this](QScreen*){ rebuildScreenCombo(); });
         }
-        if (screenCombo_->count() == 0) {
-            // No output Qt can see (headless test, or the platform plugin
-            // has nothing yet): one placeholder so the combo is not empty.
-            screenCombo_->addItem(
-                mh::tr(QStringLiteral("console.inspector.primary")), QString());
-        } else if (!primaryName.isEmpty()) {
-            const int at = screenCombo_->findData(primaryName);
-            if (at >= 0)
-                screenCombo_->setCurrentIndex(at);
-        }
-        // i18n: the entries carry a primary tag that is a translated
-        // fragment appended to the output name. A hook rebuilds the list
-        // on a language switch rather than trying to re-append to a label
-        // that already carries it.
-        //
-        // v1.0.0 (sa-D): eDP-1 IS NOT LISTED. The prototype's SCREENS table
-        // has exactly two entries and the comment beside it is explicit
-        // ("eDP-1 is disabled and never listed"), and the user repeated it:
-        // the laptop panel is not a target the overlay mounts on. Qt's
-        // QScreen list does not know that — it happily reports the internal
-        // panel — so the filter has to be ours, and it belongs at the one
-        // place both the initial fill and the replay read from. Everything
-        // else keeps its real name: a filtered-out output stays in the
-        // canvas's string space (a window already pointing at it still
-        // resolves, still draws, still clamps) and only stops being
-        // ADVERTISED as a place to look.
-        trHook([this]{
-            if (!screenCombo_)
-                return;
-            const QString keep = screenCombo_->currentData().toString();
-            screenCombo_->blockSignals(true);
-            screenCombo_->clear();
-            const auto outsNow = screen_query::listOutputs();
-            for (const auto &o : outsNow) {
-                if (o.name.isEmpty())
-                    continue;
-                if (o.name.startsWith(QStringLiteral("eDP-")))
-                    continue;      // disabled by the prototype's own table
-                const bool portrait = o.geometry.height() > o.geometry.width();
-                QString label = QStringLiteral("%1 · %2×%3")
-                                    .arg(o.name)
-                                    .arg(o.geometry.width())
-                                    .arg(o.geometry.height());
-                if (portrait)
-                    label += mh::tr(QStringLiteral("console.proto.screen.rot"));
-                if (o.primary)
-                    label += mh::tr(QStringLiteral("console.inspector.primary_tag"));
-                screenCombo_->addItem(label, o.name);
-            }
-            if (screenCombo_->count() == 0)
-                screenCombo_->addItem(
-                    mh::tr(QStringLiteral("console.inspector.primary")), QString());
-            const int at = screenCombo_->findData(keep);
-            screenCombo_->setCurrentIndex(at >= 0 ? at : 0);
-            screenCombo_->blockSignals(false);
-        });
         // THE DISPLAY SWITCH IS A VIEW OPERATION. Changing it tells the
         // canvas which monitor the overview paints — it does not move any
         // window, and that is the whole distinction the prototype draws
@@ -3422,6 +3742,24 @@ ControlPanel::ControlPanel(QWidget *parent)
     rootContentLayout->setContentsMargins(0, 0, 0, 0);
     rootContentLayout->setSpacing(0);
     rootContentLayout->addWidget(rootSplitter);
+    // THE SHELL DOES NOT SCROLL (console实测 defect 1). Above, this class
+    // was left in its fidelity mode: the content's minimum height is its
+    // PREFERRED height, so the page grew past the window (measured at
+    // 1200x1040: content 1255 tall, `consoleRootScroll` vbar range 215)
+    // and every scroll of the wheel took the top bar and the sidebar
+    // with it — the stage and the drawer were only reachable by scrolling
+    // the whole PAGE, which is what the user reported.
+    //
+    // `false` makes the content take its LAYOUT FLOOR instead: the shell
+    // then lays out exactly once at the window's own size (顶栏与侧栏
+    // 固定、随窗口缩放自适应), the two panes get the height the splitter
+    // gives them, and scrolling happens only where the console already
+    // owns a scroll area for it — the 显示器示例 (canvasScroll) and the
+    // 详情预览 (the drawer's `inspectorContent`). Nothing else changes:
+    // the horizontal budget refreshTopbarWrap() reads is still this
+    // widget's viewport, and the page still scrolls vertically when the
+    // window is smaller than the console's own minimum (the floor).
+    rootScroll->setPageScrollEnabled(false);
     rootScroll->setRootWidget(rootContent);
     centralLayout->addWidget(rootScroll);
     setCentralWidget(central);
@@ -3701,6 +4039,15 @@ ControlPanel::ControlPanel(QWidget *parent)
     for (int i = 0; i < mhw::kPanelCount; ++i)
         rebuildAndRender(i);
     selectPanel(0);
+    // v1.1.0: this construction-time call establishes the rail's default
+    // slot, NOT a user choice, so it must not arm `panelSlotChosen_`.
+    // Arming it here is what made the inspector skip its empty block on a
+    // cold start and show a mother panel's size rows before the user had
+    // clicked anything (console-inspector-fidelity-tests "A: the
+    // .inspector-content scroll box is hidden in the empty state"). The
+    // flag is re-armed by the first real click, rail or canvas, which is
+    // the only thing that should ever turn the empty state off.
+    panelSlotChosen_ = false;
     // v1.0.0 (O1): AND FILL THE WINDOW INSPECTOR. selectPanel() addresses
     // the PANEL half of the selection; the inspector's three columns are
     // the WINDOW half, and they start empty until something fills them.
@@ -3952,10 +4299,32 @@ void ControlPanel::retranslateUi()
     for (int i = 0; i < mhw::kPanelCount; ++i)
         if (Panel *panel = panelAt(i))
             panel->retranslateUi();               // cached preview-panel copy
+    /* ── 验收项4 (B 第1阶段): THE SPLIT SUB-WINDOWS ARE PANELS TOO ──────
+       The loop above only ever reached the FOUR mother panels, so a
+       中文/English flip re-translated the base windows and left every
+       split sub-window (player-status, monster-conditions, …) painting
+       the previous locale until the next rebuild. The host owns those
+       windows; retranslateAll() replays each one's own retranslateUi()
+       and then the existing sync + render path re-publishes their
+       pixmaps and titles. Scope, geometry, scale and margins are not
+       touched: retranslateUi() only rewrites copy.
+       ── end 验收项4: split sub-window retranslate ── */
+    if (splitPreview_)
+        splitPreview_->retranslateAll();
     // Preview tiles carry PAINTED chrome (e.g. the disabled placeholder)
     // and the canvas paints its header/footer — repaint both.
     for (int i = 0; i < mhw::kPanelCount; ++i)
         rebuildAndRender(i);
+    // …and the sub-window tiles: syncAll() re-reads each window's demo
+    // content for the new language and renderAll() repaints them onto
+    // the canvas. A no-op in Single (no bindings) and when the host has
+    // not been built yet — exactly the states refreshSplitWindowPreviews()
+    // already guards.
+    refreshSplitWindowPreviews();
+    // The inspector's THIRD column is a pixmap of the selected window,
+    // so it carries text too: re-render it in the new language without
+    // changing which window is selected.
+    refreshWindowPreviewPixmap();
     if (canvas_)
         canvas_->update();
 }
@@ -4245,12 +4614,76 @@ bool ControlPanel::eventFilter(QObject *watched, QEvent *event)
             savedStageSize_ = stagePaneSize();
         }
     }
-    // v0.5: Ctrl+wheel over the canvas zooms in/out.
+    /* ── round2: THE CARD'S HEIGHT BUDGET FOLLOWS THE LEFT HALF ──────────
+       refreshWindowPreviewPixmap() restates the old grid row's height as
+       the card's minimum — the card is as tall as the left half's
+       content, so the render keeps the height it had when all three
+       columns shared one row. That budget is a function of the LEFT
+       half's content, and the left half re-lays out on its own (the
+       window got wider, the language flipped, a section list was
+       rebuilt), so it is re-read HERE — where the content actually
+       changes size — and not only when the preview happens to be
+       refilled. A refill-only read leaves the number one layout pass
+       stale, which is how a right half could start out with no
+       scrollbar at all and only gain one later.
+
+       The direction is one-way by construction: the left half's size
+       does not depend on the card's, so this arm cannot feed anything
+       back into the fit. It only ever WRITES the card's minimum; the
+       card's own resize comes back through the column watcher, which
+       re-derives the preview from the new box.
+       ── end round2: the height budget ── */
+    if (watched == inspectorGridHost_
+        && (event->type() == QEvent::Resize
+            || event->type() == QEvent::LayoutRequest)
+        && windowPreviewCol_ && inspectorGridHost_->height() > 0
+        && windowPreviewCol_->minimumHeight() != inspectorGridHost_->height()) {
+        windowPreviewCol_->setMinimumHeight(inspectorGridHost_->height());
+    }
+    // ─── v1.1.4: RETIRED, AND WHY IT IS WORTH READING ────────────────────
+    // A card-resize arm lived here for one round:
+    //
+    //     if (watched == windowPreviewCol_ && event->type() == QEvent::Resize)
+    //         QTimer::singleShot(0, …, applyPreviewDisplay());
+    //
+    // It never ran. eventFilter() is installed in twelve places (the canvas,
+    // the rail, the preview VIEWPORT, the scroll area…) and the card was
+    // never one of them — probed at runtime, the card carries exactly one
+    // filter, PreviewViewportWatcher, and eight real Resizes under an
+    // explicit zoom produced zero pixmap rebuilds while the same drags under
+    // Fit produced eight. The flag it guarded stayed false forever.
+    //
+    // It was written to explain a symptom that a DIFFERENT change caused
+    // (the readout row's labels setting the card's minimum width, which is
+    // the row-split fix in buildWindowInspectorFace), so once that was fixed
+    // the arm had no symptom left to fix. Kept as a comment because the trap
+    // is general: an eventFilter arm is code you cannot see run, and "the
+    // logic is right" is not evidence. Install the filter on the widget you
+    // filter, then prove it with a counter.
+    // v1.0.5: Ctrl+wheel over the canvas zooms in/out.
     if (watched == canvas_ && event->type() == QEvent::Wheel) {
         auto *we = static_cast<QWheelEvent*>(event);
         if (we->modifiers() & Qt::ControlModifier) {
             const qreal delta = (we->angleDelta().y() > 0) ? 0.1 : -0.1;
             canvas_->setZoom(canvas_->zoom() + delta);
+            return true;
+        }
+    }
+    /* ── 实测缺陷2: Ctrl+wheel over the DETAIL PREVIEW zooms the preview ──
+       Same modifier, other area — and the dispatch is `watched`, so the
+       two arms can never both fire: this one only runs for the preview
+       scroll area and its viewport, which the canvas arm above does not
+       match. Without Ctrl the event is not consumed, so the preview
+       still scrolls with a plain wheel.
+       ── end 实测缺陷2 ── */
+    if (windowPreviewScroll_
+        && (watched == windowPreviewScroll_
+            || watched == windowPreviewScroll_->viewport()
+            || watched == windowPreviewBox_)
+        && event->type() == QEvent::Wheel) {
+        auto *we = static_cast<QWheelEvent *>(event);
+        if (we->modifiers() & Qt::ControlModifier) {
+            setPreviewZoom(stepPreviewZoom(we->angleDelta().y() > 0 ? +1 : -1));
             return true;
         }
     }
@@ -4311,6 +4744,24 @@ void ControlPanel::selectPanel(int idx, bool fromNav)
     // World is selected (the rail card is hidden; hot-keys land here).
     if (idx == 3 && currentGame() == mhw::GameId::World) return;
     selectedPanel_ = idx;
+    // v1.1.0: remember that a slot was explicitly chosen. `selectedPanel_`
+    // starts at 0, so it cannot answer "has the user actually looked at a
+    // panel?" — which is exactly the question the inspector's empty state
+    // turns on. Without this, startup (nothing picked yet) and "the user
+    // clicked the mother panel" look identical from the window state, and the
+    // inspector cannot show a mother panel's properties without also showing
+    // them on a cold start.
+    //
+    // The REDIRECT case is the one caller that is bookkeeping rather than a
+    // choice: switchGame() moves the rail off the pets slot when pets stop
+    // existing. That is a consequence of the scope change the user DID make,
+    // but it is not a look at panel 2 — and arming the flag there keeps the
+    // previous game's inspector columns alive across a game switch, which is
+    // exactly what console-inspector-fidelity-tests "B: the empty block is
+    // back after the scope change" forbids.
+    if (!panelRedirect_)
+        panelSlotChosen_ = true;
+    panelRedirect_ = false;
     syncAppearance(idx);
     updatePosLabel(idx);
     if (inspectorStack_) inspectorStack_->setCurrentIndex(idx);
@@ -4415,6 +4866,21 @@ void ControlPanel::selectPanel(int idx, bool fromNav)
     // so a rail click never leaves the chips describing the previous
     // view.
     refreshStageHead();
+    // ─── v1.1.4: AND THE MIXED BLOCK FOLLOWS THE NAV ────────────────────
+    // The 独立/合并 rows are shown or hidden by a PREDICATE over the focus
+    // (refreshMixedGroupBlock's: in-game AND same parent), and selectPanel()
+    // is one of the two things that move that focus. It used to end at the
+    // two title refreshes above, so after a rail click the list kept showing
+    // the PREVIOUS group while 全部独立 / 全部合并 — which read the focus
+    // live — wrote the new one. That is exactly the failure the per-group
+    // scoping was built to remove, arriving through the door next to it:
+    // a control under the 玩家 heading that edits 伤害.
+    //
+    // The block is a function of (mode, game, plan, focus) and cheap —
+    // eleven rows of text/checked/state with signals blocked. It also
+    // early-returns when the block does not exist yet, so the constructor's
+    // selectPanel(0) is unaffected.
+    refreshMixedGroupBlock();
 }
 
 // ─── v1.0.0: the single-display overview ──────────────────────────────
@@ -4985,14 +5451,22 @@ QWidget *ControlPanel::buildInspector(const QString &titleKey, const QString &su
         screenLab->setObjectName(QStringLiteral("sliderLabel"));
         auto *combo = new QComboBox();
         combo->setCursor(Qt::PointingHandCursor);
-        // First entry: "follow the mother panel" — empty userData so
-        // Panel::setOutputName("") clears the override and Qt resolves
-        // the OS primary (which the mother panel falls back to).
-        combo->addItem(mh::tr(QStringLiteral("console.proto.follow")), QString());
+        // First entry: the automatic mode — empty userData so
+        // Panel::setOutputName("") clears the override and the chain
+        // resolves it. 实测缺陷5: this row edits a PANEL (never a sub
+        // window), and a panel above the chain is only ever followed by
+        // its own windows — its own automatic screen is the SYSTEM
+        // PRIMARY, so 跟随主屏 is the name that matches what happens
+        // (mhw::resolveWindowOutput(own="", parent="", primary)). The
+        // inspector's combo spells the sub-window case 跟随主面板; the
+        // two are the same empty-data mode under two honest names.
+        combo->addItem(mh::tr(QStringLiteral("console.proto.follow_primary")),
+                       QString());
         // Item 0 is UI copy — re-localize it in place. The remaining
         // items are screen names + resolution and must not move.
         trHook([combo]{
-            combo->setItemText(0, mh::tr(QStringLiteral("console.proto.follow")));
+            combo->setItemText(
+                0, mh::tr(QStringLiteral("console.proto.follow_primary")));
         });
         const auto outs = screen_query::listOutputs();
         for (const auto &o : outs) {
@@ -5369,11 +5843,59 @@ QWidget *ControlPanel::buildGameColumn()
    once at overlay startup, so a mode change still persists and still
    relaunches a live child, exactly as the two-widget pair documented.
    ── end sa-A: topbar ── */
+/* ── v1.1.1 (顶栏溢出): the measured topbar band ─────────────────────── */
+namespace {
+// `.workspace{grid-template-rows:66px minmax(0,1fr)}` — the header band is
+// exactly 66px on the 1600×1000 reference viewport (geometry.json state01:
+// `topbar x=232 y=0 w=1353 h=66`). It stays 66 for as long as the header
+// is one row; refreshTopbarWrap() grows it by one button row only when
+// the window is too narrow for the single row's own minimum.
+constexpr int kTopbarBandHeight = 66;
+} // namespace
+
 QWidget *ControlPanel::buildToolbar()
 {
     auto *bar = new QFrame();
     bar->setObjectName("topbar");
-    auto *hl = new QHBoxLayout(bar);
+    topbar_ = bar;
+    /* ── v1.1.1 (顶栏溢出): ONE ROW, OR TWO ──────────────────────────────
+       The note below said "Qt has no flex-wrap" — but the PROTOTYPE'S OWN
+       `.topbar` is `display:flex; flex-wrap:wrap`, and that is exactly
+       what this block was missing: at the console's own minimum width
+       (1272 measured on the user's desktop) the single row's minimum is
+       WIDER than the window, so the root scroll gained a horizontal
+       scrollbar and the four action buttons — the last flex items — sat
+       outside the visible area. "Start overlay" read as `Start ov…`,
+       导出 was unreachable without scrolling the whole page sideways,
+       and nothing in the header said why.
+
+       So the bar is now a vbox of two rows: row1 is the measured single
+       row UNCHANGED (same margins, same spacing, same items), row2 holds
+       the four action buttons right-aligned behind their own stretch.
+       refreshTopbarWrap() keeps them on row1 whenever row1's own minimum
+       fits the window, which is every width the prototype itself renders
+       as one row — at 1600×1000 this is pixel-identical to before. When
+       it does not fit, the buttons move to row2 and the band grows by
+       one button row. Nothing is dropped, nothing moves elsewhere in the
+       window: the header wraps the way the CSS it is porting already
+       does.
+       ── end v1.1.1: one row, or two ── */
+    auto *vl = new QVBoxLayout(bar);
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(0);
+    auto *hl = new QHBoxLayout();
+    vl->addLayout(hl);
+    topbarRow1_ = hl;
+    auto *hl2 = new QHBoxLayout();
+    // Zeroed while the second row is empty (an empty layout's own margins
+    // would otherwise add to the bar's minimum height and cost the 66px
+    // band its exact height). refreshTopbarWrap() restores the real
+    // numbers the moment the buttons move in.
+    hl2->setContentsMargins(0, 0, 0, 0);
+    hl2->setSpacing(14);
+    hl2->addStretch(1);
+    vl->addLayout(hl2);
+    topbarRow2_ = hl2;
     // The prototype's padding 8px 10px and gap 8px, on a flex row that
     // wraps. Qt has no flex-wrap: a QHBoxLayout in a QFrame with a
     // size policy that lets it grow vertically gets the same result from
@@ -5392,7 +5914,7 @@ QWidget *ControlPanel::buildToolbar()
     // and the 14 are the layout's own margins and spacing.
     hl->setContentsMargins(18, 10, 18, 10);
     hl->setSpacing(14);
-    bar->setFixedHeight(66);
+    bar->setFixedHeight(kTopbarBandHeight);
 
     // ---- the title block: the prototype's `.topbar-title` -----------
     //
@@ -5458,6 +5980,21 @@ QWidget *ControlPanel::buildToolbar()
         layoutSplitBtn_->setCursor(Qt::PointingHandCursor);
         seg->addWidget(layoutSplitBtn_);
 
+        // v1.1.0: the third segment. The combo has had a Mixed row since
+        // the model landed, but the topbar's SEGMENTED control is what the
+        // user actually clicks — so until this button existed, Mixed was
+        // unreachable from the console despite being fully wired in the
+        // overlay (verified on a real Wayland session: the segment showed
+        // exactly two options).
+        layoutMixedBtn_ = new QPushButton();
+        trSet(layoutMixedBtn_, QStringLiteral("console.layout.mixed"));
+        trTip(layoutMixedBtn_, QStringLiteral("console.layout.custom_hint"));
+        layoutMixedBtn_->setObjectName(QStringLiteral("layoutSegMixed"));
+        layoutMixedBtn_->setCheckable(true);
+        layoutMixedBtn_->setAutoExclusive(true);
+        layoutMixedBtn_->setCursor(Qt::PointingHandCursor);
+        seg->addWidget(layoutMixedBtn_);
+
         hl->addWidget(layoutSeg_);
 
         // The checked state is the mode in force, not a pending choice:
@@ -5480,6 +6017,8 @@ QWidget *ControlPanel::buildToolbar()
         layoutCombo_->setCursor(Qt::PointingHandCursor);
         layoutCombo_->addItem(mh::tr(QStringLiteral("console.layout.single")));
         layoutCombo_->addItem(mh::tr(QStringLiteral("console.layout.split")));
+        // v1.1.0: the third row. The i18n key already exists in both locales.
+        layoutCombo_->addItem(mh::tr(QStringLiteral("console.layout.mixed")));
         trHook([this]{
             if (!layoutCombo_) return;
             const int keep = layoutCombo_->currentIndex();
@@ -5488,6 +6027,8 @@ QWidget *ControlPanel::buildToolbar()
                 mh::tr(QStringLiteral("console.layout.single")));
             layoutCombo_->setItemText(kLayoutComboSplitIndex,
                 mh::tr(QStringLiteral("console.layout.split")));
+            layoutCombo_->setItemText(kLayoutComboMixedIndex,
+                mh::tr(QStringLiteral("console.layout.mixed")));
             layoutCombo_->setCurrentIndex(keep);
             layoutCombo_->blockSignals(false);
         });
@@ -5516,12 +6057,15 @@ QWidget *ControlPanel::buildToolbar()
         connect(layoutApplyBtn_, &QPushButton::clicked, this,
                 [this]{ applyLayoutChoice(layoutComboMode()); });
 
-        // The segment's click: mirror into the hidden pair, then commit.
+        // The segment's click: mirror into the hidden combo, then commit.
         // Mirroring FIRST is what keeps a test that sets the combo's index
         // and clicks apply() working after a user has used the segment.
-        auto commitFromSeg = [this](bool toSplit){
-            const int want = toSplit ? kLayoutComboSplitIndex
-                                     : kLayoutComboSingleIndex;
+        //
+        // v1.1.0: takes the MODE, not a bool. `bool toSplit` could not
+        // express a third segment, and the natural extension — treating the
+        // flag as "not Split" — is what silently sent Mixed to Single.
+        auto commitFromSeg = [this](mhw::PlayerSection::PlayerLayoutMode to){
+            const int want = layoutComboIndexFor(to);
             if (layoutCombo_ && layoutCombo_->currentIndex() != want)
                 layoutCombo_->setCurrentIndex(want);
             applyLayoutChoice(layoutComboMode());
@@ -5531,9 +6075,14 @@ QWidget *ControlPanel::buildToolbar()
             syncLayoutSegmentToMode();
         };
         connect(layoutSingleBtn_, &QPushButton::clicked, this,
-                [commitFromSeg]{ commitFromSeg(false); });
+                [commitFromSeg]{ commitFromSeg(
+                    mhw::PlayerSection::PlayerLayoutMode::Single); });
         connect(layoutSplitBtn_, &QPushButton::clicked, this,
-                [commitFromSeg]{ commitFromSeg(true); });
+                [commitFromSeg]{ commitFromSeg(
+                    mhw::PlayerSection::PlayerLayoutMode::Split); });
+        connect(layoutMixedBtn_, &QPushButton::clicked, this,
+                [commitFromSeg]{ commitFromSeg(
+                    mhw::PlayerSection::PlayerLayoutMode::Mixed); });
     }
 
     // ---- 显示器 ---------------------------------------------------------
@@ -5611,11 +6160,47 @@ QWidget *ControlPanel::buildToolbar()
     // changes: the prototype's .btn, and .btn.on (clay fill) while the
     // board is in edit mode.
     editBtn_ = new QPushButton();
-    trSet(editBtn_, QStringLiteral("console.proto.edit"));
+    /* ── 验收项4 (B 第1阶段): THE TWO ENTRIES, NAMED FOR WHAT THEY DO ──────
+       编辑预览 toggles THIS console's own board (setBoardEditing), which
+       is what it always did; the new sibling below is the one that
+       actually opens the overlay's edit mode. Two different surfaces, two
+       buttons, two reserved keys — and neither is allowed to stand in
+       for the other.
+       ── end 验收项4: preview-edit keeps its own copy ── */
+    trSet(editBtn_, QStringLiteral("console.edit.preview_start"));
+    trTip(editBtn_, QStringLiteral("console.edit.preview_tip"));
     s_editBtn = editBtn_;   // the board-edit helpers key the button's face off this
     editBtn_->setObjectName("enterEdit");
     editBtn_->setCursor(Qt::PointingHandCursor);
     hl->addWidget(editBtn_);
+
+    /* ── 验收项4 (B 第1阶段): 在覆盖层中编辑 — THE REAL LAUNCH ────────────
+       THE ONLY LINE THAT MATTERS: launchOverlayChild(true) is the same
+       entry the old shell used — it builds buildOverlayArgv(edit=true)
+       (the real `--edit` on the child's argv) and hands it to the
+       overlay controller, so the child starts in ITS edit mode, and the
+       close/save round trip back to this console (the rebuild +
+       re-raise block further up in the ctor) is the very same lifecycle
+       the 启动 button already uses.
+
+       Deliberately NOT a canvas flag: flipping HudCanvas::setEditing()
+       would repaint this preview and prove nothing about the overlay's
+       windows. The preview's own edit face stays on 编辑预览 above.
+       ── end 验收项4: overlay-edit launch entry ── */
+    auto *overlayEditBtn = new QPushButton();
+    trSet(overlayEditBtn, QStringLiteral("console.edit.overlay_start"));
+    trTip(overlayEditBtn, QStringLiteral("console.edit.overlay_tip"));
+    overlayEditBtn->setObjectName(QStringLiteral("overlayEdit"));
+    overlayEditBtn->setCursor(Qt::PointingHandCursor);
+    connect(overlayEditBtn, &QPushButton::clicked, this,
+            [this] { launchOverlayChild(/*editMode=*/true); });
+    // v1.1.0: keep the handle. It used to be a buildTopbar local, so
+    // setOverlayRunning() — the one place that knows whether a child is
+    // alive — could not reach it, and clicking Edit in overlay while one
+    // was already running hit launchOverlayChild()'s silent `return`: a
+    // button that looks live and does nothing at all.
+    overlayEditBtn_ = overlayEditBtn;
+    hl->addWidget(overlayEditBtn);
 
     // ---- 启动 -----------------------------------------------------------
     //
@@ -5630,24 +6215,21 @@ QWidget *ControlPanel::buildToolbar()
     setOverlayRunning(overlay_ && overlay_->isRunning());
     hl->addWidget(startBtn_);
 
-    // ---- 导出 -----------------------------------------------------------
+    // ---- 导出: NOT HERE ANY MORE (user 第6条) ----------------------------
     //
-    // The draft's `#export-btn`, the LAST thing in its topbar
-    // (reference.html:320) — `.icon-btn` at (1521,15) 46×32 with
-    // 18px of padding left over to the edge at 1567=1585-18. The
-    // shell only ever had the rail's 导出 JSON, so the header ended
-    // on 启动悬浮窗 and there was no topbar export at all. Same
-    // handler, same modal: `openExportDialog()` is the prototype's
-    // #export-modal, so the two entries cannot disagree about what
-    // gets exported.
-    topExportBtn_ = new QPushButton();
-    trSet(topExportBtn_, QStringLiteral("console.proto.export.short"));
-    topExportBtn_->setObjectName(QStringLiteral("topExport"));
-    topExportBtn_->setCursor(Qt::PointingHandCursor);
-    trTip(topExportBtn_, QStringLiteral("console.proto.export.tip"));
-    connect(topExportBtn_, &QPushButton::clicked,
-            this, &ControlPanel::openExportDialog);
-    hl->addWidget(topExportBtn_);
+    // There used to be a SECOND export button in this row — the draft's
+    // `#export-btn` (reference.html:320), wired to the very same
+    // openExportDialog() as the rail's 导出 JSON, so the console offered
+    // two doors into one modal. The user filed that as a duplicate
+    // (顶栏重复的导出按钮) and asked for exactly ONE entry: the sidebar's,
+    // objectName `sideFootExport`, built next to 保存 at the rail's foot.
+    //
+    // Deleted with it: its console.proto.export.short / .tip i18n keys
+    // (both locales + the copy-semantics key list), its `#topExport` QSS
+    // rule, its connect() lambda, its slot in the fixed-height loop and in
+    // topbarActions_ below, and the two topExport references in
+    // console_interaction_regression_tests.cpp. openExportDialog() itself
+    // is untouched — the rail button is its remaining caller.
 
     // ---- the measured control heights ---------------------------------
     //
@@ -5669,12 +6251,172 @@ QWidget *ControlPanel::buildToolbar()
         layoutSeg_->setFixedHeight(36);
     if (screenCombo_)
         screenCombo_->setFixedHeight(31);
-    for (QPushButton *btn : {editBtn_, startBtn_, topExportBtn_}) {
+    for (QPushButton *btn : {editBtn_, overlayEditBtn, startBtn_}) {
         if (btn)
             btn->setFixedHeight(32);
     }
 
+    // v1.1.1 (顶栏溢出): the wrap set, in row order, and the first
+    // decision. The buttons stay ON ROW1 (the layout above is exactly the
+    // measured single row) until refreshTopbarWrap() finds a window that
+    // cannot hold them — the common case never leaves this row.
+    topbarActions_ = {editBtn_, overlayEditBtn, startBtn_};
+    topbarActions_.removeAll(nullptr);
+    refreshTopbarWrap();
+
     return bar;
+}
+
+/* ── v1.1.1 (顶栏溢出): ONE ROW, OR TWO ────────────────────────────────
+   THE DECISION, AND WHY IT IS NOT `topbar_->width() > x`.
+
+   Inside the root scroll the bar is sized to its OWN MINIMUM the moment
+   that minimum exceeds the viewport — measured: at a 1272px window the
+   bar is 1292 wide, the content layer is 1524 = 232 (rail) + 1292, the
+   page scrolls 252px sideways, and the four action buttons (the last
+   items of the row) live at x≈1080…1274 of that bar, i.e. past the
+   window's right edge. So the bar's own width is the CAUSE of the
+   overflow and can never be the measure of the room. The honest number
+   is the scroll viewport's width minus the bar's left offset in it.
+
+   THE RULE. One row while row1's own MINIMUM fits that width, two rows
+   the moment it does not. Both sums are computed from the same numbers
+   QLayout itself uses (an explicit minimum, else the widget's
+   minimumSizeHint — which for a QLabel IS its text), so the decision is
+   a pure function of (copy, width): two calls in a row agree, nothing
+   oscillates, and a widget that is temporarily in the other row is
+   counted the same either way.
+
+   WHAT IT BUYS, at 1272 in EN (the user's own measurement):
+   single row = 1292 needed vs 1040 available → the four buttons take
+   row2 (461px wide, right-aligned), row1 keeps title + Layout/segment +
+   Display/combo at 853px — everything the header shows is then INSIDE
+   the window and the page stops scrolling sideways at all, because the
+   content's minimum width is now 232 + max(row1, mainArea) < viewport.
+   ── end v1.1.1: one row, or two ── */
+void ControlPanel::refreshTopbarWrap()
+{
+    if (topbarWrapBusy_ || !topbar_ || !topbarRow1_ || !topbarRow2_
+        || topbarActions_.isEmpty())
+        return;
+
+    // ---- the width the bar can actually use ----------------------------
+    int available = 0;
+    if (auto *rootScroll =
+            findChild<QScrollArea *>(QStringLiteral("consoleRootScroll"))) {
+        if (rootScroll->viewport())
+            available = rootScroll->viewport()->width()
+                        - topbar_->mapTo(rootScroll->viewport(), QPoint(0, 0)).x();
+    }
+    // No scroll area (a test host, a half-built console): wrap rather
+    // than clip. Wrapping never HIDES anything, clipping always does.
+    if (available <= 0)
+        available = 0;
+
+    auto itemMin = [](QLayoutItem *it) -> int {
+        if (!it)
+            return 0;
+        if (QWidget *w = it->widget()) {
+            // The same precedence QLayout applies: an explicit minimum
+            // wins, otherwise the widget's own minimumSizeHint.
+            const int explicitMin = w->minimumWidth();
+            return explicitMin > 0 ? explicitMin : w->minimumSizeHint().width();
+        }
+        if (it->layout())
+            return it->layout()->minimumSize().width();
+        return it->minimumSize().width();
+    };
+    const auto rowMin = [&](QHBoxLayout *row, int spacing, bool withActions) {
+        const QMargins m = row->contentsMargins();
+        int sum = m.left() + m.right();
+        int items = 0;
+        for (int i = 0; i < row->count(); ++i) {
+            QLayoutItem *it = row->itemAt(i);
+            if (!it)
+                continue;
+            QWidget *w = it->widget();
+            if (w && topbarActions_.contains(w) && !withActions)
+                continue;
+            sum += itemMin(it);
+            if (items++)
+                sum += spacing;
+        }
+        return sum;
+    };
+
+    int buttonsMin = 0;
+    for (QPushButton *b : std::as_const(topbarActions_)) {
+        if (!b)
+            continue;
+        const int explicitMin = b->minimumWidth();
+        buttonsMin += explicitMin > 0 ? explicitMin : b->minimumSizeHint().width();
+    }
+
+    const int row1NoActions = rowMin(topbarRow1_, topbarRow1_->spacing(), false);
+    // ONE ROW, counted the same way in both states: the four buttons
+    // after the row1 items, each with its own spacing slot. Removing them
+    // from row1 removes exactly one spacing slot each (the stretch is
+    // always ahead of them, so no button is ever item 0), which is why
+    // `row1NoActions + n·spacing + Σ button` is the single row's minimum
+    // whether the buttons currently sit in row1 or in row2 — a pure
+    // function of the copy and the width, so the decision cannot
+    // oscillate between two consecutive calls.
+    const int singleRowMin =
+        row1NoActions + topbarRow1_->spacing() * topbarActions_.size()
+        + buttonsMin;
+    const bool wrap = singleRowMin > available;
+
+    // Cheap path: the decision is unchanged and the band is already the
+    // right height, so nothing has to move and no layout has to be
+    // re-activated. refreshTopbarTitle() reaches this on every view
+    // change, and the window model refreshes on game events — neither
+    // should pay for a layout pass that changes nothing.
+    if (wrap == topbarWrapped_ && topbar_->height() == topbarBandHeight_)
+        return;
+
+    if (wrap != topbarWrapped_) {
+        topbarWrapBusy_ = true;
+        for (QPushButton *b : std::as_const(topbarActions_)) {
+            if (!b)
+                continue;
+            // QLayout::addWidget takes the widget out of whichever layout
+            // currently owns it, so this is a move, not a copy.
+            if (wrap)
+                topbarRow2_->addWidget(b);
+            else
+                topbarRow1_->addWidget(b);
+        }
+        topbarRow1_->setContentsMargins(18, 10, 18, wrap ? 0 : 10);
+        topbarRow2_->setContentsMargins(wrap ? QMargins(18, 0, 18, 10)
+                                             : QMargins(0, 0, 0, 0));
+        topbarWrapped_ = wrap;
+        topbarWrapBusy_ = false;
+    }
+
+    // ---- the band ──────────────────────────────────────────────────────
+    // 66 exactly while it is one row (the measured `.topbar`); the two
+    // rows' own hint once it is two (46+10 + 32+10 = 98).
+    if (QLayout *barLayout = topbar_->layout()) {
+        topbarWrapBusy_ = true;
+        barLayout->activate();
+        topbarBandHeight_ = topbarWrapped_
+                                ? qMax(kTopbarBandHeight,
+                                       barLayout->sizeHint().height())
+                                : kTopbarBandHeight;
+        if (topbar_->height() != topbarBandHeight_)
+            topbar_->setFixedHeight(topbarBandHeight_);
+        topbarWrapBusy_ = false;
+    }
+}
+
+void ControlPanel::resizeEvent(QResizeEvent *e)
+{
+    QMainWindow::resizeEvent(e);
+    // The width is the input the wrap decision is a function of, and a
+    // resize is the only thing that changes it. Also reached on the first
+    // show, which is how a console built while its window was still
+    // 0-wide ends up on one row.
+    refreshTopbarWrap();
 }
 
 // ── v1.0.0 sa-A: topbar ──
@@ -5684,20 +6426,40 @@ QWidget *ControlPanel::buildToolbar()
 // ── end sa-A: topbar ──
 void ControlPanel::syncLayoutSegmentToMode()
 {
-    const bool split = layoutModeInForce_
-                       == mhw::PlayerSection::PlayerLayoutMode::Split;
+    // v1.1.0: compare each segment against ITS OWN mode. The old
+    // `bool split = mode == Split; Single->setChecked(!split)` reads every
+    // non-Split mode as Single, so a Mixed layout in force lit 整块 while
+    // the overlay ran a mixed topology — the console describing the
+    // opposite of what is on screen, which is the one thing a mode
+    // indicator must never do.
+    const auto inForce = layoutModeInForce_;
     if (layoutSingleBtn_)
-        layoutSingleBtn_->setChecked(!split);
+        layoutSingleBtn_->setChecked(
+            inForce == mhw::PlayerSection::PlayerLayoutMode::Single);
     if (layoutSplitBtn_)
-        layoutSplitBtn_->setChecked(split);
+        layoutSplitBtn_->setChecked(
+            inForce == mhw::PlayerSection::PlayerLayoutMode::Split);
+    if (layoutMixedBtn_)
+        layoutMixedBtn_->setChecked(
+            inForce == mhw::PlayerSection::PlayerLayoutMode::Mixed);
     if (layoutCombo_) {
         const int want = layoutComboIndexFor(layoutModeInForce_);
         if (layoutCombo_->currentIndex() != want)
             layoutCombo_->setCurrentIndex(want);
     }
-    // 分开密度 is Split-only, so the mode change decides its visibility.
+    // 分开密度 is not Single-only: it controls how much demo content the
+    // windows carry, and Mixed has windows too (the detached ones). Gating
+    // it on `== Split` hid it in Mixed for no reason, and the old comment
+    // here still used the v1.1.0 copy pass's banned wording 分开密度.
+    const bool hasSplitWindows =
+        inForce != mhw::PlayerSection::PlayerLayoutMode::Single;
     if (densityCombo_)
-        densityCombo_->setVisible(split);
+        densityCombo_->setVisible(hasSplitWindows);
+    // v1.1.0: the group column's 独立/合并 block is keyed on the MODE
+    // too, and a mode commit does not always reach
+    // refreshWindowModel()'s group-column refill — so its visibility is
+    // pushed here, where every committed mode change already lands.
+    refreshMixedGroupBlock();
     updateLayoutApplyEnabled();
 }
 
@@ -5743,6 +6505,19 @@ void ControlPanel::resetViewStateAfterScopeChange(bool alsoExitEditing)
     // prototype's `state.selected = null` on a scope change: the columns
     // go back to .empty-inspector and the overview is re-entered below.
     windowSelectionActive_ = false;
+    // v1.1.0: a scope change drops the WINDOW half too, and with it the
+    // PANEL half the capability rows read. Without this the inspector kept
+    // the previous scope's mother panel on screen after a game / layout /
+    // pets-availability switch, leaving a block of dead controls enabled
+    // against a selection that no longer existed (console-inspector-
+    // fidelity-tests "B: the empty block is back after the scope change").
+    //
+    // This is where clearWindowSelection()'s body used to live. That
+    // function had no caller anywhere in src/ or tests/ — the code it
+    // claimed to own was being reset here instead, minus this half — so it
+    // was deleted rather than left as a second, unreachable owner of the
+    // same transition.
+    panelSlotChosen_ = false;
     if (canvas_ && !canvas_->overviewMode())
         enterOverview(canvas_);
     // Re-derive the inspector for the new world: in Split the cleared
@@ -5863,7 +6638,13 @@ void ControlPanel::refreshStageHead()
                               ? selectedPanel_
                               : -1;
         int onScreen = 0;
-        const mhw::WindowList windows = buildWindowStates();
+        // THE COUNT IS THE RUN'S, NOT ONLY THE BOARD'S. In Mixed the
+        // windows the user detached one by one are real windows the
+        // overlay mounts, and buildWindowStates() cannot list them (the
+        // preview host — and with it the canvas's sub bindings — is
+        // Split-only), so the topology model is what this chip counts
+        // from. Single and Split are the same list, returned verbatim.
+        const mhw::WindowList windows = buildWindowTopology();
         for (const mhw::WindowState &w : windows) {
             if (!mhw::windowOnDisplay(w, screenName))
                 continue;
@@ -5887,18 +6668,42 @@ void ControlPanel::refreshTopbarTitle()
             consoleText(QStringLiteral("console.proto.top.title.overview")));
         topbarSubtitle_->setText(
             consoleText(QStringLiteral("console.proto.top.sub.overview")));
-        return;
+    } else {
+        static const char *const kPanelNavKey[mhw::kPanelCount] = {
+            "console.nav.player", "console.nav.monster",
+            "console.nav.damage", "console.nav.pets"
+        };
+        const int idx = mhw::isPanelIndex(selectedPanel_) ? selectedPanel_ : 0;
+        const QString name = consoleText(QString::fromLatin1(kPanelNavKey[idx]));
+        topbarTitle_->setText(
+            consoleText(QStringLiteral("console.proto.top.title.panel")).arg(name));
+        // THE SUBTITLE'S %1 IS A COUNT, AND THE COPY SAYS SO: both
+        // locales' `proto.top.sub.panel` was rewritten to "%1 个窗口" /
+        // "Showing only %1 windows" (the copy lane's own note: the old
+        // "%1的窗口" was missing the measure word, i.e. %1 was read as a
+        // NUMBER), yet the code was still feeding it the panel's NAME —
+        // which rendered as "当前仅显示 玩家面板 个窗口". The number is
+        // this panel's windows in the COUNT model, the same figure the
+        // rail's "N 窗" writes on this row, so the two can never
+        // disagree: in Mixed that includes the windows detached one by
+        // one, which is what the old model folded away.
+        int panelWindows = 0;
+        const mhw::WindowList topology = buildWindowTopology();
+        for (const mhw::WindowState &w : topology) {
+            if (w.panelIndex == idx)
+                ++panelWindows;
+        }
+        topbarSubtitle_->setText(
+            consoleText(QStringLiteral("console.proto.top.sub.panel"))
+                .arg(panelWindows));
     }
-    static const char *const kPanelNavKey[mhw::kPanelCount] = {
-        "console.nav.player", "console.nav.monster",
-        "console.nav.damage", "console.nav.pets"
-    };
-    const int idx = mhw::isPanelIndex(selectedPanel_) ? selectedPanel_ : 0;
-    const QString name = consoleText(QString::fromLatin1(kPanelNavKey[idx]));
-    topbarTitle_->setText(
-        consoleText(QStringLiteral("console.proto.top.title.panel")).arg(name));
-    topbarSubtitle_->setText(
-        consoleText(QStringLiteral("console.proto.top.sub.panel")).arg(name));
+    // v1.1.1 (顶栏溢出): BOTH LINES ARE PART OF THE BAR'S MINIMUM WIDTH —
+    // a QLabel's minimumSizeHint IS its text, so a view change (or the
+    // language flip that reaches this through the trHook) that lengthens
+    // the copy can be the change that makes the single row stop fitting.
+    // The wrap decision is re-run here rather than at the call sites so
+    // that every one of them gets it.
+    refreshTopbarWrap();
 }
 
 // ── v1.0.0 sa-A: sidebar + statusline ──
@@ -5915,6 +6720,12 @@ void ControlPanel::refreshTopbarTitle()
 //   * Single  → one row per panel the game has (the mother panels).
 //   * Split   → the split host's rows, grouped by parent slot, PLUS the
 //               one mother row that has no split table (pets).
+//   * Mixed   → as Single the board sees, but the RUN's topology is
+//               buildWindowTopology(): the mothers that still mount plus
+//               one row per DETACHED window (v1.1.2). The chip and this
+//               rail both count that, because a window the user split
+//               off is a window the overlay mounts whether or not the
+//               board can draw it here.
 // Deriving from that list instead of a second walk of the live objects
 // is what makes "3 窗" on the rail the same statement as the chip: both
 // are now functions of one model. The pets row is the reason this
@@ -5927,7 +6738,11 @@ void ControlPanel::refreshNavCounts()
     // Per-panel window counts, and the total.
     std::array<int, mhw::kPanelCount> counts{};
     int total = 0;
-    for (const mhw::WindowState &w : buildWindowStates()) {
+    // THE SAME MODEL THE CHIP COUNTS FROM — the point of sa-A was that
+    // the rail and the stage chip are two readings of one list, and in
+    // Mixed that list has to be the RUN's topology (the detached windows
+    // are windows), not only the board's rows.
+    for (const mhw::WindowState &w : buildWindowTopology()) {
         if (!mhw::isPanelIndex(w.panelIndex))
             continue;
         ++counts[w.panelIndex];
@@ -6090,28 +6905,63 @@ void ControlPanel::refreshInstanceCombo()
 // file resolves screens: screen_query's catalog first (that is what the
 // 目标显示器 combo lists and what `· 2560×1440` prints), then Qt's own
 // screen list (which is what Panel::setOutputName() validates against),
-// then the primary. An empty size means "no screen at all" and the
-// caller skips the conversion rather than inventing a frame — an
-// unconvertible coordinate must read as "cannot say", not as (0,0).
+// and only then — for an EMPTY name — the unnamed primary, and only while
+// the platform itself has no named screen (see the function). An empty
+// size means "no screen at all" and the caller skips the conversion rather
+// than inventing a frame — an unconvertible coordinate must read as
+// "cannot say", not as (0,0).
 static QSize logicalSizeForOutput(const QString &outputName)
 {
     const QList<screen_query::OutputInfo> screens = screen_query::listOutputs();
+    // Nameless entries are skipped deliberately: listOutputs() synthesises
+    // `screen@x,y` for a screen Qt has not named yet, and Qt's own list
+    // carries the raw empty name. Matching those against an empty
+    // outputName is what let a selection with NO output answer "I am on a
+    // screen" — see the empty-name arm below.
     for (const screen_query::OutputInfo &o : screens)
-        if (o.name == outputName)
+        if (!o.name.isEmpty() && o.name == outputName)
             return o.geometry.size();
+    bool anyNamed = false;
     for (QScreen *s : QGuiApplication::screens()) {
-        if (s && s->name() == outputName)
+        if (!s)
+            continue;
+        if (s->name().isEmpty())
+            continue;
+        anyNamed = true;
+        if (s->name() == outputName)
             return s->geometry().size();
     }
+    // A name the platform does not have (stale model, screen unplugged
+    // mid-drag) is NOT the primary. Reporting the primary here is how an
+    // unowned selection got framed as a window on screen 1: the caller
+    // saw valid=true, enabled the coordinate form and multiplied the
+    // number by a scale that did not belong to that display.
+    if (!outputName.isEmpty())
+        return QSize();
+    // Empty name. The chain resolved to "no output", which is only a real
+    // geometry while the platform itself has no NAMED screen: the offscreen
+    // backend reports its single screen with an empty name, and there that
+    // unnamed screen is the only truth there is (so the tests' windows keep
+    // their frame). With a named screen present, "" means the selection has
+    // no output of its own and the honest answer is "cannot say".
+    if (anyNamed)
+        return QSize();
     if (QScreen *primary = QGuiApplication::primaryScreen())
         return primary->geometry().size();
     return QSize();
 }
 
 // The one place both halves of stage D ask for the frame: the
-// (0,0)-anchored logical rect of the SELECTED window's own output, plus
+// (0,0)-anchored logical rect of the SELECTED object's own output, plus
 // the corner/extent/scale the canvas itself paints from (the selected
-// window's own Panel — the same object layoutSubWindowRects() reads).
+// Panel — the same object layoutSubWindowRects() reads).
+//
+// D1: the frame now comes from the ONE accessor rather than from a
+// WindowState that may not exist. `w.outputResolved` is only ever set for
+// a real window row, and a mother focus in Split has no row — that empty
+// string used to be read as "screen 1" by logicalSizeForOutput()'s old
+// primary fallback, which is why the coordinate form was enabled while
+// every write was refused.
 struct WindowFrame {
     QRect screen;      // (0,0) + the output's logical size
     Corner corner{Corner::TopLeft};
@@ -6120,32 +6970,282 @@ struct WindowFrame {
     bool valid{false};
 };
 
-static WindowFrame windowFrameFor(const mhw::WindowState &w, Panel *panel)
+static WindowFrame windowFrameFor(const ControlPanel::EditableSelection &sel)
 {
     WindowFrame f;
-    if (!panel)
+    if (!sel.panel)
         return f;
-    const QSize logical = logicalSizeForOutput(w.outputResolved);
+    const QSize logical = logicalSizeForOutput(sel.resolvedOutput);
     if (logical.isEmpty())
         return f;
     f.screen = QRect(QPoint(0, 0), logical);
-    f.corner = panel->corner();
-    f.content = panel->contentSize();
-    f.scale = panel->scale();
+    f.corner = sel.panel->corner();
+    f.content = sel.panel->contentSize();
+    f.scale = sel.panel->scale();
     f.valid = true;
     return f;
 }
+
+// ── D1: THE ONE EDIT TARGET ───────────────────────────────────────────
+//
+// currentEditableSelection() is the single answer to "what is selected,
+// and where does an edit land"; selectedPanelOrNull() below is now its
+// capability-rows spelling (`sel.panel`), so the two can no longer
+// disagree. The struct's contract is documented on the declaration.
+//
+// THE MOTHER ARM IS NOT OPTIONAL. `selectedWindow()` describes a WINDOW,
+// and a mother panel is not one: selecting a mother row gives it no
+// panelIndex, so an early `if (w.panelIndex < 0) return;` made every
+// capability row read "nothing selected" for exactly the case the user
+// reaches by clicking the mother in the overview — the rows then hid
+// themselves, which is why the column row looked broken rather than
+// merely absent. `selectedPanel_` is the member selectPanel()/
+// selectWindow() both maintain, so it is the honest answer for that case.
+// What was NOT honest was leaving the FORM on selectedWindow() while the
+// rows used this: in Split a mother focus answered "your panel" one way
+// and "invalid window" the other. Both halves come from here now.
+static const char *const kMotherShortTitle[mhw::kPanelCount] = {
+    "console.proto.win.short.player", "console.proto.win.short.monster",
+    "console.proto.win.short.damage", "console.proto.win.short.pet"
+};
+
+// The output a panel frames against, resolved by the SAME chain
+// buildWindowStates() runs for a real row — own → parent → primary, and a
+// MOTHER's parent is nobody, so its tail is the primary (the comment on
+// the mother row says exactly this). effectiveOutputName() keeps the
+// answer inside the live screen set, so an empty result can only mean
+// "nothing can be named", which windowFrameFor() reads as "no frame".
+// This exists because a mother focus in Split has no window row to carry
+// `w.outputResolved`, and inventing one from "" is what used to frame it
+// on screen 1.
+static QString resolveOutputForPanel(Panel *panel)
+{
+    if (!panel)
+        return QString();
+    QScreen *qs = QGuiApplication::primaryScreen();
+    return screen_query::effectiveOutputName(
+        mhw::resolveWindowOutput(panel->outputName(), QString(),
+                                 qs ? qs->name() : QString()));
+}
+
+ControlPanel::EditableSelection ControlPanel::currentEditableSelection() const
+{
+    EditableSelection sel;
+    const mhw::WindowState w = selectedWindow();
+
+    // ── the window arm: a row of buildWindowStates() really matched ────
+    Panel *panel = nullptr;
+    bool fromRow = false;
+    if (w.subIndex >= 0 && splitPreview_) {
+        panel = splitPreview_->windowAt(w.subIndex);
+        fromRow = true;
+    } else if (w.panelIndex >= 0) {
+        panel = panelAt(w.panelIndex);
+        fromRow = true;
+    }
+    if (fromRow) {
+        // A row that names a Panel which has since been rebuilt answers
+        // "nothing editable" — the same "absent, not blank" rule
+        // selectedWindow() uses, and never a fall-through to the mother.
+        if (!panel)
+            return sel;
+        sel.panel = panel;
+        sel.panelIndex = w.panelIndex;
+        sel.subIndex = w.subIndex;
+        sel.hasWindow = true;
+        sel.window = w;
+        sel.resolvedOutput = w.outputResolved;
+        sel.ownOutput = panel->outputName();
+        sel.title = w.title;
+        return sel;
+    }
+
+    // ── the mother arm: no window row, but a panel slot the user chose ──
+    // A mother counts ONLY once the user has actually chosen a slot —
+    // `panelSlotChosen_`, not `selectedPanel_ >= 0`, which is true on a
+    // cold start because the member defaults to 0. Before the user picks
+    // anything the honest answer is "nothing selected", and that is what
+    // keeps the inspector's empty block on screen at startup.
+    if (!(panelSlotChosen_ && selectedPanel_ >= 0
+          && mhw::isFidelityPanelIndex(selectedPanel_)))
+        return sel;
+    // Pets exist only in Rise; in World that slot is a placeholder and
+    // must not answer "here is your panel".
+    if (selectedPanel_ == 3 && currentGame() == mhw::GameId::World)
+        return sel;
+    Panel *mother = panelAt(selectedPanel_);
+    if (!mother)
+        return sel;
+    sel.panel = mother;
+    sel.panelIndex = selectedPanel_;
+    sel.resolvedOutput = resolveOutputForPanel(mother);
+    sel.ownOutput = mother->outputName();
+    sel.title = consoleText(QString::fromLatin1(kMotherShortTitle[sel.panelIndex]));
+    return sel;
+}
+
+// The capability rows' name for the same thing: literally the accessor's
+// `panel`. Kept because it is the documented "write to THIS instance"
+// spelling of 验收项5 and four test files call it directly — but it can no
+// longer answer a different object than the metadata form does.
+Panel *ControlPanel::selectedPanelOrNull() const
+{
+    return currentEditableSelection().panel;
+}
+
+// ── THE GAME FILTER THE WINDOW LISTS DID NOT HAVE ──────────────────────
+// 实测缺陷3: 窗口分组 (the Mixed 独立/合并 block) and 本组子窗 (the
+// sibling chips) both walk a list of KEYS, and the registry behind them
+// (window_layout_plan.h) is deliberately game-agnostic — one table
+// carries both 衣装 and 翔虫 so either game can resolve its own plan
+// from the same spelling. A LIST is a different statement: it says "this
+// console offers you these windows", and under the game in force those
+// two keys are not offered. `player-mantles` is a WORLD block and
+// `player-wirebug` a RISE one — panelSectionSchema() already masks those
+// two bits out of every count, so a row that listed them for the wrong
+// game was a switch whose section total could never leave 0.
+//
+// Pets is the same rule one level up: the companion surface has no World
+// data source at all (switchGame()'s `petsAvailable`, and buildWindow_
+// States()'s own panel-3 arm), and its settings key is `pet-damage`
+// (panel_pet_damage.cpp:220). `player-pets` is accepted as a second
+// spelling so a future key cannot re-open the hole by being spelled
+// differently.
+//
+// ONE function, two callers (the chips and the block), so the two lists
+// can never disagree about what the current game has.
+static bool windowKeyInGame(const QString &settingsKey, mhw::GameId game)
+{
+    if (settingsKey == QLatin1String("player-mantles"))
+        return game != mhw::GameId::Rise;   // World only
+    if (settingsKey == QLatin1String("player-wirebug"))
+        return game == mhw::GameId::Rise;   // Rise only
+    if (settingsKey == QLatin1String("pet-damage")
+        || settingsKey == QLatin1String("player-pets"))
+        return game == mhw::GameId::Rise;   // 伙伴, Rise only
+    return true;                            // every other key is both games'
+}
+
+// The group column's `on/total`, in ONE place: a window row carries its
+// own counts, and a MOTHER focus in Split has no row — so the very
+// arithmetic buildWindowStates() runs for a mother row is redone here
+// (the game-filtered schema against the panel's live mask). Two copies of
+// this number printed on the same face is how they drift apart, which is
+// the D1 defect one level down.
+static void sectionCountsFor(const ControlPanel::EditableSelection &sel,
+                             mhw::GameId game, int &on, int &total)
+{
+    on = 0;
+    total = 0;
+    if (!sel.panel)
+        return;
+    if (sel.hasWindow) {
+        on = sel.window.sectionsOn;
+        total = sel.window.sectionsTotal;
+        return;
+    }
+    const uint32_t schema = panelSectionSchema(sel.panelIndex, game);
+    total = countSectionBits(schema);
+    on = countSectionBits(sel.panel->sectionMask() & schema);
+}
+
+/* ── 实测缺陷8 / 缺陷9 (user-8): THE HONEST CEILINGS OF THE CAPABILITY ROWS ──
+   列数 — its range is NOT a number this file invented. It is the union of
+   what the six supportsColumns() implementations will actually accept,
+   read off their own clamps (every one of them floors at 1, so 0 is never
+   a column count — a 0 would also divide statusStripRows() by zero):
+
+     panel_player_split.cpp:453            std::clamp(x, 1, 6)      [1, 6]
+         (= mhw::kStatusStripMinColumns/MaxColumns, panel_player_split.h:98-99)
+     panel_monster_split_parts.cpp:476     std::clamp(x, 1, kPcCols + 3) = [1, 6]
+         (kPcCols = 3, panel_monster_split_parts.cpp:57)
+     panel_monster_split_conditions.cpp:628  std::clamp(x, 1, kPcCols + 3) = [1, 6]
+     panel_monster_split_ail.cpp:389       clamp(x, kMonsterAilMinColumns=1,
+                                              kMonsterAilMaxColumns=6)  [1, 6]
+     panel_player_split_wirebug.cpp:330    std::clamp(x, 1, 4)
+         (= kWirebugMaxColumns, panel_player_split_wirebug.h:91)
+     panel_player_split_mantles.cpp:364    std::clamp(x, 1, 2)
+         (= kMantlesMaxColumns, panel_player_split_mantles.h:73)
+
+   So the widest honest span the dial can drive is [1, 6] — and the box
+   used to claim [1, 64], a number no Panel in the tree would honour:
+   typing 64 came back as 6 (setColumnsTo() reaches the same clamps),
+   which is a control that lies about its own limits. Adding a seventh
+   supportsColumns() implementation with a wider clamp means bumping
+   kColumnsRowMax here — that is the one place this number is spelled.
+
+   The four SIZE rows are the same discipline on two axes. Their values
+   are LOGICAL pixels of the window in its target output — the same space
+   坐标 uses — and two facts bound them:
+
+     1. Panel clamps every one of the four to [0, kMaxMinSize] = [0, 4096]
+        (panel.cpp:1909/1922/1948/1961/1971/1981) and 0 means ABSENT
+        (panel.h:787-790, restoreAutoSize() writes 0 for all four). So a
+        UI ceiling may never exceed 4096, and reaching one is legal.
+     2. A window bigger than the screen it is bound to cannot even be
+        MOVED: HudCanvas::movedSubMargins() clamps a drag with
+        `maxX = max(0, logical.width() - panel.width())` (hud_canvas.cpp:2195,
+        in movedSubMargins) and Panel::marginLimits() does the same arithmetic — the
+        box's whole range collapses to a single corner. Sizes are logical
+        coordinates of that output, so the output's own logical size is
+        the largest number that means anything.
+
+   Hence two ceilings, one per axis — 宽 and 高 are different dimensions,
+   which is exactly what the user's 「可调范围太离谱」 was about:
+
+     kSizeRowMaxWidth  2560  — the landscape output this project's own
+                                code and fixtures document as the real
+                                one (DP-1 2560x1440: hud_canvas.cpp:430,
+                                panel.h:559-563, control_panel.cpp:1215),
+                                and above screen_query's 1920x1080
+                                fallback (screen_query.h:32).
+     kSizeRowMaxHeight 1440  — its height. Half of Panel::kMaxMinSize
+                                and 3× the 1080p fallback: a height row
+                                can no longer be dragged to 4096, which
+                                is 4096 px of a screen nobody has.
+
+   Both stay UNDER the hard ceiling of fact 1, and the refill below grows
+   a row's range when this window already stores something bigger, so the
+   narrower span can never lie about a value the overlay's own edit keys
+   (kMinSizeStep, panel.h:795) already wrote into panels.ini.
+   ── end 实测缺陷8 / 缺陷9 ── */
+static constexpr int kColumnsRowMin = 1;
+static constexpr int kColumnsRowMax = 6;
+static constexpr int kSizeRowMaxWidth = 2560;
+static constexpr int kSizeRowMaxHeight = 1440;
 
 void ControlPanel::buildInspectorForSelection()
 {
     if (!winPosX_ || !winPosY_)
         return;   // the ctor has not built the inspector's face yet
 
-    const mhw::WindowState w = selectedWindow();
+    // ── D1: ONE SELECTION, ONE READING ──────────────────────────────────
+    // Every block below used to ask TWO questions about the same click:
+    // the form asked selectedWindow() (a WINDOW — invalid for a mother
+    // focus in Split, which emits no mother row) while the capability rows
+    // asked selectedPanelOrNull() (which can answer a mother). The same
+    // selection therefore produced a form showing a default-constructed
+    // window's numbers over a panel that plainly had others, and the
+    // form's write guards refused what its own readouts claimed to be
+    // editing. There is one accessor now and both halves answer it.
+    const EditableSelection sel = currentEditableSelection();
     windowModelRefilling_ = true;
 
     // ── column 1: metadata ────────────────────────────────────────────
-    if (w.panelIndex < 0) {
+    //
+    // `!sel.panel` means NOTHING is editable: no window row matched and no
+    // mother slot has been chosen (the cold start, and every scope change
+    // — resetViewStateAfterScopeChange() clears the slot too). The honest
+    // state is a cleared form, not the previous object's numbers left on
+    // screen behind a disabled control.
+    //
+    // A MOTHER focus is NOT this arm. Clicking a mother panel in the
+    // overview yields a real inspection target with a real size, a real
+    // output and real sliders — the early `w.panelIndex < 0` read greyed
+    // out the whole size block for a panel that plainly has those
+    // properties, and the opposite overcorrection (enabled controls over a
+    // window state that does not exist) is what D1 records.
+    if (!sel.panel) {
         // Nothing selected: the honest state is a cleared form, not the
         // previous window's numbers left on screen. The prototype's
         // #selection-chip reads 未选择 and the form is empty.
@@ -6159,12 +7259,61 @@ void ControlPanel::buildInspectorForSelection()
             winOutput_->blockSignals(false);
             winOutput_->setEnabled(false);
         }
-        if (winScale_)
+        if (winOutputHint_)
+            winOutputHint_->setText(QString());
+        // D1: the READOUTS clear too. Grey-ing a control while its label
+        // still shows the last window's `150%` is the lying reading the
+        // audit recorded — a disabled control displaying someone else's
+        // numbers is a control that lies. Sliders go to their neutral 100
+        // (the Panel defaults, and inside both ranges), the value labels
+        // to empty (the prototype's "form is empty"), the switch to its
+        // default of off — all with signals blocked, so this reads as a
+        // refill and never as a user edit.
+        if (winScale_) {
+            winScale_->blockSignals(true);
+            winScale_->setValue(100);
+            winScale_->blockSignals(false);
             winScale_->setEnabled(false);
-        if (winOpacity_)
+        }
+        if (winScaleValue_)
+            winScaleValue_->setText(QString());
+        if (winOpacity_) {
+            winOpacity_->blockSignals(true);
+            winOpacity_->setValue(100);
+            winOpacity_->blockSignals(false);
             winOpacity_->setEnabled(false);
-        if (winVisible_)
+        }
+        if (winOpacityValue_)
+            winOpacityValue_->setText(QString());
+        if (winVisible_) {
+            winVisible_->blockSignals(true);
+            winVisible_->setChecked(false);
+            winVisible_->blockSignals(false);
             winVisible_->setEnabled(false);
+        }
+        // 验收项5: with no window there is no capability to report. The
+        // rows go dark rather than keeping the last window's numbers
+        // alive behind a hidden face.
+        for (QSpinBox *s : {winColumnsSpin_, winMinWSpin_, winMinHSpin_,
+                            winLockWSpin_, winLockHSpin_})
+            if (s)
+                s->setEnabled(false);
+        // 实测缺陷6: the slider halves go dark with their boxes — a live
+        // drag over an empty form would be a control acting on nothing.
+        for (QSlider *s : {winMinWSlider_, winMinHSlider_, winLockWSlider_,
+                           winLockHSlider_})
+            if (s)
+                s->setEnabled(false);
+        // 实测缺陷8: the 列数 − / + pair goes dark with the row it lives
+        // in — a click with nothing selected would step a box nobody is
+        // looking at, and the row is hidden right below anyway.
+        for (QPushButton *b : {winColumnsMinus_, winColumnsPlus_})
+            if (b)
+                b->setEnabled(false);
+        if (winColumnsRow_)
+            winColumnsRow_->hide();
+        if (winAutoBtn_)
+            winAutoBtn_->setEnabled(false);
         // The draft's whole empty arm: the columns are REPLACED by the
         // centered block, and the head's sub line says how to fix it.
         if (inspectorHeadSub_)
@@ -6174,6 +7323,17 @@ void ControlPanel::buildInspectorForSelection()
             inspectorEmpty_->show();
             if (contentScrollHost_)
                 contentScrollHost_->hide();
+            // round2: the OTHER half leaves with it — with two scroll
+            // boxes in the face, hiding only the left one would leave the
+            // splitter stretching an empty preview card across the whole
+            // drawer and the empty block no room at all.
+            if (previewScrollHost_)
+                previewScrollHost_->hide();
+            // …and the card's height budget (a function of the SELECTION's
+            // columns) goes with the selection: nothing is selected, so
+            // nothing may keep the last window's row height.
+            if (windowPreviewCol_)
+                windowPreviewCol_->setMinimumHeight(0);
         }
         if (selectionChip_)
             selectionChip_->setText(
@@ -6185,8 +7345,13 @@ void ControlPanel::buildInspectorForSelection()
         return;
     }
 
-    winPosX_->setEnabled(true);
-    winPosY_->setEnabled(true);
+    // ── the five controls: one honest enable rule each ───────────────────
+    // Nothing is enabled before its own source exists. The coordinate form
+    // is enabled exactly when a frame exists; 显示该窗口 exactly when a
+    // WINDOW row exists — in Split a mother panel is not a window, so no
+    // row in buildWindowStates() would ever read the key that switch
+    // writes (pushWindowVisibility() only walks rows), and an enabled
+    // control that nothing can act on is the same lie, just quieter.
     if (winOutput_)
         winOutput_->setEnabled(true);
     if (winScale_)
@@ -6194,7 +7359,7 @@ void ControlPanel::buildInspectorForSelection()
     if (winOpacity_)
         winOpacity_->setEnabled(true);
     if (winVisible_)
-        winVisible_->setEnabled(true);
+        winVisible_->setEnabled(sel.hasWindow);
 
     // Position. THE LOGICAL TOP-LEFT INSIDE THE WINDOW'S OWN OUTPUT —
     // reference.html:495's 「坐标是 <该屏> 内的逻辑坐标」. This used to
@@ -6211,18 +7376,23 @@ void ControlPanel::buildInspectorForSelection()
     // rather than fed a fabricated frame — an unconvertible coordinate
     // says so instead of lying.
     {
-        Panel *selPanel = (w.subIndex >= 0 && splitPreview_)
-                              ? splitPreview_->windowAt(w.subIndex)
-                              : panelAt(w.panelIndex);
-        const WindowFrame f = windowFrameFor(w, selPanel);
-        const bool convert = f.valid && selPanel;
+        // D1: the SAME accessor the capability rows use — and the frame
+        // comes from it too. A mother focus in Split has no window row, so
+        // `w.outputResolved` does not exist for it; the accessor resolves
+        // the panel's own output by the chain the model would have run,
+        // and when nothing can be named at all the form stays DISABLED
+        // instead of being fed a fabricated frame (an unconvertible
+        // coordinate says so rather than lying — see
+        // logicalSizeForOutput()'s empty-name rule).
+        const WindowFrame f = windowFrameFor(sel);
+        const bool convert = f.valid;
         if (winPosX_)
             winPosX_->setEnabled(convert);
         if (winPosY_)
             winPosY_->setEnabled(convert);
         if (convert) {
             const QPoint tl = mhw::layout::anchoredTopLeft(
-                f.corner, w.margins, f.screen, f.content, f.scale);
+                f.corner, sel.panel->pushedMargins(), f.screen, f.content, f.scale);
             if (!winPosX_->hasFocus())
                 winPosX_->setValue(tl.x());
             if (!winPosY_->hasFocus())
@@ -6233,47 +7403,216 @@ void ControlPanel::buildInspectorForSelection()
         }
     }
 
-    // Target display. The first entry is 跟随所属面板 (empty userData)
-    // — the prototype's `follow`. The rest are the outputs Qt reports.
-    // The combo selects THIS window's own outputName (`w.outputOwn`), so
-    // a split sub-window that has been given a pick shows it here, and
-    // picking one writes the sub-window's own key rather than its
-    // mother's — see applySelectedWindowOutput() for why.
+    // 目标显示器. The first entry is the automatic mode with empty
+    // userData — the prototype's `follow` — and the rest are the outputs
+    // Qt reports, labelled `DP-1 · 2560×1440` exactly as the
+    // prototype's labelDisplay() spells them. This window may also carry
+    // its OWN pick — a split sub-window included — and the combo selects
+    // it from `w.outputOwn`.
+    /* ── 实测缺陷5 (usability-2): WHAT THE AUTOMATIC ENTRY MEANS ──────────
+       跟随所属面板 was a phrase nobody could map onto a screen, and the
+       question it triggered (「这个是不是多余选项？」) is answered by the
+       code, not by taste: it is the ONLY automatic mode there is — the
+       other entries are concrete screens — so it is not redundant, it is
+       just mis-named. Read off mhw::resolveWindowOutput() and
+       screen_query::effectiveFrom(), the chain is own → parent → primary:
+
+         选中子窗口:  own (空) → 母面板所在屏 → 系统主屏
+         选中母面板:  own (空) → 系统主屏（母面板之上没有母面板）
+
+       and effectiveFrom()'s rule 2 adds: a stored screen that is OFFLINE
+       also lands on the primary, because mounting on a screen that is not
+       there is worse than mounting on the wrong one.
+
+       So the entry is named for the case the user is looking at
+       (跟随主面板 / 跟随主屏), and winOutputHint_ states which screen the
+       chain resolves to RIGHT NOW — the actual answer to "which display
+       does this go to?".
+       ── end 实测缺陷5 ── */
+    const auto outs = screen_query::listOutputs();
+    /* ── 实测缺陷7 (user-8): WHO 「跟随主面板」 ACTUALLY FOLLOWS ────────────
+       「母面板到底是哪个？」 — a real information gap, not a wording nit:
+       the entry names the MODE (follow the mother panel's screen) and
+       nothing on the face says which panel that is. The answer is printed
+       in the TWO places the statement is true:
+
+         combo entry  跟随主面板（玩家）      — what the option will follow
+         the line      主面板：玩家（DP-1 · 2560×1440） → 实际显示到：…
+
+       so the whole chain is readable in one glance instead of being
+       inferred from the chain's second hop.
+
+       The mother is `panelAt(sel.panelIndex)` — the SAME instance
+       buildWindowStates() hands to resolveWindowOutput() as this
+       window's parent (the `parent->outputName()` arm at :10426/:10637),
+       so this can never name a different panel than the resolution
+       actually consulted; its screen is resolved by the same
+       resolveOutputForPanel() helper (own → parent → primary) the mother
+       arm above uses. A MOTHER selection (subIndex < 0) has no panel
+       above it, so neither string changes for it — the chain there is
+       own → primary and 跟随主屏 already says so.
+       ── end 实测缺陷7 ── */
+    const bool followsMother = sel.subIndex >= 0;
+    Panel *motherPanel =
+        (followsMother && mhw::isPanelIndex(sel.panelIndex))
+            ? panelAt(sel.panelIndex)
+            : nullptr;
+    const QString motherName =
+        motherPanel
+            ? consoleText(QString::fromLatin1(kMotherShortTitle[sel.panelIndex]))
+            : QString();
+    const QString motherScreen =
+        motherPanel ? resolveOutputForPanel(motherPanel) : QString();
+    QString autoEntry =
+        consoleText(followsMother
+                        ? QStringLiteral("console.proto.follow_parent")
+                        : QStringLiteral("console.proto.follow_primary"));
+    if (followsMother && !motherName.isEmpty())
+        autoEntry = consoleText(
+                        QStringLiteral("console.proto.follow_parent_named"))
+                        .arg(motherName);
     if (winOutput_) {
         winOutput_->blockSignals(true);
         winOutput_->clear();
-        winOutput_->addItem(consoleText(QStringLiteral("console.proto.follow")),
-                            QString());
-        for (const screen_query::OutputInfo &o : screen_query::listOutputs())
-            winOutput_->addItem(mhw::displayLabel(o.name,
-                                                  screen_query::listOutputs()),
-                                o.name);
-        const int at = winOutput_->findData(w.outputOwn);
+        winOutput_->addItem(autoEntry, QString());
+        for (const screen_query::OutputInfo &o : outs)
+            winOutput_->addItem(mhw::displayLabel(o.name, outs), o.name);
+        const int at = winOutput_->findData(sel.ownOutput);
         winOutput_->setCurrentIndex(at >= 0 ? at : 0);
         winOutput_->blockSignals(false);
     }
+    if (winOutputHint_) {
+        // 实测缺陷5: the resolved screen, or the honest "no screen can be
+        // named" (offscreen, mid-hotplug) — sel.resolvedOutput is EMPTY
+        // there on purpose and must never be papered over with a guess.
+        QString resolved =
+            consoleText(QStringLiteral("console.proto.target_resolved"))
+                .arg(sel.resolvedOutput.isEmpty()
+                         ? QStringLiteral("—")
+                         : mhw::displayLabel(sel.resolvedOutput, outs));
+        // 实测缺陷7: prepend WHOSE screen the sub-window is following, so
+        // 「跟随主面板」 is answerable without leaving this row.
+        if (followsMother && !motherName.isEmpty())
+            resolved =
+                consoleText(QStringLiteral("console.proto.target_mother"))
+                    .arg(motherName,
+                         motherScreen.isEmpty()
+                             ? QStringLiteral("—")
+                             : mhw::displayLabel(motherScreen, outs))
+                + QStringLiteral(" → ") + resolved;
+        winOutputHint_->setText(resolved);
+    }
 
+    // 缩放 / 透明度 read off the PANEL itself: for a window row that is the
+    // same instance buildWindowStates() copied `w.scale` from (so no
+    // existing reading moves), and for a mother focus it is the ONLY source
+    // — there is no row, and the default-constructed 1.0 the form used to
+    // show there was this exact lie (a "100%" over a panel at 150%).
+    const qreal scaleNow = sel.panel->scale();
+    const qreal opacityNow = sel.panel->opacity();
     if (winScale_) {
         winScale_->blockSignals(true);
-        winScale_->setValue(qRound(w.scale * 100));
+        winScale_->setValue(qRound(scaleNow * 100));
         winScale_->blockSignals(false);
     }
     if (winScaleValue_)
-        winScaleValue_->setText(QStringLiteral("%1%").arg(qRound(w.scale * 100)));
+        winScaleValue_->setText(QStringLiteral("%1%").arg(qRound(scaleNow * 100)));
     if (winOpacity_) {
         winOpacity_->blockSignals(true);
-        winOpacity_->setValue(qRound(w.opacity * 100));
+        winOpacity_->setValue(qRound(opacityNow * 100));
         winOpacity_->blockSignals(false);
     }
     if (winOpacityValue_)
-        winOpacityValue_->setText(QStringLiteral("%1%").arg(qRound(w.opacity * 100)));
+        winOpacityValue_->setText(QStringLiteral("%1%").arg(qRound(opacityNow * 100)));
     // The second visibility axis. panelEnabled is the master gate and is
     // NOT what this checkbox says — a window can be hidden while its
-    // panel still mounts the others.
+    // panel still mounts the others. Read from the panel's OWN key (the
+    // same group/key buildWindowStates() reads for the row), so a mother
+    // focus shows the panel's stored bit rather than a window's default.
     if (winVisible_) {
         winVisible_->blockSignals(true);
-        winVisible_->setChecked(w.visiblePersisted);
+        winVisible_->setChecked(mhw::readWindowVisible(
+            sel.panel->settingsGroup(), sel.panel->settingsKey()));
         winVisible_->blockSignals(false);
+    }
+    /* ── 验收项5: THE CAPABILITY ROWS, REFILLED PER SELECTION ──────────────
+       Values are read off THIS window's Panel, and 列数 is only SHOWN
+       when supportsColumns() says the dial would do something — so a
+       window with no column axis never presents a column control, and
+       the number on screen can never be a previous selection's.
+       Signals are blocked for the refill: the rows' handlers are real
+       writes, and a programmatic setValue must not sound like a user
+       edit (windowModelRefilling_ guards the same thing for the fields
+       above; blocking is what makes the guard unnecessary here).
+       ── end 验收项5: refill ── */
+    {
+        // D1: the rows read the SAME object as everything above — the
+        // accessor's `panel`, not a second lookup that could answer a
+        // different instance.
+        Panel *selPanel = sel.panel;
+        const bool have = selPanel != nullptr;
+        const bool cols = have && selPanel->supportsColumns();
+        if (winColumnsRow_)
+            winColumnsRow_->setVisible(cols);
+        // 实测缺陷9 (user-8): THE RANGE IS PART OF THE READING, and it is
+        // set in the SAME blocked pass as the value, for both halves.
+        // `rangeHi <= 0` means "leave this row's range alone" (the 列数
+        // dial: its [1, 6] is the union of the subclasses' own clamps, a
+        // constant, not something a selection changes).
+        //
+        // The ceiling applied is `max(default, value)` — NEVER just the
+        // default. Panel clamps what it STORES to kMaxMinSize (4096) and
+        // the overlay's own edit keys (Panel::kMinSizeStep) can put a
+        // number there that is above this row's honest dial range; a
+        // widget that clamps what it displays then reads that lie back on
+        // the next drag. Growing to fit is therefore the truth-telling
+        // arm, and shrinking back to the default when the value fits is
+        // what keeps the narrow, usable span the normal state.
+        auto refill = [have](QSpinBox *spin, QSlider *slider, int value,
+                             int rangeHi) {
+            // 实测缺陷6: BOTH halves of the field in one pass, both with
+            // signals blocked — a selection change has to move the slider
+            // and the box together, and must never look like a user edit
+            // (the spin box's valueChanged is the only Panel writer).
+            if (spin) {
+                spin->blockSignals(true);
+                spin->setEnabled(have);
+                if (have) {
+                    if (rangeHi > 0)
+                        spin->setRange(0, qMax(rangeHi, value));
+                    spin->setValue(value);
+                }
+                spin->blockSignals(false);
+            }
+            if (slider) {
+                slider->blockSignals(true);
+                slider->setEnabled(have);
+                if (have) {
+                    if (rangeHi > 0)
+                        slider->setRange(0, qMax(rangeHi, value));
+                    slider->setValue(value);
+                }
+                slider->blockSignals(false);
+            }
+        };
+        refill(winColumnsSpin_, nullptr, cols ? selPanel->columns() : 1, 0);
+        refill(winMinWSpin_, winMinWSlider_, have ? selPanel->minWidth() : 0,
+               kSizeRowMaxWidth);
+        refill(winMinHSpin_, winMinHSlider_, have ? selPanel->minHeight() : 0,
+               kSizeRowMaxHeight);
+        refill(winLockWSpin_, winLockWSlider_, have ? selPanel->lockWidth() : 0,
+               kSizeRowMaxWidth);
+        refill(winLockHSpin_, winLockHSlider_, have ? selPanel->lockHeight() : 0,
+               kSizeRowMaxHeight);
+        // 实测缺陷8: the − / + pair is enabled exactly when the dial it
+        // steps is — `cols` already carries `have`, and the row itself is
+        // hidden the moment it is false (so this is the visible case).
+        if (winColumnsMinus_)
+            winColumnsMinus_->setEnabled(cols);
+        if (winColumnsPlus_)
+            winColumnsPlus_->setEnabled(cols);
+        if (winAutoBtn_)
+            winAutoBtn_->setEnabled(have);
     }
 
     // ── column 1: the window's group and its siblings ──────────────────
@@ -6285,6 +7624,16 @@ void ControlPanel::buildInspectorForSelection()
     // set is per panel: a player window has five siblings, a monster
     // window one.
     if (windowGroupCol_) {
+        // THE MIXED BLOCK OUTLIVES THE PURGE. It is built once (its rows
+        // are the registry, not the selection) and lives in this column,
+        // so it has to come OUT of the old layout before that layout's
+        // takeAt()/delete loop runs: the loop deletes the widgets it
+        // removes, which is exactly right for the per-selection chips and
+        // exactly wrong for this one. The new layout re-attaches it below.
+        if (mixedGroupHost_) {
+            if (QLayout *prev = windowGroupCol_->layout())
+                prev->removeWidget(mixedGroupHost_);
+        }
         // Delete the previous run's children rather than hiding them: a
         // QVBoxLayout on a frame that already has widgets would stack
         // run after run, and the group's window count is exactly what
@@ -6296,6 +7645,28 @@ void ControlPanel::buildInspectorForSelection()
                 delete item;
             }
             delete old;
+        }
+        // LIVENESS, BY NAME AND NEVER BY THE STORED POINTER: whatever the
+        // loop above deleted, the frame either survived (removeWidget
+        // above took it out first — same pointer back, so the "built
+        // once" identity holds) or it did not (pointer comparison only,
+        // no dereference: a deleted frame answers nothing). In the second
+        // case the stale vectors are dropped with it and
+        // buildMixedGroupBlock() below rebuilds a real one — which is
+        // also exactly what a test asserting the block's identity across
+        // a refill will notice.
+        {
+            QFrame *live = nullptr;
+            const auto frames = windowGroupCol_->findChildren<QFrame *>(
+                QStringLiteral("mixedGroupBlock"),
+                Qt::FindDirectChildrenOnly);
+            for (QFrame *frame : frames)
+                live = frame;
+            if (live != mixedGroupHost_) {
+                mixedGroupHost_ = live;
+                mixedGroupToggles_.clear();
+                mixedGroupStateLabels_.clear();
+            }
         }
         auto *groupLayout = new QVBoxLayout(windowGroupCol_);
         groupLayout->setContentsMargins(0, 0, 0, 0);
@@ -6328,18 +7699,38 @@ void ControlPanel::buildInspectorForSelection()
         // The count is `%1/%2` — pure QString::arg() over two counts with
         // no consoleText() in it, so it is set directly rather than
         // through a hook (see refreshGroupColumn() for the live text).
+        // sectionCountsFor() supplies the mother-focus arm: printing the
+        // window row's defaults (0/0) there would read as "this panel
+        // draws nothing", which is false.
+        int sectionsOn = 0;
+        int sectionsTotal = 0;
+        sectionCountsFor(sel, currentGame(), sectionsOn, sectionsTotal);
         winContentCount_->setText(QStringLiteral("%1/%2")
-                                      .arg(w.sectionsOn)
-                                      .arg(w.sectionsTotal));
+                                      .arg(sectionsOn)
+                                      .arg(sectionsTotal));
 
         const mhw::WindowList list = buildWindowStates();
+        const mhw::GameId chipGame = currentGame();
         for (const mhw::WindowState &sib : list) {
-            if (sib.panelIndex != w.panelIndex)
+            if (sib.panelIndex != sel.panelIndex)
                 continue;   // another panel's window is not a sibling
+            // 实测缺陷3: the sibling list obeys the game in force. The
+            // board model carries both 衣装 and 翔虫 (and, under Rise,
+            // 伙伴) because one registry serves two games — but an entry
+            // this game has no data for must not be offered a second
+            // time as a window the user can switch to.
+            if (!windowKeyInGame(sib.key, chipGame))
+                continue;
             auto *chip = new QPushButton(sib.title);
             chip->setObjectName(QStringLiteral("groupWinChip"));
+            // The KEY, exposed the same way the Mixed block's rows expose
+            // theirs: the title is localized copy and the panel/sub pair
+            // is an address, but the settings key is the only spelling a
+            // list assertion (「World 不列 player-wirebug」) can read
+            // without translating anything.
+            chip->setProperty("settingsKey", sib.key);
             chip->setCheckable(true);
-            chip->setChecked(sib.subIndex == w.subIndex);
+            chip->setChecked(sib.subIndex == sel.subIndex);
             chip->setCursor(Qt::PointingHandCursor);
             // The chip's own window. Captured by value because the list
             // it came from is a temporary — and the panel/sub pair is
@@ -6351,6 +7742,15 @@ void ControlPanel::buildInspectorForSelection()
             });
             groupLayout->addWidget(chip);
         }
+        // The Mixed 独立/合并 block. Built once (first refill), attached
+        // to every refill's layout, and brought up to date by the
+        // refreshGroupColumn() call at the end of this block — which is
+        // also what a language flip reaches through the column's one
+        // trHook, so the eleven titles and state labels follow the
+        // language without a rebuild.
+        buildMixedGroupBlock();
+        if (mixedGroupHost_)
+            groupLayout->addWidget(mixedGroupHost_);
         groupLayout->addStretch(1);
         // ── (C): the column's per-window half is rebuilt here, not
         // hidden. The old shell left the frame hidden "because a second
@@ -6370,31 +7770,16 @@ void ControlPanel::buildInspectorForSelection()
     // renderAll()), so the two cannot disagree about what a window
     // looks like. The preview is the panel's full render at its own
     // scale, scaled to fit the box while keeping its aspect.
-    if (windowPreviewBox_) {
-        Panel *panel = (w.subIndex >= 0 && splitPreview_)
-                           ? splitPreview_->windowAt(w.subIndex)
-                           : panelAt(w.panelIndex);
-        const QPixmap pix = panel ? renderPreview(panel) : QPixmap();
-        if (pix.isNull()) {
-            // A window whose sections are all off paints nothing; the
-            // prototype says so in words rather than showing an empty
-            // rectangle.
-            windowPreviewBox_->setText(
-                consoleText(QStringLiteral("console.proto.preview.empty")));
-            windowPreviewBox_->setPixmap(QPixmap());
-        } else {
-            windowPreviewBox_->setText(QString());
-            windowPreviewBox_->setPixmap(pix.scaled(
-                windowPreviewBox_->size() * pix.devicePixelRatio(),
-                Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        }
-    }
+    refreshWindowPreviewPixmap();
 
-    // The chip in the head names the window, and the panel page under
-    // the face follows the panel half of the selection so the mask rows
-    // stay about the right panel.
+    // The chip in the head names the selected OBJECT — the window's title
+    // for a window row, the mother's short title for a mother focus (it
+    // used to read `w.title`, which is empty in a Split mother focus and
+    // left the chip blank while the form below was full of the panel's
+    // numbers). The panel page under the face follows the panel half of
+    // the selection so the mask rows stay about the right panel.
     if (selectionChip_)
-        selectionChip_->setText(w.title);
+        selectionChip_->setText(sel.title);
     // The head's sub line and the empty block both follow the SELECTION
     // (reference.html:486 does both in one renderInspector pass).
     if (inspectorHeadSub_)
@@ -6404,6 +7789,10 @@ void ControlPanel::buildInspectorForSelection()
         inspectorEmpty_->hide();
         if (contentScrollHost_)
             contentScrollHost_->show();
+        // round2: the preview card's half comes back WITH the left one —
+        // both halves are one face, and the empty state owns both.
+        if (previewScrollHost_)
+            previewScrollHost_->show();
     }
     windowModelRefilling_ = false;
 }
@@ -6479,10 +7868,29 @@ const char *panelLabelKey(int panelIndex)
 // re-render the panel, which is what the old inspector's rows do too.
 bool ControlPanel::toggleSelectedWindowSection(uint32_t bit, bool on)
 {
-    const mhw::WindowState w = selectedWindow();
-    if (w.panelIndex < 0)
+    // D1: the SAME accessor the rows that drew this checkbox read. The old
+    // `selectedWindow().panelIndex < 0 → false` refused every section
+    // switch in a Split mother focus — the rows are built from sel.panel,
+    // so they were on screen and the click did nothing at all, the
+    // quiet half of the same "enabled but inert" defect.
+    const EditableSelection sel = currentEditableSelection();
+    if (!sel.panel)
         return false;
-    Panel *p = panelAt(w.panelIndex);
+    const int panelIndex = sel.panelIndex;
+    // ── 实测缺陷3 (user-8): THE SELECTED INSTANCE, NOT ITS MOTHER ────────
+    // A sub-window's bits are gated by ITS OWN mask (syncAll() pushes
+    // maskFor(ctl_[parentSlot]) into that window, and it paints from what
+    // its own Panel holds), so `sel.panel` is both what the group column
+    // READS (see refreshGroupColumn's `live`) and what this write has to
+    // land on — one object, or the switch is a no-op: the mother's mask
+    // is re-derived from the plan by every rebuildAndRender(), and with
+    // `next == old` on that already-stripped value the early return below
+    // used to skip the subs row too, so nothing anywhere moved.
+    //
+    // For a mother focus `sel.panel` IS panelAt(panelIndex), so the write
+    // is unchanged there; what still makes the change durable is the
+    // panel-page row two blocks down, which is what every rebuild reads.
+    Panel *p = sel.panel;
     if (!p)
         return false;
     const uint32_t old = p->sectionMask();
@@ -6498,8 +7906,8 @@ bool ControlPanel::toggleSelectedWindowSection(uint32_t bit, bool on)
     // written straight back. The row is found by its BIT, through the
     // same explicit table the new column uses, never by position.
     {
-        const QVector<uint32_t> bits = sectionBitsFor(w.panelIndex);
-        auto &subs = ctl_[w.panelIndex].subs;
+        const QVector<uint32_t> bits = sectionBitsFor(panelIndex);
+        auto &subs = ctl_[panelIndex].subs;
         for (int b = 0; b < bits.size() && b < subs.size(); ++b) {
             if (bits[b] != bit)
                 continue;
@@ -6508,13 +7916,414 @@ bool ControlPanel::toggleSelectedWindowSection(uint32_t bit, bool on)
             break;
         }
     }
-    syncAppearance(w.panelIndex);      // the panel page's own rows follow
-    rebuildAndRender(w.panelIndex);    // the pixmap the canvas/col 2 draw
+    syncAppearance(panelIndex);      // the panel page's own rows follow
+    rebuildAndRender(panelIndex);    // the pixmap the canvas/col 2 draw
     // The model refresh rebuilds the column this click came from. It is
     // deferred by one event-loop turn so the emitting SectionRow is not
     // deleted while it is still delivering toggled().
     QTimer::singleShot(0, this, [this]{ refreshWindowModel(); });
     return true;
+}
+
+// ── v1.1.0 Mixed: the per-window 独立/合并 half of the group column ─────
+//
+// WHAT THIS IS: inside Mixed — and only inside Mixed — the eleven rows
+// the three split tables can carve out are each either its own window
+// (独立窗口) or merged back into its mother panel (合并显示), per game,
+// chosen by hand. The mode decides the TOPOLOGY, this plan decides the
+// ROWS; a Mixed run with nothing configured falls back to the visible
+// all-detached set, which is why the switches start all-on.
+//
+// WHERE THE STATE LIVES: one mhw::WindowLayoutPlan per game, held here
+// and written to `layout.windows.<game>=` by saveMaskToDisk(). The plan
+// is launch-time: the overlay mounts the detached set on its next start,
+// so a click moves the switch, its state label and the in-memory plan —
+// and nothing else until the user saves (and applies).
+//
+// WHICH SLOT A GAME OWNS — the two games must never share a plan, or a
+// World save would rewrite Rise's row. World = 0, Rise = 1; GameId has
+// exactly these two enumerators, and the fallback answers World's slot
+// rather than inventing a third (the same reasoning layoutWindowsRowKey()
+// spells for its own empty-key fallback).
+static int mixedPlanSlotFor(mhw::GameId game)
+{
+    return game == mhw::GameId::Rise ? 1 : 0;
+}
+
+mhw::WindowLayoutPlan &ControlPanel::mixedPlanFor(mhw::GameId game)
+{
+    return mixedPlans_[mixedPlanSlotFor(game)];
+}
+
+const mhw::WindowLayoutPlan &ControlPanel::mixedPlanFor(mhw::GameId game) const
+{
+    return mixedPlans_[mixedPlanSlotFor(game)];
+}
+
+// The read half: BOTH games' rows, out of the one conf text
+// applyStartupLayoutMode() already holds — no second file is opened, and
+// nothing is written. A load must not seed a settings scope (that is
+// ensureMixedPanelSettingsScope's explicit-entry rule) and must not
+// touch the conf (that is saveMaskToDisk's job).
+//
+// Mixed is asked for as the MODE even while the console is showing
+// Single or Split: resolveWindowLayoutPlan() reads `layout.windows.<game>=`
+// ONLY in Mixed, so resolving the mode in force would hand back that
+// mode's fixed default and silently discard a saved list the next Mixed
+// entry needs. What is loaded is what the FILE says, whichever topology
+// is on screen; no row at all -> Mixed's own all-detached fallback,
+// which is exactly what the overlay resolves for the same file.
+void ControlPanel::loadMixedLayoutPlans(const QString &confText)
+{
+    for (const mhw::GameId game : {mhw::GameId::World, mhw::GameId::Rise})
+        mixedPlanFor(game) = mhw::resolveWindowLayoutPlan(
+            game, mhw::PlayerSection::PlayerLayoutMode::Mixed, confText);
+}
+
+// ── v1.1.3 (Mixed 画布): the plan read three ways, each spelled ONCE ────
+//
+// Three answers, one source: the plan in force for the game in force.
+// They exist because the same question was about to be asked in three
+// places that must not drift — the host's rebuild guard, the mother
+// panel's mask, and the mount gate that decides whether a mother is
+// painted at all — and a fourth reader (the count model) has to agree
+// with all of them.
+
+// Which rows are detached, as registry bit i of kWindowLayoutRows. It
+// identifies the HOST, not the plan object: two plans with the same
+// detached set build the same windows, so comparing this number is
+// both the correct question and the cheapest one (11 bits, no QString).
+quint32 ControlPanel::mixedPlanSignature() const
+{
+    const mhw::WindowLayoutPlan &plan = mixedPlanFor(currentGame());
+    quint32 sig = 0;
+    for (int i = 0; i < mhw::kWindowLayoutRowCount; ++i) {
+        const mhw::WindowLayoutRow &row =
+            mhw::kWindowLayoutRows[static_cast<size_t>(i)];
+        if (plan.detached(row.parentSlot, row.tableRow))
+            sig |= quint32(1u) << i;
+    }
+    return sig;
+}
+
+// The mask this run's mother PANEL actually draws — main.cpp:761's rule,
+// for the console's own preview Panel.
+//
+// Single and Split return `userMask` bit for bit, which is the whole
+// reason this is a function and not an `if` at each call site: the two
+// legacy topologies pass through an identity, so no reader can tell the
+// difference. pets (index 3) has no parent slot and no split table, so
+// an out-of-range index answers the mask untouched as well.
+uint32_t ControlPanel::effectiveMotherMask(int panel, uint32_t userMask) const
+{
+    if (layoutModeInForce() != mhw::PlayerSection::PlayerLayoutMode::Mixed)
+        return userMask;
+    if (panel < 0 || panel >= mhw::kLayoutParentCount)
+        return userMask;
+    return mixedPlanFor(currentGame()).retainedMask(panel, userMask);
+}
+
+// Does this mother still mount, in Mixed? main.cpp:776's gate with the
+// console's own predicates:
+//
+//     planMotherPanelEnabled(plan, parent, false, hasBlocks(retained))
+//
+// disabledByFlag is false because the console has no --no-player: the
+// panel master toggle is a separate axis (w.panelEnabled) that the
+// model carries in its own field and the canvas's `present` arm already
+// answers, exactly as it does in Single.
+//
+// ONLY ASKED IN MIXED. A non-Mixed topology decides mounting itself
+// (Single mounts all four, Split only pets), and mixedPlanFor() may
+// legitimately hold a saved Mixed list while the console is showing
+// Single — so an ungated call would answer a question nobody asked.
+// Every call site therefore tests the mode first; this returns true
+// (the permissive answer) for the unreachable case so a missed gate can
+// only over-count, never hide a window.
+bool ControlPanel::mixedMotherMounts(int panel, uint32_t userMask) const
+{
+    if (layoutModeInForce() != mhw::PlayerSection::PlayerLayoutMode::Mixed)
+        return true;
+    if (panel < 0 || panel >= mhw::kLayoutParentCount)
+        return true;
+    const mhw::WindowLayoutPlan &plan = mixedPlanFor(currentGame());
+    const uint32_t retained = plan.retainedMask(panel, userMask);
+    const bool hasBlocks =
+        panel == mhw::kLayoutParentPlayer
+            ? mhw::PlayerSection::playerPanelHasBlocks(retained)
+        : panel == mhw::kLayoutParentMonster
+            ? mhw::MonsterSection::monsterPanelHasBlocks(retained)
+            : mhw::DamageSection::damagePanelHasBlocks(retained);
+    return mhw::planMotherPanelEnabled(plan, panel,
+                                       /*disabledByFlag=*/false, hasBlocks);
+}
+
+// Built ONCE. Its rows come from the registry, which is the same list
+// the conf row and --detached-windows parse, so this block can never
+// offer a key the plan does not know (setDetached() answers false for an
+// unknown key) nor omit one it does. The caller re-attaches the frame to
+// the group column's layout on every refill; the frame itself survives
+// those refills, which is why its own text goes through trSet() (set now,
+// replayed on a language flip) rather than through a per-refill rebuild.
+void ControlPanel::buildMixedGroupBlock()
+{
+    if (mixedGroupHost_)
+        return;
+
+    auto *host = new QFrame();
+    host->setObjectName(QStringLiteral("mixedGroupBlock"));
+    host->setProperty("mixedGroupBlock", true);
+    auto *lay = new QVBoxLayout(host);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(6);
+
+    auto *cap = new QLabel();
+    trSet(cap, QStringLiteral("console.layout.group_title"));
+    cap->setObjectName(QStringLiteral("sectionCap"));
+    cap->setProperty("mixedGroupCaption", true);
+    lay->addWidget(cap);
+
+    for (const mhw::WindowLayoutRow &row : mhw::kWindowLayoutRows) {
+        const QString key = QString::fromLatin1(row.settingsKey);
+        auto *rowHost = new QFrame();
+        rowHost->setObjectName(QStringLiteral("mixedGroupRow"));
+        rowHost->setProperty("settingsKey", key);
+        auto *rowLay = new QHBoxLayout(rowHost);
+        rowLay->setContentsMargins(0, 0, 0, 0);
+        rowLay->setSpacing(6);
+
+        auto *box = new QCheckBox();
+        box->setObjectName(QStringLiteral("mixedWinToggle"));
+        box->setProperty("settingsKey", key);
+        box->setCursor(Qt::PointingHandCursor);
+        // The box names the WINDOW; the label beside it is what
+        // `console.layout.detached` / `.merged` annotate — the two states
+        // of this one row, so a screen reader (and a test) can tell which
+        // state a checked box is in without inferring it from the check.
+        auto *state = new QLabel();
+        state->setObjectName(QStringLiteral("mixedWinState"));
+        state->setProperty("settingsKey", key);
+
+        rowLay->addWidget(box, 1);
+        rowLay->addWidget(state);
+        lay->addWidget(rowHost);
+        mixedGroupToggles_.append(box);
+        mixedGroupStateLabels_.append(state);
+
+        // refreshMixedGroupBlock() sets the checked state with the box's
+        // signals blocked, so this fires on the user's own click only.
+        connect(box, &QCheckBox::toggled, this,
+                [this, key](bool on){ setMixedWindowDetached(key, on); });
+    }
+
+    // The two quick operations: ALL eleven detached / ALL eleven merged
+    // (an explicit empty plan, which the conf row spells as an empty
+    // value — a different state from an absent row, and the one that
+    // means "everything merged" rather than "nothing configured").
+    auto *btnRow = new QHBoxLayout();
+    btnRow->setSpacing(6);
+    auto *detachAll = new QPushButton();
+    trSet(detachAll, QStringLiteral("console.layout.detach_all"));
+    detachAll->setObjectName(QStringLiteral("mixedDetachAll"));
+    detachAll->setCursor(Qt::PointingHandCursor);
+    auto *mergeAll = new QPushButton();
+    trSet(mergeAll, QStringLiteral("console.layout.merge_all"));
+    mergeAll->setObjectName(QStringLiteral("mixedMergeAll"));
+    mergeAll->setCursor(Qt::PointingHandCursor);
+    btnRow->addWidget(detachAll, 1);
+    btnRow->addWidget(mergeAll, 1);
+    lay->addLayout(btnRow);
+    connect(detachAll, &QPushButton::clicked, this,
+            [this]{ setAllMixedWindowsDetached(true); });
+    connect(mergeAll, &QPushButton::clicked, this,
+            [this]{ setAllMixedWindowsDetached(false); });
+
+    // ── 实测缺陷4 (user-8): THE BOTTOM EXPLANATION IS GONE ──────────────
+    // The block used to end with a word-wrapped 说明 (objectName
+    // mixedGroupHint, console.layout.custom_hint) restating what Mixed
+    // means. The user's own words: 「下面的文案也没必要留」 — the caption,
+    // the eleven rows, their 独立窗口/合并显示 labels and the two quick
+    // operations already say everything the paragraph said, and it was
+    // pure scroll below the buttons.
+    //
+    // The KEY survives: console.layout.custom_hint is also the 混合
+    // segment button's tooltip (buildLayoutSegment(), trTip), where one
+    // line explaining the mode on hover is still the right place for it —
+    // so this deletes a label, not an i18n entry, and the copy-semantics
+    // key list stays satisfied without touching the resources.
+    mixedGroupHost_ = host;
+}
+
+// Everything that is a function of (mode, game, plan, FOCUS) rather than
+// of anything else: visibility, each row's localized title, its checked
+// state and its 独立窗口/合并显示 label. Safe to call as often as it is
+// called — from the group column's refill, from the one language-flip
+// trHook and from the mode commit — because every state write blocks the
+// box's signals (a programmatic setChecked() is not a user's click).
+//
+// ── 实测缺陷4 (user-8): THE LIST FOLLOWS THE FOCUS ──────────────────────
+// The eleven rows are one registry of THREE mother groups (parentSlot 0/1
+// /2). This column is read while a window is being inspected, and
+// listing every group there hands the user a plan edit for windows that
+// are not the subject of anything on screen. A selection therefore
+// narrows the list to its own group — `row.parentSlot == sel.panelIndex`,
+// the same relation the 本组子窗 chips above already use (`sib.panelIndex
+// == sel.panelIndex`), so the two halves of this column answer "which
+// group am I looking at" the same way. NO selection — the cold start,
+// and every game-only assertion — keeps the whole game-filtered
+// registry, because there is no focus to be related to.
+//
+// HIDDEN, never deleted: the eleven rows are still the registry's own
+// index (mixedGroupToggles_[i] == kWindowLayoutRows[i], which
+// console_mixed_layout_tests §2.2 pins as an identity), so the checked
+// state below still tracks the plan and a focus or game change only has
+// to re-run this function.
+void ControlPanel::refreshMixedGroupBlock()
+{
+    if (!mixedGroupHost_)
+        return;
+    // Single and Split have no plan to edit: their topology IS the mode,
+    // and both resolve a fixed default without ever reading the row. An
+    // eleven-switch block there would promise a choice the launcher
+    // ignores.
+    const bool mixed =
+        layoutModeInForce() == mhw::PlayerSection::PlayerLayoutMode::Mixed;
+    // The focus, asked here rather than passed in: the two callers that
+    // reach this function first (buildWindowInspectorFace's refill and
+    // the mode commit) both have a selection to read, and asking for it
+    // twice costs one vector walk.
+    const EditableSelection sel = currentEditableSelection();
+    const int focusPanel = sel.panel ? sel.panelIndex : -1;
+    mixedGroupHost_->setVisible(mixed);
+    if (!mixed)
+        return;
+
+    const mhw::WindowLayoutPlan &plan = mixedPlanFor(currentGame());
+    const int n = qMin(mixedGroupToggles_.size(), mixedGroupStateLabels_.size());
+    int listed = 0;
+    for (int i = 0; i < n && i < mhw::kWindowLayoutRowCount; ++i) {
+        QCheckBox *box = mixedGroupToggles_.at(i);
+        QLabel *state = mixedGroupStateLabels_.at(i);
+        if (!box || !state)
+            continue;
+        const mhw::WindowLayoutRow &row = mhw::kWindowLayoutRows[i];
+        // 实测缺陷3: the LIST obeys the game in force. 实测缺陷4 adds the
+        // focus on top of it — same mechanism (a row the console does not
+        // offer is HIDDEN, not deleted), same reason: the index identity
+        // below must survive, and switching the game or the selection
+        // only has to re-run this function.
+        const bool inGame = windowKeyInGame(
+            QString::fromLatin1(row.settingsKey), currentGame());
+        const bool related =
+            focusPanel < 0 || row.parentSlot == focusPanel;
+        const bool shown = inGame && related;
+        if (shown)
+            ++listed;
+        if (QWidget *rowHost = box->parentWidget())
+            rowHost->setVisible(shown);
+        state->setVisible(shown);
+        const bool detached = plan.detached(row.parentSlot, row.tableRow);
+        box->blockSignals(true);
+        box->setText(consoleText(QStringLiteral("console.proto.win.short.%1")
+                                     .arg(QString::fromLatin1(row.settingsKey))));
+        box->setChecked(detached);
+        box->blockSignals(false);
+        state->setText(consoleText(detached
+                                       ? QStringLiteral("console.layout.detached")
+                                       : QStringLiteral("console.layout.merged")));
+    }
+    // A focus that owns no registry row at all (the pets panel has none:
+    // the registry is player/monster/damage) must not leave a caption and
+    // two buttons over an empty list — the block leaves with its rows and
+    // comes back with them.
+    mixedGroupHost_->setVisible(listed > 0);
+}
+
+// One switch. Returns false for a key that is not in the registry — the
+// spelling rule the whole plan is built on: no case folding, no nearest
+// match, no write.
+bool ControlPanel::setMixedWindowDetached(const QString &settingsKey,
+                                          bool detached)
+{
+    mhw::WindowLayoutPlan &plan = mixedPlanFor(currentGame());
+    if (!plan.setDetached(settingsKey, detached))
+        return false;
+    refreshMixedGroupBlock();
+    refreshAfterMixedPlanChange();
+    return true;
+}
+
+void ControlPanel::setAllMixedWindowsDetached(bool detached)
+{
+    mhw::WindowLayoutPlan &plan = mixedPlanFor(currentGame());
+    // ── v1.1.4: THE BULK BUTTONS ACT ON THE ROWS THIS COLUMN SHOWS ─────
+    // With a FOCUS, "all" used to mean all eleven registry rows, so
+    // 「全部独立」 clicked while the PLAYER group was in front also
+    // detached Monster's and Damage's rows — three groups edited by a
+    // control sitting under one group's heading. The list itself already
+    // obeys (game, focus) in refreshMixedGroupBlock(); the focused arm
+    // below is the write half of the same predicate, spelled from the same
+    // two inputs, so "all" can only ever mean "all the rows you can see
+    // right now".
+    //
+    // NO FOCUS keeps the old contract byte for byte: the cold-start list
+    // is the whole registry, so the two shortcuts are still the two ends
+    // of it. That asymmetry is deliberate — the list and the write must
+    // answer the same question, and they do in both arms.
+    const EditableSelection sel = currentEditableSelection();
+    const int focusPanel = sel.panel ? sel.panelIndex : -1;
+    if (focusPanel < 0) {
+        plan = detached ? mhw::WindowLayoutPlan::allDetached()
+                        : mhw::WindowLayoutPlan();
+    } else {
+        for (int i = 0; i < mhw::kWindowLayoutRowCount; ++i) {
+            const mhw::WindowLayoutRow &row = mhw::kWindowLayoutRows[i];
+            if (row.parentSlot != focusPanel)
+                continue;
+            if (!windowKeyInGame(QString::fromLatin1(row.settingsKey),
+                                 currentGame()))
+                continue;
+            plan.setDetached(QString::fromLatin1(row.settingsKey), detached);
+        }
+    }
+    refreshMixedGroupBlock();
+    refreshAfterMixedPlanChange();
+}
+
+// ── v1.1.3: WHAT A PLAN CHANGE MOVES ────────────────────────────────────
+//
+// The 独立/合并 switches used to write the plan and stop: the group block
+// refreshed its labels, and everything the user could SEE — the board,
+// the counts, the inspector — kept the old topology until some
+// unrelated event happened to rebuild the host. That was survivable
+// while Mixed drew nothing but mothers; now that it draws the detached
+// windows, a toggle has to move the board.
+//
+// Four things, in this order, and none of them is "rebuild always":
+//
+//   1. syncSplitPreviewToCanvas() — rebuilds the host ONLY when
+//      mixedPlanSignature() differs (see splitPreviewHostPlan_), which is
+//      exactly when the detached set changed, and re-states the mothers'
+//      retained mask + `present` when it does. A toggle that changed
+//      nothing costs one 11-bit compare.
+//   2. rebuildAndRender(0..2) — not here: sync does it inside its
+//      rebuild arm, and calling it again would re-render four pixmaps
+//      for a plan that did not change the mask.
+//   3. refreshWindowModel() — deferred one turn, exactly like
+//      toggleSelectedWindowSection() does, so the emitter (a QCheckBox of
+//      the group block this function is inside) is never reached while it
+//      is delivering toggled(). The test and the screenshot path both
+//      pump the event loop, so the deferral is invisible to them.
+//   4. In Single and Split NOTHING happens — the plan is staged for the
+//      next Mixed entry (see loadMixedLayoutPlans' note) and those two
+//      topologies do not read it. That early return is what keeps the
+//      two legacy modes byte-identical through a plan edit.
+void ControlPanel::refreshAfterMixedPlanChange()
+{
+    if (layoutModeInForce() != mhw::PlayerSection::PlayerLayoutMode::Mixed)
+        return;
+    syncSplitPreviewToCanvas();
+    QTimer::singleShot(0, this, [this]{ refreshWindowModel(); });
 }
 
 // The whole per-window half of the group column. Safe to call on every
@@ -6523,26 +8332,38 @@ bool ControlPanel::toggleSelectedWindowSection(uint32_t bit, bool on)
 // per-refill widget.
 void ControlPanel::refreshGroupColumn()
 {
-    const mhw::WindowState w = selectedWindow();
+    // The Mixed 独立/合并 block first: it is a function of the MODE and
+    // the plan, not of this selection, and it lives in this column — so
+    // it must refresh BEFORE the two selection-driven early returns
+    // below, both of which are about a selection this block never reads.
+    refreshMixedGroupBlock();
+
+    // D1: the SAME accessor the form uses. The title, the `panel · output`
+    // meta and the coordinate note are readings of the object the five
+    // controls edit, so a mother focus in Split now names itself and its
+    // note names the very output the coordinate form is enabled against —
+    // instead of showing three empty strings over a live form.
+    const EditableSelection sel = currentEditableSelection();
+    const mhw::WindowState w = sel.window;   // only meaningful if hasWindow
     if (winObjectTitleName_)
-        winObjectTitleName_->setText(w.panelIndex < 0 ? QString() : w.title);
+        winObjectTitleName_->setText(sel.panel ? sel.title : QString());
     if (winObjectTitleMeta_)
-        winObjectTitleMeta_->setText(w.panelIndex < 0
-            ? QString()
-            : QStringLiteral("%1 · %2")
-                  .arg(QString::fromUtf8(panelLabelKey(w.panelIndex)).isEmpty()
+        winObjectTitleMeta_->setText(sel.panel
+            ? QStringLiteral("%1 · %2")
+                  .arg(QString::fromUtf8(panelLabelKey(sel.panelIndex)).isEmpty()
                            ? QString()
                            : consoleText(QString::fromUtf8(
-                                 panelLabelKey(w.panelIndex))))
-                  .arg(w.outputResolved));
+                                 panelLabelKey(sel.panelIndex))))
+                  .arg(sel.resolvedOutput)
+            : QString());
     if (winPosNote_)
-        winPosNote_->setText(w.panelIndex < 0
-            ? QString()
-            : consoleText(QStringLiteral("console.proto.pos.note"))
-                  .arg(w.outputResolved));
+        winPosNote_->setText(sel.panel
+            ? consoleText(QStringLiteral("console.proto.pos.note"))
+                  .arg(sel.resolvedOutput)
+            : QString());
     if (!winContentCount_ || !windowSectionListHost_)
         return;
-    if (w.panelIndex < 0) {
+    if (!sel.panel) {
         groupSectionKey_ = -1;
         winContentCount_->setText(QString());
         QLayout *oldLayout = windowSectionListHost_->layout();
@@ -6555,35 +8376,57 @@ void ControlPanel::refreshGroupColumn()
         }
         return;
     }
-    winContentCount_->setText(QStringLiteral("%1/%2")
-                                  .arg(w.sectionsOn)
-                                  .arg(w.sectionsTotal));
+    {
+        int sectionsOn = 0;
+        int sectionsTotal = 0;
+        sectionCountsFor(sel, currentGame(), sectionsOn, sectionsTotal);
+        winContentCount_->setText(QStringLiteral("%1/%2")
+                                      .arg(sectionsOn)
+                                      .arg(sectionsTotal));
+    }
 
-    // What this window draws: a mother panel draws its panel's schema; a
-    // split window draws exactly the bits its table row claims (the
+    // What this selection draws: a mother panel draws its panel's schema;
+    // a split window draws exactly the bits its table row claims (the
     // binding's row index → the table's mask, via splitWindowSections()).
-    const uint32_t schema = panelSectionSchema(w.panelIndex, currentGame());
+    const uint32_t schema = panelSectionSchema(sel.panelIndex, currentGame());
     uint32_t own = schema;
-    if (w.subIndex >= 0 && splitPreview_) {
+    if (sel.subIndex >= 0 && splitPreview_) {
         const QVector<HudCanvas::SubWindowBinding> bindings =
             splitPreview_->bindings();
-        if (w.subIndex < bindings.size())
-            own = splitWindowSections(w.panelIndex,
-                                      bindings[w.subIndex].tableRow);
+        if (sel.subIndex < bindings.size())
+            own = splitWindowSections(sel.panelIndex,
+                                      bindings[sel.subIndex].tableRow);
     }
-    const QVector<uint32_t> bits = sectionBitsFor(w.panelIndex);
-    const QStringList labels = sectionNamesFor(w.panelIndex);
-    const QStringList &keys = w.panelIndex == 0 ? mhw::PlayerSection::names()
-                              : w.panelIndex == 1 ? mhw::MonsterSection::names()
-                              : w.panelIndex == 2 ? mhw::DamageSection::names()
+    const QVector<uint32_t> bits = sectionBitsFor(sel.panelIndex);
+    const QStringList labels = sectionNamesFor(sel.panelIndex);
+    const QStringList &keys = sel.panelIndex == 0 ? mhw::PlayerSection::names()
+                              : sel.panelIndex == 1 ? mhw::MonsterSection::names()
+                              : sel.panelIndex == 2 ? mhw::DamageSection::names()
                                                   : mhw::PetDamageSection::names();
-    Panel *owner = panelAt(w.panelIndex);
-    const uint32_t live = owner ? owner->sectionMask() : schema;
+    // ── 实测缺陷3 (user-8): THE INSTANCE THE SELECTION NAMES ────────────
+    // `sel.panel` IS the object this column is about: for a window row it
+    // is the split sub-window's own Panel — the one syncAll() feeds with
+    // the user's mask and the one that window paints from — and for a
+    // mother focus it is the mother (the same object as before). Reading
+    // `panelAt(sel.panelIndex)` read the MOTHER for a sub-window: in
+    // Mixed that mask is plan.retainedMask(), which has every detached
+    // row stripped out, so the chips showed a detached row's sections OFF
+    // while the window was drawing them — and a click was written to the
+    // very mask rebuildAndRender() then forced back, which is why the
+    // switch never moved. In Single and Split the two objects hold the
+    // same bits (effectiveMotherMask is the identity there), so those
+    // topologies read exactly what they read before.
+    //
+    // It is also the same instance buildWindowStates() reads for
+    // `w.sectionsOn` (the count on this same column), so the `on/total`
+    // and the switches under it can no longer name two masks.
+    const uint32_t live =
+        sel.panel ? sel.panel->sectionMask() : schema;
 
     // Same window as last time: the rows are already built and the
     // SectionRow that just emitted toggled() is one of them. Only the
     // checked state can have moved.
-    const int key = w.panelIndex * 1000 + w.subIndex;
+    const int key = sel.panelIndex * 1000 + sel.subIndex;
     if (key == groupSectionKey_ && windowSectionListHost_->layout()) {
         const auto rows = windowSectionListHost_->findChildren<SectionRow *>();
         for (SectionRow *row : rows) {
@@ -6674,8 +8517,14 @@ void ControlPanel::refreshGroupColumn()
 // ─── end v1.0.0 inspector writes ─────────────────────────────────────
 bool ControlPanel::applySelectedWindowPosition()
 {
-    const mhw::WindowState w = selectedWindow();
-    if (w.panelIndex < 0)
+    // D1: the WRITE half of the same accessor the readouts use. The old
+    // `selectedWindow().panelIndex < 0 → return false` refused every edit
+    // in a Split mother focus while the form sat there enabled and full of
+    // numbers — one selection, two answers. `sel.panel` is the very
+    // instance the numbers were read from, so what the user sees moves.
+    const EditableSelection sel = currentEditableSelection();
+    Panel *panel = sel.panel;
+    if (!panel)
         return false;
     if (!winPosX_ || !winPosY_)
         return false;
@@ -6685,11 +8534,6 @@ bool ControlPanel::applySelectedWindowPosition()
     if (windowModelRefilling_)
         return true;
 
-    Panel *panel = (w.subIndex >= 0 && splitPreview_)
-                       ? splitPreview_->windowAt(w.subIndex)
-                       : panelAt(w.panelIndex);
-    if (!panel)
-        return false;
     QMargins m = panel->margins();
     // ── v1.0.0 integration (stage D): THE INVERSE OF WHAT THE FORM SHOWS
     //
@@ -6709,7 +8553,7 @@ bool ControlPanel::applySelectedWindowPosition()
     // recomputed, so a TopRight window whose X is set to 100 comes out at
     // x = 100 on the next paint, and a Bottom window whose Y is set to 50
     // comes out at y = 50.
-    const WindowFrame f = windowFrameFor(w, panel);
+    const WindowFrame f = windowFrameFor(sel);
     if (!f.valid)
         return false;   // no resolvable output: refuse rather than guess
     const QPoint requested(winPosX_->value(), winPosY_->value());
@@ -6770,18 +8614,16 @@ bool ControlPanel::applySelectedWindowPosition()
 // isEmpty(), so an empty row and an absent row are the same statement.
 bool ControlPanel::applySelectedWindowOutput(const QString &outputName)
 {
-    const mhw::WindowState w = selectedWindow();
-    if (w.panelIndex < 0)
+    // D1: the same accessor the COMBO reads (`sel.ownOutput` is exactly
+    // what it selected), so the write lands on the instance whose value is
+    // on screen — including a mother focus in Split, which the old
+    // window-row guard refused while the combo stayed enabled.
+    const EditableSelection sel = currentEditableSelection();
+    Panel *panel = sel.panel;
+    if (!panel)
         return false;
     if (windowModelRefilling_)
         return true;
-    // The same panel the scale / opacity / visible writes resolve to:
-    // the split host's own Panel for a sub-window, the mother otherwise.
-    Panel *panel = (w.subIndex >= 0 && splitPreview_)
-                       ? splitPreview_->windowAt(w.subIndex)
-                       : panelAt(w.panelIndex);
-    if (!panel)
-        return false;
     panel->setOutputName(outputName, /*persist=*/false);
     // Screen selection is meaningful in live mode too — the console is
     // the only writer of this key — so the persist is explicit rather
@@ -6796,16 +8638,14 @@ bool ControlPanel::applySelectedWindowOutput(const QString &outputName)
 
 bool ControlPanel::applySelectedWindowScale(qreal scale)
 {
-    const mhw::WindowState w = selectedWindow();
-    if (w.panelIndex < 0)
+    // D1: writes to the instance the slider was REFILLED from — see
+    // applySelectedWindowOutput() for why the window-row guard is gone.
+    const EditableSelection sel = currentEditableSelection();
+    Panel *panel = sel.panel;
+    if (!panel)
         return false;
     if (windowModelRefilling_)
         return true;
-    Panel *panel = (w.subIndex >= 0 && splitPreview_)
-                       ? splitPreview_->windowAt(w.subIndex)
-                       : panelAt(w.panelIndex);
-    if (!panel)
-        return false;
     // 50%–300%, the same range the console's sliders have always used.
     const qreal clamped = qBound(0.5, scale, 3.0);
     panel->setScale(clamped, /*persist=*/false);
@@ -6813,21 +8653,21 @@ bool ControlPanel::applySelectedWindowScale(qreal scale)
         canvas_->update();
     if (winScaleValue_)
         winScaleValue_->setText(QStringLiteral("%1%").arg(qRound(clamped * 100)));
+    // v1.0.1 (验收项6): a scale change alters what the Panel RENDERS, so
+    // the canvas must be handed the NEW pixmap (see the helper below).
+    refreshSelectedWindowPreview();
     return true;
 }
 
 bool ControlPanel::applySelectedWindowOpacity(qreal opacity)
 {
-    const mhw::WindowState w = selectedWindow();
-    if (w.panelIndex < 0)
+    // D1: same rule as the scale write directly above.
+    const EditableSelection sel = currentEditableSelection();
+    Panel *panel = sel.panel;
+    if (!panel)
         return false;
     if (windowModelRefilling_)
         return true;
-    Panel *panel = (w.subIndex >= 0 && splitPreview_)
-                       ? splitPreview_->windowAt(w.subIndex)
-                       : panelAt(w.panelIndex);
-    if (!panel)
-        return false;
     // 10%–100%, matching the existing opacity slider.
     const qreal clamped = qBound(0.1, opacity, 1.0);
     panel->setOpacity(clamped, /*persist=*/false);
@@ -6835,6 +8675,10 @@ bool ControlPanel::applySelectedWindowOpacity(qreal opacity)
         canvas_->update();
     if (winOpacityValue_)
         winOpacityValue_->setText(QStringLiteral("%1%").arg(qRound(clamped * 100)));
+    // v1.0.1 (验收项6): paintEvent already bakes opacity into the
+    // pixmap's alpha, so re-rendering ONCE refreshes both the canvas
+    // source and the inspector preview. Nobody multiplies alpha again.
+    refreshSelectedWindowPreview();
     return true;
 }
 
@@ -6852,17 +8696,22 @@ bool ControlPanel::applySelectedWindowOpacity(qreal opacity)
 // binding list and stays in the export payload; it is simply not drawn.
 bool ControlPanel::applySelectedWindowVisible(bool on)
 {
-    const mhw::WindowState w = selectedWindow();
-    if (w.panelIndex < 0)
+    // D1 + the key question: this switch only exists while a WINDOW row
+    // backs the selection (buildInspectorForSelection() disables it
+    // otherwise), because pushWindowVisibility() reads `visiblePersisted`
+    // off the rows and a mother panel that is not a window in the scope in
+    // force has no row to feed. Refusing here keeps the write from
+    // mutating a key nothing reads — the definition of an inert control.
+    const EditableSelection sel = currentEditableSelection();
+    Panel *panel = sel.panel;
+    if (!panel || !sel.hasWindow)
         return false;
     if (windowModelRefilling_)
         return true;
-    Panel *panel = (w.subIndex >= 0 && splitPreview_)
-                       ? splitPreview_->windowAt(w.subIndex)
-                       : panelAt(w.panelIndex);
-    if (!panel)
-        return false;
-    mhw::writeWindowVisible(panel->settingsGroup(), w.key, on);
+    // `panel->settingsKey()` is the row's own key: buildWindowStates()
+    // builds `w.key` from the very same expression for both arms (mother
+    // and sub), so this is the key the checkbox was refilled from.
+    mhw::writeWindowVisible(panel->settingsGroup(), panel->settingsKey(), on);
     // THE IMMEDIATE PUSH, so the board and the checkbox move on the same
     // click instead of the board waiting for the next refreshWindowModel().
     // This is the one place where a WRITE happened, so it is the one place
@@ -6899,6 +8748,68 @@ bool ControlPanel::applySelectedWindowVisible(bool on)
 // written later against `#inspectorGrid` finds this widget and a test
 // that looks one up finds the same one.
 // ─── end v1.0.0 inspector face ───────────────────────────────────────
+namespace {
+/* ── 验收项1 (B 第1阶段): WHO NOTICES A VIEWPORT RESIZE ──────────────────
+   Fit is a function of the container, so the container growing (the
+   user dragging the splitter handle) has to re-derive the pixmap. There
+   is no "viewport resized" signal on QScrollArea, and ControlPanel's
+   own eventFilter (control_panel.cpp:4308) is already claimed by other
+   watched targets, so this one-line filter stands in for both: it is
+   parented to the scroll area, dies with it, and only ever runs the
+   callback the build site gave it.
+   ── end 验收项1: the fit watcher ── */
+class PreviewViewportWatcher final : public QObject
+{
+public:
+    explicit PreviewViewportWatcher(QWidget *watched)
+        : QObject(watched)
+    {
+    }
+    std::function<void()> onViewportResize;
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::Resize && onViewportResize)
+            onViewportResize();
+        return QObject::eventFilter(watched, event);
+    }
+};
+
+/* ── 实测缺陷5 (user-8): A PANE THAT FOLLOWS ITS RENDER ─────────────────────
+   QScrollArea::sizeHint() on this Qt (6.12) is frozen at whatever it
+   answered the FIRST time it was asked — probed with a 20-line harness,
+   in both construction orders: a label that starts at min 200x120, drops
+   the minimum and shrinks to 96x92 still answers `scroll hint=200x120`
+   for the rest of the run, and even `setWidget(nullptr)` +
+   `setWidget(box)` does not refresh it. The pane therefore cannot hug the
+   render through the base class, and the pane stretching to the cell is
+   exactly 实测缺陷5's screenshot (a 617x344 rectangle around a 272x260
+   render).
+
+   This subclass recomputes the hint from the held widget on every call:
+   the widget's own hint (QLabel's includes its 1px QSS border — probed:
+   96x92 for a 94x90 render) plus the frame. It is deliberately NOT
+   clamped to the column: a sizeHint is a request, and
+   minimumSizeHint() — the scrollbar-based one, 68x68 measured — is what
+   QLayout squeezes the pane down to when the cell is smaller (user zooms
+   past the pane), which is where the scroll bars come from.
+   ── end 实测缺陷5: hugging scroll area ── */
+class HuggingPreviewScroll final : public QScrollArea
+{
+public:
+    using QScrollArea::QScrollArea;
+
+    QSize sizeHint() const override
+    {
+        const int fw = frameWidth() * 2;
+        const QSize inner = widget() ? widget()->sizeHint() : QSize(64, 64);
+        return QSize(inner.width() + fw, inner.height() + fw)
+            .expandedTo(minimumSizeHint());
+    }
+};
+} // namespace
+
 void ControlPanel::buildWindowInspectorFace(QWidget *parent,
                                             QVBoxLayout *parentLayout)
 {
@@ -6979,7 +8890,7 @@ void ControlPanel::buildWindowInspectorFace(QWidget *parent,
 
     // The three columns. QGridLayout with stretch factors 9 / 10 / 12
     // and an 18px gap — the prototype's .9fr 1fr 1.2fr and gap:18px,
-    // with its padding:12px 14px on the grid itself.
+    // with its padding:12px 14px 14px on the grid itself.
     //
     // v1.0.0 (O1): THE GRID LIVES INSIDE A SCROLL AREA, WHICH IS WHAT
     // `.inspector-content` IS.
@@ -7001,17 +8912,49 @@ void ControlPanel::buildWindowInspectorFace(QWidget *parent,
     //
     // The paddings stay on the GRID, not on the scroll area, so the
     // measured x/y of every column does not move by a pixel.
+    //
+    // ── round2 (用户:「这里左右应该分开竖直滚动的,而不是合在一起」) ────────
+    // ONE scroll area meant ONE scrollbar: the 元数据 column and the
+    // 当前内容状态 card share the tallest content, so scrolling to the
+    // bottom of the left columns also scrolled the preview off the top
+    // (the screenshot the user filed: all three columns moving as one).
+    // The face is now TWO halves, each scrolling its own content:
+    //
+    //   inspectorColumns (QSplitter, the draggable divider — 验收项1)
+    //   ├─ [0] inspectorContent  (QScrollArea) → inspectorGridHost
+    //   │                                   → inspectorGrid: 元数据 + 分区/本组子窗
+    //   └─ [1] inspectorContentRight (QScrollArea) → inspectorPreviewHost
+    //                                              → inspectorPreview (the card)
+    //
+    // inspectorContent KEEPS its name, its objectName and its role as
+    // the LEFT half's scroll box, because three contracts hang off it:
+    // src/main_control.cpp's --snap-scroll=end hook scrolls
+    // findChild("inspectorContent")'s vertical bar, the interaction
+    // regression tests scroll and measure it, and the fidelity tests
+    // hide/show it with the empty state. The new right half is
+    // inspectorContentRight, and previewScrollHost_ is the member the
+    // empty-state arms hide/show beside contentScrollHost_.
+    auto *columnsSplit = new QSplitter(Qt::Horizontal);
+    columnsSplit->setObjectName(QStringLiteral("inspectorColumns"));
+    columnsSplit->setChildrenCollapsible(false);
+    columnsSplit->setHandleWidth(6);
+    faceLayout->addWidget(columnsSplit, 1);
+
     auto *contentScroll = new QScrollArea();
     contentScroll->setObjectName(QStringLiteral("inspectorContent"));
     contentScrollHost_ = contentScroll;
     contentScroll->setWidgetResizable(true);
-    contentScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    contentScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     contentScroll->setFrameShape(QFrame::NoFrame);
     contentScroll->setFocusPolicy(Qt::NoFocus);
-    faceLayout->addWidget(contentScroll, 1);
+    columnsSplit->addWidget(contentScroll);
 
     auto *gridHost = new QWidget();
     gridHost->setObjectName(QStringLiteral("inspectorGridHost"));
+    inspectorGridHost_ = gridHost;
+    // round2: the card's height budget is this content's height (see the
+    // eventFilter arm of the same name), so its resizes are watched.
+    gridHost->installEventFilter(this);
     contentScroll->setWidget(gridHost);
     auto *grid = new QGridLayout(gridHost);
     grid->setObjectName(QStringLiteral("inspectorGrid"));
@@ -7123,6 +9066,43 @@ void ControlPanel::buildWindowInspectorFace(QWidget *parent,
     winOutput_->setMinimumWidth(160);   // widest real entry measured: 157px
     outRow->addWidget(winOutput_, 1);
     metaLayout->addLayout(outRow);
+    /* ── 实测缺陷5: the line that answers the dropdown's question ────────
+       「我完全没看懂他的逻辑」 — the combo can only ever name the MODE; the
+       screen the chain actually resolves to is printed right under it,
+       so the answer no longer depends on understanding the chain. The
+       text is written per selection (buildInspectorForSelection), which
+       is also why it is not a trSet: a language flip re-derives it
+       through the queued refill below instead of replaying a frozen
+       string.
+       ── end 实测缺陷5 ── */
+    winOutputHint_ = new QLabel();
+    winOutputHint_->setObjectName(QStringLiteral("metaOutputHint"));
+    winOutputHint_->setWordWrap(true);
+    metaLayout->addWidget(winOutputHint_);
+    trTip(winOutput_, QStringLiteral("console.proto.target_tip"));
+    trHook([this] {
+        // 实测缺陷7: the entry's text is per-selection, so a language flip
+        // has to re-derive it — and it must re-derive the SAME string the
+        // refill builds (mother's name included), or the two spellings of
+        // 跟随主面板 would disagree for the length of one event-loop turn.
+        // Hence the same accessor and the same kMotherShortTitle name.
+        if (winOutput_ && winOutput_->count() > 0) {
+            const EditableSelection sel = currentEditableSelection();
+            QString text = consoleText(
+                sel.subIndex >= 0
+                    ? QStringLiteral("console.proto.follow_parent")
+                    : QStringLiteral("console.proto.follow_primary"));
+            if (sel.subIndex >= 0 && mhw::isPanelIndex(sel.panelIndex))
+                text =
+                    consoleText(
+                        QStringLiteral("console.proto.follow_parent_named"))
+                        .arg(consoleText(QString::fromLatin1(
+                            kMotherShortTitle[sel.panelIndex])));
+            winOutput_->setItemText(0, text);
+        }
+        if (winOutputHint_ && !winOutputHint_->text().isEmpty())
+            QTimer::singleShot(0, this, [this] { refreshWindowModel(); });
+    });
     connect(winOutput_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int){
         // The combo's own userData is the output name; empty is
@@ -7178,7 +9158,19 @@ void ControlPanel::buildWindowInspectorFace(QWidget *parent,
     trSet(winVisible_, QStringLiteral("console.proto.visible"));
     winVisible_->setObjectName(QStringLiteral("metaVisible"));
     winVisible_->setCursor(Qt::PointingHandCursor);
-    metaLayout->addWidget(winVisible_);
+    // NOT STRETCHED, and that is a click target, not a style choice.
+    // A QVBoxLayout::addWidget() without an alignment gives the row the
+    // whole column (measured: 374px wide for a control whose painted
+    // part is `indicator ∪ text` = 100px, QStyle::SE_CheckBoxClickRect
+    // — QCheckBox::hitButton() is THAT rect, not widget->rect()). A
+    // press at the row's centre was therefore IGNORED by
+    // QAbstractButton::mousePressEvent (measured: press delivered,
+    // `isAccepted()` = 0, `isDown()` = 0, no `toggled()`), i.e. most of
+    // the row did nothing — 「点了没反应」. Left-aligning lets the
+    // widget take its own sizeHint, so the geometry the user can see is
+    // exactly the geometry that answers a click, and the row's height
+    // (which the grid below is measured against) does not move.
+    metaLayout->addWidget(winVisible_, 0, Qt::AlignLeft);
     connect(winVisible_, &QCheckBox::toggled, this, [this](bool on){
         applySelectedWindowVisible(on);
     });
@@ -7189,6 +9181,257 @@ void ControlPanel::buildWindowInspectorFace(QWidget *parent,
     winPosNote_->setObjectName(QStringLiteral("windowPosNote"));
     winPosNote_->setWordWrap(true);
     metaLayout->addWidget(winPosNote_);
+    /* ── 验收项5 (B 第1阶段): CAPABILITY-DRIVEN PROPERTY ROWS ──────────────
+       列数 / 最小宽 / 最小高 / 固定宽 / 固定高 / 恢复自动尺寸 — every one of
+       them asks the SELECTED WINDOW's own Panel (supportsColumns(),
+       columns(), minWidth(), minHeight(), lockWidth(), lockHeight())
+       rather than a hard-coded "this kind of window" guess, and the
+       writes go through Panel's exact-value wrappers, which call the
+       same protected implementations the edit-mode keys call.
+
+       列数 is HIDDEN (not disabled) for a window whose
+       supportsColumns() is false: a control that can never act is a
+       control that lies about the window. That visibility decision is
+       re-made on every selection in buildInspectorForSelection().
+
+       Nothing here touches the preview path: these are real edits, so
+       they stamp the panel's own dirty flag exactly like the keyboard
+       does, and 列数 — the one key saveAppearance() does not carry —
+       persists through Panel::persistColumns().
+       ── end 验收项5: the capability block ── */
+    auto *propsCap = new QLabel();
+    trSet(propsCap, QStringLiteral("console.inspector.size_hint"));
+    propsCap->setObjectName(QStringLiteral("sectionCap"));
+    metaLayout->addWidget(propsCap);
+
+    auto makeSpin = [](const QString &name, int lo, int hi) {
+        auto *s = new QSpinBox();
+        s->setObjectName(name);
+        s->setRange(lo, hi);
+        s->setKeyboardTracking(false);   // write on commit, not per digit
+        s->setAlignment(Qt::AlignRight);
+        return s;
+    };
+    winColumnsSpin_ =
+        makeSpin(QStringLiteral("windowColumns"), kColumnsRowMin, kColumnsRowMax);
+    // 实测缺陷9: the ceiling is PER AXIS (see kSizeRowMaxWidth/Height above)
+    // instead of Panel::maxDialValue() for all four — the shared 4096 was
+    // what made 「可调范围太离谱」. Panel::maxDialValue() remains the hard
+    // ceiling a refill grows a row to when this window stores more.
+    winMinWSpin_ = makeSpin(QStringLiteral("windowMinWidth"), 0,
+                            kSizeRowMaxWidth);
+    winMinHSpin_ = makeSpin(QStringLiteral("windowMinHeight"), 0,
+                            kSizeRowMaxHeight);
+    winLockWSpin_ = makeSpin(QStringLiteral("windowFixedWidth"), 0,
+                             kSizeRowMaxWidth);
+    winLockHSpin_ = makeSpin(QStringLiteral("windowFixedHeight"), 0,
+                             kSizeRowMaxHeight);
+    /* ── 实测缺陷6 (usability-2): the same four fields, draggable ──────────
+       The boxes above stay (exact typing keeps working and the objectName
+       every fixture finds stays put); each of the four rows now also
+       carries a slider over the SAME range — read off the spin box, so the
+       two halves cannot drift apart even if a ceiling ever moves. 56px is a
+       floor, not a width: the row still collapses in a narrow column,
+       but the handle can always be grabbed.
+       ── end 实测缺陷6: the sliders ── */
+    auto makeSizeSlider = [](const QString &name, const QSpinBox *forBox) {
+        auto *s = new QSlider(Qt::Horizontal);
+        s->setObjectName(name);
+        s->setRange(forBox->minimum(), forBox->maximum());
+        s->setSingleStep(1);
+        s->setPageStep(32);
+        s->setMinimumWidth(56);
+        s->setCursor(Qt::PointingHandCursor);
+        return s;
+    };
+    winMinWSlider_ =
+        makeSizeSlider(QStringLiteral("windowMinWidthSlider"), winMinWSpin_);
+    winMinHSlider_ =
+        makeSizeSlider(QStringLiteral("windowMinHeightSlider"), winMinHSpin_);
+    winLockWSlider_ =
+        makeSizeSlider(QStringLiteral("windowFixedWidthSlider"), winLockWSpin_);
+    winLockHSlider_ =
+        makeSizeSlider(QStringLiteral("windowFixedHeightSlider"), winLockHSpin_);
+    winAutoBtn_ = new QPushButton();
+    trSet(winAutoBtn_, QStringLiteral("console.inspector.auto_size"));
+    winAutoBtn_->setObjectName(QStringLiteral("windowAutoSize"));
+    winAutoBtn_->setCursor(Qt::PointingHandCursor);
+    // A `metaLayout`-filling row: label left, control right, and the row
+    // itself is a widget so the capability-gated one can be HIDDEN as a
+    // unit (hiding a bare QHBoxLayout's children one by one would leave
+    // the caption to remember).
+    //
+    // 实测缺陷6: with a slider the row is label | slider (expands) | box —
+    // the free space the stretch used to swallow becomes the drag range.
+    // Without one (列数) the stretch stays, so no existing row moves.
+    auto addPropRow = [this, metaLayout](const QString &labelKey,
+                                         const QString &rowName,
+                                         QSlider *slider,
+                                         QWidget *control) -> QWidget * {
+        auto *row = new QWidget();
+        row->setObjectName(rowName);
+        auto *rl = new QHBoxLayout(row);
+        rl->setContentsMargins(0, 0, 0, 0);
+        rl->setSpacing(6);
+        auto *lab = new QLabel();
+        trSet(lab, labelKey);
+        lab->setObjectName(QStringLiteral("propLabel"));
+        rl->addWidget(lab);
+        if (slider)
+            rl->addWidget(slider, 1);
+        else
+            rl->addStretch(1);
+        rl->addWidget(control);
+        metaLayout->addWidget(row);
+        return row;
+    };
+    /* ── 实测缺陷8 (user-8): 列数 gets a − / + around the box ──────────────
+       「列数控件加 −/+ 按钮」 with 「步进 1」: the buttons only step the BOX
+       (Panel::kColumnsStep == 1), and the box's valueChanged stays the one
+       and only writer into Panel::setColumnsTo() — so a click, a typed
+       number and the keyboard's [ ] all land on the same path, and at a
+       bound the step is a no-op rather than a silent out-of-range write.
+       The box keeps the tab stop (NoFocus on the buttons) and its
+       objectName, so every existing fixture still finds `windowColumns`
+       exactly where it was.
+       ── end 实测缺陷8 ── */
+    auto *colStepper = new QWidget();
+    colStepper->setObjectName(QStringLiteral("windowColumnsStepper"));
+    auto *colStepperLay = new QHBoxLayout(colStepper);
+    colStepperLay->setContentsMargins(0, 0, 0, 0);
+    colStepperLay->setSpacing(4);
+    auto makeStepBtn = [this](const QString &name, const QString &text) {
+        auto *b = new QPushButton(text);
+        b->setObjectName(name);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setFocusPolicy(Qt::NoFocus);
+        trTip(b, QStringLiteral("console.inspector.columns_step_tip"));
+        return b;
+    };
+    winColumnsMinus_ = makeStepBtn(QStringLiteral("windowColumnsMinus"),
+                                   QStringLiteral("−"));
+    winColumnsPlus_ =
+        makeStepBtn(QStringLiteral("windowColumnsPlus"), QStringLiteral("+"));
+    colStepperLay->addWidget(winColumnsMinus_);
+    colStepperLay->addWidget(winColumnsSpin_);
+    colStepperLay->addWidget(winColumnsPlus_);
+    winColumnsRow_ = addPropRow(QStringLiteral("console.inspector.columns"),
+                                QStringLiteral("propColumnsRow"),
+                                nullptr, colStepper);
+    addPropRow(QStringLiteral("console.inspector.min_width"),
+               QStringLiteral("propMinWidthRow"), winMinWSlider_, winMinWSpin_);
+    addPropRow(QStringLiteral("console.inspector.min_height"),
+               QStringLiteral("propMinHeightRow"), winMinHSlider_, winMinHSpin_);
+    addPropRow(QStringLiteral("console.inspector.fixed_width"),
+               QStringLiteral("propFixedWidthRow"), winLockWSlider_,
+               winLockWSpin_);
+    addPropRow(QStringLiteral("console.inspector.fixed_height"),
+               QStringLiteral("propFixedHeightRow"), winLockHSlider_,
+               winLockHSpin_);
+    metaLayout->addWidget(winAutoBtn_);
+
+    // ONE post-edit step, shared by all six controls: read the values
+    // back through the normal refill (a subclass clamp may have moved
+    // what was typed) and republish the render, because every one of
+    // these changes what the window DRAWS.
+    auto commit = [this] {
+        refreshWindowModel();
+        refreshSelectedWindowPreview();
+    };
+    connect(winColumnsSpin_, &QSpinBox::valueChanged, this,
+            [this, commit](int v) {
+                if (windowModelRefilling_)
+                    return;
+                Panel *panel = selectedPanelOrNull();
+                if (!panel || !panel->supportsColumns())
+                    return;
+                panel->setColumnsTo(v);
+                panel->persistColumns();
+                commit();
+            });
+    /* ── 实测缺陷8 (user-8): THE − / + PAIR ────────────────────────────────
+       They step the BOX and nothing else: the value then travels the
+       connect above — setColumnsTo() → persistColumns() → commit() — so a
+       click can never write where a typed number would not, and the box's
+       own clamp ([kColumnsRowMin, kColumnsRowMax], the subclasses' union)
+       is what makes a step at a bound a no-op instead of an out-of-range
+       value. Disabled state is read off the BOX: with nothing selected
+       (or a window with no column axis) the buttons are dark and a
+       programmatic click still changes nothing.
+       ── end 实测缺陷8 ── */
+    auto stepColumns = [this](int dir) {
+        if (windowModelRefilling_ || !winColumnsSpin_
+            || !winColumnsSpin_->isEnabled())
+            return;
+        const int next = winColumnsSpin_->value() + Panel::kColumnsStep * dir;
+        if (next != winColumnsSpin_->value())
+            winColumnsSpin_->setValue(next);
+    };
+    connect(winColumnsMinus_, &QPushButton::clicked, this,
+            [stepColumns](bool) { stepColumns(-1); });
+    connect(winColumnsPlus_, &QPushButton::clicked, this,
+            [stepColumns](bool) { stepColumns(+1); });
+    auto sizeField = [this, commit](int v, void (Panel::*setter)(int)) {
+        if (windowModelRefilling_)
+            return;
+        Panel *panel = selectedPanelOrNull();
+        if (!panel)
+            return;
+        (panel->*setter)(v);
+        commit();
+    };
+    connect(winMinWSpin_, &QSpinBox::valueChanged, this,
+            [sizeField](int v) { sizeField(v, &Panel::setExactMinWidth); });
+    connect(winMinHSpin_, &QSpinBox::valueChanged, this,
+            [sizeField](int v) { sizeField(v, &Panel::setExactMinHeight); });
+    connect(winLockWSpin_, &QSpinBox::valueChanged, this,
+            [sizeField](int v) { sizeField(v, &Panel::setExactLockWidth); });
+    connect(winLockHSpin_, &QSpinBox::valueChanged, this,
+            [sizeField](int v) { sizeField(v, &Panel::setExactLockHeight); });
+    /* ── 实测缺陷6: slider and box are ONE FIELD ──────────────────────────
+       Direction matters and is the whole correctness argument:
+
+         slider → box   setValue() on the box, which is the ONLY writer
+                        to the Panel (the four connects above). A drag
+                        therefore costs exactly one write per step and
+                        can never take a different path than typing.
+
+         box → slider   mirrored with signals BLOCKED, so the mirror
+                        cannot bounce back into a second write.
+
+       Both connections use the widget as context, so a rebuild that
+       deletes one half disconnects it instead of firing on a dangling
+       pointer.
+       ── end 实测缺陷6 ── */
+    auto linkSizeField = [](QSlider *slider, QSpinBox *spin) {
+        if (!slider || !spin)
+            return;
+        connect(slider, &QSlider::valueChanged, spin, [spin](int v) {
+            if (spin->value() != v)
+                spin->setValue(v);
+        });
+        connect(spin, &QSpinBox::valueChanged, slider, [slider](int v) {
+            if (slider->value() != v) {
+                slider->blockSignals(true);
+                slider->setValue(v);
+                slider->blockSignals(false);
+            }
+        });
+    };
+    linkSizeField(winMinWSlider_, winMinWSpin_);
+    linkSizeField(winMinHSlider_, winMinHSpin_);
+    linkSizeField(winLockWSlider_, winLockWSpin_);
+    linkSizeField(winLockHSlider_, winLockHSpin_);
+    connect(winAutoBtn_, &QPushButton::clicked, this, [this, commit] {
+        if (windowModelRefilling_)
+            return;
+        Panel *panel = selectedPanelOrNull();
+        if (!panel)
+            return;
+        panel->restoreAutoSize();
+        commit();
+    });
+
     metaLayout->addStretch(1);
     grid->addWidget(metaCol, 0, 0);
     grid->setColumnStretch(0, 9);
@@ -7205,6 +9448,46 @@ void ControlPanel::buildWindowInspectorFace(QWidget *parent,
     // everywhere else.
     windowGroupCol_ = new QFrame();
     windowGroupCol_->setObjectName(QStringLiteral("inspectorSections"));
+    // THE MIXED BLOCK GETS THE COLUMN'S FIRST LAYOUT, built right here
+    // rather than in the per-selection refill below. That refill is the
+    // only place the group column ever gets a layout — and it runs only
+    // once a selection EXISTS: the cold start has none (the console opens
+    // on `.empty-inspector`, buildInspectorForSelection's empty arm
+    // returns before the column is touched), so the eleven 独立/合并
+    // switches would not exist at all until the user's first click, and
+    // the language-flip replay through refreshGroupColumn() would have
+    // nothing to refresh either. The refill re-attaches the SAME frame
+    // (it takes it out before purging the layout), so this layout is
+    // replaced once, not duplicated.
+    {
+        auto *firstGroupLay = new QVBoxLayout(windowGroupCol_);
+        firstGroupLay->setContentsMargins(0, 0, 0, 0);
+        firstGroupLay->setSpacing(8);
+        buildMixedGroupBlock();
+        if (mixedGroupHost_)
+            firstGroupLay->addWidget(mixedGroupHost_);
+    }
+    /* ── 验收项1 (B 第1阶段): THE PREVIEW CONTAINER IS USER-SIZED ─────────
+       Columns 1 and 2 (显示内容 / 内容预览) now sit in ONE horizontal
+       QSplitter instead of two fixed grid tracks. That is the "调整预览
+       容器" half of the acceptance item: dragging the handle changes how
+       much room the third column gets, and because the preview's default
+       mode is Fit, a wider/taller container is a BIGGER whole image — no
+       change to any real Panel scale, no scrolling hunt.
+
+       round2 moved that splitter UP a level — it is `columnsSplit`, built
+       beside the two scroll boxes at the top of this function — because
+       each half now owns its own scrollbar. The handle therefore sits
+       between (元数据 + 分区) and (当前内容状态), i.e. exactly where it used
+       to sit between 分区 and 当前内容状态, and it still resizes the
+       preview's container: 验收项1's drag is the same drag, only the
+       middle column moved into the left half's grid.
+
+       Column 1 stays a GRID COLUMN (分区/本组子窗 keeps its 1fr), so the
+       9:10:12 budget is preserved by arithmetic: the left half carries
+       19 of the splitter's 31 stretch units (9+10) and the right half 12,
+       and the left half's own grid then splits those 19 back into 9:10.
+       ── end 验收项1: the preview container splitter ── */
     grid->addWidget(windowGroupCol_, 0, 1);
     grid->setColumnStretch(1, 10);
 
@@ -7217,7 +9500,21 @@ void ControlPanel::buildWindowInspectorFace(QWidget *parent,
     windowPreviewCol_ = new QFrame();
     windowPreviewCol_->setObjectName(QStringLiteral("inspectorPreview"));
     auto *previewColLayout = new QVBoxLayout(windowPreviewCol_);
-    previewColLayout->setContentsMargins(0, 0, 0, 0);
+    /* ── round2 · 卡片容器: THE CARD'S PADDING IS THE LAYOUT's ────────────
+       QFrame#inspectorPreview now paints the card itself (background +
+       1px line + radius, see control_panel_styles.cpp), so this column
+       is no longer an invisible gutter around the pane — it is the
+       「当前内容状态」CARD the user asked for (「应该加个框框来更美观」).
+
+       A stylesheet `padding` on a QFrame that OWNS A LAYOUT does not
+       reach the layout's cells (Qt applies the box padding to the
+       widget, and QLayout keeps laying its children out in
+       contentsRect()), so the inset the card needs has to come from the
+       layout's contents margins: 12 left/right, 10 top/bottom — without
+       them the caption, the pane and the zoom row would be painted ON
+       the border line.
+       ── end round2: the card's padding ── */
+    previewColLayout->setContentsMargins(12, 10, 12, 10);
     previewColLayout->setSpacing(8);
     auto *previewCap = new QLabel();
     // v1.0.0 (C): the prototype's THIRD column cap is 当前内容状态
@@ -7234,7 +9531,159 @@ void ControlPanel::buildWindowInspectorFace(QWidget *parent,
     // in the right language rather than showing a blank rectangle.
     trSet(windowPreviewBox_, QStringLiteral("console.proto.insp.empty.sub"));
     windowPreviewBox_->setWordWrap(true);
-    previewColLayout->addWidget(windowPreviewBox_, 1);
+    // ── v1.0.1 (验收项2): SCROLL, DON'T SQUEEZE ────────────────────────
+    // The label used to be stretched by the grid and filled with a
+    // pixmap scaled down into its box (~132px tall): blurry AND cropped.
+    // It now keeps the Panel render at its own pixel size inside a scroll
+    // area — findChild("windowPreviewBox") still answers the same QLabel
+    // with the same setPixmap()/setText() contract.
+    windowPreviewBox_->setMinimumSize(200, 120);
+    windowPreviewScroll_ = new HuggingPreviewScroll();
+    windowPreviewScroll_->setObjectName(QStringLiteral("windowPreviewScroll"));
+    windowPreviewScroll_->setWidgetResizable(false);   // the LABEL sizes to the pixmap
+    windowPreviewScroll_->setFrameShape(QFrame::NoFrame);
+    windowPreviewScroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    windowPreviewScroll_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    windowPreviewScroll_->setWidget(windowPreviewBox_);
+    /* ── 实测缺陷5 (user-8): THE FRAME HUGS THE RENDER ─────────────────────
+       The pane used to be stretched across the whole column (measure:
+       617x344 of pane around a 272x260 render), so the bordered box sat at
+       the top-left of a mostly empty rectangle and the readout row + the
+       orange note were pushed to the column's far edges — the "外框 400px
+       宽，里面 190x95" screenshot. Two settings make the container follow
+       the content instead:
+
+         * no stretch + a Preferred policy: the scroll area takes its
+           sizeHint (which QScrollArea derives from the label it holds —
+           probed: 124px of pane for a 120px label) instead of the cell;
+         * AlignLeft|AlignTop: the cross axis follows too, so the pane is
+           as wide as the render rather than as wide as the column. A
+           content larger than the column is still clamped to it (QLayout
+           only ever hands out the cell), which is what keeps the scroll
+           bars — and therefore 实测缺陷2's "scroll, don't squeeze" — alive
+           when the user zooms past the pane.
+
+       previewFitScale() is rewritten in the same commit to read the
+       COLUMN, not this viewport: a pane that hugs its content cannot be
+       the input to the scale that sets that content (measured: 272x260 →
+       97x93 in two passes, kPreviewDefaultFill of itself each time).
+       ── end 实测缺陷5 ── */
+    windowPreviewScroll_->setSizePolicy(QSizePolicy::Preferred,
+                                        QSizePolicy::Preferred);
+    previewColLayout->addWidget(windowPreviewScroll_);
+    previewColLayout->setAlignment(windowPreviewScroll_,
+                                   Qt::AlignLeft | Qt::AlignTop);
+    /* ── 验收项1 (B 第1阶段): THE ZOOM ROW ────────────────────────────────
+       Fit (the default, z == 0), 1:1, and − / + steps — a preview zoom
+       that is INDEPENDENT OF THE REAL HUD SCALE: every one of these only
+       re-derives the label's pixmap from windowPreviewSource_; nothing
+       here reaches Panel::scale() or panels.ini.
+
+       The dynamic halves (缩放 % / 尺寸) are rewritten by
+       applyPreviewDisplay(), which the trHook below replays on a
+       language flip — so the row never carries a frozen string either.
+       ── end 验收项1: zoom row ── */
+    auto *zoomRow = new QHBoxLayout();
+    zoomRow->setSpacing(6);
+    previewZoomLabel_ = new QLabel();
+    previewZoomLabel_->setObjectName(QStringLiteral("previewZoomLabel"));
+    previewZoomLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    previewSizeLabel_ = new QLabel();
+    previewSizeLabel_->setObjectName(QStringLiteral("previewSizeLabel"));
+    previewSizeLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    /* ── v1.1.4: THE READOUT GETS ITS OWN LINE ─────────────────────────────
+       The two readouts and the four zoom buttons used to share one HBox,
+       and a QLabel's minimum width is its full text width — so the row's
+       minimum was 「适应窗口 88%」+「尺寸 380×345 · 高度 290」+ four
+       buttons ≈ 520px. The card's right half is ~350px at the console's
+       own size, so the CARD inherited a 520px minimum and the right half
+       answered with a horizontal scrollbar (measured, not predicted).
+       Two rows: the readouts shrink the card's minimum to their own width,
+       and the button row is ~240px, so the widest of the two still fits.
+       objectNames, text and every signal stay exactly where they were.
+       ── end v1.1.4 ── */
+    auto *readoutRow = new QVBoxLayout();
+    readoutRow->setSpacing(2);
+    readoutRow->addWidget(previewZoomLabel_);
+    readoutRow->addWidget(previewSizeLabel_);
+    zoomRow->addStretch(1);
+    auto makeZoomBtn = [this](const QString &name, const QString &text) {
+        auto *b = new QPushButton(text);
+        b->setObjectName(name);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setFocusPolicy(Qt::NoFocus);
+        return b;
+    };
+    previewFitBtn_ = makeZoomBtn(QStringLiteral("previewFitBtn"), QString());
+    trSet(previewFitBtn_, QStringLiteral("console.preview.fit"));
+    previewActualBtn_ = makeZoomBtn(QStringLiteral("previewActualBtn"), QString());
+    trSet(previewActualBtn_, QStringLiteral("console.preview.actual_size"));
+    previewZoomOutBtn_ = makeZoomBtn(QStringLiteral("previewZoomOutBtn"),
+                                     QStringLiteral("−"));
+    previewZoomInBtn_ = makeZoomBtn(QStringLiteral("previewZoomInBtn"),
+                                    QStringLiteral("+"));
+    trTip(previewZoomInBtn_, QStringLiteral("console.preview.resize_tip"));
+    trTip(previewZoomOutBtn_, QStringLiteral("console.preview.resize_tip"));
+    trTip(previewFitBtn_, QStringLiteral("console.preview.hint"));
+    for (QPushButton *b : {previewZoomOutBtn_, previewZoomInBtn_,
+                           previewFitBtn_, previewActualBtn_})
+        zoomRow->addWidget(b);
+    previewColLayout->addLayout(readoutRow);
+    previewColLayout->addLayout(zoomRow);
+    // The one place the readout's format lives, so the trHook below and
+    // every zoom click share it.
+    trHook([this] { applyPreviewDisplay(); });
+    connect(previewFitBtn_, &QPushButton::clicked, this,
+            [this] { setPreviewZoom(0.0); });          // Fit = the reset
+    connect(previewActualBtn_, &QPushButton::clicked, this,
+            [this] { setPreviewZoom(1.0); });
+    connect(previewZoomInBtn_, &QPushButton::clicked, this,
+            [this] { setPreviewZoom(stepPreviewZoom(+1)); });
+    connect(previewZoomOutBtn_, &QPushButton::clicked, this,
+            [this] { setPreviewZoom(stepPreviewZoom(-1)); });
+    // FIT FOLLOWS THE CONTAINER. Dragging the splitter's handle (or any
+    // other resize of the viewport) has to re-derive the Fit pixmap, or
+    // "调整预览容器" would leave the image at its old fit. Only the
+    // Fit arm re-derives: an explicit zoom is a ratio the user chose and
+    // must not be silently rewritten by a resize.
+    auto *fitWatcher = new PreviewViewportWatcher(windowPreviewScroll_);
+    fitWatcher->onViewportResize = [this] {
+        // Fit AND the default view are both functions of the viewport, so
+        // both re-derive on a resize; an explicit zoom is a ratio the user
+        // chose and is left alone.
+        if (windowPreviewScroll_
+            && (previewMarginDefault_ || previewZoom_ <= 0.0))
+            applyPreviewDisplay();
+    };
+    windowPreviewScroll_->viewport()->installEventFilter(fitWatcher);
+    /* ── 实测缺陷5: AND THE COLUMN, BECAUSE THE PANE NO LONGER RESIZES ─────
+       The pane hugs the render now, so dragging the splitter widens the
+       COLUMN without resizing the pane — the old viewport-only watcher
+       would go deaf exactly when the user "adjusts the preview
+       container". The column is the input previewFitScale() reads (see
+       实测缺陷5 there), so a resize of it is the event that must re-derive.
+       Same callback, same Fit/default-only guard.
+       ── end 实测缺陷5: column watcher ── */
+    auto *colWatcher = new PreviewViewportWatcher(windowPreviewCol_);
+    colWatcher->onViewportResize = fitWatcher->onViewportResize;
+    windowPreviewCol_->installEventFilter(colWatcher);
+    /* ── 实测缺陷2: CTRL+WHEEL OVER THE DETAIL PREVIEW ─────────────────────
+       The board's Ctrl+wheel (canvas zoom) is handled in eventFilter() by
+       `watched == canvas_`; this is the same modifier on the OTHER area.
+       Both filters are installed on different widgets, so a wheel over
+       the preview can never reach the canvas handler and vice versa — the
+       dispatch is by the widget the event landed on, not by a global
+       modifier test. Plain wheel over the preview keeps scrolling it (only
+       the Ctrl arm is consumed).
+       ── end 实测缺陷2 ── */
+    windowPreviewScroll_->installEventFilter(this);
+    windowPreviewScroll_->viewport()->installEventFilter(this);
+    // …and the label itself: a wheel over a QLabel with a pixmap is
+    // delivered to the LABEL first, and a delivered-then-ignored event
+    // propagates to the viewport without re-running that widget's
+    // filters. Filtering all three makes the arm below fire wherever in
+    // the preview area the cursor happens to be.
+    windowPreviewBox_->installEventFilter(this);
     // ── v1.0.0 (C): `.detail-warning` (reference.html:497) ─────────────
     // 「这是窗口将要显示的 demo HUD 内容；配置字段在左侧和中间编辑。」 — the
     // line that says what the third column IS, so nobody edits a
@@ -7244,8 +9693,59 @@ void ControlPanel::buildWindowInspectorFace(QWidget *parent,
     detailWarning->setObjectName(QStringLiteral("detailWarning"));
     detailWarning->setWordWrap(true);
     previewColLayout->addWidget(detailWarning);
-    grid->addWidget(windowPreviewCol_, 0, 2);
-    grid->setColumnStretch(2, 12);
+    /* ── 实测缺陷5: THE SPARE SPACE BELONGS TO A SPACER, NOT TO THE LABELS ──
+       Without this the QVBoxLayout hands its surplus to whatever can grow,
+       and both the caption and the word-wrapped note have a Preferred
+       policy — measured: each of them stretched to h=125 while the pane
+       hugged 96, i.e. the "大片空白" merely moved into the two labels and,
+       worse, fed back through chrome into previewFitScale() (available
+       height 120 → the render shrank to 25% of itself). A trailing
+       stretch of factor 1 takes all of it, so the block above stays packed
+       and every height chrome measures is the height that item asked for.
+       ── end 实测缺陷5 ── */
+    previewColLayout->addStretch(1);
+    /* ── round2: THE RIGHT HALF — ITS OWN HOST, ITS OWN SCROLL AREA ───────
+       The card goes into a scroll area of its own so that 「当前内容
+       状态」 and the two left columns stop sharing one scrollbar.
+
+       The host's margins are the grid's own (14,12,14,14) so the card's
+       outer edge lands where the old third column started and its top
+       edge is level with 元数据 / 分区 — the padding INSIDE the card is
+       the layout's (see the 12/10 note where previewColLayout is built),
+       this padding is the drawer's.
+
+       The trailing stretch keeps 实测缺陷5's invariant: a pane that
+       hugs its render may not be stretched by a spare-tall cell, so the
+       surplus of a tall right half belongs to the SCROLL AREA (it simply
+       is not there — the content is shorter than the viewport and there
+       is no bar), never to the card. previewFitScale()'s input stays the
+       card's own box, which stays a function of the CONTENT.
+       ── end round2: the right half ── */
+    auto *previewScrollHost = new QWidget();
+    previewScrollHost->setObjectName(QStringLiteral("inspectorPreviewHost"));
+    auto *previewHostLayout = new QVBoxLayout(previewScrollHost);
+    previewHostLayout->setContentsMargins(14, 12, 14, 14);
+    previewHostLayout->setSpacing(18);
+    previewHostLayout->addWidget(windowPreviewCol_);
+    previewHostLayout->addStretch(1);
+
+    auto *previewScroll = new QScrollArea();
+    previewScroll->setObjectName(QStringLiteral("inspectorContentRight"));
+    previewScrollHost_ = previewScroll;
+    previewScroll->setWidgetResizable(true);
+    previewScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    previewScroll->setFrameShape(QFrame::NoFrame);
+    previewScroll->setFocusPolicy(Qt::NoFocus);
+    previewScroll->setWidget(previewScrollHost);
+    columnsSplit->addWidget(previewScroll);
+    // A splitter distributes by its own children instead of by grid
+    // stretches, so the three columns' 9 : 10 : 12 budget is restated
+    // HERE as 19 (9+10, the left half) : 12 — and the left half's grid
+    // splits its 19 back into 9:10, so every column keeps the width it
+    // had before the split until the user drags the handle.
+    columnsSplit->setStretchFactor(0, 19);
+    columnsSplit->setStretchFactor(1, 12);
+    columnsSplit->setSizes(QList<int>{190, 120});
 
     // v1.0.0 (O1): `align-items:start` — the draft's three columns are
     // TOP-ALIGNED and the row they sit in does not stretch them
@@ -7257,7 +9757,7 @@ void ControlPanel::buildWindowInspectorFace(QWidget *parent,
     auto *gridFiller = new QWidget();
     gridFiller->setObjectName(QStringLiteral("inspectorGridFiller"));
     gridFiller->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-    grid->addWidget(gridFiller, 1, 0, 1, 3);
+    grid->addWidget(gridFiller, 1, 0, 1, 2);
     grid->setRowStretch(1, 1);
 
     // ── the empty state ─────────────────────────────────────────────────
@@ -7501,26 +10001,54 @@ struct ModalParts {
     QFrame *backdrop = nullptr;
 };
 
-ModalParts buildModalShell(QDialog *dlg, const QString &title)
+ModalParts buildModalShell(QDialog *dlg, const QString &title,
+                           bool compact = false)
 {
     ModalParts out;
     auto *outer = new QVBoxLayout(dlg);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
 
-    auto *backdrop = new QFrame(dlg);
-    backdrop->setObjectName(QStringLiteral("modalBackdrop"));
-    backdrop->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    outer->addWidget(backdrop);
-    out.backdrop = backdrop;
-    auto *bvl = new QVBoxLayout(backdrop);
-    bvl->setContentsMargins(0, 0, 0, 0);
-    bvl->setSpacing(0);
-    bvl->setAlignment(Qt::AlignCenter);
+    /* ── 验收项2 (B 第1阶段): ONE CONTENT LAYER IN THE COMPACT DIALOG ──────
+       The full-window modals (帮助 / 导出 JSON / 退出确认) keep their
+       veil: backdrop behind, card centred inside it, click-the-margin to
+       dismiss. The COMPACT settings popup does not — a second frame plus
+       the card's size-minus-64 cap put an independent black border and
+       64px of black padding around the content, which is the "设置不贴
+       合内容" defect. So here `compact` parents the shell DIRECTLY to the
+       dialog and lets it fill it: exactly one content layer, no outer
+       box. modalBackdrop is then absent by construction, and the caller
+       must null-guard it (the dismiss filter still runs on the dialog).
 
-    auto *shell = new QFrame(backdrop);
+       Nothing else moves: modalHead / modalBody (the scroll area, so
+       long copy still scrolls internally) / modalActions (the 关闭 row,
+       OUTSIDE the scroll, so it stays reachable at any content length)
+       are built by the same code for both shapes.
+       ── end 验收项2: compact = one layer ── */
+    QWidget *host = dlg;
+    QVBoxLayout *hostLayout = nullptr;
+    if (!compact) {
+        auto *backdrop = new QFrame(dlg);
+        backdrop->setObjectName(QStringLiteral("modalBackdrop"));
+        backdrop->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        outer->addWidget(backdrop);
+        out.backdrop = backdrop;
+        auto *bvl = new QVBoxLayout(backdrop);
+        bvl->setContentsMargins(0, 0, 0, 0);
+        bvl->setSpacing(0);
+        bvl->setAlignment(Qt::AlignCenter);
+        host = backdrop;
+        hostLayout = bvl;
+    }
+
+    auto *shell = new QFrame(host);
     shell->setObjectName(QStringLiteral("modalShell"));
-    bvl->addWidget(shell);
+    if (compact) {
+        shell->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        outer->addWidget(shell, 1);
+    } else {
+        hostLayout->addWidget(shell);
+    }
     out.shell = shell;
     auto *svl = new QVBoxLayout(shell);
     svl->setContentsMargins(20, 20, 20, 16);
@@ -7565,7 +10093,11 @@ ModalParts buildModalShell(QDialog *dlg, const QString &title)
 // not on the screen and not on whatever Qt's QDialog::exec() default
 // position happens to be. Called just before exec(), once the body has
 // been filled and adjustSize() has something real to measure.
-void centerModalOnConsole(QDialog *dlg)
+// `compact` = the settings dialog's own contract (用户验收项1): a small
+// popup of at most ~680×700 clamped to the current screen, NOT a dialog
+// stretched over the whole console. The other dialogs (帮助 / 导出 JSON /
+// 退出确认) keep the full-client veil.
+void centerModalOnConsole(QDialog *dlg, bool compact = false)
 {
     if (!dlg)
         return;
@@ -7592,33 +10124,94 @@ void centerModalOnConsole(QDialog *dlg)
     if (!client)
         client = host;
     const QPoint origin = client->mapToGlobal(QPoint(0, 0));
-    dlg->setGeometry(origin.x(), origin.y(),
-                     client->width(), client->height());
-
-    // THE CARD NEVER FILLS THE VEIL. Without this the settings dialog's
-    // own content (appearance rows + Rise card + data note + About) is
-    // taller than a small window, the shell grows to the dialog, and
-    // there is no longer any part of `.modal-backdrop` that is not the
-    // panel — which makes `if(e.target===m)` unreachable and the
-    // click-to-close dead, AND stops `.modal-body{overflow:auto}` from
-    // ever scrolling (a scroll area whose height is its content's never
-    // has anything to scroll). Capping the card at the veil minus 32px
-    // on each side restores both: there is always a margin to click, and
-    // the body scrolls inside it. Same reason the prototype's card has a
-    // max-width against an inset:0 backdrop.
-    if (QFrame *shell =
-            dlg->findChild<QFrame *>(QStringLiteral("modalShell"))) {
-        shell->setMaximumSize(qMax(200, client->width() - 64),
-                              qMax(120, client->height() - 64));
+    // ── v1.0.1 (验收项1): THE SETTINGS DIALOG IS A SMALL POPUP ──────────
+    // It used to be sized to the whole client area, so "设置" read as a
+    // full-window page. It is now at most 680×700, clamped to the screen
+    // the dialog is on AND to the client area, and centred inside it.
+    // The veil stays (its click-to-close still works on the margin that
+    // is left) and the body still scrolls — `.modal-body{overflow:auto}`.
+    QSize size = client->size();
+    if (compact) {
+        QScreen *scr = dlg->screen() ? dlg->screen()
+                                     : QGuiApplication::primaryScreen();
+        const QRect avail = scr ? scr->availableGeometry()
+                                : QRect(QPoint(0, 0), client->size());
+        size.setWidth (qMin(680, qMin(avail.width(),  client->width())));
+        /* ── 验收项2: HUG THE CONTENT, UP TO THE COMPACT CEILING ──────────
+           The box used to be a flat 700px tall no matter how much copy
+           was in it, so a short settings list sat inside 300px of
+           empty shell — the same "不贴合内容" defect as the black border.
+           sizeHint() is the head + modalBody's own content + the action
+           row (measured right before exec(), when the body is filled);
+           the caps below keep the compact contract (≤700, inside the
+           screen and the client area) and the floor keeps the pop-up a
+           pop-up when the body measures nonsense.
+           ── end 验收项2: content-hugging height ── */
+        int h = dlg->sizeHint().height();
+        if (h <= 0)
+            h = 700;
+        h = qMin(h, qMin(700, qMin(avail.height(), client->height())));
+        size.setHeight(qMax(240, h));
     }
+    // Offsets are 0 when size == client, so veil dialogs keep their
+    // exact geometry; the compact one lands centred instead of at (0,0).
+    dlg->setGeometry(origin.x() + (client->width()  - size.width())  / 2,
+                     origin.y() + (client->height() - size.height()) / 2,
+                     size.width(), size.height());
+
+    // THE CARD NEVER FILLS THE VEIL — for the FULL-WINDOW veils only.
+    // Without this the 帮助 / 导出 dialogs' own content is taller than
+    // the window, the shell grows to it, and there is no longer any part
+    // of `.modal-backdrop` that is not the panel — which makes
+    // `if(e.target===m)` unreachable and the click-to-close dead, AND
+    // stops `.modal-body{overflow:auto}` from ever scrolling (a scroll
+    // area whose height is its content's never has anything to scroll).
+    // Capping the card at the veil minus 32px on each side restores
+    // both, and is exactly the 64px of black padding the COMPACT
+    // settings dialog had to shed (验收项2) — so `compact` skips it and
+    // the shell simply fills its dialog: one layer, no outer box.
+    if (!compact)
+        if (QFrame *shell =
+                dlg->findChild<QFrame *>(QStringLiteral("modalShell"))) {
+            shell->setMaximumSize(qMax(200, size.width()  - 64),
+                                  qMax(120, size.height() - 64));
+        }
 }
 } // namespace
 
-// 帮助与快捷键. The prototype's #help-modal is four paragraphs plus a
-// key table; the paragraphs are the console's real semantics (per-display
-// logical coordinates, the four scopes, what SAVE writes) and the table
-// is the board's edit keys. Both are translated copy that already exists
-// — no new strings, so a language flip is automatic.
+// 帮助与快捷键. THE SAME COMPACT CONTRACT AS 设置 (at most 680×700, height
+// hugging the copy, clamped to the screen and to the console, the body
+// scrolling inside). On the full-client veil this panel grew to the whole
+// console's client area — the「帮助面板太大」report — so it now builds
+// exactly the way openSettingsDialog() does.
+//
+// v1.1.4: the --snap-dialog=<...> hook's only entry. Deliberately thin —
+// it picks one of the three private modals and calls it; the grab itself
+// lives on the CLI side (main_control.cpp), because a modal blocks in
+// exec() and nothing can photograph it from beside.
+void ControlPanel::snapOpenDialog(const QString &which)
+{
+    if (which == QStringLiteral("help"))
+        openHelpDialog();
+    else if (which == QStringLiteral("settings"))
+        openSettingsDialog();
+    else
+        openExportDialog();
+}
+
+// The copy is docs/CONSOLE.md's, not a paraphrase: per-display logical
+// coordinates, the target-output follow chain, the SIX game × layout
+// scopes (2 games × Single/Split/Mixed — v0.14's four were pre-Mixed),
+// and what SAVE and EXPORT JSON actually write. Sections use the
+// dialogCap captions settings already uses.
+//
+// v1.1.4: rewritten as STEPS, not provenance. The five sections used to
+// explain where the preview's pixels come from, how many scopes exist and
+// which file each row is written to — accurate, and useless to someone
+// asking 「how do I move this window」. They now answer the five questions
+// a first session actually has (pick a game/layout, pick a window, choose
+// a screen, save, edit), with the one true caveat (the preview draws demo
+// data) kept as a single clause instead of a paragraph.
 void ControlPanel::openHelpDialog()
 {
     // PARENTED TO `this` — see buildModalShell()'s note: the console's
@@ -7629,31 +10222,62 @@ void ControlPanel::openHelpDialog()
     const QString helpTitle =
         consoleText(QStringLiteral("console.proto.help.title"));
     dlg.setWindowTitle(helpTitle);
-    const ModalParts help = buildModalShell(&dlg, helpTitle);
+    const ModalParts help = buildModalShell(&dlg, helpTitle,
+                                            /*compact=*/true);
     auto *dismiss = new BackdropDismissFilter(&dlg, help.shell);
     dlg.installEventFilter(dismiss);
-    // INSTALLED ON THE VEIL TOO. Qt delivers a mouse event to the
-    // DEEPEST widget under the cursor, so a press on the backdrop
-    // is targeted at modalBackdrop and would never reach a filter
-    // installed on the dialog alone — the click-to-close would be
-    // dead code. The same filter object on both covers the veil
-    // (dismiss) and leaves the shell to its own events (keep).
-    help.backdrop->installEventFilter(dismiss);
+    // The compact shell has no veil (buildModalShell's compact note), so
+    // the guard is the point — same shape as the settings dialog: the
+    // filter still runs on the dialog itself.
+    if (help.backdrop)
+        help.backdrop->installEventFilter(dismiss);
     QVBoxLayout *vl = help.body;
-    vl->setSpacing(12);
+    vl->setSpacing(10);
 
-    for (const char *key : {"console.proto.help.p1", "console.proto.help.p2",
-                            "console.proto.help.p3", "console.proto.help.p4"}) {
-        auto *p = new QLabel(consoleText(QString::fromLatin1(key)));
+    struct Section { const char *cap; const char *para; };
+    static const Section sections[] = {
+        {"console.proto.help.cap.data",    "console.proto.help.p1"},
+        {"console.proto.help.cap.display", "console.proto.help.p2"},
+        {"console.proto.help.cap.scope",   "console.proto.help.p3"},
+        {"console.proto.help.cap.save",    "console.proto.help.p4"},
+        {"console.proto.help.cap.edit",    "console.proto.help.p5"},
+    };
+    for (const Section &s : sections) {
+        auto *cap = new QLabel(consoleText(QString::fromLatin1(s.cap)));
+        cap->setObjectName(QStringLiteral("dialogCap"));
+        vl->addWidget(cap);
+        auto *p = new QLabel(consoleText(QString::fromLatin1(s.para)));
         p->setObjectName(QStringLiteral("helpPara"));
         p->setWordWrap(true);
         vl->addWidget(p);
+        // v1.1.4: a paragraph's trailing space is what separated one
+        // section from the next, and it was the SAME 10px the caption-to-
+        // its own text uses — so five sections read as one dense block with
+        // six bold headings in it. Six extra pixels after each paragraph is
+        // the difference between "wall of text" and "five things you can
+        // scan for"; the caption-to-text gap stays untouched, so nothing
+        // inside a section moves.
+        vl->addSpacing(6);
     }
 
-    // The key table. Two columns, the prototype's own rows: 方向键 moves
-    // 1px, Shift+方向键 moves 10px, Esc saves and leaves edit mode. These
-    // are the canvas's own contract (hud_canvas.cpp's kArrowStep), so the
-    // help text and the behaviour come from the same numbers.
+    auto *keysCap = new QLabel(
+        consoleText(QStringLiteral("console.proto.help.cap.keys")));
+    keysCap->setObjectName(QStringLiteral("dialogCap"));
+    vl->addWidget(keysCap);
+
+    // The key table. Two columns; the rows are the canvas's own contract
+    // (hud_canvas.cpp's kArrowStep / kArrowBigStep) plus the wheel zoom,
+    // so the help text and the behaviour come from the same numbers.
+    //
+    // v1.1.5: ONLY REAL KEYBOARD KEYS LIVE IN THIS TABLE. The row that
+    // used to end it — "− / + / 1:1" — was three QPushButtons
+    // (zoomOutBtn_ / zoomFitBtn_ in the layout area), not keys: the user's
+    // verdict on the old help panel was 「最后这个1:1的快捷键，根本没法按
+    // 吧。真存在么？」, and the honest answer is that the BUTTONS exist and
+    // no key is bound to them (ControlPanel::keyPressEvent handles only
+    // 1/2/3/4 and Esc). Listing them in a 按键 table taught the reader to
+    // hunt for a shortcut that was never written. They now have their own
+    // note under the table, spelled as what they are.
     auto *table = new QGridLayout();
     table->setHorizontalSpacing(18);
     table->setVerticalSpacing(6);
@@ -7663,15 +10287,31 @@ void ControlPanel::openHelpDialog()
     aHead->setObjectName(QStringLiteral("helpTh"));
     table->addWidget(kHead, 0, 0);
     table->addWidget(aHead, 0, 1);
-    struct Row { const char *key; const char *act; };
+    // ─── THE KEY COLUMN, AND WHY IT IS QString::fromUtf8 ──────────────────
+    // The key names are UTF-8 SOURCE LITERALS: ↑ ↓ ← → are three bytes
+    // each in UTF-8. They used to go through QString::fromLatin1(), which
+    // decodes each of those bytes as Latin-1 and produced U+00E2 U+0086
+    // U+0091 per arrow — “â” plus two C1 controls the font draws as a box
+    // (the「a?? a?? a?? a??」rows of the screenshot). fromUtf8 keeps the
+    // code points; the two control rows then render as ↑ ↓ ← →.
+    // `latin` is a language-neutral key name; `i18n` is the one row whose
+    // label is not (Ctrl + 滚轮 / Ctrl + wheel) and therefore a key path.
+    struct Row { const char *latin; const char *i18n; const char *act; };
     static const Row rows[] = {
-        {"↑ ↓ ← →", "console.proto.help.k.move"},
-        {"Shift + ↑ ↓ ← →", "console.proto.help.k.move10"},
-        {"Esc", "console.proto.help.k.esc"},
-        {"1 / 2 / 3 / 4", "console.proto.help.k.panel"},
+        {"↑ ↓ ← →",       nullptr, "console.proto.help.k.move"},
+        {"Shift + ↑ ↓ ← →", nullptr, "console.proto.help.k.move10"},
+        {"Esc",            nullptr, "console.proto.help.k.esc"},
+        {"1 / 2 / 3 / 4",  nullptr, "console.proto.help.k.panel"},
+        {nullptr, "console.proto.help.k.wheel.key",
+                      "console.proto.help.k.wheel"},
     };
-    for (int i = 0; i < 4; ++i) {
-        auto *k = new QLabel(QString::fromLatin1(rows[i].key));
+    constexpr int rowCount =
+        static_cast<int>(sizeof(rows) / sizeof(rows[0]));
+    for (int i = 0; i < rowCount; ++i) {
+        const QString keyText = rows[i].i18n
+            ? consoleText(QString::fromLatin1(rows[i].i18n))
+            : QString::fromUtf8(rows[i].latin);
+        auto *k = new QLabel(keyText);
         k->setObjectName(QStringLiteral("helpKey"));
         auto *a = new QLabel(consoleText(QString::fromLatin1(rows[i].act)));
         a->setObjectName(QStringLiteral("helpAct"));
@@ -7680,7 +10320,15 @@ void ControlPanel::openHelpDialog()
         table->addWidget(a, i + 1, 1);
     }
     vl->addLayout(table);
-    vl->addStretch(1);
+
+    // The zoom BUTTONS, as their own note rather than a table row — see
+    // the comment above the table. Its own objectName (helpNote, not
+    // helpPara) so the five-step paragraph contract above is unchanged.
+    auto *zoomNote = new QLabel(consoleText(
+        QStringLiteral("console.proto.help.k.zoombtn.note")));
+    zoomNote->setObjectName(QStringLiteral("helpNote"));
+    zoomNote->setWordWrap(true);
+    vl->addWidget(zoomNote);
 
     auto *close = new QPushButton(consoleText(QStringLiteral("console.proto.close")));
     close->setObjectName(QStringLiteral("dialogClose"));
@@ -7689,7 +10337,7 @@ void ControlPanel::openHelpDialog()
     help.actions->addStretch(1);
     help.actions->addWidget(close);
 
-    centerModalOnConsole(&dlg);
+    centerModalOnConsole(&dlg, /*compact=*/true);
     dlg.exec();
 }
 
@@ -7708,18 +10356,20 @@ void ControlPanel::openSettingsDialog()
     const QString settingsTitle =
         consoleText(QStringLiteral("console.proto.settings"));
     dlg.setWindowTitle(settingsTitle);
-    const ModalParts shell = buildModalShell(&dlg, settingsTitle);
+    const ModalParts shell = buildModalShell(&dlg, settingsTitle,
+                                             /*compact=*/true);
     auto *dismiss = new BackdropDismissFilter(&dlg, shell.shell);
     dlg.installEventFilter(dismiss);
-    // INSTALLED ON THE VEIL TOO. Qt delivers a mouse event to the
-    // DEEPEST widget under the cursor, so a press on the backdrop
-    // is targeted at modalBackdrop and would never reach a filter
-    // installed on the dialog alone — the click-to-close would be
-    // dead code. The same filter object on both covers the veil
-    // (dismiss) and leaves the shell to its own events (keep).
-    shell.backdrop->installEventFilter(dismiss);
+    // INSTALLED ON THE VEIL TOO — but the compact shell has no veil (see
+    // buildModalShell's compact note), so the guard is the point: the
+    // filter still runs on the dialog itself, which is where a press
+    // outside the single content layer would land.
+    if (shell.backdrop)
+        shell.backdrop->installEventFilter(dismiss);
     QVBoxLayout *vl = shell.body;
-    vl->setSpacing(14);
+    // v1.0.1 (验收项1): 紧凑弹窗内的 section 间距收紧。留白不再靠“弹窗
+    // 占满主窗口”提供，弹窗只到内容高度（上限 700px，超出内部滚动）。
+    vl->setSpacing(10);
 
     // ---- 外观 ----
     auto *appearanceCap = new QLabel(
@@ -7903,99 +10553,121 @@ void ControlPanel::openSettingsDialog()
     // The Rise card's status lines are a function of the filesystem, so
     // they are re-read on every open rather than frozen at construction.
     riseCard_->refresh();
-    centerModalOnConsole(&dlg);
+    centerModalOnConsole(&dlg, /*compact=*/true);
     dlg.exec();
 }
 
-// 导出配置 JSON. The prototype's #export-modal holds one text box with
-// the current scope's snapshot and three actions (copy / download /
-// close). What goes in the box is the point:
+// ─── v1.1.5: the payload is a LAYOUT PACKAGE ─────────────────────────────
 //
-//     {kind:"monster-control-console-prototype", demo:true,
-//      game, layout, view, display,
-//      coordinateSpace:"per-display logical x/y; no global desktop coordinates",
-//      panels:{…}, windows:[…]}
+// The old shape (`kind: monster-control-console-prototype`, `demo:true`,
+// panels/windows arrays) described what the board was drawing and said so
+// in as many words: 「快照导出 · 非 panels.ini」. Useful to LOOK at, but
+// nothing could read it back — which is exactly why the user asked why
+// there was an export and no import. An import needs the package format's
+// header to know what it is holding, so the payload became the package.
 //
-// THE PAYLOAD IS THE LIVE MODEL, NOT A SECOND SNAPSHOT. Every number in
-// it is read from the Panels through buildWindowStates(), which is the
-// same derivation the inspector and the canvas read — so an export can
-// never describe a window the board is not drawing. The one thing the
-// payload deliberately does NOT carry is a global desktop coordinate:
-// panels.ini has never stored one, and the export says so in as many
-// words.
+// What the old snapshot carried that still matters (which game, which mode,
+// which window sits where) is in the package. What was never restorable —
+// the demo-seeded CONTENT of the panels — is not, and a layout package does
+// not pretend to hold it.
 //
-// WHY QJsonDocument AND NOT A HAND-BUILT STRING. A hand-built JSON
-// string is one unescaped quote away from invalid output, and the
-// window keys and panel names are user-visible strings. QJsonDocument
-// escapes them, and the same document is what a future import would
-// parse.
-// ─── end v1.0.0 export ───────────────────────────────────────────────
+// THREE GRANULARITIES, because the user asked for both ends: 「既可以导出
+// 精细到崛起的怪物面板的 mix 状态，也可以一键打包」.
+//
+//   当前面板组   the group the rail has in front, this scope only
+//   当前作用域   the game x layout the console is showing
+//   全部打包     every scope the store carries
+//
+// READ FROM panels.ini, NOT from the live Panels. The setters persist on
+// every change (setScale/setMargins/… all default to persist=true), so the
+// store is the live state as far as layout goes — and it is the only place
+// the other five scopes exist at all. Reading one source for all three
+// granularities is what keeps the three answers from disagreeing about a
+// window the console happens to have open.
 void ControlPanel::refreshExportPayload()
 {
     if (!exportText_)
         return;
-    const bool split = layoutModeInForce_
-                       == mhw::PlayerSection::PlayerLayoutMode::Split;
 
-    QJsonObject root;
-    root[QStringLiteral("kind")] =
-        QStringLiteral("monster-control-console-prototype");
-    // demo:true is honest: the panels in this console are demo-seeded and
-    // are NOT the live overlay's state. Claiming otherwise would make an
-    // exported file look like a backup of the user's real layout.
-    root[QStringLiteral("demo")] = true;
-    root[QStringLiteral("game")] =
+    QSettings panels(QSettings::IniFormat, QSettings::UserScope,
+                     QStringLiteral("monster-overlay"),
+                     QStringLiteral("panels"));
+    QString error;
+    const std::optional<mhw::LayoutPackage> whole =
+        mhw::layoutPackageFromSettings(panels, &error);
+    if (!whole) {
+        exportText_->setPlainText(error);
+        return;
+    }
+
+    const QString game =
         currentGame() == mhw::GameId::Rise ? QStringLiteral("rise")
                                            : QStringLiteral("world");
-    root[QStringLiteral("layout")] =
-        split ? QStringLiteral("split") : QStringLiteral("single");
-    root[QStringLiteral("view")] =
-        canvas_ && canvas_->overviewMode() ? QStringLiteral("overview")
-                                           : QStringLiteral("panel");
-    root[QStringLiteral("display")] = canvas_ ? canvas_->overviewScreen()
-                                              : QString();
-    root[QStringLiteral("coordinateSpace")] =
-        QStringLiteral("per-display logical x/y; no global desktop coordinates");
+    const QString mode = mhw::playerLayoutModeToString(layoutModeInForce());
+    const QString scope = game + QLatin1Char('/') + mode;
 
-    // panels: the four mother panels' own appearance, one object each.
-    QJsonObject panels;
-    for (int i = 0; i < mhw::kPanelCount; ++i) {
-        if (i == 3 && currentGame() != mhw::GameId::Rise)
-            continue;   // no pets panel under World
-        Panel *p = panelAt(i);
-        if (!p)
-            continue;
-        QJsonObject o;
-        o[QStringLiteral("enabled")] = p->panelEnabled();
-        o[QStringLiteral("output")] = p->outputName();
-        o[QStringLiteral("scale")] = p->scale();
-        o[QStringLiteral("opacity")] = p->opacity();
-        o[QStringLiteral("bgAlpha")] = p->bgAlpha();
-        panels[p->settingsKey()] = o;
+    mhw::LayoutPackage out;
+    const int level = exportScope_ ? exportScope_->currentIndex() : 1;
+
+    if (level == 2) {
+        out = *whole;
+        // 「一键打包」 is the one granularity that promises a full backup,
+        // and a full backup includes which sections are on — the four mask
+        // rows, the language, and both games' detached-window plans. The
+        // narrower levels stay scope-only: see readGlobalBlockFromConf's
+        // note on why a single-group export must not rewrite masks.
+        out.hasGlobal = true;
+        out.global = readGlobalBlockFromConf();
+    } else if (level == 1) {
+        out.containsScopes.insert(scope, whole->containsScopes.value(scope));
+        out.scopes.insert(scope, whole->scopes.value(scope));
+    } else {
+        // The focused group only. No focus means the whole scope, the same
+        // fallback the bulk controls use — "all" must mean "all the rows
+        // you can see", in this direction too.
+        const EditableSelection sel = currentEditableSelection();
+        const QString focusName =
+            (sel.panel && sel.panelIndex >= 0) ? sel.panel->settingsKey()
+                                               : QString();
+        QStringList rows;
+        if (!focusName.isEmpty())
+            rows = mhw::layoutPackageWindowsFor(focusName, mode);
+        // BIND THE MAP FIRST. QMap::value() returns by value, so
+        // `map.value(k).begin()` and `map.value(k).end()` are iterators
+        // into TWO DIFFERENT temporary containers — the loop compares
+        // foreign iterators and segfaults inside Qt's string compare.
+        const QMap<QString, mhw::LayoutWindowRow> scopedRows =
+            whole->scopes.value(scope);
+        QMap<QString, mhw::LayoutWindowRow> scoped;
+        for (auto it = scopedRows.begin(); it != scopedRows.end(); ++it) {
+            if (!rows.isEmpty() && !rows.contains(it.key()))
+                continue;
+            scoped.insert(it.key(), it.value());
+        }
+        if (!scoped.isEmpty()) {
+            out.scopes.insert(scope, scoped);
+            // The header must name exactly the groups present, or parse()
+            // will refuse the file this writes — which is the contract
+            // working as designed.
+            QStringList groups;
+            for (const QString &panel : mhw::layoutPackagePanelsFor(
+                     game == QLatin1String("rise")))
+                for (const QString &k : mhw::layoutPackageWindowsFor(
+                         panel, mode))
+                    if (scoped.contains(k)) {
+                        groups.append(panel);
+                        break;
+                    }
+            out.containsScopes.insert(scope, groups);
+        }
     }
-    root[QStringLiteral("panels")] = panels;
 
-    // windows: the model's own list, in the order the canvas draws it.
-    QJsonArray windows;
-    for (const mhw::WindowState &w : buildWindowStates()) {
-        QJsonObject o;
-        o[QStringLiteral("key")] = w.key;
-        o[QStringLiteral("panel")] = w.key.section('-', 0, 0);
-        o[QStringLiteral("subIndex")] = w.subIndex;
-        // x/y are the window's own logical offset INSIDE its target
-        // display — the same pair the inspector's two spin boxes show.
-        o[QStringLiteral("x")] = w.margins.left();
-        o[QStringLiteral("y")] = w.margins.top();
-        o[QStringLiteral("output")] = w.outputResolved;
-        o[QStringLiteral("scale")] = w.scale;
-        o[QStringLiteral("opacity")] = w.opacity;
-        o[QStringLiteral("visible")] = w.visiblePersisted;
-        windows.append(o);
+    if (out.scopes.isEmpty()) {
+        exportText_->setPlainText(
+            consoleText(QStringLiteral("console.proto.export.empty")));
+        return;
     }
-    root[QStringLiteral("windows")] = windows;
-
-    exportText_->setPlainText(
-        QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Indented)));
+    exportText_->setPlainText(QString::fromUtf8(out.serialize()));
 }
 
 void ControlPanel::openExportDialog()
@@ -8027,6 +10699,34 @@ void ControlPanel::openExportDialog()
     desc->setObjectName(QStringLiteral("dialogNote"));
     desc->setWordWrap(true);
     vl->addWidget(desc);
+
+    // v1.1.5: HOW MUCH to export. The two ends of the user's sentence —
+    // 「既可以导出精细到崛起的怪物面板的 mix 状态，也可以一键打包」 — belong
+    // on one control, because the difference between them is one field of
+    // the same dialog and not two separate exports.
+    auto *scopeRow = new QHBoxLayout();
+    scopeRow->setSpacing(8);
+    auto *scopeLabel = new QLabel(
+        consoleText(QStringLiteral("console.proto.export.scope")));
+    scopeLabel->setObjectName(QStringLiteral("dialogNote"));
+    scopeRow->addWidget(scopeLabel);
+    exportScope_ = new QComboBox();
+    exportScope_->setObjectName(QStringLiteral("exportScope"));
+    exportScope_->addItem(
+        consoleText(QStringLiteral("console.proto.export.scope.group")));
+    exportScope_->addItem(
+        consoleText(QStringLiteral("console.proto.export.scope.current")));
+    exportScope_->addItem(
+        consoleText(QStringLiteral("console.proto.export.scope.all")));
+    // The default is the current SCOPE: it is the granularity that answers
+    // "save what I am looking at", which is what a user reaching for
+    // 导出 usually means. The narrower and the whole-store options sit one
+    // click away in either direction.
+    exportScope_->setCurrentIndex(1);
+    connect(exportScope_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int){ refreshExportPayload(); });
+    scopeRow->addWidget(exportScope_, 1);
+    vl->addLayout(scopeRow);
 
     exportText_ = new QPlainTextEdit();
     exportText_->setObjectName(QStringLiteral("exportText"));
@@ -8156,6 +10856,29 @@ void ControlPanel::resetPrototypeScope()
     // user may have unchecked, which live in this console's widgets and
     // not in any Panel.
     rebuildMotherPanels();
+    // v1.1.4: AND REBIND BEFORE ANYTHING PAINTS.
+    //
+    // The contract is already written down where it belongs —
+    // rebuildMotherPanels()'s own comment says the canvas holds non-owning
+    // PanelSource* into this set and "the caller must run
+    // rebindMotherPanels() straight after this function returns". Two of
+    // the three call sites did (switchGame(), the ctor path); THIS one did
+    // not, and the user's core dump is what it looks like:
+    //
+    //     #0 PanelSourceAdapter::outputName() const        <- SIGSEGV
+    //     #1 HudCanvas::windowOutputName(int, int)
+    //     #2 HudCanvas::overviewDrawsPanel(int)
+    //     #3 HudCanvas::paintEvent(QPaintEvent*)
+    //
+    // i.e. the very next paint asked a DELETED Panel for its screen, from
+    // an overview that is on screen by default — which is why 「重置演示」
+    // needed two clicks to take the console down.
+    //
+    // It also explains the other half of the report: 「这个按钮好像没用」.
+    // With the canvas still bound to the freed adapters it was reading
+    // freed memory for every window's geometry, so the reloaded panels the
+    // rebuild had just constructed never reached the board.
+    rebindMotherPanels();
     syncSplitPreviewToCanvas();
     for (int i = 0; i < mhw::kPanelCount; ++i) {
         rebuildAndRender(i);
@@ -8165,6 +10888,446 @@ void ControlPanel::resetPrototypeScope()
     refreshSplitWindowPreviews();
     refreshWindowModel();
     showToast(QStringLiteral("console.proto.reset.done"));
+}
+
+// ─── v1.1.5: applying a layout package ────────────────────────────────────
+//
+// 重置布局 and 导入 are the same operation from the console's point of view:
+// take the rows of ONE scope out of a package and turn them into Panel
+// state. What differs is where the package came from — the shipped default
+// versus a file the user picked — so that is the only difference between the
+// two entry points, and this block is where they meet.
+//
+// focusPanel IS THE GROUP THE RAIL HAS IN FRONT, and that is deliberate.
+// The bulk controls in this console already mean "all the rows you can see
+// right now" (see setAllMixedWindowsDetached's note on why a button sitting
+// under one group's heading must not reach into the others). A reset is a
+// destructive action; if the selector for one is NOT bounded the same way,
+// clicking 重置布局 while the player group is selected silently rewrites
+// monsters and damage too — the exact defect class that block exists for.
+// focusPanel == -1 is the explicit "every group" case: 全部重置.
+
+Panel *ControlPanel::windowForKey(const QString &key)
+{
+    for (int i = 0; i < mhw::kPanelCount; ++i) {
+        Panel *p = panelAt(i);
+        if (p && p->settingsKey() == key)
+            return p;
+    }
+    if (splitPreview_) {
+        const QVector<HudCanvas::SubWindowBinding> bindings =
+            splitPreview_->bindings();
+        for (int i = 0; i < bindings.size(); ++i) {
+            Panel *sub = splitPreview_->windowAt(i);
+            if (sub && sub->settingsKey() == key)
+                return sub;
+        }
+    }
+    return nullptr;
+}
+
+void ControlPanel::applyLayoutRowTo(Panel *panel, const mhw::LayoutWindowRow &row)
+{
+    if (!panel)
+        return;
+    // Margins come as four independent optionals because panels.ini stores
+    // them that way (ml=/mt=/mr=/mb=), so a package carrying only `mt`
+    // means "move it vertically" and leaves the horizontal pair alone.
+    // Building the QMargins from the PANEL and overriding just the named
+    // components is what makes that true; constructing from the four rows
+    // would silently zero the ones the file does not mention.
+    if (row.ml || row.mt || row.mr || row.mb) {
+        QMargins m = panel->margins();
+        if (row.ml) m.setLeft(*row.ml);
+        if (row.mt) m.setTop(*row.mt);
+        if (row.mr) m.setRight(*row.mr);
+        if (row.mb) m.setBottom(*row.mb);
+        panel->setMargins(m, true);
+    }
+    if (row.scale) panel->setScale(*row.scale, true);
+    if (row.opacity) panel->setOpacity(*row.opacity, true);
+    if (row.bgAlpha) panel->setBgAlpha(*row.bgAlpha, true);
+    if (row.outputName) panel->setOutputName(*row.outputName, true);
+    if (row.minW) panel->setExactMinWidth(*row.minW);
+    if (row.minH) panel->setExactMinHeight(*row.minH);
+    if (row.lockW) panel->setExactLockWidth(*row.lockW);
+    if (row.lockH) panel->setExactLockHeight(*row.lockH);
+    if (row.columns) panel->setColumnsTo(*row.columns);
+    // `winVisible` is the PERSISTED bit, not the widget's own flag — it is
+    // the same row buildWindowStates() reads back, so writing it is what
+    // makes a restored window stay restored across the next start.
+    if (row.visible)
+        mhw::writeWindowVisible(panel->settingsGroup(),
+                                panel->settingsKey(), *row.visible);
+}
+
+bool ControlPanel::applyLayoutPackage(const mhw::LayoutPackage &pkg,
+                                      int focusPanel, QString *error)
+{
+    const QString game =
+        currentGame() == mhw::GameId::Rise ? QStringLiteral("rise")
+                                           : QStringLiteral("world");
+    const QString mode = mhw::playerLayoutModeToString(layoutModeInForce_);
+    const QString scope = game + QLatin1Char('/') + mode;
+
+    if (!pkg.containsScope(scope)) {
+        if (error)
+            *error = QStringLiteral(
+                "this package does not cover %1 (it covers %2)")
+                         .arg(scope, pkg.scopeNames().join(QLatin1String(", ")));
+        return false;
+    }
+
+    // Which panel group `focusPanel` means, in its own settingsKey form:
+    // `player` / `monster` / `dps` / `pet-damage`.
+    QString focusName;
+    if (focusPanel >= 0)
+        if (Panel *mother = panelAt(focusPanel))
+            focusName = mother->settingsKey();
+
+    const QMap<QString, mhw::LayoutWindowRow> rows = pkg.scopes.value(scope);
+    for (auto it = rows.begin(); it != rows.end(); ++it) {
+        if (focusPanel >= 0) {
+            const QStringList owned =
+                mhw::layoutPackageWindowsFor(focusName, mode);
+            if (!owned.contains(it.key()))
+                continue;
+        }
+        Panel *target = windowForKey(it.key());
+        if (!target) {
+            // Parse already proved the key belongs to this mode, so a miss
+            // here means the console simply is not carrying that window
+            // (World has no pets row, and a scope mounted without its
+            // detached windows has no sub rows). Skipping is the honest
+            // answer; inventing a panel is not.
+            continue;
+        }
+        applyLayoutRowTo(target, it.value());
+    }
+
+    // One turn deferred, exactly like refreshAfterMixedPlanChange(): the
+    // widget that triggered this is still delivering its own signal, and
+    // rebuilding the model synchronously from inside it is how this console
+    // used to reach a half-torn-down host.
+    //
+    // v1.1.5: AND THE DEFERRED HALF IS THE WHOLE REFRESH, not two of its
+    // six steps. The user's report: 「我点击重置布局，但是不会立即刷新。
+    // 需要手动点一下别的窗口才显示重置后的布局」. This lambda used to run
+    // syncSplitPreviewToCanvas() + refreshWindowModel() and stop there —
+    // both of which rebuild MODELS (the host's bindings, the window list),
+    // and neither of which touches the canvas's PIXMAPS. Those live in the
+    // canvas's own slots (setPanelPixmap for the four mothers,
+    // setSubWindowPixmap for every split window) and are only re-pushed by
+    // rebuildAndRender() / refreshSplitWindowPreviews() — so after a reset
+    // the board kept painting the pre-reset images at the pre-reset sizes
+    // until some unrelated action (a rail click, a selection change) happened
+    // to re-render. That is the whole "click another window and it appears".
+    //
+    // The six steps below are resetPrototypeScope()'s own, verbatim: the
+    // one function in this file that was already correct. A reset and an
+    // import are the same operation from the canvas's point of view — new
+    // geometry for the same windows — so they owe it the same refresh.
+    QTimer::singleShot(0, this, [this] {
+        syncSplitPreviewToCanvas();
+        for (int i = 0; i < mhw::kPanelCount; ++i) {
+            rebuildAndRender(i);   // re-renders the mother pixmap + repaint
+            syncAppearance(i);
+            updatePosLabel(i);
+        }
+        refreshSplitWindowPreviews();   // re-renders every sub-window pixmap
+        refreshWindowModel();
+        refreshGroupColumn();   // the inspector's counts / checked rows
+    });
+    return true;
+}
+
+bool ControlPanel::loadShippedDefault(mhw::LayoutPackage &out,
+                                      QString *error) const
+{
+    QFile f(QStringLiteral(":/default-layout.json"));
+    if (!f.open(QIODevice::ReadOnly)) {
+        if (error)
+            *error = QStringLiteral(
+                "the shipped default layout is not present in this build");
+        return false;
+    }
+    const std::optional<mhw::LayoutPackage> parsed =
+        mhw::LayoutPackage::parse(f.readAll(), error);
+    if (!parsed) {
+        if (error && error->isEmpty())
+            *error = QStringLiteral("the shipped default layout is corrupt");
+        return false;
+    }
+    out = *parsed;
+    return true;
+}
+
+void ControlPanel::resetLayoutToDefault(int focusPanel)
+{
+    mhw::LayoutPackage pkg;
+    QString error;
+    if (!loadShippedDefault(pkg, &error)) {
+        // A build without its default is a broken build, and saying so is
+        // the only honest reaction: a silent no-op would read as "reset
+        // worked" and the user would keep working on a layout they think
+        // they just replaced.
+        showToast(error);
+        return;
+    }
+    if (!applyLayoutPackage(pkg, focusPanel, &error)) {
+        showToast(error);
+        return;
+    }
+    showToast(consoleText(focusPanel < 0
+                              ? QStringLiteral(
+                                    "console.proto.layout.reset.all.done")
+                              : QStringLiteral(
+                                    "console.proto.layout.reset.done")));
+}
+
+// ─── v1.1.5: the global block ────────────────────────────────────────────
+//
+// A layout package's scopes say where the windows sit; this says which
+// sections are on. Without it a 「全部打包」 round trip would restore every
+// window's geometry and leave every mask as the importer had it — which is
+// not "restore", it is "rearrange".
+//
+// READ FROM THE CONF TEXT, NOT FROM MEMBERS. The console has the masks and
+// the plans in memory, but the package is a description of what is ON DISK,
+// and a user who hand-edited the conf while the console was closed would
+// otherwise export the console's stale copy of a file it never re-read.
+//
+// The conf is documented as plain `key=value` lines (see loadMaskFromDisk's
+// header comment), so the two non-mask rows are read with a ten-line reader
+// here rather than by growing a parser for a format that does not need one.
+mhw::LayoutGlobalBlock ControlPanel::readGlobalBlockFromConf() const
+{
+    mhw::LayoutGlobalBlock block;
+    const QString path = mhw::localeConfPath();
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return block;   // absent conf: an empty global block, which parses
+    const QString text = QString::fromUtf8(file.readAll());
+
+    const mhw::PanelMaskSet masks = mhw::parsePanelMasks(text);
+    // Only a VALID row goes into the package. A malformed one is not a
+    // value the package can carry, and copying the parser's fallback for
+    // it would write a number the user never chose.
+    if (masks.playerValid) block.maskPlayer = masks.player;
+    if (masks.monsterValid) block.maskMonster = masks.monster;
+    if (masks.damageValid) block.maskDamage = masks.damage;
+    if (masks.petsValid) block.maskPets = masks.pets;
+
+    auto confValue = [&text](const QString &key) -> std::optional<QString> {
+        for (const QString &line : text.split(QLatin1Char('\n'))) {
+            const int eq = line.indexOf(QLatin1Char('='));
+            if (eq <= 0)
+                continue;
+            if (line.left(eq).trimmed() == key)
+                return line.mid(eq + 1).trimmed();
+        }
+        return std::nullopt;
+    };
+
+    if (const auto v = confValue(QStringLiteral("locale")); v && !v->isEmpty())
+        block.locale = *v;
+    // `layout=` is written as an EMPTY line in Single mode (that is how the
+    // console says "single, not unset"), so an empty value means "single",
+    // not "nothing to carry".
+    if (const auto v = confValue(QStringLiteral("layout")); v)
+        block.layout = *v;
+
+    for (const mhw::GameId game : {mhw::GameId::World, mhw::GameId::Rise}) {
+        const auto v = confValue(mhw::layoutWindowsRowKey(game));
+        if (!v)
+            continue;   // an absent row is a different state from an empty
+        QStringList keys;
+        for (const QString &k : v->split(QLatin1Char(','), Qt::SkipEmptyParts))
+            keys.append(k);
+        block.plans.insert(
+            game == mhw::GameId::Rise ? QStringLiteral("rise")
+                                      : QStringLiteral("world"),
+            keys);
+    }
+    return block;
+}
+
+// ─── v1.1.5: import ───────────────────────────────────────────────────────
+namespace {
+
+// Replace ONE conf row and leave every other line byte for byte alone —
+// the codec's row rule (see serializeWindowLayoutPlanRow's note), applied
+// to the rows a layout package carries. split() on a trailing newline
+// yields a phantom empty element, which must not come back as a blank
+// line on every single import.
+QString replaceConfRow(const QString &text, const QString &key,
+                       const QString &value)
+{
+    const bool trailing = text.endsWith(QLatin1Char('\n'));
+    QStringList lines = text.split(QLatin1Char('\n'));
+    if (trailing && !lines.isEmpty() && lines.last().isEmpty())
+        lines.removeLast();
+    bool found = false;
+    for (QString &line : lines) {
+        const int eq = line.indexOf(QLatin1Char('='));
+        if (eq > 0 && line.left(eq).trimmed() == key) {
+            line = key + QLatin1Char('=') + value;
+            found = true;
+        }
+    }
+    if (!found)
+        lines.append(key + QLatin1Char('=') + value);
+    QString out = lines.join(QLatin1Char('\n'));
+    return trailing ? out + QLatin1Char('\n') : out;
+}
+
+QString configDirPath()
+{
+    return QFileInfo(mhw::localeConfPath()).absolutePath();
+}
+
+}  // namespace
+
+QString ControlPanel::backupConfigForImport() const
+{
+    const QString stamp =
+        QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
+    const QString dir =
+        configDirPath() + QStringLiteral("/backups/") + stamp;
+    if (!QDir().mkpath(dir))
+        return consoleText(QStringLiteral("console.proto.layout.import.backup.fail"));
+    // Both files an import can touch. A backup of only the one the user
+    // happened to be using is not a backup.
+    for (const QString &name : {QStringLiteral("panels.ini"),
+                                QStringLiteral("monster-overlay.conf")}) {
+        const QString from = configDirPath() + QLatin1Char('/') + name;
+        if (!QFile::exists(from))
+            continue;   // never created on this machine; nothing to save
+        if (!QFile::copy(from, dir + QLatin1Char('/') + name))
+            return consoleText(
+                QStringLiteral("console.proto.layout.import.backup.fail"));
+    }
+    return QString();
+}
+
+void ControlPanel::importLayoutPackage()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this, consoleText(QStringLiteral("console.proto.layout.import")),
+        QString(), QStringLiteral("JSON (*.json)"));
+    if (path.isEmpty())
+        return;
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        showToast(consoleText(
+            QStringLiteral("console.proto.layout.import.fail")));
+        return;
+    }
+    QString error;
+    // The header decides everything: what it declares is what will be
+    // written, and a refusal here happens BEFORE a single byte of the
+    // user's configuration is touched.
+    const std::optional<mhw::LayoutPackage> pkg =
+        mhw::LayoutPackage::parse(file.readAll(), &error);
+    if (!pkg) {
+        QMessageBox::critical(
+            this, consoleText(QStringLiteral("console.proto.layout.import")),
+            consoleText(QStringLiteral(
+                            "console.proto.layout.import.bad")) + QLatin1Char('\n')
+                + error);
+        return;
+    }
+
+    // THE CONFIRM NAMES THE SCOPES. The user's own requirement was that an
+    // import work out from the header what it contains — so show it to
+    // them, rather than writing first and describing afterwards.
+    QStringList summary;
+    for (const QString &scope : pkg->scopeNames()) {
+        QStringList panels;
+        for (const QString &p : mhw::layoutPackagePanelsFor(
+                 scope.startsWith(QLatin1String("rise")))) {
+            if (pkg->panelsOf(scope).contains(p))
+                panels.append(p);
+        }
+        summary.append(QStringLiteral("%1  →  %2")
+                           .arg(scope, panels.join(QStringLiteral("、"))));
+    }
+    if (pkg->hasGlobal)
+        summary.append(consoleText(
+            QStringLiteral("console.proto.layout.import.global")));
+    QMessageBox box(QMessageBox::Warning,
+                    consoleText(QStringLiteral("console.proto.layout.import")),
+                    consoleText(QStringLiteral(
+                        "console.proto.layout.import.confirm"))
+                        + QStringLiteral("\n\n") + summary.join(QLatin1Char('\n')),
+                    QMessageBox::Yes | QMessageBox::Cancel, this);
+    if (box.exec() != QMessageBox::Yes)
+        return;
+
+    const QString backup = backupConfigForImport();
+    if (!backup.isEmpty()) {
+        QMessageBox::critical(
+            this, consoleText(QStringLiteral("console.proto.layout.import")),
+            backup);
+        return;   // refuse to write over a configuration we could not save
+    }
+
+    QSettings panels(QSettings::IniFormat, QSettings::UserScope,
+                     QStringLiteral("monster-overlay"),
+                     QStringLiteral("panels"));
+    // QSettings::sync() returns void in Qt6 — there is no "did it flush"
+    // answer to ask. The backup taken above is what makes a failed write
+    // recoverable, not a return value from here.
+    if (!mhw::layoutPackageToSettings(*pkg, panels, &error)) {
+        QMessageBox::critical(
+            this, consoleText(QStringLiteral("console.proto.layout.import")),
+            error.isEmpty()
+                ? consoleText(QStringLiteral(
+                      "console.proto.layout.import.fail"))
+                : error);
+        return;
+    }
+    panels.sync();
+
+    if (pkg->hasGlobal) {
+        QString text;
+        QFile conf(mhw::localeConfPath());
+        if (conf.open(QIODevice::ReadOnly))
+            text = QString::fromUtf8(conf.readAll());
+        conf.close();
+        const mhw::LayoutGlobalBlock &g = pkg->global;
+        if (g.maskPlayer) {
+            // The codec replaces the four mask rows in place and keeps
+            // every other line — including the layout and locale rows
+            // this function is about to rewrite.
+            text = QString::fromUtf8(mhw::serializePanelMasks(
+                *g.maskPlayer, g.maskMonster ? *g.maskMonster : 0xffffffffu,
+                g.maskDamage ? *g.maskDamage : 0xffffffffu,
+                g.maskPets ? *g.maskPets : 0xffffffffu, text));
+        }
+        if (g.locale)
+            text = replaceConfRow(text, QStringLiteral("locale"), *g.locale);
+        if (g.layout)
+            text = replaceConfRow(text, QStringLiteral("layout"), *g.layout);
+        for (auto it = g.plans.begin(); it != g.plans.end(); ++it)
+            text = replaceConfRow(
+                text,
+                it.key() == QLatin1String("rise")
+                    ? QStringLiteral("layout.windows.rise")
+                    : QStringLiteral("layout.windows.world"),
+                it.value().join(QLatin1Char(',')));
+        QFile out(mhw::localeConfPath());
+        if (out.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            out.write(text.toUtf8());
+    }
+
+    // Re-read everything from disk, exactly as 重置演示 does: the panels
+    // themselves cache their geometry from their constructor, so applying
+    // a package to the store and leaving the widgets alone would show the
+    // user a console that still draws the OLD layout.
+    resetPrototypeScope();
+    showToast(consoleText(QStringLiteral("console.proto.layout.import.done")));
 }
 
 // 检查更新 — the prototype's entry that says 已是最新版本(demo) without
@@ -8444,6 +11607,18 @@ mhw::WindowList ControlPanel::buildWindowStates() const
     mhw::WindowList list;
     const bool split = layoutModeInForce_
                        == mhw::PlayerSection::PlayerLayoutMode::Split;
+    // ── v1.1.3 (Mixed 画布): THE BOARD'S LIST IN MIXED ────────────────────
+    // Before this, Mixed fell through to the Single answer (four mother
+    // rows) because only Split built a preview host — so the board drew
+    // mothers while the overlay mounted the detached windows, and
+    // buildWindowTopology() had to bolt the missing rows on afterwards to
+    // make a count honest. Mixed now has a host of its own (the rows the
+    // plan detached), so THIS list is the board's whole truth in every
+    // mode: mothers that still mount, plus the detached windows as real
+    // sub-window rows with real geometry. The count model then has
+    // nothing to invent (see buildWindowTopology()'s dedupe arm).
+    const bool mixed = layoutModeInForce_
+                       == mhw::PlayerSection::PlayerLayoutMode::Mixed;
     // The primary's name, once: the tail of the own→parent chain, and
     // the same QScreen walk HudCanvas::primaryOutputName() does. Empty
     // when Qt reports no screens at all, in which case the chain stops
@@ -8489,8 +11664,8 @@ mhw::WindowList ControlPanel::buildWindowStates() const
         w.primaryOutput = primary;
         // A mother has no parent to fall back to, so the chain is
         // own → primary — the same two steps Single already answered.
-        w.outputResolved = mhw::resolveWindowOutput(w.outputOwn, QString(),
-                                                    primary);
+        w.outputResolved = screen_query::effectiveOutputName(
+            mhw::resolveWindowOutput(w.outputOwn, QString(), primary));
         w.panelEnabled = p->panelEnabled();
         w.visiblePersisted = mhw::readWindowVisible(p->settingsGroup(), w.key);
         // ── (C): the mother panel draws its own schema, game-filtered ──
@@ -8501,7 +11676,7 @@ mhw::WindowList ControlPanel::buildWindowStates() const
         return w;
     };
 
-    if (split && splitPreview_) {
+    if ((split || mixed) && splitPreview_) {
         const QVector<HudCanvas::SubWindowBinding> bindings =
             splitPreview_->bindings();
         for (int i = 0; i < bindings.size(); ++i) {
@@ -8527,28 +11702,40 @@ mhw::WindowList ControlPanel::buildWindowStates() const
             w.opacity = sub->opacity();
             w.outputOwn = sub->outputName();
             w.primaryOutput = primary;
-            w.outputResolved = mhw::resolveWindowOutput(
-                w.outputOwn,
-                parent ? parent->outputName() : QString(),
-                primary);
+            w.outputResolved = screen_query::effectiveOutputName(
+                mhw::resolveWindowOutput(
+                    w.outputOwn, parent ? parent->outputName() : QString(), primary));
             w.panelEnabled = parent ? parent->panelEnabled() : true;
             w.visiblePersisted = mhw::readWindowVisible(sub->settingsGroup(),
                                                         w.key);
             // ── (C): WHAT THIS WINDOW DRAWS ─────────────────────────────
             // `own` is the split table row's claim (kPlayerSplitTargets /
             // kMonsterSplitTargets / kDamageSplitTargets at the row the
-            // binding names), NOT a row number used as a bit. The panel's
-            // live mask decides which of those bits are still on; the
+            // binding names), NOT a row number used as a bit. The window's
+            // own live mask decides which of those bits are still on; the
             // game-filtered schema decides which of them exist at all.
+            //
+            // ── 实测缺陷3 (user-8): THE WINDOW'S MASK, NOT THE MOTHER'S ──
+            // `sub` is the very Panel the host hands the canvas, and the
+            // host's renderAll() computes its enabled flag from
+            // `own & e.window->sectionMask() & schema` — this expression.
+            // The mother's mask was the other answer: the same bits in
+            // Single and Split (effectiveMotherMask is the identity
+            // there), but in Mixed the mother holds plan.retainedMask(),
+            // which has every DETACHED row stripped out while the detached
+            // window keeps drawing from its own mask (syncAll() pushes
+            // maskFor(ctl_[parentSlot]) into every window). A player
+            // status window whose two sections are both on screen was
+            // therefore reported as 0/2 here — the number the group
+            // column's 显示内容 count and its switches both read.
             const uint32_t own = splitWindowSections(b.parentSlot,
                                                      b.tableRow);
             const uint32_t schema = panelSectionSchema(b.parentSlot,
                                                        currentGame());
-            const uint32_t parentMask =
-                parent ? parent->sectionMask() : schema;
-            w.sectionMask = own & parentMask & schema;
+            const uint32_t live = sub->sectionMask();
+            w.sectionMask = own & live & schema;
             w.sectionsTotal = countSectionBits(own & schema);
-            w.sectionsOn = countSectionBits(own & parentMask & schema);
+            w.sectionsOn = countSectionBits(own & live & schema);
             list.append(w);
         }
         // ── THE PETS ROW, AND ONLY IT ────────────────────────────────────
@@ -8571,16 +11758,49 @@ mhw::WindowList ControlPanel::buildWindowStates() const
         // inspector and the visibility push all read this one model; a
         // window the overlay mounts but the model omits is a picture
         // nobody can select, count or hide.
-        if (currentGame() == mhw::GameId::Rise)
-            if (Panel *p = panelAt(3))
-                list.append(motherRow(3, p));
+        //
+        // v1.1.3: SPLIT'S TAIL ONLY. In Mixed the three panels that DO
+        // have a split table have just emitted their detached rows, but
+        // they are not finished as mothers: a Mixed mother that kept at
+        // least one row still mounts and still draws (main.cpp:776), so
+        // it belongs in this list beside its own detached children —
+        // exactly what the four-slot arm of the board paints. A mother
+        // that gave up every row is NOT added (mixedMotherMounts), which
+        // is the model half of "交出全部行且无内容时不挂载".
+        if (split) {
+            if (currentGame() == mhw::GameId::Rise)
+                if (Panel *p = panelAt(3))
+                    list.append(motherRow(3, p));
+            return list;
+        }
+        // Mixed.
+        for (int i = 0; i < mhw::kPanelCount; ++i) {
+            if (i == 3 && currentGame() != mhw::GameId::Rise)
+                continue;   // no pets panel under World
+            if (i < mhw::kLayoutParentCount
+                && !mixedMotherMounts(i, maskFor(ctl_[i])))
+                continue;   // gave up every row and has no block left
+            Panel *p = panelAt(i);
+            if (!p)
+                continue;
+            list.append(motherRow(i, p));
+        }
         return list;
     }
 
     // Single: the four mother panels are the four windows.
+    //
+    // v1.1.3: Mixed reaches this arm only while it has NO host yet (the
+    // first construction, before applyStartupLayoutMode()'s sync, or a
+    // canvas-less caller) — and even then it must not over-count, so the
+    // same mount gate runs here. Single and Split never read it: the
+    // gate answers `true` unconditionally outside Mixed.
     for (int i = 0; i < mhw::kPanelCount; ++i) {
         if (i == 3 && currentGame() != mhw::GameId::Rise)
             continue;   // no pets panel under World
+        if (mixed && i < mhw::kLayoutParentCount
+            && !mixedMotherMounts(i, maskFor(ctl_[i])))
+            continue;
         Panel *p = panelAt(i);
         if (!p)
             continue;
@@ -8589,22 +11809,185 @@ mhw::WindowList ControlPanel::buildWindowStates() const
     return list;
 }
 
+// ── v1.1.2 (Mixed 拓扑), v1.1.3 (与画板列表合一) ────────────────────────
+//
+// buildWindowStates() is the CONSOLE's answer — "which windows does the
+// board draw here" — and v1.1.3 made it complete in Mixed too: the
+// preview host now exists in Mixed (one window per detached row), so the
+// list carries the detached windows as real rows with real geometry and
+// the mothers that still mount. That was built for drawing; this
+// function is still the COUNT model, and it is deliberately NOT a second
+// board:
+//
+//   * Single and Split  — buildWindowStates() returned VERBATIM. No
+//     branch, so those two topologies cannot drift from themselves.
+//   * Mixed             — the SAME list, with two corrections that make
+//     it "what the RUN mounts" rather than "what the board can show":
+//     (a) a mother row whose mount gate is false is dropped (defensive:
+//         buildWindowStates() already drops it when the gate is false,
+//         but this list may also be read before the first sync), and
+//     (b) one row per DETACHED registry row that the list does not
+//         ALREADY carry — see the dedupe below. With a host present (b)
+//         adds nothing: the rows are there, with geometry; without a
+//         host it is what kept the count honest before v1.1.3 and still
+//         does.
+//
+// GEOMETRY IS CLAIMED ONLY WHEN THE CONSOLE OWNS THE WINDOW. A detached
+// row the host built carries its Panel's margins/scale/opacity; the
+// fallback row (no host) keeps the struct defaults and must not be read
+// as a placement — the overlay owns that, per its own panels.ini row
+// under <game>/mixed/<key>. Both carry what a COUNT needs: identity,
+// parent panel, the output chain (own -> parent -> primary; a sub-window
+// has no outputName of its own by construction — panel.h), the panel-
+// master flag, and the per-window visibility stored under that window's
+// own scope.
+mhw::WindowList ControlPanel::buildWindowTopology() const
+{
+    mhw::WindowList list = buildWindowStates();
+    if (layoutModeInForce_ != mhw::PlayerSection::PlayerLayoutMode::Mixed)
+        return list;             // Single / Split: no change, by construction
+
+    const mhw::WindowLayoutPlan &plan = mixedPlanFor(currentGame());
+
+    // The same own -> parent -> primary chain buildWindowStates() runs,
+    // spelled identically: a Mixed detached window follows its mother's
+    // output unless it has one of its own (it cannot — see above).
+    QString primary;
+    if (QScreen *s = QGuiApplication::primaryScreen())
+        primary = s->name();
+
+    // THE MOTHER GATE, ONE SPELLING. This used to be a local lambda that
+    // reimplemented main.cpp's planMotherPanelEnabled(); it is now the
+    // shared ControlPanel::mixedMotherMounts() that buildWindowStates(),
+    // rebuildAndRender() (the canvas's `present` flag) and
+    // refreshWindowPreviewPixmap() all read — so "does this mother
+    // mount" has one answer for the model, the count and the paint.
+    // Its equivalence to the old lambda is exact: planMotherPanelEnabled
+    // with disabledByFlag=false is `hasBlocks(retained) || nothing
+    // detached`, which is what the lambda spelled out.
+    //
+    // The enable flag is deliberately NOT part of this gate: counting
+    // never filtered on panelEnabled before (windowOnDisplay does that at
+    // the chip), and mixing the two axes here would change Single too.
+    const auto motherMounts = [this](int panel) -> bool {
+        if (panel < 0 || panel >= mhw::kLayoutParentCount)
+            return true;         // pets: no split table, nothing can leave
+        return mixedMotherMounts(panel, maskFor(ctl_[panel]));
+    };
+
+    mhw::WindowList out;
+    out.reserve(list.size() + mhw::kWindowLayoutRowCount);
+    for (const mhw::WindowState &w : list) {
+        if (w.subIndex == -1 && w.panelIndex >= 0
+            && w.panelIndex < mhw::kLayoutParentCount
+            && !motherMounts(w.panelIndex))
+            continue;            // it gave up every row and kept no block
+        out.append(w);
+    }
+
+    // ── THE DETACHED ROWS THE LIST DID NOT ALREADY HAVE ──────────────────
+    // v1.1.3: the host-backed rows are already in `list` (same keys, real
+    // geometry), so appending them again would double every count — the
+    // reason this arm is a dedupe and not a flat append. A detached row
+    // with no host (the fallback above) still gets its fabricated row,
+    // exactly as before v1.1.3.
+    QSet<QString> alreadyListed;
+    for (const mhw::WindowState &w : list)
+        if (w.subIndex >= 0 && !w.key.isEmpty())
+            alreadyListed.insert(w.key);
+
+    // The detached windows themselves, in the same registry order
+    // --print-layout-plan lists them.
+    for (int i = 0; i < mhw::kWindowLayoutRowCount; ++i) {
+        const mhw::WindowLayoutRow &row = mhw::kWindowLayoutRows[static_cast<size_t>(i)];
+        if (!plan.detached(row.parentSlot, row.tableRow))
+            continue;
+        // v1.1.5: THE SAME GAME FILTER THE HOST APPLIES. A row the game
+        // in force does not have is not MOUNTED (the host skips it at
+        // construction), so it must not be COUNTED either — otherwise
+        // this fallback fabricates a row the board never draws and the
+        // two models disagree, which is the exact defect class the
+        // v1.1.3 "count == board" contract exists to prevent. The user
+        // saw it as 「世界的时候有一个空的翔虫窗口」; the count chip
+        // would have kept promising eleven windows while ten were
+        // mounted. The filter is the host's own formula, spelled here
+        // against the same two helpers.
+        const uint32_t rowOwn = splitWindowSections(row.parentSlot,
+                                                    row.tableRow);
+        if (rowOwn != 0
+            && (rowOwn & panelSectionSchema(row.parentSlot, currentGame()))
+                   == 0)
+            continue;
+        if (alreadyListed.contains(QString::fromLatin1(row.settingsKey)))
+            continue;            // the host's row says it better already
+        if (row.parentSlot < 0 || row.parentSlot >= mhw::kPanelCount)
+            continue;
+        Panel *parent = panelAt(row.parentSlot);
+        if (!parent)
+            continue;
+
+        mhw::WindowState w;
+        w.panelIndex = row.parentSlot;
+        // subIndex is the REGISTRY row here, not a preview-host binding
+        // index — a distinction that only exists while there is no host:
+        // every consumer that turns a subIndex into a Panel guards on
+        // splitPreview_ first, and with a host present this row was never
+        // created (the dedupe above). So this index can never resolve to
+        // the wrong instance.
+        w.subIndex  = i;
+        w.key       = row.settingsKey;
+        w.title     = consoleText(QStringLiteral("console.proto.win.short.%1")
+                                      .arg(w.key));
+        // Geometry stays at the struct defaults: this model must not
+        // invent a placement for a window it does not own. scale/opacity
+        // are the defaults for the same reason.
+        w.outputOwn = QString();      // a sub-window has no own outputName
+        w.primaryOutput = primary;
+        w.outputResolved = screen_query::effectiveOutputName(
+            mhw::resolveWindowOutput(w.outputOwn, parent->outputName(),
+                                     primary));
+        w.panelEnabled = parent->panelEnabled();
+        // The per-window visibility row lives under that window's OWN
+        // settings scope (<game>/mixed/<key>), readable without the
+        // Panel object — the scope is a pure function of the key.
+        w.visiblePersisted = mhw::readWindowVisible(
+            mhw::panelSettingsScopeGroup(row.settingsKey), row.settingsKey);
+
+        // WHAT THIS WINDOW DRAWS — the Split arm's formula, byte for
+        // byte: the table row's claim, the panel's live mask and the
+        // game-filtered schema.
+        const uint32_t own = splitWindowSections(row.parentSlot,
+                                                 row.tableRow);
+        const uint32_t schema = panelSectionSchema(row.parentSlot,
+                                                   currentGame());
+        const uint32_t parentMask = parent->sectionMask();
+        w.sectionMask = own & parentMask & schema;
+        w.sectionsTotal = countSectionBits(own & schema);
+        w.sectionsOn = countSectionBits(own & parentMask & schema);
+        out.append(w);
+    }
+    return out;
+}
+
 // The one window the inspector describes. A row that names a Panel
 // which has since been rebuilt answers an invalid state (panelIndex
 // -1), which is the same "absent, not blank" rule the list uses.
 //
-// v1.0.0 (B): the inverse operation — the user left the window half of
-// the selection (the mode changed, the game changed, the pets panel
-// went away). The PANEL slot stays where it is, because the rail's
-// highlight and the topbar title are the panel half and must not jump.
-void ControlPanel::clearWindowSelection()
-{
-    windowSelectionActive_ = false;
-    selectedSubWindow_ = -1;
-    if (canvas_)
-        canvas_->setSelectedSubWindow(-1);
-    buildInspectorForSelection();
-}
+// v1.1.0: clearWindowSelection() is DELETED, and that is the fix rather
+// than a cleanup.
+//
+// It had no caller in src/ or tests/ — `grep -rn clearWindowSelection`
+// matched only its own definition and a comment referring to it. The
+// transition it claimed to own ("the user left the window half of the
+// selection") was in fact performed by resetViewStateAfterScopeChange(),
+// which cleared windowSelectionActive_ but NOT panelSlotChosen_. So the
+// function was a second, unreachable owner of a half-completed state
+// reset: reading it made the console look like it cleared a mother
+// selection, while every real path left one behind.
+//
+// Its one piece of real logic now lives in resetViewStateAfterScopeChange(),
+// and the rail highlight / topbar title behaviour it documented still
+// holds there: a scope change clears the selection, not the panel slot.
 
 mhw::WindowState ControlPanel::selectedWindow() const
 {
@@ -8649,6 +12032,11 @@ void ControlPanel::selectWindow(int panelIndex, int subIndex)
         return;
     const bool panelChanged = (selectedPanel_ != panelIndex);
     selectedPanel_ = panelIndex;
+    // v1.1.0: reaching a window selection IS a user choice, including the
+    // mother-panel arm (subIndex < 0). clearWindowSelection() disarms this
+    // flag, so without re-arming it here a scope switch followed by a window
+    // click would leave the capability rows reading "nothing selected".
+    panelSlotChosen_ = true;
     selectedSubWindow_ = subIndex;
     // THE ONLY PLACE A SELECTION IS CREATED. Rail clicks and the ctor go
     // through selectPanel(), which moves the panel slot without ever
@@ -8658,17 +12046,63 @@ void ControlPanel::selectWindow(int panelIndex, int subIndex)
     windowSelectionActive_ = true;
 
     if (canvas_) {
-        // A sub-window index only means something in Split, and the
-        // canvas clears its own sub-selection when it enters Single —
-        // pushing one there would be an index into an empty vector that
-        // the setter normalises to -1 anyway. Doing it here keeps the
-        // two from ever holding different answers.
-        if (subIndex >= 0
-            && layoutModeInForce_ == mhw::PlayerSection::PlayerLayoutMode::Split) {
-            canvas_->setSelectedSubWindow(subIndex);
-        } else {
-            canvas_->setSelectedSubWindow(-1);
+        // A sub-window index means something whenever that window actually
+        // RUNS as its own window. On HEAD that was exactly Split, and the
+        // gate said so; Mixed is what makes the two different (the same
+        // class of gate as the output-inheritance one in main.cpp).
+        //
+        // The concrete failure this fixes: under `mixed`, selecting a
+        // detached window took the else branch, so the canvas never learned
+        // which sub-window was picked, its header chip kept reading "0 个窗口",
+        // and the picture did not highlight the box the user just clicked.
+        //
+        // Single still clears, as before (it has no sub-windows at all). Mixed
+        // asks the plan rather than the mode: a window that merged back into
+        // its mother is NOT a sub-window here, and pushing such an index would
+        // point at whatever now occupies that slot.
+        //
+        // ── v1.1.3: A SEARCH, NOT AN INDEX. The gate this replaced read
+        // `topology[subIndex]` — which is only the sub-window the user
+        // picked while sub rows happen to occupy positions 0..N-1 of the
+        // list. That held when Mixed's list was four mother rows plus the
+        // appended detached rows; it does NOT hold now that the list also
+        // carries the mothers that still mount (mixed arm of
+        // buildWindowStates) and the no-host fallback appends after them,
+        // so position i can be a mother row (subIndex -1, never equal, so
+        // the worst case was a selection silently cleared) or, after a
+        // partial host, a different window entirely.
+        //
+        // The search is also the SAME statement the canvas's own click
+        // handler makes one block up: subWindowSelected(i) finds its row
+        // by scanning for `w.subIndex == i`. One index space, one lookup,
+        // two entries (click and programmatic select) that cannot
+        // disagree about whether a window exists.
+        //
+        // The subWindowCount() check closes the last hole: with no host
+        // (before the first sync, or a canvas-less console) topology
+        // still lists the detached windows — it must, that is the count
+        // model's job — but the canvas holds no slot for them, so there is
+        // nothing to highlight.
+        bool subIsLive = false;
+        if (subIndex >= 0) {
+            if (layoutModeInForce_
+                == mhw::PlayerSection::PlayerLayoutMode::Split) {
+                subIsLive = true;         // every row is its own window
+            } else if (layoutModeInForce_
+                       == mhw::PlayerSection::PlayerLayoutMode::Mixed) {
+                const mhw::WindowList topology = buildWindowTopology();
+                for (const mhw::WindowState &w : topology) {
+                    if (w.subIndex == subIndex
+                        && w.panelIndex == panelIndex) {
+                        subIsLive = true;
+                        break;
+                    }
+                }
+                subIsLive = subIsLive
+                    && subIndex < canvas_->subWindowCount();
+            }
         }
+        canvas_->setSelectedSubWindow(subIsLive ? subIndex : -1);
         canvas_->setSelectedPanel(panelIndex);
     }
 
@@ -8691,6 +12125,16 @@ void ControlPanel::selectWindow(int panelIndex, int subIndex)
     } else {
         buildInspectorForSelection();
     }
+    // v1.1.0: re-selecting the SAME panel must still refill. Selecting a
+    // MOTHER is a real inspection state now that the capability rows read
+    // selectedPanelOrNull() (which answers for a mother, not just a window
+    // row). Re-clicking the mother you are already on leaves `panelChanged`
+    // false, so the branch above does not run, and the size rows then keep
+    // whatever enabled-state the previous selection left behind — a mother
+    // that does have a size showing a disabled size block. Run the fill
+    // unconditionally: it is a refill (the block already re-reads every
+    // value), not a rebuild, so the extra call costs one pass.
+    buildInspectorForSelection();
     refreshWindowModel();
 }
 
@@ -8900,8 +12344,18 @@ void ControlPanel::switchGame(mhw::GameId game)
         ctl_[3].navButton->setVisible(petsAvailable);
     if (canvas_)
         canvas_->setPanelPresent(3, petsAvailable);
-    if (!petsAvailable && selectedPanel_ == 3)
+    if (!petsAvailable && selectedPanel_ == 3) {
+        panelRedirect_ = true;
         selectPanel(2);
+    }
+    // v1.1.0: a scope change drops the window half of the selection, and
+    // with it the panel half that the capability rows read. Without this the
+    // inspector kept the previous game's mother panel on screen after the
+    // switch ("B: the empty block is back after the scope change"). The rail
+    // highlight and the topbar title deliberately stay put.
+    panelSlotChosen_ = false;
+    windowSelectionActive_ = false;
+    selectedSubWindow_ = -1;
 
     if (gameWorldBtn_) {
         gameWorldBtn_->setProperty("selected", !isRise);
@@ -9587,6 +13041,15 @@ void ControlPanel::applyStartupLayoutMode()
     const mhw::ConsoleLayoutConfRow confRow =
         mhw::parseConsoleLayoutRow(text);
 
+    // v1.1.0 Mixed: BOTH games' plan rows, read from the same text this
+    // function just read — one read, no second file handle, and NOTHING
+    // written or seeded. A load must never copy a settings scope (that is
+    // ensureMixedPanelSettingsScope's explicit-entry rule, and its caller
+    // is applyLayoutChoice below) nor stamp a conf row (that is
+    // saveMaskToDisk's). It only stages what the next Mixed switch will
+    // show and what the next save will write.
+    loadMixedLayoutPlans(text);
+
     // The shared chain, called exactly as main.cpp calls it. The CLI
     // half is empty from the console's side: the console is not a
     // command line, so it never "passes a flag", it only states the
@@ -9595,15 +13058,18 @@ void ControlPanel::applyStartupLayoutMode()
     // about precedence.
     const mhw::PlayerLayoutResolution resolved =
         mhw::resolveStartupLayoutMode(mhw::PlayerLayoutCliRequest{},
-                                      confRow.source);
+                                      confRow);
 
     // The mode the running build actually uses from here on: what the
     // resolver said, recorded so the apply button can tell "you picked
     // something new" apart from "you picked what is already in force".
     layoutModeInForce_ = resolved.mode;
+    // v1.1.0: through playerLayoutModeToString() rather than a two-arm
+    // ternary — the old spelling printed `layout=single` for a Mixed conf
+    // row, which is how the console and the overlay ended up disagreeing
+    // about the user's own file.
     qInfo("monster-control: layout=%s (source=%d)",
-          resolved.mode == mhw::PlayerSection::PlayerLayoutMode::Split
-              ? "split" : "single",
+          qPrintable(mhw::playerLayoutModeToString(resolved.mode)),
           static_cast<int>(resolved.source));
 
     if (layoutCombo_) {
@@ -9617,6 +13083,10 @@ void ControlPanel::applyStartupLayoutMode()
         updateLayoutApplyEnabled();
     }
 
+    // Restoring the hidden legacy combo is not enough: the visible
+    // segment must describe the same persisted mode before first show.
+    syncLayoutSegmentToMode();
+
     // v0.13: the canvas must describe the topology this mode names,
     // which is also the only place the sub-windows get built at
     // startup. Done AFTER the combo is set so the log line and the UI
@@ -9624,26 +13094,50 @@ void ControlPanel::applyStartupLayoutMode()
     syncSplitPreviewToCanvas();
 }
 
-// The combo's one and only index converter. Kept as a named function
-// rather than a literal at each site so a reordered combo (or a third
-// mode, if one ever arrives) is one edit and not a hunt.
+// The combo's one and only index converter, enum -> index. Kept as a
+// named function rather than a literal at each site so a reordered combo
+// is one edit and not a hunt.
+//
+// v1.1.0: exhaustive switch. The old `mode == Split ? 1 : 0` answered
+// index 0 for Mixed, so restoring a `layout=mixed` row drove the combo
+// to 一整块 while the overlay booted Mixed — the console describing the
+// opposite topology to the one on screen. A switch turns that class of
+// bug into a -Wswitch warning on the next mode.
 int ControlPanel::layoutComboIndexFor(
     mhw::PlayerSection::PlayerLayoutMode mode) const
 {
-    return mode == mhw::PlayerSection::PlayerLayoutMode::Split
-               ? kLayoutComboSplitIndex
-               : kLayoutComboSingleIndex;
+    switch (mode) {
+    case mhw::PlayerSection::PlayerLayoutMode::Split:
+        return kLayoutComboSplitIndex;
+    case mhw::PlayerSection::PlayerLayoutMode::Mixed:
+        return kLayoutComboMixedIndex;
+    case mhw::PlayerSection::PlayerLayoutMode::Single:
+        break;
+    }
+    return kLayoutComboSingleIndex;
 }
 
 // In-force mode as the combo spells it. Returns Single when the combo
 // does not exist, so a caller with no UI still gets a sane answer.
+//
+// v1.1.0: index -> enum, THROUGH layoutComboIndexFor() rather than a
+// second independent comparison. Two separate converters is how the
+// split-only pairing drifted in the first place: the other half mapped
+// EVERY non-Split index to Single, so the third row read back as Single
+// and the next saveMaskToDisk() rewrote `layout=mixed` away — the exact
+// data-loss shape the deleted two-argument resolver was fixed for, one
+// layer up.
 mhw::PlayerSection::PlayerLayoutMode ControlPanel::layoutComboMode() const
 {
     if (!layoutCombo_ || layoutCombo_->count() == 0)
         return mhw::PlayerSection::PlayerLayoutMode::Single;
-    return layoutCombo_->currentIndex() == kLayoutComboSplitIndex
-               ? mhw::PlayerSection::PlayerLayoutMode::Split
-               : mhw::PlayerSection::PlayerLayoutMode::Single;
+    for (const auto mode : {mhw::PlayerSection::PlayerLayoutMode::Single,
+                            mhw::PlayerSection::PlayerLayoutMode::Split,
+                            mhw::PlayerSection::PlayerLayoutMode::Mixed}) {
+        if (layoutCombo_->currentIndex() == layoutComboIndexFor(mode))
+            return mode;
+    }
+    return mhw::PlayerSection::PlayerLayoutMode::Single;
 }
 
 // Enable the apply button ONLY when the selection actually differs from
@@ -9699,7 +13193,17 @@ void ControlPanel::syncSplitPreviewToCanvas()
     // canvas's subSlots_, and it does so regardless of what follows.
     canvas_->setLayoutMode(layoutModeInForce());
 
-    if (layoutModeInForce() != mhw::PlayerSection::PlayerLayoutMode::Split) {
+    const mhw::PlayerSection::PlayerLayoutMode mode = layoutModeInForce();
+    // v1.1.3: MIXED IS A THIRD ARM, NOT "NOT SPLIT". This gate used to
+    // read `!= Split`, which is what made Mixed take the Single early
+    // return: the host was dropped, the canvas was handed no bindings,
+    // and the board could only ever draw the four mother panels — while
+    // the overlay booted with the detached windows mounted. `mixed` is
+    // computed here and used below (the rebuild guard and the row filter
+    // in ensureBuilt) so there is one spelling of "is this arm Mixed".
+    const bool mixed =
+        mode == mhw::PlayerSection::PlayerLayoutMode::Mixed;
+    if (mode != mhw::PlayerSection::PlayerLayoutMode::Split && !mixed) {
         // Single: the windows are no longer needed, and keeping them
         // alive would hold fourteen layer-shell surfaces open for a
         // preview nobody is looking at.
@@ -9715,11 +13219,26 @@ void ControlPanel::syncSplitPreviewToCanvas()
         // what is drawn.
         splitPreview_.reset();
         canvas_->setSubWindowBindings({});
-        // ── stage A: the rebind RESET the visibility flags (a fresh
-        // SubSlot is visible), so the filter is re-pushed on this arm
-        // too — the single window case must not keep a stale hide from
-        // the split list that was just dropped, nor forget a hide the
-        // user set for a mother window.
+        // ── v1.1.4: AND THE MOTHERS GET THEIR OWN MASK BACK ────────────
+        // The Mixed arm below re-states every mother through
+        // rebuildAndRender(): effectiveMotherMask() hands the Panel the
+        // RETAINED mask and mixedMotherMounts() sets canvas `present` from
+        // the same plan. Leaving Mixed used to return here WITHOUT the
+        // symmetric write — so the Panels kept the retained mask and
+        // `present=false`. A fully detached player mother then had mask 0
+        // (nothing to draw, and `present` false so the canvas skipped it
+        // outright); monster/damage kept only the rows no split table
+        // claims. That is the user's report, verbatim: 「点了下整块，结果
+        // 两个显示器上都是一个窗口都没有」.
+        //
+        // Outside Mixed effectiveMotherMask() is the identity, and the
+        // Mixed-only gate at rebuildAndRender():13096 does not run, so this
+        // loop restores exactly the pre-Mixed state: the same two values
+        // the constructor and every section toggle already produce. It is
+        // also the Single half of the symmetry the Mixed arm relies on —
+        // one function, both directions, no third place to forget.
+        for (int i = 0; i < mhw::kPanelCount; ++i)
+            rebuildAndRender(i);
         pushWindowVisibility();
         return;
     }
@@ -9797,8 +13316,26 @@ void ControlPanel::syncSplitPreviewToCanvas()
     // a rail button — twice a session at most. That is the right trade
     // against a preview that lies.
     const mhw::GameId hostGame = splitPreviewHostGame_;
+    // v1.1.3: TWO MORE THINGS MAKE A HOST STALE, and both are recorded at
+    // build time (splitPreviewHostMode_ / splitPreviewHostPlan_):
+    //
+    //   * the MODE — Split's host owns every row of the split table and
+    //     Mixed's owns only the plan's detached ones, so neither can be
+    //     reused for the other. Before v1.1.3 Mixed never reached this
+    //     line, which is why only the game was ever checked here;
+    //   * the PLAN (Mixed only) — one 独立/合并 toggle changes WHICH
+    //     rows the host owns. This is the ONLY thing that rebuilds a host
+    //     for a plan change, and it costs one 11-bit comparison per sync,
+    //     so a drag, a paint or a visibility refresh never rebuilds: a
+    //     Mixed sync whose (game, mode, plan) is unchanged does exactly
+    //     what a Split one does.
+    //
+    // Single is not on this path at all: its arm above reset the host.
     const bool needsRebuild = !splitPreview_
-                             || hostGame != currentGame();
+                             || hostGame != currentGame()
+                             || splitPreviewHostMode_ != mode
+                             || (mixed && splitPreviewHostPlan_
+                                     != mixedPlanSignature());
     if (needsRebuild) {
         // Destroy FIRST. The old host's windows own PanelSourceAdapters
         // the canvas holds raw pointers to, and dropping the host frees
@@ -9806,8 +13343,16 @@ void ControlPanel::syncSplitPreviewToCanvas()
         // the canvas never observes a freed source.
         splitPreview_.reset();
         splitPreview_ = std::make_unique<SplitWindowPreviewHost>();
-        splitPreview_->ensureBuilt(currentGame());
+        // The plan is only READ here, at construction: nullptr (the whole
+        // split table, byte-identical to before) outside Mixed, and the
+        // plan in force inside it. A later plan change rebuilds instead
+        // of re-filtering — see the guard above.
+        splitPreview_->ensureBuilt(currentGame(),
+                                   mixed ? &mixedPlanFor(currentGame())
+                                         : nullptr);
         splitPreviewHostGame_ = currentGame();
+        splitPreviewHostMode_ = mode;
+        splitPreviewHostPlan_ = mixedPlanSignature();
         // v0.15 → v1.0.0 (OUTPUT-OWNERSHIP-FIX): PUSH THE WINDOW'S OWN
         // OWNERSHIP FALLBACK INTO EVERY SPLIT SUB-WINDOW.
         //
@@ -9866,6 +13411,33 @@ void ControlPanel::syncSplitPreviewToCanvas()
               splitPreview_->countForParent(0),
               splitPreview_->countForParent(1),
               splitPreview_->countForParent(2));
+        // ── v1.1.3: AND THE MOTHERS THAT GAVE THEIR ROWS UP ────────────
+        //
+        // Mixed only, and only when the host was actually rebuilt —
+        // which is exactly when the topology changed (game, mode or plan),
+        // so a no-op sync never pays for it.
+        //
+        // WHAT THIS FIXES, ONE ROW DOWN. The mother Panel still holds the
+        // USER's mask, but in Mixed the overlay's mother is handed
+        // plan.retainedMask() (main.cpp:761) and mounts only while
+        // planMotherPanelEnabled() says so (main.cpp:776). Without this
+        // loop the board painted a mother that gives every row away as a
+        // full panel — a window the overlay does not mount, drawn from
+        // blocks that are ALSO drawn in their own detached windows. Both
+        // halves come out of rebuildAndRender(): it applies
+        // effectiveMotherMask() to the Panel and mixedMotherMounts() to
+        // the canvas's `present` flag, and the paint arm of the canvas
+        // skips a mother whose `present` is false (hud_canvas.cpp:2710).
+        //
+        // WHY rebuildAndRender() AND NOT A NEW FUNCTION. It is the one
+        // place the mask, `present`, the rail tile and the split
+        // re-render already live together, and its Single/Split answer is
+        // unchanged (effectiveMotherMask is an identity there), so this
+        // call is reachable in the two legacy modes only from the paths
+        // that already call it.
+        if (mixed)
+            for (int i = 0; i < mhw::kPanelCount; ++i)
+                rebuildAndRender(i);
     }
     // ── stage A: the split rebind reset every SubSlot's flag ───────────
     pushWindowVisibility();
@@ -9878,7 +13450,14 @@ void ControlPanel::refreshSplitWindowPreviews()
 {
     if (!canvas_ || !splitPreview_)
         return;
-    if (layoutModeInForce() != mhw::PlayerSection::PlayerLayoutMode::Split)
+    // v1.1.3: Mixed has a host too (a filtered one), and its windows read
+    // the same three masks — so it takes the same road. The gate is
+    // "does the mode build a host", spelled as the two that do rather
+    // than as `!= Single`, which would silently admit the next topology
+    // without its windows being in the host.
+    const mhw::PlayerSection::PlayerLayoutMode mode = layoutModeInForce();
+    if (mode != mhw::PlayerSection::PlayerLayoutMode::Split
+        && mode != mhw::PlayerSection::PlayerLayoutMode::Mixed)
         return;
     // Only worth doing if the canvas still has the bindings: the two
     // are set together in syncSplitPreviewToCanvas(), so a mismatch
@@ -9933,6 +13512,20 @@ void ControlPanel::applyLayoutChoice(mhw::PlayerSection::PlayerLayoutMode mode)
         // layout while the conf declared another — the exact
         // inconsistency saveMaskToDisk()'s own comment describes as the
         // symptom it was written to remove.
+        // THE MIXED SCOPE SEED, on the way IN. ensureMixedPanelSettingsScope()
+        // copies the <game>/<fromMode>/<window> values into
+        // <game>/mixed/<window> (missing keys only), so a user who enters
+        // Mixed keeps the geometry they had — and it must run exactly on
+        // an EXPLICIT entry: never from a read-only load, never from a
+        // refresh. That is why the call lives here rather than in
+        // applyStartupLayoutMode()/refreshMixedGroupBlock(): this is the
+        // only place the user's own choice moves Single|Split -> Mixed,
+        // and a Mixed -> Mixed repeat cannot reach it (the guard at the
+        // top of this function already returned for that), with the
+        // function's own Mixed check as a second belt.
+        if (mode == mhw::PlayerSection::PlayerLayoutMode::Mixed)
+            mhw::ensureMixedPanelSettingsScope(currentGame(),
+                                               layoutModeInForce());
         layoutModeInForce_ = mode;
         updateLayoutApplyEnabled();
         saveMaskToDisk();     // also rewrites the layout= row
@@ -9987,6 +13580,14 @@ void ControlPanel::applyLayoutChoice(mhw::PlayerSection::PlayerLayoutMode mode)
     // the user's own hand-written override was silently discarded by
     // the contradiction. The mode moves first, and everything after
     // reads the mode the user just chose.
+    //
+    // THE SAME SEED as the no-child arm, reached here only AFTER the
+    // confirm dialog said yes: a declined dialog must leave Mixed
+    // untouched, so no scope may have been copied before the question
+    // was answered. Same guard — an explicit entry, Single|Split ->
+    // Mixed, and nothing else.
+    if (mode == mhw::PlayerSection::PlayerLayoutMode::Mixed)
+        mhw::ensureMixedPanelSettingsScope(currentGame(), layoutModeInForce());
     layoutModeInForce_ = mode;
     updateLayoutApplyEnabled();
     saveMaskToDisk();         // the row the relaunched child will read
@@ -10129,6 +13730,54 @@ void ControlPanel::saveMaskToDisk() const
     // the file is user-editable, so it stays clean.
     written.append(mhw::serializeConsoleLayoutRow(layoutModeInForce()));
 
+    // ── v1.1.0 Mixed: the `layout.windows.<game>=` row ────────────────────
+    //
+    // THE SAME SET RULE the `layout=` row above uses, for the same
+    // reason: saveMaskToDisk() runs on save, on close and on every apply,
+    // and a plan row that piled up would leave the file's LAST row
+    // contradicting the switches the console is showing. So every stale
+    // copy of THIS game's row is dropped and one fresh row is appended —
+    // two saves in a row produce one row and byte-identical output.
+    //
+    // ONLY THIS GAME'S ROW. The other game's row, unknown keys and the
+    // locale row are already preserved verbatim inside `written` (that is
+    // serializePanelMasks()'s contract), and nothing below rewrites them:
+    // saving World must not move Rise's list, and vice versa. The prefix
+    // is the full `layout.windows.world=` / `layout.windows.rise=` key,
+    // so one can never prefix-match the other.
+    //
+    // ONLY IN MIXED. Single and Split resolve a FIXED plan and never read
+    // this row (window_layout_plan.h's resolve rule), so writing it there
+    // would put a row in the file of every user who ever opened the
+    // combo — the exact "states a default as if it were a choice" harm
+    // the `layout=` row's absence rule above avoids. A Mixed plan that
+    // was saved earlier is still preserved by the codec while the console
+    // is in Single (it is an unknown key to the mask writer), so leaving
+    // Mixed loses nothing: the row is there again, unchanged, next time.
+    if (layoutModeInForce() == mhw::PlayerSection::PlayerLayoutMode::Mixed) {
+        const QByteArray planKey =
+            mhw::layoutWindowsRowKey(currentGame()).toLatin1();
+        if (!planKey.isEmpty()) {
+            const QByteArray planPrefix = planKey + '=';
+            const QList<QByteArray> lines = written.split('\n');
+            QList<QByteArray> kept;
+            kept.reserve(lines.size() + 1);
+            for (const QByteArray &line : lines) {
+                if (line.trimmed().startsWith(planPrefix))
+                    continue;   // drop every stale copy; see WHY above
+                kept.append(line);
+            }
+            QByteArray rebuilt = kept.join('\n');
+            // Same NUL guard as the layout= block above: join() drops the
+            // terminator split() kept as its last (empty) element.
+            if (written.endsWith('\n') && !rebuilt.endsWith('\n'))
+                rebuilt.append('\n');
+            written = rebuilt;
+            written.append(mhw::serializeWindowLayoutPlanRow(
+                currentGame(), mixedPlanFor(currentGame())));
+        }
+    }
+
     const QString parent = QFileInfo(path).absolutePath();
     if (!QDir().mkpath(parent)) {
         qWarning("monster-control: cannot create config directory %s",
@@ -10165,10 +13814,24 @@ void ControlPanel::rebuildAndRender(int idx)
     auto *lab = ctl_[idx].preview;
     updatePanelSummary(idx);
 
-    uint32_t mask = 0;
+    uint32_t userMask = 0;
     for (int b = 0; b < ctl_[idx].subs.size(); ++b)
         if (ctl_[idx].subs[b]->isChecked())
-            mask |= (1u << b);
+            userMask |= (1u << b);
+    // ── v1.1.3 (Mixed): THE MASK THIS PANEL DRAWS ────────────────────────
+    // effectiveMotherMask() is the identity in Single and Split (the two
+    // legacy topologies therefore read the exact value this line has
+    // always read, bit for bit) and plan.retainedMask(parent, userMask) in
+    // Mixed — the same value main.cpp:761 hands the OVERLAY's mother.
+    // Without it the console's mother kept drawing blocks it had just
+    // detached: once inside its own window, once still inside the mother.
+    //
+    // `userMask` (not `mask`) is what every gate below reads, because the
+    // gates ask about the USER's switches (saveMaskToDisk writes those)
+    // while `mask` is what the PANEL draws. Where the two differ is only
+    // in Mixed, and there it is the whole point: a row the plan gave away
+    // stays ON in the user's mask and OFF in the mother's.
+    const uint32_t mask = effectiveMotherMask(idx, userMask);
     panel->setSectionMask(mask);   // also calls update()
 
     // Section bits that filter actors are also expressed through the frozen
@@ -10288,6 +13951,14 @@ void ControlPanel::rebuildAndRender(int idx)
     //
     // sectionMask() is the user's live checkbox state: the handler this
     // function belongs to set it three lines above.
+    //
+    // v1.1.3 CORRECTION to that one sentence: in Mixed the Panel holds
+    // the RETAINED mask, so `mask` here is the user's switches minus the
+    // rows this run detached. The predicate is unchanged and still right
+    // — it asks "does this PANEL have anything to draw", and the retained
+    // mask is precisely what this panel draws. The gates that ask a
+    // different question ("does this run mount it at all") read userMask
+    // below instead.
     bool hasBlocks = true;
     if (idx == 0)
         hasBlocks = mhw::PlayerSection::playerPanelHasBlocks(mask);
@@ -10299,6 +13970,19 @@ void ControlPanel::rebuildAndRender(int idx)
         hasBlocks = mhw::damagePanelHasBlocks(mask);
     // idx == 3 (pets) has no split table and keeps its own master/content
     // gate, which the disabled arm above already returned on.
+    //
+    // ── v1.1.3: MIXED ASKS THE OVERLAY'S GATE, NOT ONLY hasBlocks ────────
+    // hasBlocks(retained) answers "can it draw"; planMotherPanelEnabled
+    // adds the second arm the overlay has — "or nothing was ever detached
+    // from it" — which is what keeps a maskless mother mounted in Mixed
+    // exactly as main.cpp:776 does. Gated on the mode, deliberately:
+    // outside Mixed this flag's answer must stay byte-identical, and
+    // mixedMotherMounts()'s own `return true` fallback is the WRONG
+    // answer for a Single run whose mask is empty. The gate lives at the
+    // call site for that reason — never remove it.
+    if (layoutModeInForce() == mhw::PlayerSection::PlayerLayoutMode::Mixed
+        && idx < mhw::kLayoutParentCount)
+        hasBlocks = mixedMotherMounts(idx, userMask);
 
     if (canvas_) {
         canvas_->setPanelPresent(idx, hasBlocks);
@@ -10386,6 +14070,22 @@ void ControlPanel::setOverlayRunning(bool running)
         statusBadge_->style()->unpolish(statusBadge_);
         statusBadge_->style()->polish(statusBadge_);
     }
+    /* ── v1.1.0: THE OVERLAY-EDIT BUTTON IS NOT A LAUNCHER ────────────────
+       One child at a time is the contract launchOverlayChild() enforces,
+       and it enforces it with a bare `return` — so a click that arrives
+       while a child is alive used to be swallowed with no button state
+       change and no message. The user saw a live button and nothing
+       happened. Disabling it states the truth in the place the user is
+       already looking, and the tooltip keeps its explanation (the
+       console's own Edit Layout button is deliberately NOT touched: it
+       only edits the canvas and never wanted a child).
+       ── end v1.1.0 ────────────────────────────────────────────────── */
+    if (overlayEditBtn_) {
+        overlayEditBtn_->setEnabled(!running);
+        trTip(overlayEditBtn_, running
+                  ? QStringLiteral("console.edit.overlay_running_tip")
+                  : QStringLiteral("console.edit.overlay_tip"));
+    }
     /* ── v1.0.0 sa-A: statusline ──
        The run half of the status line ("未启动(演示)" / "模拟运行中 · PID
        {p}") is liveness, which is exactly what this function is told.
@@ -10394,6 +14094,11 @@ void ControlPanel::setOverlayRunning(bool running)
        written from the same `running` argument.
        ── end sa-A: statusline ── */
     refreshStatusline();
+    // v1.1.1 (顶栏溢出): the launch/stop swap rewrites the button's TEXT,
+    // and a QLabel-free QPushButton's minimumSizeHint is its text — so
+    // the row's minimum changed with it. Re-decide the wrap rather than
+    // let a wider word push the header back past the window edge.
+    refreshTopbarWrap();
 }
 
 // v0.5 UI-link: sync the APPEARANCE sliders to match the panel's current
@@ -10513,4 +14218,458 @@ void ControlPanel::updatePosLabel(int idx)
         mh::tr(QStringLiteral("console.pos.label"))
             .arg(corner).arg(m.left()).arg(m.top())
             .arg(m.right()).arg(m.bottom()));
+}
+
+// ── v1.0.1: THE THREE CHEAP REFRESHES (设置 / 预览 / 属性 + 拖动跟手) ────
+
+// 验收项2: 检查器第三列的图源。原来 pix.scaled(label.size()*dpr) 把已经
+// 在自有 scale 渲染过的 pixmap 再压进 ~132px 高的盒子 —— 又糊又被裁。
+// 现在原像素显示，超框部分由 windowPreviewScroll 滚动查看；空状态仍是
+// setPixmap(QPixmap()) + 提示文字的旧契约。
+void ControlPanel::refreshWindowPreviewPixmap()
+{
+    if (!windowPreviewBox_)
+        return;
+    const mhw::WindowState w = selectedWindow();
+    if (w.panelIndex < 0)
+        return;
+    /* ── round2: THE CARD'S HEIGHT BUDGET IS THE LEFT HALF'S HEIGHT ──────
+       Before the split, the preview column's height WAS the grid row's
+       height — the tallest of the three columns, because a QSplitter
+       stretches every child across its cross axis. That is where the
+       render's height came from: measured at 1600x1000 the row was ~442px
+       (元数据/分区 are that tall), leaving ~330px of render room. In a
+       scroll area of its own the card would collapse to the drawer's own
+       height (~247px, i.e. ~54px of render room) and the preview would
+       render three times smaller than the console the user had.
+
+       So the budget is restated EXPLICITLY: the card is at least as tall
+       as the LEFT half's content is — which is exactly the old row
+       height, since that row was max(元数据, 分区, 预览). The input is the
+       OTHER half's content and never this preview, so 实测缺陷5's rule
+       holds: the fit still cannot be fed by the fit. Both halves then
+       carry the same content height and each scrolls its own copy of it
+       — which is precisely the change the user asked for (滚左边不动右边).
+       ── end round2: the card's height budget ── */
+    if (windowPreviewCol_ && inspectorGridHost_)
+        windowPreviewCol_->setMinimumHeight(inspectorGridHost_->height());
+    Panel *panel = (w.subIndex >= 0 && splitPreview_)
+                       ? splitPreview_->windowAt(w.subIndex)
+                       : panelAt(w.panelIndex);
+    const QPixmap pix = panel ? renderPreview(panel) : QPixmap();
+    if (pix.isNull()) {
+        // A window whose sections are all off paints nothing; the
+        // prototype says so in words rather than an empty rectangle.
+        windowPreviewSource_ = QPixmap();   // the empty state owns the box
+        windowPreviewBox_->setText(
+            consoleText(QStringLiteral("console.proto.preview.empty")));
+        windowPreviewBox_->setPixmap(QPixmap());
+        // 实测缺陷5: THE EMPTY STATE OWNS THE FLOOR. build time gives the
+        // label 200x120 so an unselected console says so in a readable
+        // rectangle; a FILLED box drops that floor in applyPreviewDisplay()
+        // so the frame can hug the render. Restoring it here is what keeps
+        // the two states independent of the order they arrive in.
+        windowPreviewBox_->setMinimumSize(200, 120);
+        windowPreviewBox_->adjustSize();
+        applyPreviewDisplay();              // …and clears the readout row
+        return;
+    }
+    windowPreviewBox_->setText(QString());
+    /* ── 验收项1: THE SOURCE IS REPLACED, NEVER MUTATED ──────────────────
+       Every render replaces the immutable high-resolution source; the
+       label only ever gets a DERIVED pixmap (see applyPreviewDisplay()).
+       That is the "原图不可反复缩小再放大" half: zooming in and out a
+       hundred times always re-scales the same full-resolution render,
+       so there is no accumulated resampling loss, and no path in here
+       writes Panel::scale() or the `scale=` row.
+       ── end 验收项1: source swap ── */
+    windowPreviewSource_ = pix;
+    applyPreviewDisplay();
+}
+
+// 验收项1 (B 第1阶段): THE THREE ZOOM ENTRY POINTS.
+//
+// previewFitScale() — the ratio that shows the WHOLE image in the
+// preview column the user has now (splitter drag included).
+//
+// ── 实测缺陷5 (user-8): AVAILABLE, NOT VISIBLE ─────────────────────────────
+// It used to read windowPreviewScroll_'s viewport. That was right while
+// the pane was stretched across the column (viewport = the cell), and it
+// is wrong now that the pane HUGS the render: the pane would then be the
+// product of this function, and feeding the answer back into the question
+// shrank the image by kPreviewDefaultFill of itself on every layout pass
+// — measured, not theorised: 272x260 → 97x93 after two passes.
+//
+// So the input is the CONTAINER the pane lives in: windowPreviewCol_ is
+// the CARD of the right half — round2 put that half in its own scroll
+// area (inspectorContentRight) as a child of inspectorColumns, the
+// splitter the user drags — so its WIDTH is set by the handle, i.e. by
+// the OTHER half's width, and its HEIGHT is set by its own content (the
+// host layout keeps a trailing stretch, so no spare-tall cell can grow
+// it). Neither can come from this preview: the chrome subtracted below
+// (caption, zoom row, bottom note, the card's border + 12/10 padding) is
+// content-independent too, so nothing here can feed back into the image
+// size. The −4 is the label's own 1px QSS border on each side plus
+// rounding slack, so that `render + frame` always lands INSIDE the card:
+// without it, Fit mode hands the column back a hint 2px taller than
+// itself and the row grows 2px per pass.
+// ── end 实测缺陷5 ──
+qreal ControlPanel::previewFitScale() const
+{
+    if (windowPreviewSource_.isNull() || !windowPreviewCol_
+        || !windowPreviewScroll_)
+        return 1.0;
+    const QRect col = windowPreviewCol_->rect();
+    int chrome = 0;
+    int items = 0;
+    /* ── round2: THE CARD'S OWN INSETS ────────────────────────────────────
+       inspectorPreview is a bordered, padded card now (QSS border +
+       this layout's 12/10 contents margins), and the border is painted
+       INSIDE the frame's rect — so the room the pane can actually use
+       is the rect minus 2×border minus the margins on that axis.
+
+       Both subtractions are CONSTANTS of the card, never of the render:
+       the input is still windowPreviewCol_'s box (set by the splitter)
+       plus content-independent chrome, so nothing here can feed the
+       scale's answer back into its own question — the loop 实测缺陷5
+       measured (272x260 → 97x93 in two passes) stays closed. Before this
+       the horizontal margins were not subtracted at all, which used to
+       be harmless while the frame had no padding or border and would now
+       make Fit hand back an image wider than its own card (a scrollbar
+       where 适应窗口 promised a fit).
+       ── end round2: the card's insets ── */
+    QMargins cardInsets;
+    if (QLayout *lay = windowPreviewCol_->layout()) {
+        for (int i = 0; i < lay->count(); ++i) {
+            const QLayoutItem *it = lay->itemAt(i);
+            if (!it)
+                continue;
+            // The trailing stretch is not chrome: it is the spare space
+            // itself (widgetless AND 0-sized, unlike the zoom row, which is
+            // a widgetless layout with a real hint).
+            if (!it->widget() && it->sizeHint().isEmpty())
+                continue;
+            ++items;
+            if (it->widget() == windowPreviewScroll_)
+                continue;
+            // Live geometry once the layout has run — the bottom note is
+            // word-wrapped, so its sizeHint is the unwrapped one and would
+            // under-count the space it really takes. sizeHint is the
+            // pre-layout fallback (before the first pass nothing has a
+            // height yet).
+            const QWidget *w = it->widget();
+            chrome += (w && w->height() > 0)
+                          ? w->height()
+                          : it->sizeHint().height();
+        }
+        chrome += lay->spacing() * qMax(0, items - 1);
+        cardInsets = lay->contentsMargins();
+        chrome += cardInsets.top() + cardInsets.bottom();
+    }
+    // The card's own frame inset: control_panel_styles.cpp paints a 1px
+    // QSS border on QFrame#inspectorPreview, and QStyleSheetStyle adds
+    // the frame's own 1px line width on top of it — MEASURED, not
+    // guessed: the card's host laid a 639px row out to a 611px card, i.e.
+    // 24px of layout margins plus 2px per side of frame. Qt really does
+    // inset a layout by its widget's styled frame (that is why this is a
+    // constant and not a runtime style read: QStyle exposes no
+    // frameWidth(), and the exact number belongs to the stylesheet).
+    // Reserving it when no stylesheet paints a border costs Fit a couple
+    // of pixels of an image it already shrinks for the pane, while NOT
+    // reserving it would let the card hand back a render wider than its
+    // own border box — a scrollbar where 适应窗口 promised a fit. The −4
+    // that follows is the LABEL's own 1px border on each side plus
+    // rounding slack, its job before the card existed.
+    constexpr qreal kCardBorder = 4.0;
+    const qreal vw = col.width() - kCardBorder
+                     - cardInsets.left() - cardInsets.right() - 4.0;
+    const qreal vh = col.height() - chrome - kCardBorder - 4.0;
+    const qreal sw = windowPreviewSource_.width();
+    const qreal sh = windowPreviewSource_.height();
+    if (vw <= 0.0 || vh <= 0.0 || sw <= 0.0 || sh <= 0.0)
+        return 1.0;
+    // CAPPED AT 1:1. Fit means "show all of it", never "enlarge it":
+    // past 1:1 the label would be showing interpolated pixels of a source
+    // that is already small enough to see whole, and — the reason this
+    // cap is written down — it makes Fit monotone against 1:1 (the
+    // rendered pixmap is never bigger than the source), which is the
+    // property the 1:1 / Fit round trip is asserted on.
+    return qMin<qreal>(1.0, qMin(vw / sw, vh / sh));
+}
+
+/* ── 实测缺陷2 (usability-2): THE DEFAULT VIEW ─────────────────────────────
+   「这里这个太大了，应该是一个正常大小的窗口」 — measured, not guessed: with
+   Fit as the default the four mother panels (378×361 / 380×345 / 380×337 /
+   380×337) all land at 88–94% in the 444×318 pane, i.e. the HUD window is
+   drawn touching the pane's top and bottom edges and reads as a zoomed
+   crop. 1:1 would be worse, not better (361 > 318 → it overflows).
+
+   So the default is the FIT ratio scaled by kPreviewDefaultFill: it can
+   never fill the pane, it follows the pane when the user drags the
+   splitter, it never enlarges a source past 1:1 (previewFitScale() is
+   already capped), and it degrades to plain Fit when there is nothing to
+   show. The named modes are untouched: 适应窗口 is still exactly Fit and
+   实际大小 is still exactly the source pixels — the default is simply no
+   longer one of them pretending to be "the whole image, edge to edge".
+   ── end 实测缺陷2: the default view ── */
+namespace {
+// Fraction of the viewport the DEFAULT view fills. 0.75 leaves ~12% of the
+// pane free on each axis at any aspect, which is the smallest margin that
+// still reads as "a window sitting in a frame" instead of "a borderless
+// crop".
+constexpr qreal kPreviewDefaultFill = 0.75;
+} // namespace
+
+qreal ControlPanel::previewDefaultScale() const
+{
+    return qMin<qreal>(1.0, kPreviewDefaultFill * previewFitScale());
+}
+
+qreal ControlPanel::stepPreviewZoom(int dir) const
+{
+    // FROM WHERE THE USER IS LOOKING: an explicit zoom steps that ratio,
+    // the default view steps the ratio actually on screen (so the first
+    // Ctrl+wheel tick enlarges what is visible instead of jumping to
+    // Fit), and Fit steps the fit scale.
+    const qreal base = previewMarginDefault_ ? previewDefaultScale()
+                       : previewZoom_ > 0.0   ? previewZoom_
+                                              : previewFitScale();
+    const qreal next = base * (dir > 0 ? 1.25 : 0.8);
+    return qBound(0.1, next, 8.0);
+}
+
+void ControlPanel::setPreviewZoom(qreal z)
+{
+    // z == 0 is Fit (the reset button); 1.0 is 1:1 with the source render;
+    // anything between is an explicit ratio. ANY of them is the user
+    // choosing a zoom, so all of them retire the default view — that is
+    // the only state change besides previewZoom_ itself.
+    previewMarginDefault_ = false;
+    previewZoom_ = (z <= 0.0) ? 0.0 : qBound(0.1, z, 8.0);
+    // THE ONLY SIDE EFFECT. No Panel::setScale(), no setScale(..., false),
+    // no panels.ini write — the acceptance item's "独立于真实 HUD scale"
+    // is enforced by there being no other statement in this function.
+    applyPreviewDisplay();
+}
+
+// source + zoom -> the label's pixmap, plus the readout row above it.
+void ControlPanel::applyPreviewDisplay()
+{
+    // MODE PRECEDENCE: the default view (until the user zooms), then an
+    // explicit ratio, then Fit. Only this line picks the mode, so the
+    // readout, the pixmap and the resize re-derive can never disagree.
+    const qreal eff = previewMarginDefault_ ? previewDefaultScale()
+                      : previewZoom_ > 0.0   ? previewZoom_
+                                             : previewFitScale();
+    if (previewZoomLabel_) {
+        if (windowPreviewSource_.isNull()) {
+            previewZoomLabel_->setText(QString());
+            if (previewSizeLabel_)
+                previewSizeLabel_->setText(QString());
+        } else {
+            const qreal pct = qRound(eff * 100.0);
+            const QString mode =
+                previewMarginDefault_
+                    ? consoleText(QStringLiteral("console.preview.default"))
+                    : previewZoom_ > 0.0
+                          ? consoleText(QStringLiteral("console.preview.zoom"))
+                          : consoleText(QStringLiteral("console.preview.fit"));
+            previewZoomLabel_->setText(
+                QStringLiteral("%1 %2%").arg(mode, QString::number(pct)));
+            if (previewSizeLabel_) {
+                const int sw = windowPreviewSource_.width();
+                const int sh = qRound(windowPreviewSource_.height() * eff);
+                previewSizeLabel_->setText(
+                    QStringLiteral("%1 %2×%3 · %4 %5")
+                        .arg(consoleText(QStringLiteral("console.preview.size")),
+                             QString::number(sw),
+                             QString::number(windowPreviewSource_.height()),
+                             consoleText(QStringLiteral("console.preview.height")),
+                             QString::number(sh)));
+            }
+        }
+    }
+    if (!windowPreviewBox_ || windowPreviewSource_.isNull())
+        return;
+    /* ── 实测缺陷5: THE FILLED BOX HAS NO FLOOR ────────────────────────────
+       The empty state keeps the 200x120 minimum the label is built with
+       (measured in the user's screenshot: a 156x74 render framed by a
+       200x120 box = 44px of dead space to the right and 46px below the
+       image, INSIDE the border). With a render present the box is sized by
+       the render and nothing else — setMinimumSize(0,0) also retires the
+       build-time setMinimumHeight(120). The only survivor is the 1px QSS
+       border, which is the frame itself.
+       ── end 实测缺陷5: no floor on a filled box ── */
+    windowPreviewBox_->setMinimumSize(0, 0);
+    QPixmap derived;
+    if (qFuzzyCompare(1.0, eff)) {
+        derived = windowPreviewSource_;
+    } else {
+        // DEVICE PIXELS × ratio, then the SOURCE's DPR is put back: Qt's
+        // QLabel sizes itself from the pixmap's device-independent size
+        // (probed on Qt 6.12: 200x100@dpr2 → a 100x50 label), so keeping
+        // the DPR is what makes `eff` mean the same thing at DPR 1 and
+        // DPR 2 — measured, not assumed.
+        const qreal dpr = windowPreviewSource_.devicePixelRatio();
+        const QSize target(qRound(windowPreviewSource_.width() * eff),
+                           qRound(windowPreviewSource_.height() * eff));
+        derived = windowPreviewSource_.scaled(target, Qt::KeepAspectRatio,
+                                               Qt::SmoothTransformation);
+        derived.setDevicePixelRatio(dpr);
+    }
+    windowPreviewBox_->setPixmap(derived);
+    // widgetResizable(false) requires explicitly adopting the new hint.
+    windowPreviewBox_->adjustSize();
+    /* ── 实测缺陷5: TELL THE COLUMN THE PANE'S HINT CHANGED ─────────────────
+       The label lives inside the scroll area's viewport, which has no
+       layout of its own — so QLabel::adjustSize() → updateGeometry()
+       invalidates nothing that could re-measure the pane, and the
+       COLUMN's layout would keep laying the pane out from the hint it
+       last saw (measured: item sizeHint=200x120 while the pane itself
+       already answered 96x92). updateGeometry() on the pane walks one
+       level up to windowPreviewCol_, which does have one.
+       ── end 实测缺陷5 ── */
+    windowPreviewScroll_->updateGeometry();
+}
+
+// 验收项6: scale / opacity 改的是 Panel 的真实绘制，画布画的是它收到的
+// pixmap，所以必须把新 pixmap 重新交给画布（和检查器预览）；只
+// canvas_->update() 会继续画旧图。renderPreview() 复用 Panel 的
+// paintEvent，opacity 已烘进 alpha —— 不二次乘 alpha。一次渲染三处复用。
+void ControlPanel::refreshSelectedWindowPreview()
+{
+    const mhw::WindowState w = selectedWindow();
+    if (w.panelIndex < 0)
+        return;
+    Panel *panel = (w.subIndex >= 0 && splitPreview_)
+                       ? splitPreview_->windowAt(w.subIndex)
+                       : panelAt(w.panelIndex);
+    if (!panel)
+        return;
+    if (w.subIndex >= 0) {
+        refreshSplitWindowPreviews();
+        refreshWindowPreviewPixmap();
+        return;
+    }
+    const QPixmap pix = renderPreview(panel);
+    if (canvas_) {
+        // The same master/mask gate rebuildAndRender() applies, so an
+        // opacity change can never resurrect a disabled panel on the
+        // canvas.
+        const uint32_t mask = panel->sectionMask();
+        bool hasBlocks =
+            w.panelIndex == 0 ? mhw::PlayerSection::playerPanelHasBlocks(mask)
+            : w.panelIndex == 1 ? mhw::monsterPanelHasBlocks(mask)
+            : w.panelIndex == 2 ? mhw::damagePanelHasBlocks(mask)
+                                : true;
+        // v1.1.3: the same MIXED gate rebuildAndRender() applies, and for
+        // the same reason it must not drift from it: this function runs
+        // after an opacity/scale change while rebuildAndRender() runs
+        // after a mask or plan change, and two functions computing
+        // `present` two ways is how a mother flickers between mounted and
+        // unmounted as the user edits it. Gated on the mode exactly as
+        // there — outside Mixed the answer above is the legacy one.
+        if (layoutModeInForce() == mhw::PlayerSection::PlayerLayoutMode::Mixed
+            && w.panelIndex < mhw::kLayoutParentCount)
+            hasBlocks = mixedMotherMounts(w.panelIndex,
+                                          maskFor(ctl_[w.panelIndex]));
+        canvas_->setPanelPresent(w.panelIndex, hasBlocks);
+        if (hasBlocks)
+            canvas_->setPanelPixmap(w.panelIndex, pix, true);
+        else
+            canvas_->setPanelPixmap(w.panelIndex, QPixmap(), false);
+    }
+    if (ctl_[w.panelIndex].preview)
+        ctl_[w.panelIndex].preview->setPixmap(pix);
+    refreshWindowPreviewPixmap();
+}
+
+// 验收项4: 拖动时“位置字段实时同步”的只读入口。窗口模型的其它部分
+// （标题、分区列表、检查器重建、rail 计数）在一次拖动里都不变，只有
+// metaX / metaY 和它们的 enabled 态跟着 corner/margins/scale/content 走。
+// 调用侧已确认拖的就是选中的窗口，这里因此不再重建整个 WindowList。
+void ControlPanel::refreshSelectedWindowPositionFields()
+{
+    // D1: the SAME accessor, and the drag path needs no third copy of the
+    // sub-window-or-mother lookup — `sel.panel` is the instance the frame
+    // and the numbers both come from.
+    const EditableSelection sel = currentEditableSelection();
+    if (!sel.panel || !winPosX_ || !winPosY_)
+        return;
+    const WindowFrame f = windowFrameFor(sel);
+    const bool convert = f.valid;
+    winPosX_->setEnabled(convert);
+    winPosY_->setEnabled(convert);
+    if (convert) {
+        const QPoint tl = mhw::layout::anchoredTopLeft(
+            f.corner, sel.panel->pushedMargins(), f.screen, f.content, f.scale);
+        if (!winPosX_->hasFocus())
+            winPosX_->setValue(tl.x());
+        if (!winPosY_->hasFocus())
+            winPosY_->setValue(tl.y());
+    } else {
+        winPosX_->setValue(0);
+        winPosY_->setValue(0);
+    }
+}
+
+// 验收项8: combo 的唯一重建点（初始填充 / 语言切换 / 屏幕热插拔）。只写
+// combo 本身 —— 显示器选择是 view 操作，谁都不能在这里写 Panel 的
+// outputName。内屏 eDP 不再被过滤（原型那句 "eDP-1 is disabled and never
+// listed" 是演示表数据，不是运行时合同）。
+void ControlPanel::rebuildScreenCombo()
+{
+    if (!screenCombo_)
+        return;
+    const QString keep = screenCombo_->currentData().toString();
+    screenCombo_->blockSignals(true);
+    screenCombo_->clear();
+    QString primaryName;
+    const auto outs = screen_query::listOutputs();
+    for (const auto &o : outs) {
+        if (o.name.isEmpty())
+            continue;      // Qt had not populated the name yet
+        const bool portrait = o.geometry.height() > o.geometry.width();
+        QString label = QStringLiteral("%1 · %2×%3")
+                            .arg(o.name)
+                            .arg(o.geometry.width())
+                            .arg(o.geometry.height());
+        if (portrait)
+            label += mh::tr(QStringLiteral("console.proto.screen.rot"));
+        if (o.primary) {
+            label += mh::tr(QStringLiteral("console.inspector.primary_tag"));
+            primaryName = o.name;
+        }
+        screenCombo_->addItem(label, o.name);
+    }
+    if (screenCombo_->count() == 0) {
+        // No output Qt can see (headless test, or the platform plugin has
+        // nothing yet): one placeholder so the combo is not empty.
+        screenCombo_->addItem(
+            mh::tr(QStringLiteral("console.inspector.primary")), QString());
+    } else if (!keep.isEmpty() && screenCombo_->findData(keep) >= 0) {
+        screenCombo_->setCurrentIndex(screenCombo_->findData(keep));
+    } else if (!primaryName.isEmpty()) {
+        const int at = screenCombo_->findData(primaryName);
+        if (at >= 0)
+            screenCombo_->setCurrentIndex(at);
+    } else {
+        screenCombo_->setCurrentIndex(0);
+    }
+    screenCombo_->blockSignals(false);
+    // Rebuilding with signals blocked must still update the viewer; an
+    // unplug must not leave the canvas filtering a screen absent from Qt.
+    if (canvas_) {
+        const QString screen = screen_query::effectiveOutputName(
+            screenCombo_->currentData().toString());
+        if (canvas_->overviewMode()) canvas_->setOverview(true, screen);
+        else canvas_->setPreviewScreen(screen);
+        refreshWindowModel();
+        refreshStageHead();
+    }
+    // v1.1.1 (顶栏溢出): the entries' text IS the combo's width hint, so a
+    // hot-plug that adds a long output name (`HDMI-A-1 · 1080×1920(rotated)
+    // (primary)`) changes the row's minimum too. Re-decide the wrap here
+    // rather than trust the canvas branch above to have reached it.
+    refreshTopbarWrap();
 }

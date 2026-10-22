@@ -507,4 +507,77 @@ QList<OutputInfo> listOutputs()
     return out;
 }
 
+// The shared core: `names` is every live output in Qt's order and
+// `primary` is the live primary's name (possibly empty, possibly not in
+// `names` — both are checked, so an empty/garbage primary can never win
+// over a real screen). Pure function, no I/O, no subprocess — which is
+// the point: this runs per mouse-move while the user drags a window.
+static QString effectiveFrom(const QString &requested,
+                             const QStringList &names,
+                             const QString &primary)
+{
+    // No outputs at all: empty out, deterministically. A guessed name
+    // here would mount a layer-shell surface on an output the
+    // compositor may not have, which is worse than mounting nothing.
+    if (names.isEmpty())
+        return QString();
+
+    // 1. Online and named: return it VERBATIM. The stored intent is the
+    //    user's data; identity must never be normalised on read.
+    if (!requested.isEmpty() && names.contains(requested))
+        return requested;
+
+    // 2. Offline or empty -> Qt's primary. Only if Qt really calls that
+    //    screen by a name we can see, so the answer is always a name
+    //    that exists in `names`.
+    if (!primary.isEmpty() && names.contains(primary))
+        return primary;
+
+    // 2b. Qt has no usable primary (offscreen, mid-hotplug): the first
+    //     live screen that has a name, still a real Qt name.
+    for (const QString &n : names)
+        if (!n.isEmpty())
+            return n;
+
+    // 2c. Screens exist but every one of them is nameless (offscreen's
+    //     default screen). No synthetic `screen@x,y` label: that string
+    //     is a listOutputs() presentation fallback and no compositor
+    //     matches it, so handing it to a window system would be a lie.
+    //     Empty means "no usable identity", and callers fall back to
+    //     their own default screen handling.
+    return QString();
+}
+
+// Production overload: live Qt screens only. QGuiApplication::screens()
+// is an in-process list — no QProcess, no detect(), no hyprctl — so the
+// cost is a QList copy on the drag hot path.
+QString effectiveOutputName(const QString &requested)
+{
+    const QList<QScreen *> screens = QGuiApplication::screens();
+    QStringList names;
+    names.reserve(screens.size());
+    for (const QScreen *s : screens)
+        if (s)
+            names.append(s->name());
+    const QScreen *primary = QGuiApplication::primaryScreen();
+    return effectiveFrom(requested, names,
+                         primary ? primary->name() : QString());
+}
+
+// Test-override overload: same rules over an explicit list, with the
+// `primary`-flagged entry standing in for QGuiApplication::primaryScreen().
+QString effectiveOutputName(const QString &requested,
+                            const QList<OutputInfo> &live)
+{
+    QStringList names;
+    names.reserve(live.size());
+    QString primary;
+    for (const OutputInfo &o : live) {
+        names.append(o.name);
+        if (o.primary && primary.isEmpty())
+            primary = o.name;
+    }
+    return effectiveFrom(requested, names, primary);
+}
+
 } // namespace screen_query

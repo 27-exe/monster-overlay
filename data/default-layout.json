@@ -1,0 +1,743 @@
+{
+  "kind": "monster-overlay-layout",
+  "schema": 1,
+  "contains": {
+    "global": true,
+    "scopes": {
+      "rise/mixed": [
+        "player",
+        "monster",
+        "dps",
+        "pet-damage"
+      ],
+      "rise/single": [
+        "player",
+        "monster",
+        "dps",
+        "pet-damage"
+      ],
+      "rise/split": [
+        "player",
+        "monster",
+        "dps",
+        "pet-damage"
+      ],
+      "world/mixed": [
+        "player",
+        "monster",
+        "dps"
+      ],
+      "world/single": [
+        "player",
+        "monster",
+        "dps"
+      ],
+      "world/split": [
+        "player",
+        "monster",
+        "dps"
+      ]
+    }
+  },
+  "global": {
+    "masks": {
+      "player": "1ff",
+      "monster": "3f",
+      "damage": "f",
+      "pets": "3"
+    },
+    "locale": "zh-CN",
+    "layout": "mixed",
+    "plans": {
+      "world": "player-status,player-mantles,player-wirebug,player-bars,player-weapon,player-info,damage-share,damage-chart,damage-rows,monster-identity,monster-conditions",
+      "rise": "player-status,player-mantles,player-wirebug,player-bars,player-weapon,player-info,damage-share,damage-chart,damage-rows,monster-identity,monster-conditions"
+    }
+  },
+  "scopes": {
+    "rise/mixed": {
+      "player": {
+        "ml": 0,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.7,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "player-status": {
+        "ml": 0,
+        "mt": 715,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.9,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 2,
+        "outputName": "DP-1"
+      },
+      "player-mantles": {
+        "ml": 0,
+        "mt": 305,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 2,
+        "outputName": "DP-1"
+      },
+      "player-wirebug": {
+        "ml": 0,
+        "mt": 615,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 1,
+        "outputName": "DP-1"
+      },
+      "player-bars": {
+        "ml": 0,
+        "mt": 524,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 0.91,
+        "bgAlpha": 170,
+        "minW": 368,
+        "outputName": "DP-1"
+      },
+      "player-weapon": {
+        "ml": 0,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "minW": 304,
+        "outputName": "DP-1"
+      },
+      "player-info": {
+        "ml": 0,
+        "mt": 842,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "monster": {
+        "ml": 0,
+        "mt": 86,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "monster-identity": {
+        "ml": 1038,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "monster-conditions": {
+        "ml": 1270,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 3,
+        "outputName": "DP-1"
+      },
+      "dps": {
+        "ml": 0,
+        "mt": 540,
+        "mr": 127,
+        "mb": 0,
+        "scale": 0.91,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "damage-share": {
+        "ml": 0,
+        "mt": 463,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.7,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "damage-chart": {
+        "ml": 0,
+        "mt": 1,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "damage-rows": {
+        "ml": 0,
+        "mt": 151,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "pet-damage": {
+        "ml": 2260,
+        "mt": 0,
+        "mr": 0,
+        "mb": 440,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      }
+    },
+    "rise/single": {
+      "player": {
+        "ml": 0,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.7,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "monster": {
+        "ml": 0,
+        "mt": 362,
+        "mr": 274,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "dps": {
+        "ml": 0,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.7,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "pet-damage": {
+        "ml": 2320,
+        "mt": 0,
+        "mr": 0,
+        "mb": 686,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      }
+    },
+    "rise/split": {
+      "player": {
+        "ml": 0,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.7,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "player-status": {
+        "ml": 0,
+        "mt": 715,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.9,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 2,
+        "outputName": ""
+      },
+      "player-mantles": {
+        "ml": 0,
+        "mt": 305,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 2,
+        "outputName": ""
+      },
+      "player-wirebug": {
+        "ml": 0,
+        "mt": 615,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 1,
+        "outputName": ""
+      },
+      "player-bars": {
+        "ml": 0,
+        "mt": 524,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "minW": 368,
+        "outputName": ""
+      },
+      "player-weapon": {
+        "ml": 0,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "minW": 304,
+        "outputName": ""
+      },
+      "player-info": {
+        "ml": 0,
+        "mt": 842,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "monster": {
+        "ml": 0,
+        "mt": 86,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "monster-identity": {
+        "ml": 1038,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "monster-conditions": {
+        "ml": 1270,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 3,
+        "outputName": "DP-1"
+      },
+      "dps": {
+        "ml": 0,
+        "mt": 540,
+        "mr": 127,
+        "mb": 0,
+        "scale": 0.91,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "damage-share": {
+        "ml": 0,
+        "mt": 463,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.7,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "damage-chart": {
+        "ml": 0,
+        "mt": 281,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "damage-rows": {
+        "ml": 0,
+        "mt": 520,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "pet-damage": {
+        "ml": 2260,
+        "mt": 0,
+        "mr": 0,
+        "mb": 563,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      }
+    },
+    "world/mixed": {
+      "player": {
+        "ml": 20,
+        "mt": 20,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "player-status": {
+        "ml": 0,
+        "mt": 838,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 2,
+        "outputName": "DP-1"
+      },
+      "player-mantles": {
+        "ml": 0,
+        "mt": 702,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 1,
+        "outputName": "DP-1"
+      },
+      "player-wirebug": {
+        "ml": 40,
+        "mt": 365,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 4,
+        "outputName": "DP-1"
+      },
+      "player-bars": {
+        "ml": 0,
+        "mt": 640,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 0.97,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "player-weapon": {
+        "ml": 0,
+        "mt": 997,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "player-info": {
+        "ml": 489,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "monster": {
+        "ml": 0,
+        "mt": 20,
+        "mr": 20,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "monster-identity": {
+        "ml": 1226,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "minW": 320,
+        "outputName": "DP-1"
+      },
+      "monster-conditions": {
+        "ml": 901,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 3,
+        "outputName": "DP-1"
+      },
+      "dps": {
+        "ml": 0,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.78,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "damage-share": {
+        "ml": 0,
+        "mt": 446,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "damage-chart": {
+        "ml": 0,
+        "mt": 204,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.9,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "damage-rows": {
+        "ml": 0,
+        "mt": 54,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.9,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      }
+    },
+    "world/single": {
+      "player": {
+        "ml": 20,
+        "mt": 20,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.5,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "monster": {
+        "ml": 0,
+        "mt": 0,
+        "mr": 1110,
+        "mb": 0,
+        "scale": 0.6,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "dps": {
+        "ml": 0,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      }
+    },
+    "world/split": {
+      "player": {
+        "ml": 20,
+        "mt": 20,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "player-status": {
+        "ml": 0,
+        "mt": 838,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 3,
+        "outputName": ""
+      },
+      "player-mantles": {
+        "ml": 0,
+        "mt": 702,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 1,
+        "outputName": ""
+      },
+      "player-wirebug": {
+        "ml": 40,
+        "mt": 365,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 4,
+        "outputName": ""
+      },
+      "player-bars": {
+        "ml": 0,
+        "mt": 642,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "minW": 304,
+        "outputName": ""
+      },
+      "player-weapon": {
+        "ml": 0,
+        "mt": 997,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "player-info": {
+        "ml": 489,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "monster": {
+        "ml": 0,
+        "mt": 20,
+        "mr": 20,
+        "mb": 0,
+        "scale": 1.0,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "monster-identity": {
+        "ml": 1226,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "minW": 320,
+        "outputName": "DP-1"
+      },
+      "monster-conditions": {
+        "ml": 901,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "columns": 3,
+        "outputName": "DP-1"
+      },
+      "dps": {
+        "ml": 0,
+        "mt": 0,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.78,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": "DP-1"
+      },
+      "damage-share": {
+        "ml": 0,
+        "mt": 446,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.8,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "damage-chart": {
+        "ml": 0,
+        "mt": 204,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.9,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      },
+      "damage-rows": {
+        "ml": 0,
+        "mt": 54,
+        "mr": 0,
+        "mb": 0,
+        "scale": 0.9,
+        "opacity": 1.0,
+        "bgAlpha": 170,
+        "outputName": ""
+      }
+    }
+  }
+}

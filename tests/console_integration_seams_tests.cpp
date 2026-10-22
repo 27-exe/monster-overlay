@@ -1043,6 +1043,15 @@ int main(int argc, char *argv[])
                       "resolves — an unresolvable output disables the pair "
                       "instead of showing a fabricated frame");
                 if (spinX->isEnabled()) {
+                    // Opening preserves raw margins even when today's
+                    // screen must clamp them. Establish an explicit edit
+                    // before comparing two stored anchor deltas.
+                    const int normalizedX = spinX->value() + 20;
+                    check(typeInto(spinX, normalizedX),
+                          "D2: normalize the runtime-clamped starting position by a real edit");
+                    pump();
+                    check(spinX->value() == normalizedX,
+                          "D2: normalized coordinate is the one actually presented");
                     canvas->grab();
                     pump();
                     const QVector<QRectF> before = canvas->subWindowRects();
@@ -1162,18 +1171,18 @@ int main(int argc, char *argv[])
                     return;
                 std::printf("C: step1 running, dialog=%p\n",
                             static_cast<void *>(dlg));
-                // The five containers the QSS owner styles — all five
+                // The containers the QSS owner styles — all of them
                 // must exist as findable widgets or their CSS silently
-                // matches nothing.
-                check(dlg->findChild<QFrame *>(QStringLiteral("modalBackdrop")),
-                      "C: modalBackdrop exists (the veil)");
+                // matches nothing. modalBackdrop is deliberately ABSENT
+                // in the compact popup (验收项2): see the check below.
                 check(dlg->findChild<QFrame *>(QStringLiteral("modalShell")),
                       "C: modalShell exists (the panel the content sits in)");
                 check(dlg->findChild<QFrame *>(QStringLiteral("modalHead")),
                       "C: modalHead exists");
                 check(dlg->findChild<QScrollArea *>(QStringLiteral("modalBody")),
                       "C: modalBody exists AND is a scroll area (the "
-                      "prototype's .modal-body overflow:auto)");
+                      "prototype's .modal-body overflow:auto — long copy "
+                      "scrolls inside the shell)");
                 check(dlg->findChild<QFrame *>(QStringLiteral("modalActions")),
                       "C: modalActions exists");
                 // PARENTAGE: the console's QSS is a widget stylesheet on
@@ -1182,15 +1191,48 @@ int main(int argc, char *argv[])
                       "C: the dialog is parented to the console, so the "
                       "window stylesheet reaches it (the old "
                       "QDialog(parentWidget()) was null)");
-                // The veil covers the console's client area.
+                // v1.0.1 (验收项1 → 验收项2): THE SETTINGS DIALOG IS A
+                // COMPACT POPUP OF ONE CONTENT LAYER. It used to be sized
+                // to the whole client area, and then shrank inside a veil
+                // that still wrapped it in an independent black frame with
+                // 64px of black padding. Now the shell IS the dialog's
+                // content: no veil element, no outer box, and a height
+                // that hugs the copy (≤700). 帮助 / 导出 JSON keep the
+                // full-client veil — see centerModalOnConsole(!compact).
                 const QWidget *client = cp.centralWidget();
-                check(client && dlg->size() == client->size(),
-                      "C: the veil covers the console's client area — "
-                      "reference.html's .modal-backdrop inset:0",
+                check(client && dlg->width() <= client->width()
+                      && dlg->height() <= client->height(),
+                      "C: the settings dialog fits INSIDE the console's "
+                      "client area — it no longer fills it",
                       QStringLiteral("dlg=%1x%2 client=%3x%4")
                           .arg(dlg->width()).arg(dlg->height())
                           .arg(client ? client->width() : -1)
                           .arg(client ? client->height() : -1));
+                check(dlg->width() <= 680 && dlg->height() <= 700,
+                      "C: …and it is the compact popup (≤680×700, 验收项1)",
+                      QStringLiteral("%1x%2")
+                          .arg(dlg->width()).arg(dlg->height()));
+                // 验收项2: ONE LAYER. No second frame around the content,
+                // and no 64px of black margin left inside the dialog.
+                check(!dlg->findChild<QFrame *>(QStringLiteral("modalBackdrop")),
+                      "C: the compact settings popup has NO separate veil "
+                      "frame — one content shell only (验收项2)");
+                if (QFrame *shell =
+                        dlg->findChild<QFrame *>(QStringLiteral("modalShell"))) {
+                    if (dlg->layout())
+                        dlg->layout()->activate();
+                    const QRect g = shell->geometry();
+                    const bool fills = g.left() <= 1 && g.top() <= 1
+                        && dlg->width()  - g.right()  <= 2
+                        && dlg->height() - g.bottom() <= 2;
+                    check(fills,
+                          "C: modalShell FILLS the dialog — no outer black "
+                          "frame, no 64px black padding (验收项2)",
+                          QStringLiteral("shell=%1,%2 %3x%4 dlg=%5x%6")
+                              .arg(g.x()).arg(g.y()).arg(g.width())
+                              .arg(g.height()).arg(dlg->width())
+                              .arg(dlg->height()));
+                }
                 // THE TWO GROUPS.
                 auto *tg = dlg->findChild<QButtonGroup *>(
                     QStringLiteral("themeActionGroup"));
@@ -1226,35 +1268,27 @@ int main(int argc, char *argv[])
                           "C: a press inside the shell's padding does NOT "
                           "close it (the prototype's e.target!==m)");
                 }
-                // A press on the VEIL closes it. The point has to be
-                // one the shell does not cover — the dismiss rule is
-                // "outside the panel", and clicking a spot the panel
-                // owns must not close it — so the click is aimed at the
-                // dialog's corner only after checking that corner is
-                // backdrop. If the card ever fills the dialog again the
-                // corner is inside it and this FAILs instead of passing
-                // vacuously.
-                if (QFrame *bd = dlg->findChild<QFrame *>(
-                        QStringLiteral("modalBackdrop"))) {
-                    const QPoint corner(3, 3);
-                    const QWidget *under = dlg->childAt(corner);
-                    bool onVeil = true;
-                    for (const QWidget *w = under; w && w != dlg;
-                         w = w->parentWidget())
-                        if (w->objectName()
-                            == QStringLiteral("modalShell"))
-                            onVeil = false;
-                    check(onVeil,
-                          "C: the dialog's corner is BACKDROP, not card — "
-                          "there is always a veil to click (and therefore "
-                          "always something for modalBody to scroll)");
-                    if (onVeil) {
-                        realClick(bd, QPointF(corner));
-                        pump(60);
-                        check(!dlg->isVisible(),
-                              "C: a press on the veil CLOSES the dialog, on "
-                              "Esc's own reject path");
-                    }
+                // A press on the VEIL used to be the dismiss path. The
+                // compact popup has no veil (验收项2), so the dismiss path
+                // is the 关闭 row: it sits OUTSIDE modalBody's scroll
+                // area, which is what makes it reachable however long the
+                // copy is (关闭按钮固定可达), and its click is the same
+                // QDialog::accept the Esc path below reopens against.
+                check(!dlg->findChild<QFrame *>(QStringLiteral("modalBackdrop")),
+                      "C: …and with no veil there is nothing that can eat "
+                      "a click meant for the content");
+                if (auto *closeBtn = dlg->findChild<QPushButton *>(
+                        QStringLiteral("dialogClose"))) {
+                    check(closeBtn->isVisible()
+                              && closeBtn->width() > 0
+                              && closeBtn->height() > 0,
+                          "C: the 关闭 button is visible and reachable "
+                          "(it lives outside the scrolling body)");
+                    closeBtn->click();
+                    pump(60);
+                    check(!dlg->isVisible(),
+                          "C: the 关闭 button CLOSES the dialog, on the "
+                          "same accept path Esc uses");
                 }
             };
             // WATCHDOG: if any close path in step1 fails to land, the

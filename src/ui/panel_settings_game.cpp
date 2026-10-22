@@ -334,4 +334,70 @@ bool migrateLegacyPanelSection(QSettings &settings,
     return true;
 }
 
+// ─── the Mixed scope seed ─────────────────────────────────────────────
+//
+// The guarantees are spelled out at the declaration
+// (ui/panel_settings_game.h); what follows is only the mechanism.
+
+bool ensureMixedPanelSettingsScope(QSettings &settings, GameId game,
+                                   PlayerSection::PlayerLayoutMode fromMode)
+{
+    // Already there. There is no source domain to copy FROM, and a
+    // Mixed -> Mixed call is what a second click on the same combo entry
+    // produces. No read, no write.
+    if (fromMode == PlayerSection::PlayerLayoutMode::Mixed)
+        return false;
+
+    // panelSettingsScopeFor() prefixes whatever key it is handed, so an
+    // EMPTY key is the domain prefix itself, trailing '/' included — the
+    // same accessor every window spells its group through, never a
+    // second spelling of the namespace.
+    const QString srcPrefix = panelSettingsScopeFor(game, fromMode, QString());
+    const QString dstPrefix = panelSettingsScopeFor(
+        game, PlayerSection::PlayerLayoutMode::Mixed, QString());
+
+    // A COPY of the key list, not a view: setValue() below mutates the
+    // store the list came from, and QSettings' key enumeration is not a
+    // snapshot a mutating loop may rely on.
+    const QStringList keys = settings.allKeys();
+
+    bool seeded = false;
+    for (const QString &full : keys) {
+        if (!full.startsWith(srcPrefix))
+            continue;                     // another mode, or another game
+        const QString tail = full.mid(srcPrefix.size());
+        if (tail.isEmpty())
+            continue;                     // the prefix is not itself a key
+        const QString dst = dstPrefix + tail;
+        if (settings.contains(dst))
+            continue;                     // THE rule: an existing Mixed
+                                          // value is authoritative
+        settings.setValue(dst, settings.value(full));
+        seeded = true;
+    }
+    return seeded;
+}
+
+void ensureMixedPanelSettingsScope(GameId game,
+                                   PlayerSection::PlayerLayoutMode fromMode)
+{
+    // The same (format, scope, organization, application) tuple Panel
+    // opens, so this resolves to the same panels.ini — no second store
+    // for the same windows.
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("monster-overlay"),
+                       QStringLiteral("panels"));
+    // QSettings caches the file at construction; sync() before reading
+    // so a console process that just saved a layout is the state being
+    // seeded from, not a snapshot from process start.
+    settings.sync();
+    const bool seeded =
+        ensureMixedPanelSettingsScope(settings, game, fromMode);
+    // And a sync on the way out, so the domain a Panel constructs a
+    // millisecond later opens the SEEDED file rather than one whose
+    // write is still queued for the destructor.
+    if (seeded)
+        settings.sync();
+}
+
 } // namespace mhw

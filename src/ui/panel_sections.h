@@ -275,6 +275,18 @@ enum class PlayerLayoutMode {
     Single,   // v0.11.4 behaviour, pixel for pixel. The default.
     Split,    // the sections named by kPlayerSplitTargets move into their
               // own layer-shell windows.
+    // v1.1.0: the third topology — EACH table-defined window group
+    // decides for itself whether it is its own window or is merged back
+    // into its mother panel, so `player-bars` can be out while
+    // `player-status` stays in. The per-window answer lives in
+    // ui/window_layout_plan.h (WindowLayoutPlan), NOT here: this enum
+    // still names the whole-window arrangement the namespace and the
+    // codec keys hang off, and the plan says which rows moved.
+    //
+    // Single and Split keep their old ordinal positions on purpose:
+    // every persisted value and every `static_cast<int>(mode)` in the
+    // wild keeps meaning what it meant before v1.1.0.
+    Mixed,    // per-row topology; spelled "mixed" by parse/serialize.
 };
 
 // Which split window a bit group belongs to. The index is the subscript
@@ -491,12 +503,26 @@ inline constexpr int kPlayerSplitTargetCount =
 // `mask` verbatim, bit for bit, so playerPanel.setSectionMask() is handed
 // exactly the value v0.11.4 handed it and no downstream code can detect
 // the difference.
+//
+// MIXED ANSWERS LIKE SPLIT — the D5 rule the three *PanelMaskFor()
+// functions now share: `母面板 mask = 用户 mask & ~被拆走的位`, where the
+// bits that walk out are this table's own row claims. With no plan in
+// hand (this function is the planless reference answer) "the rows that
+// walk out" can only mean ALL of them, so Mixed's answer here is
+// `mask & ~playerSplitRemovedBits()` == defaultWindowLayoutPlan(Mixed)
+// .retainedMask(), i.e. the all-detached fallback — 0 for PlayerPanel,
+// whose nine rows claim every bit. The value a real Mixed run uses comes
+// from WindowLayoutPlan::retainedMask() in main.cpp; this function must
+// simply not DISAGREE with it in the default case, and must not disagree
+// with the monster and damage versions of the same question either.
 [[nodiscard]] constexpr uint32_t playerPanelMaskFor(
     PlayerLayoutMode mode, uint32_t mask) noexcept
 {
-    return mode == PlayerLayoutMode::Split
-               ? static_cast<uint32_t>(mask & ~playerSplitRemovedBits())
-               : mask;
+    // `== Single` rather than `== Split` so a third mode cannot fall into
+    // the verbatim arm and hand the panel bits that left for windows.
+    return mode == PlayerLayoutMode::Single
+               ? mask
+               : static_cast<uint32_t>(mask & ~playerSplitRemovedBits());
 }
 
 // THE NON-BLOCK BITS of PlayerSection: the bits that are a real switch
@@ -678,6 +704,28 @@ static_assert(playerPanelHasBlocks(playerPanelMaskFor(
               "in Single mode PlayerPanel keeps every block");
 } // namespace PlayerSection
 
+// A.2 — THE PLAYER TABLE, ALSO FROM mhw SCOPE.
+//
+// kPlayerSplitTargets lives inside PlayerSection, while the monster and
+// damage tables (kMonsterSplitTargets, kDamageSplitTargets) and their
+// slot namespaces (MonsterSplitSlot, DamageSplitSlot) were always
+// declared at mhw:: scope, because those sections closed long before
+// their tables were added. The per-window window-layout plan
+// (ui/window_layout_plan.h) indexes all THREE tables through one flat
+// registry, and it only reads uniformly if the player row can be spelled
+// the same way as the other two: mhw::PlayerSplitSlot,
+// mhw::kPlayerSplitTargets.
+//
+// A using-declaration may not name a namespace (it is ill-formed), so
+// the slot table is re-exported with a namespace ALIAS and the table
+// with a using-declaration. Both add a second NAME for the same entity —
+// mhw::PlayerSection::PlayerSplitSlot and
+// mhw::PlayerSection::kPlayerSplitTargets keep working, so every
+// existing call site (control_panel.cpp, main_output_wiring_tests.cpp)
+// is untouched.
+using PlayerSection::kPlayerSplitTargets;
+namespace PlayerSplitSlot = PlayerSection::PlayerSplitSlot;
+
 // ----- Startup resolution for the layout mode ---------------------------
 //
 // Same shape as mhw::resolveStartupPanelMask in
@@ -753,9 +801,18 @@ using PlayerLayoutConfRow = PlayerLayoutSource;
 [[nodiscard]] inline QString playerLayoutModeToString(
     PlayerSection::PlayerLayoutMode mode) noexcept
 {
-    return mode == PlayerSection::PlayerLayoutMode::Split
-               ? QStringLiteral("split")
-               : QStringLiteral("single");
+    switch (mode) {
+    case PlayerSection::PlayerLayoutMode::Split:
+        return QStringLiteral("split");
+    case PlayerSection::PlayerLayoutMode::Mixed:
+        return QStringLiteral("mixed");
+    case PlayerSection::PlayerLayoutMode::Single:
+        break;
+    }
+    // Single, and any value outside the enum: the default spelling.
+    // The switch is what makes a FOURTH mode a compile-visible decision
+    // here rather than a mode that silently serialises as "single".
+    return QStringLiteral("single");
 }
 
 // Parse one --layout= value. An unrecognised spelling is NOT Single: it
@@ -771,6 +828,10 @@ using PlayerLayoutConfRow = PlayerLayoutSource;
     }
     if (t == QLatin1String("split")) {
         out = PlayerSection::PlayerLayoutMode::Split;
+        return true;
+    }
+    if (t == QLatin1String("mixed")) {
+        out = PlayerSection::PlayerLayoutMode::Mixed;
         return true;
     }
     return false;
@@ -795,7 +856,8 @@ using PlayerLayoutConfRow = PlayerLayoutSource;
 // never heard of --layout= gets one big window, which is what every
 // release before v0.12 painted.
 [[nodiscard]] inline PlayerLayoutResolution resolveStartupLayoutMode(
-    const PlayerLayoutCliRequest &cli, const PlayerLayoutConfRow &conf)
+    const PlayerLayoutCliRequest &cli, const PlayerLayoutConfRow &conf,
+    PlayerSection::PlayerLayoutMode confMode)
 {
     // Rule 1 — an explicit --layout= wins over everything, malformed or not.
     // A malformed value resolves to the DEFAULT rather than to the conf row.
@@ -821,12 +883,35 @@ using PlayerLayoutConfRow = PlayerLayoutSource;
     // to report is treated as no information, so a hand-mangled conf can
     // never select a window topology the user did not ask for.
     if (conf == PlayerLayoutSource::Conf)
-        return {PlayerSection::PlayerLayoutMode::Split,
-                PlayerLayoutSource::Conf};
+        return {confMode, PlayerLayoutSource::Conf};
 
     // Rule 3 — nothing usable was said: one big window.
     return {PlayerSection::PlayerLayoutMode::Single, PlayerLayoutSource::Default};
 }
+
+// THE TWO-ARGUMENT ENTRY IS GONE — that deletion is the fix for a
+// data-loss bug, so do not restore it.
+//
+// It hard-coded `Split` for the conf mode. That was correct only while
+// `layout=` could say nothing but "split", which was true when it was
+// written. Adding `layout=mixed` made the hard-code actively harmful:
+//
+//   * control_panel.cpp:10219 called this overload, so the console read a
+//     hand-edited `layout=mixed` as Split, and
+//   * saveMaskToDisk() drops every `layout=` row and re-appends
+//     `serializeConsoleLayoutRow(layoutModeInForce())` — so ONE console save
+//     rewrote `layout=mixed` to `layout=split`, silently (reproduced by
+//     audit-layout/probe5: exit=2, "layout=mixed survived: NO").
+//
+// The old comment claimed call sites used the three-argument form "so
+// layout=mixed survives the trip" and that leaving control_panel.cpp on two
+// arguments was deliberate — but main.cpp had no Mixed branch at all, so
+// NEITHER call site was on the three-argument form. Deleting the overload
+// turns the correct call into a compile error instead of a silent downgrade.
+//
+// Callers hold a parsed ConsoleLayoutConfRow and use the codec's
+// row-taking overload in viewmodel/console_layout_mode_codec.h, which
+// forwards the row's own mode.
 
 // ----- Monster panel sections ---------------------------------------------
 namespace MonsterSection {
@@ -1190,7 +1275,12 @@ constexpr DamageSplitTarget kDamageSplitTargets[] = {
     // painted.
     if (mode == PlayerSection::PlayerLayoutMode::Single)
         return mask;
-    // SPLIT: the panel only ever loses blocks that moved out.
+    // SPLIT AND MIXED: the panel only ever loses blocks that moved out.
+    // (Mixed already answered this way before D5 — the `== Single` arm
+    // above was the whole discriminator — so this is the arm that
+    // playerPanelMaskFor() and monsterPanelMaskFor() were made to match,
+    // not a change here: defaultWindowLayoutPlan(Mixed).retainedMask()
+    // for damage is this same value, 0x08 = OtherMembers.)
     uint32_t removed = 0;
     for (const DamageSplitTarget &t : kDamageSplitTargets)
         removed |= t.mask;
@@ -1591,12 +1681,20 @@ inline constexpr int kMonsterSplitTargetCount = static_cast<int>(
 // `mask` verbatim, bit for bit, so monsterPanel.setSectionMask() is
 // handed exactly the value v0.12 hands it and no downstream code can
 // detect the difference.
+//
+// MIXED ANSWERS LIKE SPLIT, same rule as playerPanelMaskFor() (D5): the
+// user's mask minus every row claim of this table. No plan in hand here,
+// so "every row claim" is all of them — which is exactly
+// defaultWindowLayoutPlan(Mixed).retainedMask(), and leaves MonsterPanel
+// holding only Tenderize, the one bit no row can claim.
 [[nodiscard]] constexpr uint32_t monsterPanelMaskFor(
     PlayerSection::PlayerLayoutMode mode, uint32_t mask) noexcept
 {
-    return mode == PlayerSection::PlayerLayoutMode::Split
-               ? static_cast<uint32_t>(mask & ~monsterSplitRemovedBits())
-               : mask;
+    // `== Single`, not `== Split`: a third mode must not fall into the
+    // verbatim arm (that is what made Mixed keep every block).
+    return mode == PlayerSection::PlayerLayoutMode::Single
+               ? mask
+               : static_cast<uint32_t>(mask & ~monsterSplitRemovedBits());
 }
 
 // THE ONE NON-BLOCK BIT of MonsterSection. Tenderize (1u << 5) is a
@@ -1737,4 +1835,30 @@ static_assert(monsterPanelHasBlocks(
                       PlayerSection::PlayerLayoutMode::Single,
                       MonsterSection::kAll)),
               "in Single mode MonsterPanel keeps every block");
+
+// A.2 — THE MONSTER AND DAMAGE PANEL HELPERS, ALSO FROM THEIR SECTION.
+//
+// The player panel's trio (playerPanelMaskFor / playerPanelHasBlocks)
+// was declared INSIDE namespace PlayerSection, but the monster and
+// damage equivalents were declared at mhw:: scope — their sections had
+// already closed by the time the split wave added them. The per-window
+// window-layout plan (ui/window_layout_plan.h) reads all three panels
+// through one registry, so its tests spell the three symmetrically:
+//   mhw::PlayerSection::playerPanelMaskFor
+//   mhw::MonsterSection::monsterPanelMaskFor
+//   mhw::DamageSection::damagePanelMaskFor
+//
+// These are re-exports, not copies: a using-declaration introduces a
+// second NAME for the function that already exists at mhw:: scope, so
+// every current unqualified call site still resolves to the same entity
+// and there remains exactly one definition.
+namespace MonsterSection {
+using ::mhw::monsterPanelMaskFor;
+using ::mhw::monsterPanelHasBlocks;
+} // namespace MonsterSection
+
+namespace DamageSection {
+using ::mhw::damagePanelMaskFor;
+using ::mhw::damagePanelHasBlocks;
+} // namespace DamageSection
 } // namespace mhw

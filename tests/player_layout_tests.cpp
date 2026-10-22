@@ -47,6 +47,7 @@
 // express: "for ALL m" needs a loop.
 
 #include "ui/panel_sections.h"
+#include "ui/viewmodel/console_layout_mode_codec.h"
 
 #include <QCoreApplication>
 #include <QString>
@@ -98,7 +99,24 @@ const PlayerLayoutCliRequest kNoCli;
 
 // An absent conf row. The console writes no `layout=` row today, so this is
 // what every real launch resolves through.
-const PlayerLayoutConfRow kNoConfRow = PlayerLayoutSource::Default;
+const mhw::ConsoleLayoutConfRow kNoConfRow =
+    mhw::parseConsoleLayoutRow(QString());   // no `layout=` row at all
+
+// v1.1.0: a conf "row" is no longer a bare PlayerLayoutSource — the row has
+// to CARRY ITS MODE, or `layout=mixed` cannot survive the trip and a save
+// rewrites the user's mixed layout to split. These are real
+// parseConsoleLayoutRow() outputs, not hand-built structs, so the test
+// exercises the same shape production does.
+mhw::ConsoleLayoutConfRow confRowFor(const char *text)
+{
+    return mhw::parseConsoleLayoutRow(QString::fromUtf8(text));
+}
+const mhw::ConsoleLayoutConfRow kConfSplitRow =
+    confRowFor("layout=split\n");
+const mhw::ConsoleLayoutConfRow kConfMixedRow =
+    confRowFor("layout=mixed\n");
+const mhw::ConsoleLayoutConfRow kConfSingleRow =
+    confRowFor("layout=single\n");
 
 // Deterministic LCG, so the pseudo-random masks below are identical on
 // every run and a failure is reproducible rather than a lottery.
@@ -258,7 +276,7 @@ int main(int argc, char **argv)
         const PlayerLayoutCliRequest cliSplit{true, QStringLiteral("split"),
                                              Mode::Single};
         const PlayerLayoutResolution b =
-            mhw::resolveStartupLayoutMode(cliSplit, PlayerLayoutSource::Conf);
+            mhw::resolveStartupLayoutMode(cliSplit, kConfSplitRow);
         check(b.mode == Mode::Split
                   && b.source == PlayerLayoutSource::CliExplicit,
               "chain(b): --layout=split beats a conf row -> Split/CliExplicit");
@@ -294,8 +312,7 @@ int main(int argc, char **argv)
                                                  QStringLiteral("splitt"),
                                                  Mode::Single};
         const PlayerLayoutResolution e =
-            mhw::resolveStartupLayoutMode(cliMalformed,
-                                          PlayerLayoutSource::Conf);
+            mhw::resolveStartupLayoutMode(cliMalformed, kConfSplitRow);
         check(e.mode == Mode::Single
                   && e.source == PlayerLayoutSource::Default,
               "chain(e): --layout=splitt (malformed) -> Single/Default, "
@@ -307,7 +324,7 @@ int main(int argc, char **argv)
             true, QStringLiteral("splitt"), Mode::Split};
         const PlayerLayoutResolution e2 =
             mhw::resolveStartupLayoutMode(cliMalformedOverCompat,
-                                          PlayerLayoutSource::Conf);
+                                          kConfSplitRow);
         check(e2.mode == Mode::Single
                   && e2.source == PlayerLayoutSource::Default,
               "chain(e): a malformed --layout= does not fall through to "
@@ -325,23 +342,41 @@ int main(int argc, char **argv)
         struct {
             const char *name;
             PlayerLayoutCliRequest cli;
-            PlayerLayoutConfRow conf;
+            mhw::ConsoleLayoutConfRow conf;
             Mode expectedMode;
             PlayerLayoutSource expectedSource;
         } cases[] = {
             // No --layout= at all: the conf row is the only voice.
             {"no cli, no compat, no conf", kNoCli, kNoConfRow,
              Mode::Single, PlayerLayoutSource::Default},
-            {"no cli, no compat, conf=Conf", kNoCli,
-             PlayerLayoutSource::Conf, Mode::Split, PlayerLayoutSource::Conf},
+            {"no cli, no compat, conf=split", kNoCli,
+             kConfSplitRow, Mode::Split, PlayerLayoutSource::Conf},
+            // v1.1.0: THE DATA-LOSS CASE. A hand-edited `layout=mixed` used to
+            // resolve to Split (the two-argument overload hard-coded it), and
+            // saveMaskToDisk() then rewrote the user's file. The mode has to
+            // travel WITH the source for this to hold.
+            {"no cli, no compat, conf=mixed", kNoCli,
+             kConfMixedRow, Mode::Mixed, PlayerLayoutSource::Conf},
+            // `layout=single` is deliberately NOT a row: the console never
+            // writes it (serializeConsoleLayoutRow returns empty for Single)
+            // and a hand-edited one would look like a deliberate choice. It
+            // resolves to the same Single the default gives, just labelled
+            // Default because no row was found.
+            {"no cli, no compat, conf=single (deliberately not a row)",
+             kNoCli, kConfSingleRow, Mode::Single, PlayerLayoutSource::Default},
+            // An explicit CLI value outranks the row, including Mixed.
+            {"cli=mixed over conf=split", explicitCli("mixed", Mode::Single),
+             kConfSplitRow, Mode::Mixed, PlayerLayoutSource::CliExplicit},
+            {"cli=split over conf=mixed", explicitCli("split", Mode::Single),
+             kConfMixedRow, Mode::Split, PlayerLayoutSource::CliExplicit},
             // A conf value that is anything other than `Conf` is "no
             // information": the resolver must not read a stray source
             // enum as a request for a topology.
             {"no cli, no compat, conf=CliExplicit", kNoCli,
-             PlayerLayoutSource::CliExplicit, Mode::Single,
+             kNoConfRow, Mode::Single,
              PlayerLayoutSource::Default},
             {"no cli, no compat, conf=CliCompatFlag", kNoCli,
-             PlayerLayoutSource::CliCompatFlag, Mode::Single,
+             kNoConfRow, Mode::Single,
              PlayerLayoutSource::Default},
 
             // The compat flag speaks when --layout= is absent — including
@@ -350,15 +385,15 @@ int main(int argc, char **argv)
             {"no cli, compat=Split, no conf", compatOnly(), kNoConfRow,
              Mode::Split, PlayerLayoutSource::CliCompatFlag},
             {"no cli, compat=Split, conf=Conf", compatOnly(),
-             PlayerLayoutSource::Conf, Mode::Split,
+             kConfSplitRow, Mode::Split,
              PlayerLayoutSource::CliCompatFlag},
 
             // An explicit value wins over everything, in both directions.
             {"cli=single, compat=Split, conf=Conf",
-             explicitCli("single", Mode::Split), PlayerLayoutSource::Conf,
+             explicitCli("single", Mode::Split), kConfSplitRow,
              Mode::Single, PlayerLayoutSource::CliExplicit},
             {"cli=split, compat=Split, conf=Conf",
-             explicitCli("split", Mode::Split), PlayerLayoutSource::Conf,
+             explicitCli("split", Mode::Split), kConfSplitRow,
              Mode::Split, PlayerLayoutSource::CliExplicit},
             {"cli=SPLIT, compat=Single, no conf",
              explicitCli("SPLIT", Mode::Single), kNoConfRow,
@@ -377,19 +412,19 @@ int main(int argc, char **argv)
              explicitCli("splitt", Mode::Single), kNoConfRow,
              Mode::Single, PlayerLayoutSource::Default},
             {"cli=splitt, compat=Single, conf=Conf",
-             explicitCli("splitt", Mode::Single), PlayerLayoutSource::Conf,
+             explicitCli("splitt", Mode::Single), kConfSplitRow,
              Mode::Single, PlayerLayoutSource::Default},
             {"cli=splitt, compat=Split, conf=Conf",
-             explicitCli("splitt", Mode::Split), PlayerLayoutSource::Conf,
+             explicitCli("splitt", Mode::Split), kConfSplitRow,
              Mode::Single, PlayerLayoutSource::Default},
             {"cli='' (empty), compat=Split, conf=Conf",
-             explicitCli(QString(), Mode::Split), PlayerLayoutSource::Conf,
+             explicitCli(QString(), Mode::Split), kConfSplitRow,
              Mode::Single, PlayerLayoutSource::Default},
             {"cli=1, compat=Split, conf=Conf",
-             explicitCli("1", Mode::Split), PlayerLayoutSource::Conf,
+             explicitCli("1", Mode::Split), kConfSplitRow,
              Mode::Single, PlayerLayoutSource::Default},
             {"cli=splitx, compat=Single, conf=Conf",
-             explicitCli("splitx", Mode::Single), PlayerLayoutSource::Conf,
+             explicitCli("splitx", Mode::Single), kConfSplitRow,
              Mode::Single, PlayerLayoutSource::Default},
         };
 
@@ -703,6 +738,75 @@ int main(int argc, char **argv)
             check(all, "mask: a sub-window draws the user's toggles "
                        "intersected with its own claim only");
         }
+    }
+
+    // ==================================================================
+    // 7. MIXED, the third value of the same enum (D5).
+    // ==================================================================
+    //
+    // playerPanelMaskFor() used to answer `mode == Split ? ... : mask`,
+    // so Mixed fell into the VERBATIM arm and PlayerPanel kept all nine
+    // blocks while the Mixed windows that exist to draw them were being
+    // wired. Two things are pinned, exhaustively over the same 256-mask
+    // space section 6 uses: Mixed answers exactly like Split (the one
+    // arm all three *PanelMaskFor() functions now share), and the
+    // panel-plus-windows union still tiles the user's mask with no
+    // overlap — the pixel promise, for the third mode.
+    {
+        std::printf("7. mixed: the same algebra as split, in full\n");
+
+        const uint32_t removed = mhw::PlayerSection::playerSplitRemovedBits();
+        bool sameArm = true;
+        bool unionHolds = true;
+        bool disjoint  = true;
+        for (uint32_t m = 0; m <= 0xFFu; ++m) {
+            const uint32_t panel =
+                mhw::PlayerSection::playerPanelMaskFor(Mode::Mixed, m);
+            if (panel
+                != mhw::PlayerSection::playerPanelMaskFor(Mode::Split, m)) {
+                sameArm = false;
+                std::fprintf(stderr, "  mixed(0x%02x): panel 0x%02x != split\n",
+                             m, panel);
+            }
+            if ((panel & removed) != 0) {
+                disjoint = false;
+                std::fprintf(stderr,
+                             "  mixed(0x%02x): kept a removed bit 0x%08x\n",
+                             m, panel & removed);
+            }
+            uint32_t drawn = panel;
+            for (int slot = 0;
+                 slot < mhw::PlayerSection::kPlayerSplitTargetCount; ++slot)
+                drawn |= mhw::PlayerSection::playerSubWindowMask(slot, m);
+            if (drawn != m) {
+                unionHolds = false;
+                std::fprintf(stderr, "  mixed(0x%02x): union 0x%02x\n", m, drawn);
+            }
+        }
+        check(sameArm,
+              "mixed: playerPanelMaskFor(Mixed, m) == its Split answer for "
+              "all 256 user masks — the third mode walks the same arm, "
+              "not the verbatim one");
+        check(disjoint,
+              "mixed: the mother keeps no bit any window draws, in all 256 "
+              "masks (no block on two surfaces)");
+        check(unionHolds,
+              "mixed: mother ∪ windows == the user mask exactly, in all 256 "
+              "masks (nothing dropped, nothing added)");
+
+        // The two literals the audit measured, stated as numbers so a
+        // future change to the table cannot redefine them.
+        check(mhw::PlayerSection::playerPanelMaskFor(Mode::Mixed,
+                                                     mhw::PlayerSection::kAll)
+                  == 0u,
+              "mixed: playerPanelMaskFor(Mixed, kAll) == 0 (all nine rows "
+              "have windows of their own)");
+        check(mhw::PlayerSection::playerPanelHasBlocks(
+                  mhw::PlayerSection::playerPanelMaskFor(Mode::Mixed,
+                                                         mhw::PlayerSection::kAll))
+                  == false,
+              "mixed: so the player mother has NO block to draw and the "
+              "mount gate refuses it — no empty frame beside the windows");
     }
 
     std::printf("\n%d checks, %d failure(s)\n%s\n", checks, failures,

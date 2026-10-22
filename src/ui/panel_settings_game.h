@@ -238,4 +238,57 @@ bool migrateLegacyPanelSection(QSettings &settings,
                                const PanelSettingsScope &scope,
                                const QString &settingsKey);
 
+// ─── the Mixed scope seed ───────────────────────────────────────────────
+//
+// Mixed (v1.1.0) is the fifth domain: [world/mixed/<key>] and
+// [rise/mixed/<key>]. It is the only topology whose WINDOWS are not a
+// fixed list — each row of the three split tables is either its own
+// window or merged back into its mother panel, per game, per user
+// (ui/window_layout_plan.h) — so a user's Mixed run starts from
+// wherever they were, not from factory defaults.
+//
+// WHAT THIS DOES, and nothing more: when the user EXPLICITLY enters
+// Mixed, every window parameter (scale, mt/mr/ml/mb, minW, columns,
+// …) that already exists under the <game>/<fromMode>/<window> path is
+// copied to the SAME key under <game>/mixed/<window> — but only when
+// that Mixed key does not already exist.
+//
+//   * EXISTING Mixed values are authoritative and are never touched.
+//     They are the layout the user already dragged and saved in Mixed,
+//     and re-seeding them would be exactly the data loss
+//     migrateLegacyPanelSection's rule 2 refuses.
+//   * the source domain (single or split) is READ, never written — a
+//     Split run still owns its own geometry afterwards.
+//   * the other game is never read and never written: the prefix is
+//     game-scoped, so World's seed cannot reach Rise's sections.
+//   * copy-missing-only makes it IDEMPOTENT, so a second explicit entry
+//     (or a second process racing the first) changes nothing. No marker
+//     key is written — a marker would be a second record of a fact the
+//     missing-key check already answers, and it would have to be
+//     removed by hand if a user ever deletes a Mixed section.
+//
+// WHEN IT MUST NOT RUN: on a read-only load. Panels are constructed on
+// startup whatever the topology is, and none of them may seed Mixed just
+// by being constructed — the trigger is the user's explicit choice of
+// Mixed, not a mode that happens to be in force. So this is NOT called
+// from Panel::loadConfig() or from the launch-time scope injection; the
+// explicit-entry path (console combo / --layout=mixed) is the only
+// caller.
+//
+// fromMode == Mixed means "already there": nothing is copied, false is
+// returned, and the file is not touched at all.
+//
+// The two-argument form opens the same (IniFormat, UserScope,
+// "monster-overlay", "panels") handle Panel opens, so it addresses the
+// live panels.ini. The handle-taking form below is the whole
+// implementation and takes the handle rather than opening one, so a test
+// can drive it against a throwaway file and can never reach the
+// developer's real config. It returns true when anything was seeded, for
+// the same caller-gated log-line reason migrateLegacyPanelSection does.
+[[nodiscard]] bool ensureMixedPanelSettingsScope(QSettings &settings,
+                                                 GameId game,
+                                                 PlayerSection::PlayerLayoutMode fromMode);
+void ensureMixedPanelSettingsScope(GameId game,
+                                   PlayerSection::PlayerLayoutMode fromMode);
+
 } // namespace mhw

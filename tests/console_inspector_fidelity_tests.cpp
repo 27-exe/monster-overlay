@@ -38,17 +38,24 @@
 // real settings entry.
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
+#include <QDir>
 #include <QFrame>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMetaObject>
+#include <QMouseEvent>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScopedPointer>
 #include <QSettings>
+#include <QSlider>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QString>
 #include <QTemporaryDir>
@@ -61,6 +68,7 @@
 #include "ui/console_fidelity_windows.h"
 #include "ui/control_panel.h"
 #include "ui/hud_canvas.h"
+#include "ui/panel.h"
 #include "ui/section_row.h"
 
 namespace {
@@ -125,6 +133,33 @@ void clickGameButton(ControlPanel *cp, const QString &key)
     }
     std::printf("FAIL: game button for %s not found\n", qPrintable(key));
     ++failures;
+}
+
+// A real POINTER gesture, delivered the way QWidgetWindow delivers one:
+// hit-test the DEEPEST widget under the global point, send press/release
+// to THAT widget, and let Qt's own parent propagation carry whatever the
+// child does not handle. Delivering straight to the SectionRow (which is
+// what a sendEvent-to-target test does) skips the one step this file's E
+// block is about: a SectionRow's own label covers the middle of the row,
+// so the user's pointer lands on the label, and the chip only moves if
+// that event reaches the row behind it.
+QWidget *hitTargetAt(QWidget *window, const QPoint &globalPos)
+{
+    QWidget *hit = window->childAt(window->mapFromGlobal(globalPos));
+    return hit ? hit : window;
+}
+
+void hitTestClick(QWidget *window, const QPoint &globalPos)
+{
+    QWidget *target = hitTargetAt(window, globalPos);
+    const QPointF local = target->mapFromGlobal(globalPos);
+    QMouseEvent press(QEvent::MouseButtonPress, local, globalPos,
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &press);
+    QMouseEvent release(QEvent::MouseButtonRelease, local, globalPos,
+                        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &release);
+    QCoreApplication::processEvents();
 }
 
 } // namespace
@@ -217,6 +252,34 @@ int main(int argc, char *argv[])
                   "A/B: the .inspector-content scroll box is back with a "
                   "selection — the three columns replace the empty block");
 
+            // ── D1: a live selection is live in BOTH directions ──────────
+            // The controls are enabled, so the write must land; and the
+            // readouts must come from the panel the form is showing.
+            auto *metaScale = cp.findChild<QSlider *>(
+                QStringLiteral("metaScale"));
+            auto *metaOpacity = cp.findChild<QSlider *>(
+                QStringLiteral("metaOpacity"));
+            auto *metaVisible = cp.findChild<QCheckBox *>(
+                QStringLiteral("metaVisible"));
+            auto *metaX = cp.findChild<QSpinBox *>(QStringLiteral("metaX"));
+            check(metaScale && metaScale->isEnabled()
+                      && metaOpacity && metaOpacity->isEnabled()
+                      && metaVisible && metaVisible->isEnabled()
+                      && metaX && metaX->isEnabled()
+                      && output && output->isEnabled(),
+                  "D1: with a window selected all five controls are live");
+            Panel *selPanel = cp.selectedPanelOrNull();
+            if (metaScale && selPanel) {
+                metaScale->setValue(175);
+                pump();
+                check(qRound(selPanel->scale() * 100) == 175,
+                      "D1: the 缩放 write lands on the panel the form shows",
+                      QStringLiteral("panel reads %1%")
+                          .arg(qRound(selPanel->scale() * 100)));
+                check(metaScale->value() == 175,
+                      "D1: and the readout still agrees with it");
+            }
+
             // Scope change: switching the game drops the selection and
             // returns to the overview + empty inspector.
             clickGameButton(&cp, QStringLiteral("console.game.rise"));
@@ -229,6 +292,52 @@ int main(int argc, char *argv[])
             check(empty && empty->isVisible(),
                   "B: the empty block is back after the scope change");
 
+            // ── D1: with NOTHING editable the five controls go dark AND ──
+            // their readouts must not keep the last window's numbers. A
+            // disabled slider still reading 175% is the lying reading the
+            // audit recorded — grey-ing a control does not un-say what it
+            // displays.
+            check(cp.currentEditableSelection().panel == nullptr
+                      && cp.selectedPanelOrNull() == nullptr,
+                  "D1: after the scope change ONE accessor answers \"nothing "
+                  "editable\"");
+            check(metaScale && !metaScale->isEnabled()
+                      && metaOpacity && !metaOpacity->isEnabled()
+                      && metaVisible && !metaVisible->isEnabled()
+                      && metaX && !metaX->isEnabled()
+                      && output && !output->isEnabled(),
+                  "D1: all five controls are disabled while nothing is selected",
+                  QStringLiteral("scale%1 opacity%2 visible%3 posX%4 out%5")
+                      .arg(metaScale && metaScale->isEnabled())
+                      .arg(metaOpacity && metaOpacity->isEnabled())
+                      .arg(metaVisible && metaVisible->isEnabled())
+                      .arg(metaX && metaX->isEnabled())
+                      .arg(output && output->isEnabled()));
+            check(metaScale && metaScale->value() == 100
+                      && metaOpacity && metaOpacity->value() == 100,
+                  "D1: the sliders read neutral, not the last window's 175%",
+                  QStringLiteral("scale=%1 opacity=%2")
+                      .arg(metaScale ? metaScale->value() : -1)
+                      .arg(metaOpacity ? metaOpacity->value() : -1));
+            // The value labels belong to THIS column: the rail's own
+            // sliders spell the same objectName, so looking them up
+            // globally would read the rail's numbers instead of the form's.
+            const auto valueLabels = metaScale && metaScale->parentWidget()
+                ? metaScale->parentWidget()->findChildren<QLabel *>(
+                      QStringLiteral("sliderValue"))
+                : QList<QLabel *>();
+            check(valueLabels.size() >= 2 && valueLabels[0]->text().isEmpty()
+                      && valueLabels[1]->text().isEmpty(),
+                  "D1: the 缩放/透明度 value labels are CLEARED (no stale "
+                  "reading left behind a disabled control)",
+                  QStringLiteral("%1 | %2")
+                      .arg(valueLabels.size() >= 1 ? valueLabels[0]->text()
+                                                   : QStringLiteral("?"))
+                      .arg(valueLabels.size() >= 2 ? valueLabels[1]->text()
+                                                   : QStringLiteral("?")));
+            check(metaVisible && !metaVisible->isChecked(),
+                  "D1: the 显示该窗口 switch is reset with everything else");
+
             // And a click works again in the new scope.
             clickGameButton(&cp, QStringLiteral("console.game.world"));
             pump();
@@ -236,6 +345,11 @@ int main(int argc, char *argv[])
             pump();
             check(cp.selectedWindow().panelIndex >= 0,
                   "B: a click selects again after the scope change");
+            // Put the panel back where the next block found it.
+            if (metaScale && cp.selectedPanelOrNull()) {
+                metaScale->setValue(100);
+                pump();
+            }
         }
     }
 
@@ -347,19 +461,24 @@ int main(int argc, char *argv[])
               "D: the window-count chip is set",
               count ? count->text() : QString());
 
-        // The prototype's scaffolding is constructed but off screen: no
-        // − / + / 缩放 / 安全区 / 网格 is visible anywhere.
+        // v1.0.1 (验收项5): THE ZOOM CONTROLS ARE VISIBLE — and only the
+        // zoom controls are. safe-area / grid stay hidden preview-console
+        // scaffolding (still findable through findChild), while − / + /
+        // 1:1 and the % label are what make the board's zoom
+        // discoverable — Ctrl+wheel alone was undiscoverable, which is
+        // exactly 用户验收项5.
         int visibleToggles = 0;
         for (QWidget *w : cp.findChildren<QWidget *>(QStringLiteral("stageToggle")))
             if (w->isVisible())
                 ++visibleToggles;
-        check(visibleToggles == 0,
-              "D: no zoom / safe-area / grid control is visible",
+        check(visibleToggles == 3,
+              "D: exactly the three zoom buttons (− / + / 1:1) are "
+              "visible on the stage head",
               QStringLiteral("%1 visible").arg(visibleToggles));
         auto *zoomLabel = cp.findChild<QLabel *>(
             QStringLiteral("stageToggleLabel"));
-        check(zoomLabel == nullptr || !zoomLabel->isVisible(),
-              "D: the zoom percentage label is not visible");
+        check(zoomLabel != nullptr && zoomLabel->isVisible(),
+              "D: …and the zoom percentage label sits with them");
         auto *theme = cp.findChild<QPushButton *>(
             QStringLiteral("themeToggle"));
         check(theme == nullptr || !theme->isVisible(),
@@ -368,6 +487,334 @@ int main(int argc, char *argv[])
             QStringLiteral("localeChip"));
         check(localeChip == nullptr || !localeChip->isVisible(),
               "D: the locale chip is not on the stage (settings only)");
+    }
+
+    // ── (E): 实测缺陷(user-8)③ — a REAL click on a 显示内容 chip ─────────
+    //
+    // The user's own state: a `layout=mixed` conf row (which resolves to
+    // Mixed with every row detached when the file carries no plan) and a
+    // focus on ONE DETACHED sub-window. That is the only state where the
+    // mother's mask and that window's own mask are two different numbers:
+    // the mother holds plan.retainedMask() — every detached row stripped
+    // out — while the window paints from maskFor(ctl_[parentSlot]). The
+    // column read the mother and the click wrote the mother, so the write
+    // landed on a value rebuildAndRender() immediately re-derived; the
+    // refilled chip was still off and the count still 0/2, which is what
+    // 「点击无效」 meant. Both halves now name the selection's own Panel.
+    {
+        cp.close();
+        pump();
+        QDir().mkpath(configRoot.path()
+                      + QStringLiteral("/monster-overlay"));
+        QFile conf(configRoot.path()
+                   + QStringLiteral("/monster-overlay/monster-overlay.conf"));
+        check(conf.open(QIODevice::WriteOnly | QIODevice::Text),
+              "E: the temp config can take a `layout=mixed` row");
+        if (conf.isOpen())
+            conf.write("layout=mixed\n");
+        conf.close();
+
+        ControlPanel cpMixed;
+        cpMixed.show();
+        pump();
+        // The mode, read the way the user reads it: the 布局 segment's own
+        // 混合 button carries the in-force mode (layoutModeInForce() is
+        // private, and this file drives controls, not members).
+        auto *mixedSeg = cpMixed.findChild<QPushButton *>(
+            QStringLiteral("layoutSegMixed"));
+        check(mixedSeg != nullptr && mixedSeg->isChecked(),
+              "E: the 布局 segment shows 混合 selected for that conf row",
+              mixedSeg ? (mixedSeg->isChecked() ? QStringLiteral("mixed")
+                                                : QStringLiteral("not mixed"))
+                       : QStringLiteral("button missing"));
+
+        int statusSub = -1;
+        mhw::WindowState status;
+        for (const mhw::WindowState &w : cpMixed.buildWindowStates())
+            if (w.key == QStringLiteral("player-status")) {
+                status = w;
+                statusSub = w.subIndex;
+            }
+        check(statusSub >= 0 && status.sectionsTotal == 2,
+              "E: precondition — a detached player-status row claims two "
+              "sections",
+              QStringLiteral("sub=%1 sections=%2/%3")
+                  .arg(statusSub)
+                  .arg(status.sectionsOn)
+                  .arg(status.sectionsTotal));
+        cpMixed.selectWindow(0, statusSub);
+        cpMixed.refreshWindowModel();
+        pump(300);
+
+        auto chipOf = [&cpMixed](uint32_t bit) -> SectionRow * {
+            auto *h = cpMixed.findChild<QFrame *>(
+                QStringLiteral("windowSectionList"));
+            if (!h)
+                return nullptr;
+            for (SectionRow *r : h->findChildren<SectionRow *>())
+                if (r->property("sectionBit").toUInt() == bit)
+                    return r;
+            return nullptr;
+        };
+        auto countText = [&cpMixed] {
+            auto *c = cpMixed.findChild<QLabel *>(
+                QStringLiteral("groupSections"));
+            return c ? c->text() : QString();
+        };
+        auto windowMask = [&cpMixed] {
+            const auto s = cpMixed.currentEditableSelection();
+            return s.panel ? s.panel->sectionMask() : 0u;
+        };
+        auto onCountOf = [&cpMixed](const QString &key) {
+            for (const mhw::WindowState &w : cpMixed.buildWindowStates())
+                if (w.key == key)
+                    return w.sectionsOn;
+            return -1;
+        };
+
+        check(countText() == QStringLiteral("2/2"),
+              "E: 显示内容 reads 2/2 — both sections the window IS drawing",
+              countText());
+        check(onCountOf(QStringLiteral("player-status")) == 2,
+              "E: the model agrees: that row's on-count is 2 of 2",
+              QString::number(onCountOf(QStringLiteral("player-status"))));
+
+        SectionRow *first = nullptr;
+        uint32_t bit = 0;
+        {
+            auto *h = cpMixed.findChild<QFrame *>(
+                QStringLiteral("windowSectionList"));
+            const auto rows = h ? h->findChildren<SectionRow *>()
+                                : QList<SectionRow *>();
+            check(rows.size() == 2,
+                  "E: one chip per section of this window (two)",
+                  QString::number(rows.size()));
+            if (!rows.isEmpty()) {
+                first = rows.first();
+                bit = first->property("sectionBit").toUInt();
+            }
+        }
+        if (first) {
+            check(first->isEnabled(),
+                  "E: the chip is enabled (a disabled switch is not "
+                  "clickable)");
+            check(first->isChecked(),
+                  "E: the chip starts checked, because its section is on");
+
+            // The pointer's own target: the row's own text label. Aim at
+            // the LABEL's centre, not the row's. The label starts at a
+            // fixed 35px, so at a narrow inspector (a 68px row) the row's
+            // centre is 34 — one pixel left of the label — and an
+            // assertion on the row's centre silently became a test of the
+            // row's width instead of the label path it was written for.
+            QLabel *label = nullptr;
+            for (QLabel *l : first->findChildren<QLabel *>())
+                if (l->isVisible() && l->width() > 0) {
+                    label = l;
+                    break;
+                }
+            check(label != nullptr,
+                  "E: the row's text is a real, visible label");
+            const QPoint at =
+                label ? label->mapToGlobal(label->rect().center())
+                      : first->mapToGlobal(first->rect().center());
+            QWidget *hit = hitTargetAt(cpMixed.window(), at);
+            check(label != nullptr && hit == label,
+                  "E: at the label's centre the pointer lands on that label",
+                  hit ? QString::fromLatin1(hit->metaObject()->className())
+                      : QStringLiteral("null"));
+
+            QPixmap before;
+            const auto selBefore = cpMixed.currentEditableSelection();
+            if (selBefore.panel) {
+                selBefore.panel->repaint();
+                before = selBefore.panel->grab();
+            }
+            const uint32_t maskBefore = windowMask();
+
+            int fired = 0;
+            QObject::connect(first, &SectionRow::stateChanged,
+                             [&fired](int) { ++fired; });
+            hitTestClick(cpMixed.window(), at);
+            pump(300);
+
+            check(fired == 1,
+                  "E: the real press/release emits stateChanged exactly once",
+                  QString::number(fired));
+            check((maskBefore & bit) != 0 && (windowMask() & bit) == 0,
+                  "E: the WINDOW's own mask took the click (its bit is clear)",
+                  QStringLiteral("0x%1 -> 0x%2")
+                      .arg(maskBefore, 0, 16)
+                      .arg(windowMask(), 0, 16));
+            check(countText() == QStringLiteral("1/2"),
+                  "E: the count moved to 1/2 with the click", countText());
+            SectionRow *afterChip = chipOf(bit);
+            check(afterChip != nullptr && !afterChip->isChecked(),
+                  "E: the chip itself is now OFF (it did not bounce back)");
+            check(onCountOf(QStringLiteral("player-status")) == 1,
+                  "E: the model's on-count followed, 2 -> 1",
+                  QString::number(
+                      onCountOf(QStringLiteral("player-status"))));
+
+            QPixmap paint;
+            const auto selAfter = cpMixed.currentEditableSelection();
+            if (selAfter.panel) {
+                selAfter.panel->repaint();
+                paint = selAfter.panel->grab();
+            }
+            check(!before.isNull() && !paint.isNull()
+                      && before.toImage() != paint.toImage(),
+                  "E: the window's own PAINT changed — the section really "
+                  "left the card",
+                  QStringLiteral("%1x%2 -> %3x%4")
+                      .arg(before.width())
+                      .arg(before.height())
+                      .arg(paint.width())
+                      .arg(paint.height()));
+
+            // Back on: the same gesture in the other direction, so the
+            // switch is proved two-way rather than one-shot.
+            if (afterChip) {
+                hitTestClick(cpMixed.window(),
+                             afterChip->mapToGlobal(
+                                 afterChip->rect().center()));
+                pump(300);
+                check(countText() == QStringLiteral("2/2"),
+                      "E: a second click puts the count back to 2/2",
+                      countText());
+                SectionRow *again = chipOf(bit);
+                check(again != nullptr && again->isChecked(),
+                      "E: …and the chip is checked again");
+                check((windowMask() & bit) != 0,
+                      "E: …and the window's mask has its bit back",
+                      QStringLiteral("0x%1").arg(windowMask(), 0, 16));
+            }
+        }
+
+        // ── (F): 实测缺陷(user-8)④ — 窗口分组 follows the focus, and the
+        //          bottom 说明 is gone ───────────────────────────────────
+        //
+        // "相关" is taken from the model the column already uses for its
+        // own 本组子窗 chips: a row belongs to the focus's group when its
+        // registry `parentSlot` equals the selection's panelIndex.
+        {
+            auto listedKeys = [&cpMixed] {
+                QStringList keys;
+                for (QCheckBox *box : cpMixed.findChildren<QCheckBox *>(
+                         QStringLiteral("mixedWinToggle"))) {
+                    const QWidget *rowHost = box->parentWidget();
+                    // isHidden(), not isVisible() — the flag
+                    // refreshMixedGroupBlock() itself sets, not whatever
+                    // an ancestor happens to be doing (console_mixed_
+                    // layout_tests §8 uses the same reading for the
+                    // game half of this filter).
+                    if (rowHost && !rowHost->isHidden())
+                        keys << box->property("settingsKey").toString();
+                }
+                keys.sort();
+                return keys;
+            };
+            auto sorted = [](QStringList keys) {
+                keys.sort();
+                return keys;
+            };
+
+            check(cpMixed.findChildren<QLabel *>(
+                          QStringLiteral("mixedGroupHint"))
+                      .isEmpty(),
+                  "F: the bottom 说明 label is gone (no mixedGroupHint)");
+            check(cpMixed
+                          .findChildren<QCheckBox *>(
+                              QStringLiteral("mixedWinToggle"))
+                          .size()
+                      == 11,
+                  "F: the eleven registry rows still exist (hidden, never "
+                  "deleted)");
+            check(listedKeys()
+                      == sorted({QStringLiteral("player-bars"),
+                                 QStringLiteral("player-info"),
+                                 QStringLiteral("player-mantles"),
+                                 QStringLiteral("player-status"),
+                                 QStringLiteral("player-weapon")}),
+                  "F: a PLAYER window focused → only the player group is "
+                  "listed (World, so 翔虫 is out by the game filter too)",
+                  listedKeys().join(QLatin1Char(',')));
+
+            int sub = -1;
+            for (const mhw::WindowState &w : cpMixed.buildWindowStates())
+                if (w.key == QStringLiteral("monster-identity"))
+                    sub = w.subIndex;
+            check(sub >= 0, "F: precondition — a monster sub-window exists");
+            cpMixed.selectWindow(1, sub);
+            cpMixed.refreshWindowModel();
+            pump(300);
+            check(listedKeys()
+                      == sorted({QStringLiteral("monster-conditions"),
+                                 QStringLiteral("monster-identity")}),
+                  "F: a MONSTER window focused → only the monster group",
+                  listedKeys().join(QLatin1Char(',')));
+
+            sub = -1;
+            for (const mhw::WindowState &w : cpMixed.buildWindowStates())
+                if (w.key == QStringLiteral("damage-share"))
+                    sub = w.subIndex;
+            check(sub >= 0, "F: precondition — a damage sub-window exists");
+            cpMixed.selectWindow(2, sub);
+            cpMixed.refreshWindowModel();
+            pump(300);
+            check(listedKeys()
+                      == sorted({QStringLiteral("damage-chart"),
+                                 QStringLiteral("damage-rows"),
+                                 QStringLiteral("damage-share")}),
+                  "F: a DAMAGE window focused → only the damage group",
+                  listedKeys().join(QLatin1Char(',')));
+
+            // NO focus: a scope change clears the selection, so the list
+            // is the game filter alone — the case console_mixed_layout_
+            // tests §8 asserts, kept working by the focus filter. Driven
+            // through the real 崛起 button, not through switchGame().
+            clickGameButton(&cpMixed, QStringLiteral("console.game.rise"));
+            cpMixed.refreshWindowModel();
+            pump(300);
+            check(cpMixed.currentEditableSelection().panel == nullptr,
+                  "F: precondition — a scope change clears the focus");
+            check(listedKeys()
+                      == sorted({QStringLiteral("damage-chart"),
+                                 QStringLiteral("damage-rows"),
+                                 QStringLiteral("damage-share"),
+                                 QStringLiteral("monster-conditions"),
+                                 QStringLiteral("monster-identity"),
+                                 QStringLiteral("player-bars"),
+                                 QStringLiteral("player-info"),
+                                 QStringLiteral("player-status"),
+                                 QStringLiteral("player-weapon"),
+                                 QStringLiteral("player-wirebug")}),
+                  "F: with no focus the whole game-filtered registry is "
+                  "listed (Rise: 衣装 out, 翔虫 in)",
+                  listedKeys().join(QLatin1Char(',')));
+
+            // A focus that owns no registry row — the pets panel has none —
+            // takes the block with it rather than leaving a caption and
+            // two buttons over an empty list. Selected as the row the
+            // overview lists for it (selectPanel() is private; selectWindow
+            // is the path a click on that row takes anyway).
+            cpMixed.selectWindow(3, -1);
+            cpMixed.refreshWindowModel();
+            pump(300);
+            const auto petsSel = cpMixed.currentEditableSelection();
+            check(petsSel.panelIndex == 3,
+                  "F: precondition — the pets window row is the focus",
+                  QStringLiteral("panel=%1 sub=%2")
+                      .arg(petsSel.panelIndex)
+                      .arg(petsSel.subIndex));
+            auto *block = cpMixed.findChild<QFrame *>(
+                QStringLiteral("mixedGroupBlock"));
+            check(block != nullptr && block->isHidden(),
+                  "F: a pets focus hides the 窗口分组 block (no registry "
+                  "row belongs to it)");
+        }
+        cpMixed.close();
+        pump();
     }
 
     std::printf("%s (%d checks, %d failures)\n",

@@ -984,8 +984,9 @@ void sectionFidelityBoard()
         // an existing selection (mousePressEvent's non-overview arm only
         // ever sets one), so `selectedSubWindow()` cannot tell "the press
         // missed everything" from "the press landed here again".
-        // subWindowSelected fires only from a press inside a box, which
-        // makes its count the honest probe.
+        // subWindowSelected fires from EVERY press inside a box (v1.0.1
+        // (#7) dropped the index-changed gate so a re-click still fills
+        // the inspector), which makes its count the honest probe.
         int selectedSignals = 0;
         QObject::connect(&v, &HudCanvas::subWindowSelected,
                          [&selectedSignals](int) { ++selectedSignals; });
@@ -998,6 +999,16 @@ void sectionFidelityBoard()
               Qt::LeftButton, Qt::MouseButtons());
         check(v.selectedSubWindow() == 1 && selectedSignals == 1,
               "a click selects the second window while it is visible");
+
+        // v1.0.1 (#7): the same box clicked AGAIN re-notifies. The full
+        // contract lives in canvas_interaction_regression_tests.cpp;
+        // this file pins that the split arm obeys it too.
+        mouse(&v, QEvent::MouseButtonPress, both[1].center(),
+              Qt::LeftButton, Qt::LeftButton);
+        mouse(&v, QEvent::MouseButtonRelease, both[1].center(),
+              Qt::LeftButton, Qt::MouseButtons());
+        check(v.selectedSubWindow() == 1 && selectedSignals == 2,
+              "a re-click on the same visible window notifies again");
 
         v.setSubWindowVisible(1, false);
         pump();

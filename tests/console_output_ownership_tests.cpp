@@ -1526,8 +1526,14 @@ int main(int argc, char *argv[])
               "(no split table) — and no mother row for the split panels",
               QStringLiteral("rows=%1 mothers=%2 pets=%3")
                   .arg(splitList.size()).arg(motherRows).arg(petsRows));
-        check(splitList.size() == 12,
-              "eleven split windows + the pets row = twelve rows",
+        // v1.1.5: eleven rows minus the one this game does not have —
+        // 衣装 is World-only, so a Rise host mounts ten split windows.
+        // The model lists exactly what the host mounts (that is the
+        // v1.1.3 contract this file pins), so the total is eleven rows:
+        // ten split windows + the pets row.
+        check(splitList.size() == 11,
+              "ten split windows (eleven rows minus Rise-absent 衣装) + the "
+              "pets row = eleven rows",
               QStringLiteral("%1").arg(splitList.size()));
         check(havePetsFromSingle
                   && pets.key == petsFromSingle.key
@@ -1600,8 +1606,11 @@ int main(int argc, char *argv[])
               "the rail counts the Split pets window once (it used to say 0 "
               "窗 with the window on the board)",
               navCountOf(cp, "navPets"));
-        check(digitsIn(navCountOf(cp, "navPlayer")) == 6,
-              "the rail still counts the six player split windows",
+        // v1.1.5: five, not six — the rail counts the windows the board
+        // actually mounts, and a Rise host does not mount 衣装 (World-only).
+        check(digitsIn(navCountOf(cp, "navPlayer")) == 5,
+              "the rail still counts the player split windows Rise mounts "
+              "(five: 衣装 is World-only)",
               navCountOf(cp, "navPlayer"));
     }
 

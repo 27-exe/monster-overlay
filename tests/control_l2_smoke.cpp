@@ -471,7 +471,13 @@ int main(int argc, char *argv[])
         // about locale: the note is translated, so it flips with the chip.
         // The version is no longer asserted HERE because it is no longer
         // rendered HERE.
-        if (brandSub->text() != QStringLiteral("控制台 · 预览为演示内容；「保存」会写入当前「游戏 × 布局」作用域的配置文件")) {
+        // v1.1.5: the wording changed with the rail's 保存 button (gone —
+        // the write now happens on close), so the expected text is the
+        // table's own answer for the loaded locale rather than a second
+        // hard-coded copy of the copy.
+        const QString expectedNoteZh =
+            mhw::StringTable::instance().tr(QStringLiteral("console.proto.notreal"));
+        if (brandSub->text() != expectedNoteZh) {
             fprintf(stderr, "FAIL: expected zh copy before the switch, got '%s'\n",
                     qPrintable(brandSub->text()));
             return 10;
@@ -501,9 +507,24 @@ int main(int argc, char *argv[])
         // v1.0.0: the prototype's `notreal` note again, in English. The
         // version string this used to carry lives in the settings dialog's
         // About section now.
-        if (brandSub->text() != QStringLiteral("Console · the preview is demo content; Save writes the configuration for the current game x layout scope")) {
-            fprintf(stderr, "FAIL: chip click did not retranslate ('%s')\n",
-                    qPrintable(brandSub->text()));
+        //
+        // v1.1.0: the expected string moved INTO the resource on purpose.
+        // Hard-coding it here made this assertion a second copy of the copy,
+        // so any wording improvement failed the test instead of passing it —
+        // exactly the opposite of what a copy gate is for. Ask the table what
+        // the key resolves to in the locale we just switched to, then assert
+        // the widget equals that. A genuinely missing key still fails below,
+        // because consoleText() falls back to a marker the comparison rejects.
+        const QString expectedNoteEn =
+            mhw::StringTable::instance().tr(QStringLiteral("console.proto.notreal"));
+        if (brandSub->text() != expectedNoteEn) {
+            fprintf(stderr, "FAIL: chip click did not retranslate ('%s' vs '%s')\n",
+                    qPrintable(brandSub->text()), qPrintable(expectedNoteEn));
+            return 11;
+        }
+        // Guard against the comparison above passing on two empty strings.
+        if (expectedNoteEn.isEmpty() || brandSub->text().isEmpty()) {
+            fprintf(stderr, "FAIL: brandSub or its resource string is empty\n");
             return 11;
         }
         if (mhw::StringTable::instance().tr(
@@ -534,7 +555,11 @@ int main(int argc, char *argv[])
 
         clickChip();   // en-US -> zh-CN
         // v1.0.0: the prototype's `notreal` note, back in Chinese.
-        if (brandSub->text() != QStringLiteral("控制台 · 预览为演示内容；「保存」会写入当前「游戏 × 布局」作用域的配置文件")) {
+        // v1.1.5: read from the table like the EN arm above (the wording
+        // moved when the rail's 保存 button was removed).
+        if (brandSub->text()
+            != mhw::StringTable::instance().tr(
+                   QStringLiteral("console.proto.notreal"))) {
             fprintf(stderr, "FAIL: second click did not restore zh copy ('%s')\n",
                     qPrintable(brandSub->text()));
             return 13;
@@ -575,7 +600,11 @@ int main(int argc, char *argv[])
         // v1.0.0: same carrier as above — the prototype's `notreal` note.
         // The point of this check is that an explicit locale beats a stale
         // conf, and a translated note proves the chrome followed it.
-        if (!brandSub || brandSub->text() != QStringLiteral("控制台 · 预览为演示内容；「保存」会写入当前「游戏 × 布局」作用域的配置文件")) {
+        // v1.1.5: expected text from the table (the copy moved when the
+        // rail's 保存 button was removed).
+        if (!brandSub || brandSub->text()
+            != mhw::StringTable::instance().tr(
+                   QStringLiteral("console.proto.notreal"))) {
             fprintf(stderr, "FAIL: console chrome did not stay on the explicit locale ('%s')\n",
                     brandSub ? qPrintable(brandSub->text()) : "railBrandSub missing");
             return 16;

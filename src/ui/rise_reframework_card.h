@@ -54,6 +54,20 @@ public:
     // exactly where the block used to be inlined.
     void build(QWidget *contentParent, QVBoxLayout *inspectorLayout);
 
+    // Builds the READ-ONLY status summary into `scrollLayout` (parented to
+    // `sidebarParent`) — the rail's scroll column, one section below the
+    // game switch and the panel list. Called from ControlPanel's constructor
+    // at the rail build site; it happens once, because unlike the card this
+    // block does not live in a dialog that is built on open.
+    //
+    // Read-only BY CONTRACT: labels only, no QPushButton may appear here.
+    // The install / remove entry points live on the card in the settings
+    // dialog, and a second copy in the rail would be exactly the duplicate
+    // entry point the console is busy removing elsewhere. refresh() is the
+    // only writer of its text, so it follows the same 1500 ms tick, the
+    // same retranslateUi() and the same switchGame() as the card.
+    void buildSidebarSummary(QWidget *sidebarParent, QVBoxLayout *scrollLayout);
+
     // Re-reads the filesystem, refreshes the status lines and re-enables every
     // button. Safe to call from the refresh timer, from retranslateUi() and
     // from switchGame() alike.
@@ -100,6 +114,13 @@ private:
     QPointer<QPushButton> menuStateFixButton_;
     QPointer<QPushButton> menuStateRestoreButton_;
     QPointer<QPushButton> removeFrameworkButton_;
+
+    // Rail (sidebar) summary handles — built once by buildSidebarSummary()
+    // into ControlPanel's rail scroll column. QPointer for the same reason as
+    // above: they are plain widgets in the console tree, but refresh() runs
+    // from a timer that outlives anything a future refactor might delete.
+    QPointer<QWidget> sideBlock_;        // title + summary container
+    QPointer<QLabel>  sideStatusLabel_;  // the composed status text
 
     // Result of the last refresh()'s locator call: the Steam install dir.
     // Kept because every request path gates on it.

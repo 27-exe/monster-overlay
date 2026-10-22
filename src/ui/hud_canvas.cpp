@@ -373,6 +373,15 @@ QColor boardClay()
 // difference between matching the CSS and matching an approximation of
 // it.
 constexpr qreal kBoardInset = 12.0;   // the 12px inset band
+// v1.0.1 (#6): the alpha-read checker painted inside the fidelity
+// board's inset rect. Purely a console-preview aid — the real HUD never
+// sees it and no pixel baseline measures it. The alphas are baked into
+// the colours, never QPainter::setOpacity (see the paint note: the
+// HUD's opacity is already in its pixmap's alpha and a second opacity
+// multiply is the double-alpha bug this fix must not reintroduce).
+constexpr qreal kBoardCheckerCell = 16.0;    // 16px cells
+constexpr int kBoardCheckerLightAlpha = 16;  // white @ ~6%
+constexpr int kBoardCheckerDarkAlpha = 32;   // black @ ~12.5%
 
 // `.board.editing::before` — the lattice. `inset:12px` puts it on the
 // same rect the inset band frames, `opacity:.28` multiplies everything
@@ -526,10 +535,10 @@ HudCanvas::HudCanvas(QWidget *parent) : QWidget(parent)
     // this covers the unplug-then-replug case too.
     connect(static_cast<QGuiApplication *>(QCoreApplication::instance()),
             &QGuiApplication::screenAdded,
-            this, [this] { rebuildScreenCache(); updateGeometry(); update(); });
+            this, [this] { rebuildScreenCache(); refreshViewportMetrics(); updateGeometry(); update(); });
     connect(static_cast<QGuiApplication *>(QCoreApplication::instance()),
             &QGuiApplication::screenRemoved,
-            this, [this] { rebuildScreenCache(); updateGeometry(); update(); });
+            this, [this] { rebuildScreenCache(); refreshViewportMetrics(); updateGeometry(); update(); });
     // v0.15: the PRIMARY can also change with no screen coming or going
     // — a compositor setting, a kscreen re-arrangement, a headless
     // session handing primary to a different output. screenAdded /
@@ -548,7 +557,7 @@ HudCanvas::HudCanvas(QWidget *parent) : QWidget(parent)
     // instead of serving the one cached for the old one.
     connect(static_cast<QGuiApplication *>(QCoreApplication::instance()),
             &QGuiApplication::primaryScreenChanged,
-            this, [this] { rebuildScreenCache(); updateGeometry(); update(); });
+            this, [this] { rebuildScreenCache(); refreshViewportMetrics(); updateGeometry(); update(); });
 }
 
 // ─── public API ─────────────────────────────────────────────────────────
@@ -869,7 +878,26 @@ void HudCanvas::setConsoleFidelityMode(bool on)
     if (on == consoleFidelity_)
         return;
     consoleFidelity_ = on;
+    // The flag swaps the whole fitting rule (board-viewport vs legacy
+    // stage), so the fixed-mode CONTENT extent moves with it.
+    refreshViewportMetrics();
     updateGeometry();
+    update();
+}
+
+// ─── v1.0.1 (#10): hide the in-board `.board-label` copy ───────────────
+//
+// Paint-only, console-only, DEFAULT VISIBLE — see the header note for
+// why the top bar's display picker stays the single full copy and this
+// one may go. Not gated on consoleFidelity_ in the SETTER: the flag is
+// state either way, and only the fidelity arm reads it, so forcing the
+// value outside fidelity mode cannot move a single legacy pixel (that
+// arm never painted the label).
+void HudCanvas::setFidelityBoardLabelVisible(bool visible)
+{
+    if (visible == boardLabelVisible_)
+        return;
+    boardLabelVisible_ = visible;
     update();
 }
 
@@ -1190,7 +1218,8 @@ QVector<HudCanvas::SubWindowPaintInfo> HudCanvas::layoutSubWindows(
         const qreal z = std::max(0.1, sub.src->scale());
         const QRect lrect = anchoredRect(QRect(QPoint(0, 0), logical),
                                         sub.src->corner(),
-                                        sub.src->margins(), content, z);
+                                        consoleFidelity_ ? sub.src->presentationMargins()
+                                                         : sub.src->margins(), content, z);
         const QRectF canvas(frameTopLeft.x() + lrect.x() * fit,
                            frameTopLeft.y() + lrect.y() * fit,
                            lrect.width() * fit, lrect.height() * fit);
@@ -1212,6 +1241,22 @@ void HudCanvas::setZoom(qreal z)
     z = std::clamp(z, 0.5, 4.0);
     if (qFuzzyCompare(z, zoom_)) return;
     zoom_ = z;
+    if (fixedViewport_) {
+        // v1.0.1 (#9): THE WIDGET'S GEOMETRY IS NOT A FUNCTION OF ZOOM
+        // HERE. No setFixedSize, no size-policy change — the natural
+        // height the ancestors see (sizeHint()/heightForWidth(), both
+        // zoom-suppressed in this mode) is the zoom-1 hint at every
+        // step, so a bare page, a QScrollArea child and a user's
+        // splitter keep the size they had. What moves is the INSIDE:
+        // the frame/content extent and the scroll range, picked up by
+        // refreshViewportMetrics() below and repainted through the one
+        // screenFrame() mapping.
+        refreshViewportMetrics();
+        updateGeometry();
+        update();
+        emit zoomChanged(zoom_);
+        return;
+    }
     if (zoom_ > 1.0) {
         // Enlarged: fix the canvas to its sizeHint so QScrollArea
         // shows scrollbars and the screen frame actually grows.
@@ -1224,10 +1269,194 @@ void HudCanvas::setZoom(qreal z)
         setMinimumSize(520, 360);
         setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
     }
+    refreshViewportMetrics();
     updateGeometry();
     update();
     emit zoomChanged(zoom_);
 }
+
+// ─── v1.0.1 (#9): fixed-viewport mode ──────────────────────────────────
+//
+// The mode switch and the three numbers the console's scrollbars need.
+// Everything geometric lives in fidelityBoardSizeF() /
+// viewportContentSizeF(); this block only selects behaviour.
+void HudCanvas::setFixedViewportMode(bool on)
+{
+    if (fixedViewport_ == on)
+        return;
+    fixedViewport_ = on;
+    if (on) {
+        // Was the legacy zoom>1 arm's setFixedSize() in effect? It is
+        // the ONLY thing in this widget that pins maximum to a zoomed
+        // hint (the constructor and the zoom<=1 arm both leave maximum
+        // at QWIDGETSIZE_MAX), so this predicate reads "we fixed this
+        // canvas to its zoomed size ourselves" — captured BEFORE the
+        // restoration below resets maximum.
+        const bool wasZoomFixed =
+            maximumWidth() != QWIDGETSIZE_MAX
+            || maximumHeight() != QWIDGETSIZE_MAX;
+        // RELEASE the zoom>1 fixed size the legacy arm may have left
+        // behind — turning the mode on while zoomed is the migration
+        // path a console takes, and without this the ancestor would
+        // keep inheriting the 2× hint forever. These three lines are
+        // the legacy arm's own zoom<=1 restoration, reused verbatim, so
+        // the widget lands on exactly the state a zoom<=1 canvas has.
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        setMinimumSize(520, 360);
+        setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        // AND shrink the artifact back: a canvas nobody else resizes
+        // (a widgetResizable(false) scroll child, a bare page) would
+        // otherwise sit at 2156×2112 forever — updateGeometry() cannot
+        // shrink a widget, only ask a layout to. sizeHint() here is
+        // already the zoom-1 hint (the flag flipped above), so this
+        // undoes exactly our own legacy damage. A parent that wants a
+        // different size may resize after us; its resize wins.
+        if (wasZoomFixed)
+            resize(sizeHint());
+    } else {
+        // LEAVING: re-apply the legacy arm for the CURRENT zoom, so
+        // mode-off is byte-identical to never-having-turned-it-on.
+        if (zoom_ > 1.0) {
+            setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+            setFixedSize(sizeHint());
+        } else {
+            setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+            setMinimumSize(520, 360);
+            setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        }
+        // The pan is a fixed-mode concept; leaving zeroes it (the clamp
+        // below does that because the range is 0 outside the mode).
+    }
+    refreshViewportMetrics();
+    updateGeometry();
+    update();
+}
+
+QSizeF HudCanvas::fidelityBoardSizeF() const
+{
+    const QSize phys = previewScreenInfo().physical;
+    const bool portrait = isPortrait(phys);
+    const qreal ar = physicalAspect(phys);
+    // The board is laid out against the WIDGET's avail in both arms —
+    // that base is the un-zoomed viewport in fixed mode, and the
+    // already-zoom-grown widget in the legacy mode (which is why the
+    // legacy arm divides the zoom back out below, exactly as
+    // screenFrame()/fidelityHeightForWidth() spell it).
+    const qreal availW = std::max(0.0, QRectF(rect())
+                                            .adjusted(kBoardPadX, kBoardPadTop,
+                                                      -kBoardPadX, 0.0)
+                                            .width());
+    if (fixedViewport_) {
+        // The widget never carries the zoom here, so the cap is the CSS
+        // cap at every step and the ×zoom is the WHOLE zoom — once.
+        const qreal boardW = (portrait
+            ? std::min(availW * kBoardPortraitFraction,
+                       kBoardMaxWidthPortrait)
+            : std::min(availW, kBoardMaxWidthLandscape)) * zoom_;
+        const qreal boardH = portrait
+            ? std::max(boardW * ar, kBoardPortraitMinHeight * zoom_)
+            : boardW * ar;
+        return QSizeF(boardW, boardH);
+    }
+    const qreal fitWidth = zoom_ > 1.0 ? availW / zoom_ : availW;
+    const qreal boardW = (portrait
+        ? std::min(fitWidth * kBoardPortraitFraction, kBoardMaxWidthPortrait)
+        : std::min(fitWidth, kBoardMaxWidthLandscape)) * zoom_;
+    const qreal boardH = portrait
+        ? std::max(boardW * ar, kBoardPortraitMinHeight * zoom_)
+        : boardW * ar;
+    return QSizeF(boardW, boardH);
+}
+
+QSizeF HudCanvas::viewportContentSizeF() const
+{
+    if (!fixedViewport_)
+        return QSizeF(size());   // widget IS the content: nothing scrolls
+    if (consoleFidelity_) {
+        // `.board-viewport { padding:12px 14px 0 }` around the board, and
+        // at least the widget — content is NEVER smaller than the
+        // viewport, so the range below is ≥ 0 by construction.
+        const QSizeF board = fidelityBoardSizeF();
+        return QSizeF(std::max(qreal(width()),
+                               board.width() + 2.0 * kBoardPadX),
+                      std::max(qreal(height()),
+                               board.height() + kBoardPadTop));
+    }
+    // Legacy arm: fit into the widget's own avail (zoom-1 space), then
+    // scale by zoom ONCE, then add the header/footer chrome. The fit
+    // mirrors screenFrame()'s legacy arm — minus its frameZoom split,
+    // because here the widget never pre-carried the zoom.
+    const QRectF avail0 =
+        QRectF(rect()).adjusted(22, 46, -22, -kFooter);
+    const QSize phys = previewScreenInfo().physical;
+    const qreal physAR = phys.height() / qreal(phys.width());
+    QSizeF screen(std::max(0.0, avail0.width()),
+                  std::max(0.0, avail0.width()) * physAR);
+    if (screen.height() > avail0.height())
+        screen = QSizeF(avail0.height() / physAR, avail0.height());
+    screen *= zoom_;
+    return QSizeF(std::max(qreal(width()), screen.width() + 44.0),
+                  std::max(qreal(height()),
+                           screen.height() + 46.0 + kFooter));
+}
+
+QSize HudCanvas::viewportContentSize() const
+{
+    const QSizeF c = viewportContentSizeF();
+    // Ceil, not round: a fractional board edge must still be INSIDE the
+    // content, or the last half-pixel of the frame would sit past the
+    // scrollable extent and be unreachable.
+    return QSize(int(std::ceil(c.width())), int(std::ceil(c.height())));
+}
+
+QSize HudCanvas::viewportScrollRange() const
+{
+    if (!fixedViewport_)
+        return QSize(0, 0);   // no mode: no scroll, whatever the size
+    const QSize c = viewportContentSize();
+    return QSize(std::max(0, c.width() - width()),
+                 std::max(0, c.height() - height()));
+}
+
+void HudCanvas::setViewportScrollOffset(QPoint offset)
+{
+    const QSize r = viewportScrollRange();
+    applyViewportScroll(QPoint(qBound(0, offset.x(), r.width()),
+                               qBound(0, offset.y(), r.height())));
+}
+
+void HudCanvas::applyViewportScroll(QPoint offset)
+{
+    if (viewportScrollOffset_ == offset)
+        return;
+    viewportScrollOffset_ = offset;
+    // screenFrame() subtracts this offset itself, so paint, hit-test
+    // and drag all move together with one update().
+    update();
+    emit viewportScrollChanged(viewportScrollOffset_);
+}
+
+void HudCanvas::clampViewportScroll()
+{
+    // Re-applies the CURRENT range to the stored offset: an offset that
+    // used to be legal and isn't anymore (content shrank, widget grew,
+    // mode switched off → range 0,0) is written clamped, never left
+    // dangling outside the scrollable extent.
+    setViewportScrollOffset(viewportScrollOffset_);
+}
+
+void HudCanvas::refreshViewportMetrics()
+{
+    if (fixedViewport_) {
+        const QSize c = viewportContentSize();
+        if (c != notifiedContentSize_) {
+            notifiedContentSize_ = c;
+            emit viewportContentChanged(c);
+        }
+    }
+    clampViewportScroll();
+}
+
 
 QSize HudCanvas::sizeHint() const
 {
@@ -1247,9 +1476,18 @@ QSize HudCanvas::sizeHint() const
     // like from the inside.
     //
     // Zoom still scales the width; the height now follows from the ratio.
+    //
+    // v1.0.1 (#9): FIXED-VIEWPORT MODE answers the zoom-1 hint at every
+    // zoom — `hz` below — because there the widget's natural size must
+    // NOT be a function of zoom: the measured defect was a bare page at
+    // 1078×1062 (z1) growing to 2156×2112 (z2) and the console's
+    // 1400×760 scroll child going 1398×758 → 2156×2112. The zoom lives
+    // in viewportContentSizeF()/screenFrame() instead — inside the
+    // viewport, never in the hint the ancestors lay out from.
     const QSize phys = previewScreenInfo().physical;
     const qreal ar = phys.height() / qreal(phys.width());
-    const int w = qRound(820 * (zoom_ > 1.0 ? zoom_ : 1.0));
+    const qreal hz = fixedViewport_ ? 1.0 : zoom_;
+    const int w = qRound(820 * (hz > 1.0 ? hz : 1.0));
     const int h = qRound(w * ar) + kHeader + kFooter;
     if (consoleFidelity_) {
         // THE NATURAL WIDTH OF THE FIDELITY BOARD, so a shell sizing
@@ -1264,7 +1502,7 @@ QSize HudCanvas::sizeHint() const
             : kBoardMaxWidthLandscape;
         const qreal scaled =
             std::max(820.0, naturalW + 2.0 * kBoardPadX)
-                * (zoom_ > 1.0 ? zoom_ : 1.0);
+                * (hz > 1.0 ? hz : 1.0);
         const int fw = qRound(scaled);
         return QSize(fw, std::max(360, fidelityHeightForWidth(fw)));
     }
@@ -1310,11 +1548,26 @@ int HudCanvas::fidelityHeightForWidth(int width) const
     const QSize phys = previewScreenInfo().physical;
     const qreal ar = physicalAspect(phys);
     const qreal availW = std::max(0.0, width - 2.0 * kBoardPadX);
-    const qreal boardW = isPortrait(phys)
-        ? std::min(availW * kBoardPortraitFraction, kBoardMaxWidthPortrait)
-        : std::min(availW, kBoardMaxWidthLandscape);
+    // v1.0.1 (#5): THE CAP CONSUMES ZOOM. At zoom 1.0 this is
+    // byte-for-byte the CSS rule (min(100%,1050px) / min(48%,560px)),
+    // so the cap baseline every existing check measures is untouched.
+    // At z>1 the widget width already grew by z in sizeHint(), so the
+    // cap growing by z too yields board = cap*z exactly ONCE — never
+    // z² — and the height follows with the same z. Without this the
+    // widget widened while the board sat at its cap and every zoom step
+    // only painted more empty ground.
+    //
+    // v1.0.1 (#9): in FIXED-VIEWPORT MODE `hz` is 1 — this is the
+    // ANCESTOR-facing height and the widget never grows there, so it
+    // answers the zoom-1 height at every zoom; the zoomed extent that
+    // makes the image scroll instead comes from viewportContentSizeF().
+    const qreal hz = fixedViewport_ ? 1.0 : zoom_;
+    const qreal fitWidth = hz > 1.0 ? availW / hz : availW;
+    const qreal boardW = (isPortrait(phys)
+        ? std::min(fitWidth * kBoardPortraitFraction, kBoardMaxWidthPortrait)
+        : std::min(fitWidth, kBoardMaxWidthLandscape)) * hz;
     const qreal boardH = isPortrait(phys)
-        ? std::max(boardW * ar, kBoardPortraitMinHeight)
+        ? std::max(boardW * ar, kBoardPortraitMinHeight * hz)
         : boardW * ar;
     return qRound(kBoardPadTop + boardH);
 }
@@ -1507,6 +1760,9 @@ void HudCanvas::setPreviewScreen(QString outputName)
     // QGuiApplication::screens() so it lands on real geometry. Cheap:
     // this is the plain in-process QScreen walk, not detect().
     rebuildScreenCache();
+    // v1.0.1 (#9): a new preview screen is a new aspect ratio ⇒ a new
+    // board size ⇒ a new fixed-mode content extent.
+    refreshViewportMetrics();
     updateGeometry();
     update();
 }
@@ -1564,6 +1820,9 @@ void HudCanvas::setOverview(bool on, const QString &screen)
         savedPreviewOutput_.clear();
     }
     rebuildScreenCache();
+    // v1.0.1 (#9): a new preview screen is a new aspect ratio ⇒ a new
+    // board size ⇒ a new fixed-mode content extent.
+    refreshViewportMetrics();
     updateGeometry();
     update();
 }
@@ -1592,6 +1851,15 @@ void HudCanvas::setOverview(bool on, const QString &screen)
 // This is a CONFIGURATION fact, not a view state, so it is stable under
 // the screen switch and under selectPanel(): the user can flip the
 // display dropdown all they like without moving a single window.
+namespace detail {
+// v1.0.1 (#8): forward declaration of the output-resolution seam. The
+// full definition — and why it exists — sits with resolveBoundOutput
+// below; this declaration is here only because windowOutputName(),
+// defined before that block, already routes through it.
+QString effectiveOutputName(const QString &own, const QString &parentOutput,
+                            const QString &primaryOutput);
+} // namespace detail
+
 QString HudCanvas::windowOutputName(int panelIndex, int subIndex) const
 {
     const PanelSource *src = nullptr;
@@ -1606,7 +1874,7 @@ QString HudCanvas::windowOutputName(int panelIndex, int subIndex) const
         // prototype's `scope().panels[win.panel].output` is.
         const QString own = src->outputName();
         if (!own.isEmpty())
-            return own;
+            return screen_query::effectiveOutputName(own);
         const int parent = subSlots_[subIndex].parentSlot;
         if (mhw::isPanelIndex(parent))
             panelIndex = parent;
@@ -1632,13 +1900,17 @@ QString HudCanvas::windowOutputName(int panelIndex, int subIndex) const
         return {};
     }
 
-    if (mhw::isPanelIndex(panelIndex) && slots_[panelIndex].src) {
-        const QString parentName = slots_[panelIndex].src->outputName();
-        if (!parentName.isEmpty())
-            return parentName;
-    }
-    // Step 3: the primary, as a name (not the screen state).
-    return primaryOutputName();
+    QString parentName;
+    if (mhw::isPanelIndex(panelIndex) && slots_[panelIndex].src)
+        parentName = slots_[panelIndex].src->outputName();
+    // v1.0.1 (#8): the tail is ONE chain-spelling with boundOutputName's
+    // — detail::effectiveOutputName, the stand-in for
+    // screen_query::effectiveOutputName (own → parent → primary). For a
+    // mother the "parent" step re-reads its own outputName, so this
+    // collapses to own → primary for free; for a sub-window the early
+    // return above already took a non-empty own. The last step is the
+    // PRIMARY and never previewOutputName_ (the viewer).
+    return detail::effectiveOutputName({}, parentName, primaryOutputName());
 }
 
 QString HudCanvas::primaryOutputName() const
@@ -1750,6 +2022,36 @@ concept HasPreviewFallback = requires(const T &t) {
     { t.previewFallbackOutput() } -> std::convertible_to<QString>;
 };
 
+// ─── v1.0.1 (#8): THE OUTPUT-RESOLUTION SEAM ──────────────────────────
+//
+// windowOutputName(), boundOutputName() and the console's filter/count
+// all have to answer ONE question with ONE chain:
+//
+//     own output  ->  parent panel's output  ->  the primary
+//
+// This forwarder is that chain, spelled once in this file. The runtime
+// lane owns the canonical screen_query::effectiveOutputName and the
+// parent session swaps this body for that call — the signature the
+// sibling must provide is:
+//
+//     QString screen_query::effectiveOutputName(const QString &own,
+//                                               const QString &parentOutput,
+//                                               const QString &primaryOutput);
+//
+// While it is missing, this implements the same chain, so no consumer
+// waits on the interface. THE LAST STEP IS THE PRIMARY AND NEVER
+// previewOutputName_ (the viewer): a window that follows its
+// parent/primary LIVES on that screen, and the canvas's preview screen
+// is a view state, not a location.
+QString effectiveOutputName(const QString &own,
+                            const QString &parentOutput,
+                            const QString &primaryOutput)
+{
+    const QString intent = !own.isEmpty() ? own
+                         : !parentOutput.isEmpty() ? parentOutput : primaryOutput;
+    return screen_query::effectiveOutputName(intent);
+}
+
 // Resolve one binding's screen, by the rule in the comment above.
 //
 // A TEMPLATE, not a plain function, and that is load-bearing: `if
@@ -1764,10 +2066,10 @@ concept HasPreviewFallback = requires(const T &t) {
 // which is exactly what has to be true for the split sub-window path
 // to start working the day panel_source.h grows the accessors.
 template <typename T>
-QString resolveBoundOutput(const T *src, const QString &canvasScreen)
+QString resolveBoundOutput(const T *src, const QString &chainFallback)
 {
     if (!src)
-        return canvasScreen;
+        return chainFallback;
 
     QString name;
     if constexpr (HasOutputName<T>)
@@ -1780,17 +2082,26 @@ QString resolveBoundOutput(const T *src, const QString &canvasScreen)
         if (name.isEmpty())
             name = src->previewFallbackOutput();
     }
-    // Step 3. `name` is empty exactly when the source has no screen of
-    // its own to name — which is the pre-fix condition, so the fallback
-    // is the canvas's screen and nothing moves.
-    return name.isEmpty() ? canvasScreen : name;
+    // v1.0.1 (#8): Step 3, ONE chain-spelling with windowOutputName's —
+    // detail::effectiveOutputName, the stand-in for
+    // screen_query::effectiveOutputName. `name` is empty exactly when
+    // the source names no screen even after the console's pushed
+    // fallback, so the answer is the CHAIN's primary — never the
+    // canvas's preview screen (the viewer).
+    return effectiveOutputName(name, {}, chainFallback);
 }
 
 } // namespace detail
 
 QString HudCanvas::boundOutputName(const PanelSource *src) const
 {
-    return detail::resolveBoundOutput(src, previewOutputName_);
+    // v1.0.1 (#8): the chain's last step is the PRIMARY, not the
+    // canvas's preview screen. The console already pushes the parent
+    // panel's output (or the primary's name) into a split window's
+    // previewFallbackOutput, so what is left to remove here is exactly
+    // the viewer fallback: a mother/child that FOLLOWS must be measured
+    // against where the output chain puts it.
+    return detail::resolveBoundOutput(src, primaryOutputName());
 }
 
 // ─── geometry helpers ───────────────────────────────────────────────────
@@ -2043,6 +2354,40 @@ void HudCanvas::paintEvent(QPaintEvent *)
             p.fillPath(band, bandColor);
         }
 
+        // ─── v1.0.1 (#6): THE ALPHA-READ CHECKER ─────────────────────
+        //
+        // A neutral micro-checker under the windows so a translucent
+        // pixmap has something structured to reveal it against: opacity
+        // is baked into the pixmap's alpha, and on a flat ground a 60%
+        // panel and a solid one look alike — on a checker the ghosting
+        // is obvious. Console-preview only; the real HUD never sees it
+        // and no pixel baseline measures it. The alphas are baked into
+        // the colours (never QPainter::setOpacity — a second opacity
+        // multiply is the double-alpha bug). The selection outline
+        // deliberately does not scale with a window's opacity: it is
+        // chrome, not content.
+        if (transparencyGuide_) {
+            const QRectF cells = frame.adjusted(kBoardInset, kBoardInset,
+                                                 -kBoardInset, -kBoardInset);
+            // One cached repeating brush, not thousands of rectangles
+            // per mouse move when the display preview is zoomed in.
+            static const QPixmap tile = [] {
+                const int cell = int(kBoardCheckerCell);
+                QPixmap pm(2 * cell, 2 * cell);
+                pm.fill(QColor(0, 0, 0, kBoardCheckerDarkAlpha));
+                QPainter tp(&pm);
+                tp.setCompositionMode(QPainter::CompositionMode_Source);
+                const QColor light(255, 255, 255, kBoardCheckerLightAlpha);
+                tp.fillRect(QRect(cell, 0, cell, cell), light);
+                tp.fillRect(QRect(0, cell, cell, cell), light);
+                return pm;
+            }();
+            p.save();
+            p.setBrushOrigin(cells.topLeft());
+            p.fillRect(cells, QBrush(tile));
+            p.restore();
+        }
+
         // ─── `.board.editing::before` — the 5% x 5% lattice ───────────
         //
         // `inset:12px` puts it on exactly the rect the band frames;
@@ -2094,16 +2439,27 @@ void HudCanvas::paintEvent(QPaintEvent *)
         // `letter-spacing:.04em` (0.4px at 10px), `pointer-events:none`
         // — which in a canvas means it is painted last among the chrome
         // and takes no part in hit-testing, exactly as below.
-        p.save();
-        QFont labelFont = cardMonoFont(kBoardMonoPt);
-        labelFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.4);
-        p.setFont(labelFont);
-        p.setPen(QColor(0x87, 0x86, 0x7f));   // --board-fg-3
-        p.drawText(QRectF(frame.left() + 14.0, frame.top() + 12.0,
-                          std::max(0.0, frame.width() - 28.0), 16.0),
-                   Qt::AlignLeft | Qt::AlignVCenter,
-                   fidelityBoardLabel());
-        p.restore();
+        //
+        // v1.0.1 (#10): CONSOLE-ONLY SWITCH. The console's top bar keeps
+        // the one authoritative display picker, so this in-board repeat
+        // of `output · W×H · logical coordinate space` can be turned off
+        // with setFidelityBoardLabelVisible(false). Default true = this
+        // block paints byte-for-byte as before; paint-only (no geometry
+        // role above), so frame/content/scroll/drag are identical
+        // either way. The legacy arm below never painted the label at
+        // all, so there is no legacy baseline to move.
+        if (boardLabelVisible_) {
+            p.save();
+            QFont labelFont = cardMonoFont(kBoardMonoPt);
+            labelFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.4);
+            p.setFont(labelFont);
+            p.setPen(QColor(0x87, 0x86, 0x7f));   // --board-fg-3
+            p.drawText(QRectF(frame.left() + 14.0, frame.top() + 12.0,
+                              std::max(0.0, frame.width() - 28.0), 16.0),
+                       Qt::AlignLeft | Qt::AlignVCenter,
+                       fidelityBoardLabel());
+            p.restore();
+        }
     } else {
     QLinearGradient bg(frame.topLeft(), frame.bottomRight());
     bg.setColorAt(0,    QColor(34, 50, 42));
@@ -2271,7 +2627,20 @@ void HudCanvas::paintEvent(QPaintEvent *)
     // `|| overviewMode_` was a second, competing model: it kept the pets
     // box OFF the overview (which now counts it) and left it ON every
     // panel view (which counted it nowhere, the model having no row).
-    const bool drawMothers = subSlots_.isEmpty();
+    // v1.0.1 (#11): MIXED DRAWS MOTHERS ALONGSIDE THEIR DETACHED CHILDREN.
+    // The old gate was Split-only thinking — `subSlots_.isEmpty()` said
+    // "no child bindings ⇒ this is a monolith, paint the mothers", so in
+    // Mixed (per-row topology: some rows in the mother, some detached)
+    // ANY binding suppressed EVERY present mother while its children
+    // drew, and the retained rows fell out of the preview entirely.
+    // Mixed adds itself to the gate: present mothers paint (the
+    // bound/present/visible guards below still decide each one), and
+    // the children's own arm is untouched. PURE SPLIT IS BYTE-IDENTICAL
+    // — non-empty vector and mode != Mixed still yields false, pets
+    // exception included; SINGLE still clears its bindings in
+    // setLayoutMode(), so isEmpty() remains true there.
+    const bool drawMothers = subSlots_.isEmpty()
+        || layoutMode_ == mhw::PlayerSection::PlayerLayoutMode::Mixed;
     // v1.0.0 (OUTPUT-OWNERSHIP-FIX, C3): the PANEL VIEW's own filter.
     // reference.html:442 applies `resolveOutput(w) === state.display` in
     // BOTH views — it is not an overview-only rule — and Qt's board used
@@ -2342,9 +2711,26 @@ void HudCanvas::paintEvent(QPaintEvent *)
         const Slot &s = slots_[i];
         const qreal z = std::max(0.1, s.src->scale());
         const QSize cs = s.src->contentSize();
+        // v1.0.1 (#11): NO EMPTY SHELL IN MIXED. In Mixed the mother is
+        // supposed to hold exactly the ROWS nobody detached, and the
+        // SOURCE is the single place that knows how much that is: the
+        // overlay's panel drops a detached section's pixels AND its
+        // height (panel_sections.h: sectionOn() gates both), so a mother
+        // whose rows have all been detached reports a zero extent.
+        // Painting its old box anyway would be a shell whose body
+        // replays pixels its children now draw — the double-draw this
+        // lane must not ship. Skip the mother; its bindings' boxes
+        // paint below.
+        // GATED ON MIXED ONLY: Single/Split keep their exact legacy
+        // painting, and the `bound` guard above stays a separate
+        // predicate (see its comment — merging it once segfaulted Split).
+        if (layoutMode_ == mhw::PlayerSection::PlayerLayoutMode::Mixed
+            && (cs.width() <= 0 || cs.height() <= 0))
+            continue;
         const QRect lrect = anchoredRect(QRect(QPoint(0, 0), logical),
                                          s.src->corner(),
-                                         s.src->margins(), cs, z);
+                                         consoleFidelity_ ? s.src->presentationMargins()
+                                                          : s.src->margins(), cs, z);
         const QRectF target = logicalToCanvas(lrect);
 
         if (!s.pixmap.isNull() && s.enabled) {
@@ -3082,10 +3468,14 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
     if (overviewMode_) {
         for (int i = subSlots_.size() - 1; i >= 0; --i) {
             if (i < subRects_.size() && subRects_[i].contains(e->position())) {
-                const bool changed = (subSelected_ != i);
                 subSelected_ = i;
-                if (changed)
-                    emit subWindowSelected(i);
+                // v1.0.1 (#7): a RE-CLICK notifies too. The console's
+                // handler is what fills the inspector, and a silent
+                // press on the already-selected box was the 「重点击静默
+                // 失效」 report. setSelectedSubWindow() (the
+                // console-driven setter) never emits, so the echo
+                // cannot loop.
+                emit subWindowSelected(i);
                 update();
                 return;
             }
@@ -3093,11 +3483,13 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
         for (int i = mhw::kPanelCount - 1; i >= 0; --i) {
             if (!slots_[i].lastTarget_.contains(e->position()))
                 continue;
-            if (i != selected_) {
-                selected_ = i;
-                update();
-                emit panelSelected(i);
-            }
+            selected_ = i;
+            update();
+            // v1.0.1 (#7): every user click notifies — including the
+            // re-click on the already-highlighted default panel. The
+            // no-loop guarantee is the same as below: setSelectedPanel()
+            // is the console-driven setter and never emits.
+            emit panelSelected(i);
             return;
         }
         return;   // empty space: no drag, no selection change
@@ -3147,7 +3539,6 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
     if (!subSlots_.isEmpty()) {
         for (int i = subSlots_.size() - 1; i >= 0; --i) {
             if (i < subRects_.size() && subRects_[i].contains(e->position())) {
-                const bool changed = (subSelected_ != i);
                 subSelected_ = i;
                 // v1.0.0: the drag half, gated. Selection and the signal
                 // are above and unconditional; these four lines are the
@@ -3160,8 +3551,9 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
                     subDragStartMargins_ = subSlots_[i].src->margins();
                     setCursor(Qt::ClosedHandCursor);
                 }
-                if (changed)
-                    emit subWindowSelected(i);
+                // v1.0.1 (#7): unconditional — see the overview arm's
+                // note. A child re-click also notifies the inspector.
+                emit subWindowSelected(i);
                 update();
                 return;
             }
@@ -3179,11 +3571,15 @@ void HudCanvas::mousePressEvent(QMouseEvent *e)
 
     for (int i = mhw::kPanelCount - 1; i >= 0; --i) {
         if (slots_[i].lastTarget_.contains(e->position())) {
-            if (i != selected_) {
-                selected_ = i;
-                update();
-                emit panelSelected(i);
-            }
+            selected_ = i;
+            update();
+            // v1.0.1 (#7): EVERY user click emits — including a re-click
+            // on the default-highlighted panel and, in Split, the pets
+            // box this arm also serves. console's panelSelected handler
+            // fills the WindowState inspector; the console-driven
+            // setSelectedPanel() stays signal-free, so a console echo
+            // cannot close the loop.
+            emit panelSelected(i);
             // Start drag — v1.0.0: gated, exactly as the sub-window arm
             // above. Selection is not a write; this is.
             if (canDrag) {
@@ -3249,24 +3645,30 @@ void HudCanvas::screenFrame(QRectF &frame, qreal &fit, QSize &logical) const
     // is visible. The rounding costs at most half a logical pixel of
     // aspect ratio and it buys an exact border.
     if (consoleFidelity_) {
+        // v1.0.1 (#9): WHERE THE FRAME IS MEASURED FROM. Legacy mode
+        // centres it in the WIDGET (rect()); fixed-viewport mode
+        // centres it in the CONTENT extent and then subtracts the
+        // scroll offset — inside this one function, so paint,
+        // hit-test and drag consume the offset frame by construction
+        // and cannot drift apart. fidelityBoardSizeF() applies the zoom
+        // exactly once in both arms (its legacy arm divides back the
+        // zoom the grown widget already carries, its fixed arm has no
+        // widget growth to divide out).
+        const QSizeF board = fidelityBoardSizeF();
+        const QRectF base = fixedViewport_
+            ? QRectF(QPointF(0.0, 0.0), viewportContentSizeF())
+            : QRectF(rect());
         const QRectF avail =
-            QRectF(rect()).adjusted(kBoardPadX, kBoardPadTop, -kBoardPadX, 0.0);
-        const bool portrait = isPortrait(phys);
-        const qreal ar = physicalAspect(phys);
-        const qreal availW = std::max(0.0, avail.width());
-        const qreal boardW = portrait
-            ? std::min(availW * kBoardPortraitFraction, kBoardMaxWidthPortrait)
-            : std::min(availW, kBoardMaxWidthLandscape);
-        const qreal boardH = portrait
-            ? std::max(boardW * ar, kBoardPortraitMinHeight)
-            : boardW * ar;
-
+            base.adjusted(kBoardPadX, kBoardPadTop, -kBoardPadX, 0.0);
         const qreal cx = avail.center().x();
-        qreal top = avail.center().y() - boardH / 2.0;
+        qreal top = avail.center().y() - board.height() / 2.0;
         if (top < avail.top())
             top = avail.top();
-        frame = QRectF(QPointF(qRound(cx - boardW / 2.0), qRound(top)),
-                       QSizeF(qRound(boardW), qRound(boardH)));
+        frame = QRectF(QPointF(qRound(cx - board.width() / 2.0), qRound(top)),
+                       QSizeF(qRound(board.width()), qRound(board.height())));
+        if (fixedViewport_)
+            frame.translate(-qreal(viewportScrollOffset_.x()),
+                            -qreal(viewportScrollOffset_.y()));
         fit = ((logical.width() <= 0 || logical.height() <= 0))
             ? 0.0
             : std::min(frame.width() / logical.width(),
@@ -3276,12 +3678,42 @@ void HudCanvas::screenFrame(QRectF &frame, qreal &fit, QSize &logical) const
 
     const QRectF avail = QRectF(rect()).adjusted(22, 46, -22, -kFooter);
 
+    // v1.0.1 (#5): ZOOM BELOW 1 SHRINKS THE FRAME ITSELF. At zoom>1
+    // setZoom() fixed the widget to sizeHint()*z, so `avail` already
+    // carries the zoom and multiplying here too would square it (z²);
+    // at zoom<=1 the widget stays viewport-sized (Expanding), so the
+    // shrink has nowhere else to come from. At 1.0 the factor is 1 and
+    // this is the exact baseline fit. `screen *= factor` after the fit
+    // keeps the frame <= avail in both arms, so the centred rect can
+    // never go negative and get clipped at an edge.
+    //
+    // v1.0.1 (#9): FIXED-VIEWPORT MODE flips the first sentence — the
+    // widget NEVER carries the zoom there, so the fit runs against the
+    // widget's zoom-1 avail and frameZoom IS the zoom, once. The frame
+    // is then centred in the CONTENT extent (never against the already
+    // zoomed numbers — that is the z² path) and the scroll offset comes
+    // off last, through the same mapping paint and hit-test read.
+    const qreal frameZoom = fixedViewport_
+        ? zoom_
+        : ((zoom_ > 1.0) ? 1.0 : zoom_);
     QSizeF screen(avail.width(), avail.width() * physAR);
     if (screen.height() > avail.height())
         screen = QSizeF(avail.height() / physAR, avail.height());
-    frame = QRectF(QPointF(avail.center().x() - screen.width() / 2,
-                           avail.center().y() - screen.height() / 2),
-                   screen);
+    screen *= frameZoom;
+    if (fixedViewport_) {
+        const QRectF cAvail =
+            QRectF(QPointF(0.0, 0.0), viewportContentSizeF())
+                .adjusted(22, 46, -22, -kFooter);
+        frame = QRectF(QPointF(cAvail.center().x() - screen.width() / 2,
+                               cAvail.center().y() - screen.height() / 2),
+                       screen);
+        frame.translate(-qreal(viewportScrollOffset_.x()),
+                        -qreal(viewportScrollOffset_.y()));
+    } else {
+        frame = QRectF(QPointF(avail.center().x() - screen.width() / 2,
+                               avail.center().y() - screen.height() / 2),
+                       screen);
+    }
     fit = ((logical.width() <= 0 || logical.height() <= 0))
         ? 0.0
         : std::min(frame.width() / logical.width(),
@@ -3470,4 +3902,11 @@ void HudCanvas::keyPressEvent(QKeyEvent *e)
     emit panelMoved(selected_, movedMargins(selected_, dx, dy));
 }
 
-void HudCanvas::resizeEvent(QResizeEvent *) { update(); }
+void HudCanvas::resizeEvent(QResizeEvent *)
+{
+    // v1.0.1 (#9): a resize moves the CONTENT-vs-VIEWPORT split (the
+    // extent is ≥ size(), so shrinking the widget opens scroll range
+    // and growing it closes it) — re-emit and re-clamp, then repaint.
+    refreshViewportMetrics();
+    update();
+}

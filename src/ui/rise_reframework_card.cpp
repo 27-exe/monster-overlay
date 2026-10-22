@@ -47,6 +47,101 @@ namespace mh {
 inline QString tr(const QString &key) { return mhw::StringTable::instance().tr(key); }
 } // namespace mh
 
+namespace {
+
+// The RAIL (sidebar) summary — the read-only block the console builds into its
+// scroll column next to the game switch and the panel list while Rise is
+// selected. It answers two questions at a glance: "is REFramework there?" and
+// "is the overlay Lua there?".
+//
+// Two hard rules, both inherited from the state machine this was extracted
+// from rather than invented here:
+//
+//  1. NO SECOND PROBE. Every branch reads the SAME Status snapshot and the
+//     SAME menu-state report refresh() already took for the settings card.
+//     Running the locator or the manager again for a second surface would
+//     give the two surfaces two readings of one question, and they could
+//     disagree by a tick — the exact inconsistency this card was split out
+//     to prevent.
+//  2. NO ACTIONS. The rail block is labels only; the install / remove entry
+//     points stay on the card, because a second copy in the rail is the
+//     duplicate-entry-point problem the console is busy removing elsewhere.
+//
+// What it deliberately does NOT say: the game directory path, the raw
+// installer detail, or the operation result — the card's paragraph already
+// says all of that, at length, one modal away. The rail keeps one glance.
+QString railSummaryText(const QString &gameDir,
+                        const mhw::RiseReFrameworkManager::Status &status,
+                        const mhw::ReFrameworkMenuStateReport &menu,
+                        bool operationPending)
+{
+    using CoreState = mhw::RiseReFrameworkManager::CoreState;
+    using LuaState = mhw::RiseReFrameworkManager::LuaState;
+    using ManifestState = mhw::RiseReFrameworkManager::ManifestState;
+
+    const bool dirUsable = !gameDir.isEmpty() && status.gameDirValid;
+    const bool corePresent = status.core == CoreState::Managed
+                             || status.core == CoreState::External;
+
+    QStringList lines;
+
+    // Line 1 — the core. The "abnormal" cases the card folds into its
+    // paragraph (manifest invalid, a Lua that no longer matches the packaged
+    // copy, a core that does not match its manifest) are surfaced here as
+    // explicit states instead of being hidden behind "ready".
+    const char *rfKey = nullptr;
+    if (gameDir.isEmpty())
+        rfKey = "console.reframework.side_rf_no_dir";
+    else if (!status.gameDirValid)
+        rfKey = "console.reframework.side_rf_bad_dir";
+    else if (status.core == CoreState::Conflict)
+        rfKey = "console.reframework.side_rf_conflict";
+    else if (status.core == CoreState::Absent)
+        rfKey = "console.reframework.side_rf_missing";
+    else if (status.manifest == ManifestState::Invalid
+             || status.lua == LuaState::Modified)
+        rfKey = "console.reframework.side_rf_incomplete";
+    else
+        rfKey = "console.reframework.side_rf_ok";
+    lines.append(mh::tr(QStringLiteral("console.reframework.side_rf"))
+                     .arg(mh::tr(QString::fromLatin1(rfKey))));
+
+    // Line 2 — the script. Meaningless until there is a directory to look
+    // in, so with no usable install only line 1 is shown.
+    if (dirUsable) {
+        const char *luaKey =
+            status.lua == LuaState::Missing
+                ? "console.reframework.side_lua_missing"
+                : status.lua == LuaState::Modified
+                      ? "console.reframework.side_lua_modified"
+                      : "console.reframework.side_lua_installed";
+        lines.append(mh::tr(QStringLiteral("console.reframework.side_lua"))
+                         .arg(mh::tr(QString::fromLatin1(luaKey))));
+    }
+
+    // Line 3 — the menu-popup state, only while a core exists to read it.
+    // Same key set the card's menu label resolves, so the two cannot drift.
+    if (corePresent) {
+        const char *menuKey =
+            menu.state == mhw::ReFrameworkMenuState::Overridden
+                ? "console.reframework.menu_state_overridden"
+                : menu.state == mhw::ReFrameworkMenuState::Default
+                      ? "console.reframework.menu_state_default"
+                      : "console.reframework.menu_state_unknown";
+        lines.append(mh::tr(QString::fromLatin1(menuKey)));
+    }
+
+    // An in-flight worker makes every file state above a pre-operation
+    // reading; say so for the couple of seconds it lasts rather than let the
+    // rail contradict the card. Same key, same bookkeeping flag.
+    if (operationPending)
+        lines.append(mh::tr(QStringLiteral("console.reframework.pending")));
+
+    return lines.join(QLatin1Char('\n'));
+}
+
+} // namespace
+
 RiseReframeworkCard::RiseReframeworkCard(ControlPanel *owner)
     : owner_(owner)
 {
@@ -158,19 +253,69 @@ void RiseReframeworkCard::build(QWidget *contentParent, QVBoxLayout *inspectorLa
     inspectorLayout->addSpacing(12);
 }
 
+void RiseReframeworkCard::buildSidebarSummary(QWidget *sidebarParent,
+                                              QVBoxLayout *scrollLayout)
+{
+    // Read-only by contract: TWO labels and nothing else. The install /
+    // remove / menu-fix buttons live on the card in the settings dialog, and
+    // a second copy here would be two entry points for one operation — the
+    // exact duplication the console is removing elsewhere (see the header).
+    auto *block = new QWidget(sidebarParent);
+    block->setObjectName(QStringLiteral("riseReframeworkSide"));
+    auto *blockLayout = new QVBoxLayout(block);
+    blockLayout->setContentsMargins(0, 0, 0, 0);
+    blockLayout->setSpacing(4);
+
+    // Section caption, same objectName and registration channel as the rail's
+    // other two captions (游戏 / 面板) so retranslateUi() replays it the same
+    // way and it inherits the same QSS.
+    auto *title = new QLabel(block);
+    owner_->trSet(title, QStringLiteral("console.reframework.side_title"));
+    title->setObjectName(QStringLiteral("sideLabel"));
+    blockLayout->addWidget(title);
+
+    // The composed status text. NOT trSet-registered: it is not a fixed
+    // string — refresh() recomposes it from the same probe the card uses, and
+    // retranslateUi() calls refresh() right after replaying the registry, so
+    // the text follows the language without a second owner for one widget.
+    // No dedicated QSS rule either: it inherits the console's global label
+    // (background transparent, fg colour), so it stays correct across theme
+    // and locale switches without a style rule of its own.
+    auto *summary = new QLabel(block);
+    summary->setObjectName(QStringLiteral("riseReframeworkSideStatus"));
+    summary->setWordWrap(true);
+    blockLayout->addWidget(summary);
+
+    sideBlock_ = block;
+    sideStatusLabel_ = summary;
+    scrollLayout->addWidget(block);
+}
+
 void RiseReframeworkCard::refresh()
 {
+    const bool riseSelected = owner_->currentGame() == mhw::GameId::Rise;
+
+    // The rail summary is a plain child of the console's rail: it is on
+    // screen for the whole session, so the game switch alone gates it.
+    if (sideBlock_)
+        sideBlock_->setVisible(riseSelected);
+
     // A REAL test now. card_ is a QPointer (rise_reframework_card.h): the
     // settings dialog this card was built into is a stack QDialog, so
     // after exec() returns its children - every handle below - are
     // deleted while the owner's 1500 ms tick keeps calling us. When
     // card_ is null the card is not on any screen, and every other
     // handle is its child, so the answer is the same for all of them.
-    if (card_.isNull())
-        return;
+    // The RAIL summary is deliberately NOT behind that test: it must
+    // answer before the settings dialog has ever been opened, which is
+    // why the probe below runs first and only the card half is skipped.
+    const bool cardOnScreen = !card_.isNull();
+    if (cardOnScreen)
+        card_->setVisible(riseSelected);
 
-    const bool riseSelected = owner_->currentGame() == mhw::GameId::Rise;
-    card_->setVisible(riseSelected);
+    // World has no REFramework surface at all: the rail block was hidden
+    // above, the card with it, and no probe runs — the same as before the
+    // summary existed.
     if (!riseSelected)
         return;
 
@@ -181,6 +326,24 @@ void RiseReframeworkCard::refresh()
     const mhw::RiseReFrameworkManager manager(QCoreApplication::applicationDirPath());
     const mhw::RiseReFrameworkManager::Status status = manager.status(gameDir_);
     const bool gameRunning = mhw::detectGame().has_value();
+
+    // Read ONCE per tick and shared by the card's menu-state label below and
+    // the rail summary above it: one read, two presentations. It used to run
+    // inside `if (menuStateLabel_)`, i.e. only while the settings dialog was
+    // open; the rail needs the same answer while that dialog is closed.
+    // Read-only — queryReFrameworkMenuState inspects and writes nothing.
+    const mhw::ReFrameworkMenuStateReport menuReport =
+        mhw::queryReFrameworkMenuState(gameDir_);
+
+    // The rail summary first: it is filled whether or not the card half
+    // below runs, and it is derived from THIS probe — never from one of its
+    // own (see railSummaryText).
+    if (sideStatusLabel_)
+        sideStatusLabel_->setText(
+            railSummaryText(gameDir_, status, menuReport, operationPending_));
+
+    if (!cardOnScreen)
+        return;
 
     // The readable status lines are derived by the widget-free view model
     // (src/ui/viewmodel/rise_reframework_status.cpp), which carries the
@@ -232,8 +395,8 @@ void RiseReframeworkCard::refresh()
     // state they lead to rather than by fixed text — the point is that the
     // player can see which one is in effect right now.
     if (menuStateLabel_) {
-        const mhw::ReFrameworkMenuStateReport menuReport =
-            mhw::queryReFrameworkMenuState(gameDir_);
+        // menuReport is the ONE read taken at the top of this refresh; it is
+        // shared with the rail summary so the two surfaces cannot drift.
         const char *stateKey =
             menuReport.state == mhw::ReFrameworkMenuState::Overridden
                 ? "console.reframework.menu_state_overridden"

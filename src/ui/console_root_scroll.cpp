@@ -43,6 +43,18 @@ void RootScrollArea::setRootWidget(QWidget *content)
     syncNaturalHeight();
 }
 
+void RootScrollArea::setPageScrollEnabled(bool on)
+{
+    if (pageScroll_ == on)
+        return;
+    pageScroll_ = on;
+    // Re-apply the budget right away: setRootWidget() may already have
+    // run (in which case the content is carrying the PREFERRED height as
+    // an explicit minimum right now), and a call made before it just
+    // leaves the flag for setRootWidget()'s own sync to read.
+    syncNaturalHeight();
+}
+
 int RootScrollArea::naturalHeight() const
 {
     const QWidget *content = widget();
@@ -77,7 +89,15 @@ void RootScrollArea::syncNaturalHeight()
 {
     QWidget *content = widget();
     if (!content || !content->layout()) return;
-    const int h = naturalHeight();
+    // THE BUDGET, in one expression: the preferred height while the page
+    // is allowed to scroll (the fidelity mode), the layout's own floor
+    // when it is not (see setPageScrollEnabled()). `minimumSizeHint()`
+    // is QWidget's "layout->totalMinimumSize()" — the height the panes
+    // below cannot go under — so the floor still pushes the content past
+    // the viewport exactly when the window is smaller than the console
+    // itself and there is nothing left to give.
+    const int h = pageScroll_ ? naturalHeight()
+                              : content->minimumSizeHint().height();
     if (h <= 0 || content->minimumHeight() == h) return;
     // Re-entrancy guard: setMinimumHeight() queues a layout, which comes
     // back here as a LayoutRequest. The flag is dropped before the call

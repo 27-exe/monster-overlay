@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(monster_overlay VERSION 1.0.0 LANGUAGES CXX)
+project(monster_overlay VERSION 1.1.5 LANGUAGES CXX)
 
 # Strip the build machine's absolute paths out of every compiled TU. Without
 # this the binaries embed CMAKE_SOURCE_DIR via __FILE__ and the wiring test's
@@ -247,6 +247,11 @@ add_library(mhw-ui STATIC
     # rather than being one more block in the biggest one.
     src/ui/console_fidelity_windows.cpp
     src/ui/console_fidelity_windows.h
+    # v1.1.5: the layout package format — what 重置布局 restores from, what
+    # 导出 writes and 导入 reads. Its own TU because it is pure QtCore and
+    # is exercised by a plain logic test as well as the console.
+    src/ui/layout_package.cpp
+    src/ui/layout_package.h
     src/ui/control_panel_styles.cpp
     src/ui/control_panel_styles.h
     src/ui/rise_reframework_card.cpp
@@ -1490,6 +1495,25 @@ add_executable(world-severable-scan-tests
     target_compile_options(console-split-sync-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME console-split-sync-tests COMMAND console-split-sync-tests)
 
+    # v1.1.5: the preview host mounts only the rows the game in force has
+    # — 「世界的时候有一个空的翔虫窗口，崛起的时候有一个空的衣装窗口」.
+    # The overlay gates every split window on hasVisibleContent(), so the
+    # wrong-game row is never mounted there; the console used to build all
+    # eleven rows for either game and let the canvas draw the
+    # `.hidden-window` placeholder for the wrong-game one. Asserted from
+    # both games, in both topologies, with the reverse direction (the
+    # right game's own block is still there WITH content) and the registry
+    # staying game-agnostic.
+    add_executable(console-game-absent-window-tests
+        tests/console_game_absent_window_tests.cpp
+        src/resources/resources.qrc
+    )
+    target_link_libraries(console-game-absent-window-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(console-game-absent-window-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-game-absent-window-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME console-game-absent-window-tests COMMAND console-game-absent-window-tests)
+
     # v0.14: the DPS rows window, and the dispatch that decides which game a
     # sub-window seeds itself for. The second half is the load-bearing one:
     # twelve syncGameForDemo() overloads were dead code, because the host
@@ -1797,6 +1821,10 @@ add_executable(world-severable-scan-tests
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         RESOURCE_LOCK "panels-ini")
 
+    set_tests_properties(console-game-absent-window-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
+
     # v0.12: the 「任务/进程」 window's content model — what the snapshot's
     # quest block and connection block resolve to, and which half of them
     # is allowed to be empty. The window exists to give the diagnostic
@@ -2053,6 +2081,160 @@ add_executable(world-severable-scan-tests
     set_tests_properties(console-integration-seams-tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # v1.0.1: user-facing interaction, output recovery and dual-theme pixels.
+    foreach(_regression IN ITEMS console-interaction canvas-interaction
+                                 output-fallback slider-theme)
+        string(REPLACE "-" "_" _regression_source "${_regression}")
+        set(_regression_target "${_regression}-regression-tests")
+        add_executable(${_regression_target}
+            tests/${_regression_source}_regression_tests.cpp
+            src/resources/resources.qrc
+            assets/icons.qrc)
+        target_link_libraries(${_regression_target} PRIVATE
+            Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+            LayerShellQt::Interface monster-core game-rise game-world mhw-ui)
+        target_include_directories(${_regression_target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src ${_QT6_GUI_PRIVATE_INCLUDE_DIR})
+        target_compile_options(${_regression_target} PRIVATE
+            -Wall -Wextra -Wpedantic)
+        add_test(NAME ${_regression_target} COMMAND ${_regression_target})
+        set_tests_properties(${_regression_target} PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    endforeach()
+    set_tests_properties(console-interaction-regression-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;MONSTER_OVERLAY_UI_TEST_LAYOUT=split")
+
+    # ── v1.1.0: per-window merge/split (Mixed), the detail preview viewport,
+    # instant locale refresh, capability-driven inspector rows, and copy.
+    #
+    # window-layout-plan-tests is the ONLY target that needs Qt6::Core: the
+    # plan model is a pure header, and pulling the widget stack in would let a
+    # GUI-side include hide a broken pure model. The rest mirror the v1.0.1
+    # regression block above.
+    add_executable(window-layout-plan-tests
+        tests/window_layout_plan_tests.cpp)
+    target_link_libraries(window-layout-plan-tests PRIVATE Qt6::Core monster-core mhw-ui)
+    target_include_directories(window-layout-plan-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(window-layout-plan-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME window-layout-plan-tests COMMAND window-layout-plan-tests)
+    set_tests_properties(window-layout-plan-tests PROPERTIES TIMEOUT 60)
+
+    # The layout package format: the file an export writes, an import reads
+    # and the shipped default lives in. Pure logic, but it shares the window
+    # registry with the console, hence mhw-ui.
+    add_executable(layout-package-tests
+        tests/layout_package_tests.cpp)
+    target_link_libraries(layout-package-tests PRIVATE
+        Qt6::Core monster-core mhw-ui)
+    target_include_directories(layout-package-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(layout-package-tests PRIVATE
+        MONSTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_options(layout-package-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME layout-package-tests COMMAND layout-package-tests)
+    set_tests_properties(layout-package-tests PROPERTIES TIMEOUT 60)
+
+    foreach(_v11 IN ITEMS console-preview-viewport console-locale-refresh
+                      console-window-capability-controls canvas-fixed-viewport
+                      hud-canvas-mixed copy-semantics)
+        string(REPLACE "-" "_" _v11_source "${_v11}")
+        set(_v11_target "${_v11}-tests")
+        add_executable(${_v11_target}
+            tests/${_v11_source}_tests.cpp
+            src/resources/resources.qrc
+            assets/icons.qrc)
+        target_link_libraries(${_v11_target} PRIVATE
+            Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+            LayerShellQt::Interface monster-core game-rise game-world mhw-ui)
+        target_include_directories(${_v11_target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src ${_QT6_GUI_PRIVATE_INCLUDE_DIR})
+        target_compile_options(${_v11_target} PRIVATE
+            -Wall -Wextra -Wpedantic)
+        # copy-semantics-tests reads the locale JSON from disk (the qrc copy is
+        # what ships, but asserting against the build tree would hide a source
+        # edit that never got re-embedded). The other suites never touch it.
+        target_compile_definitions(${_v11_target} PRIVATE
+            MONSTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+        add_test(NAME ${_v11_target} COMMAND ${_v11_target})
+        set_tests_properties(${_v11_target} PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 90)
+    endforeach()
+    # The preview/capability suites drive the console in Split, matching the
+    # console-interaction suite: a saved Single layout would make the split
+    # sub-window bindings legitimately empty and the checks vacuous.
+    foreach(_v11_split IN ITEMS console-preview-viewport console-window-capability-controls)
+        set_tests_properties(${_v11_split}-tests PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;MONSTER_OVERLAY_UI_TEST_LAYOUT=split")
+    endforeach()
+
+    # ── round2: THE INSPECTOR'S TWO HALVES SCROLL SEPARATELY ──────────────
+    # 用户:「这里左右应该分开竖直滚动的,而不是合在一起」. The suite asserts the
+    # new tree (inspectorColumns is still ONE QSplitter, but its two
+    # children are now two scroll areas: inspectorContent carries 元数据 +
+    # 分区/本组子窗, inspectorContentRight carries the 当前内容状态 card),
+    # that each half's bar earns a REAL range from its own content, and —
+    # the point of the change — that scrolling one half leaves the other
+    # half's bar value and its content's y-offset against the window
+    # exactly where they were. It also checks the contracts the split must
+    # not break: the splitter keeps exactly 2 children (console-preview-
+    # viewport), inspectorContent keeps its objectName and its scroll
+    # role (main_control's --snap-scroll hook, console-interaction,
+    # console-inspector-fidelity), and the empty state hides BOTH halves.
+    #
+    # Split layout, like console-preview-viewport: the third column is
+    # about a selected WINDOW, and a saved Single layout has none. No
+    # _QT6_GUI_PRIVATE_INCLUDE_DIR: this file injects no fake screens. The
+    # XDG_CONFIG_HOME redirect is inside the test (a QTemporaryDir), so
+    # panels.ini is never touched.
+    add_executable(console-scroll-split-tests
+        tests/console_scroll_split_tests.cpp
+        src/resources/resources.qrc
+        assets/icons.qrc)
+    target_link_libraries(console-scroll-split-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+        LayerShellQt::Interface monster-core game-rise game-world mhw-ui)
+    target_include_directories(console-scroll-split-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-scroll-split-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-scroll-split-tests COMMAND console-scroll-split-tests)
+    set_tests_properties(console-scroll-split-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;MONSTER_OVERLAY_UI_TEST_LAYOUT=split"
+        TIMEOUT 90)
+
+    # The per-window detach/merge toggles, the layout.windows.<game>= SET rule
+    # and the first-entry scope seed — driven through the REAL controls (combo,
+    # apply, the eleven toggles, 保存), not through the helpers behind them.
+    #
+    # RESOURCE_LOCK, and the reason it is not paranoia: this suite seeds a
+    # panels.ini key under the scope the console's own defaults resolve to
+    # before it swaps in its temporary HOME/XDG, so it must not overlap the
+    # other suites that do the same. Its HOME and XDG_CONFIG_HOME both point
+    # into a QTemporaryDir, so nothing here reads or writes the user's own
+    # configuration — the lock is about tests racing each other.
+    #
+    # No _QT6_GUI_PRIVATE_INCLUDE_DIR: this file injects no fake screens, so
+    # it needs no QPA private header. resources.qrc IS needed — consoleText()
+    # reads the i18n table from it, and the suite asserts the copy is
+    # non-empty, which would fail rather than pass silently without it.
+    add_executable(console-mixed-layout-tests
+        tests/console_mixed_layout_tests.cpp
+        src/resources/resources.qrc)
+    target_link_libraries(console-mixed-layout-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg mhw-ui)
+    target_include_directories(console-mixed-layout-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-mixed-layout-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-mixed-layout-tests
+             COMMAND console-mixed-layout-tests)
+    set_tests_properties(console-mixed-layout-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RESOURCE_LOCK "panels-ini")
+
     # ── v1.0.0 fidelity (root scroll): THE PAGE SCROLLS, THE BOARD DOES
     # NOT SHRINK — and this is the test of that mechanism itself.
     #
@@ -2178,6 +2360,96 @@ add_executable(world-severable-scan-tests
     )
     target_compile_options(rise-damage-wiring-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME rise-damage-wiring-tests COMMAND rise-damage-wiring-tests)
+
+    # v1.1.4: the BEHAVIOUR those source-level guards protect — that an
+    # edit-mode damage window keeps its own demo when the mother panel is
+    # unmounted (Mixed + every damage row detached), which is the user's
+    # 「崛起下,启动悬浮窗编辑的话,伤害统计那个窗会自动隐藏」. Offscreen,
+    # single-shot QImage render: no layer-shell, no focus stealing. The
+    # wiring half is pinned by rise-damage-wiring-tests; this pins the
+    # pixels those guards are supposed to keep.
+    add_executable(rise-damage-edit-demo-tests
+        tests/rise_damage_edit_demo_tests.cpp
+        src/resources/resources.qrc
+        assets/icons.qrc
+    )
+    target_link_libraries(rise-damage-edit-demo-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+        LayerShellQt::Interface monster-core game-rise game-world mhw-ui)
+    target_include_directories(rise-damage-edit-demo-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(rise-damage-edit-demo-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME rise-damage-edit-demo-tests COMMAND rise-damage-edit-demo-tests)
+    set_tests_properties(rise-damage-edit-demo-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+    # v1.1.4: 「反复点击重置演示 → 崩溃」. rebuildMotherPanels() deletes the
+    # four Panels and the canvas holds non-owning PanelSource* into them; two
+    # of the three call sites rebound, resetPrototypeScope() did not, so the
+    # next paint asked a freed Panel for its screen. Three consecutive resets
+    # with a REAL paint between each — the paint is where the user's core
+    # dump died, not the click — plus the bound-adapter identity that proves
+    # the canvas is no longer holding the previous set.
+    add_executable(console-reset-scope-tests
+        tests/console_reset_scope_tests.cpp
+        src/resources/resources.qrc
+        assets/icons.qrc
+    )
+    target_link_libraries(console-reset-scope-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+        LayerShellQt::Interface monster-core game-rise game-world mhw-ui)
+    target_include_directories(console-reset-scope-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-reset-scope-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-reset-scope-tests COMMAND console-reset-scope-tests)
+
+    # 重置布局 / 全部重置 — the shipped default, and the boundary between the
+    # two. The spec sentence is 「粒度默认重置当前选中的组」, so the test
+    # that carries the rule is the one asserting the OTHER group survived.
+    add_executable(console-layout-default-tests
+        tests/console_layout_default_tests.cpp
+        src/resources/resources.qrc
+        assets/icons.qrc
+    )
+    target_link_libraries(console-layout-default-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+        LayerShellQt::Interface monster-core game-rise game-world mhw-ui)
+    target_include_directories(console-layout-default-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-layout-default-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-layout-default-tests
+             COMMAND console-layout-default-tests)
+    set_tests_properties(console-layout-default-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 90)
+    set_tests_properties(console-reset-scope-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;MONSTER_OVERLAY_UI_TEST_LAYOUT=split"
+        TIMEOUT 90)
+
+    # v1.1.4: the export snapshot must name the mode it was taken in — it
+    # answered a THREE-mode question with `split ? "split" : "single"`, so a
+    # Mixed console exported `"layout": "single"`. All three modes are walked
+    # on purpose: a two-valued check passes on two of them and only fails on
+    # the third.
+    add_executable(console-export-payload-tests
+        tests/console_export_payload_tests.cpp
+        src/resources/resources.qrc
+        assets/icons.qrc
+    )
+    target_link_libraries(console-export-payload-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg
+        LayerShellQt::Interface monster-core game-rise game-world mhw-ui)
+    target_include_directories(console-export-payload-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(console-export-payload-tests PRIVATE
+        -Wall -Wextra -Wpedantic)
+    add_test(NAME console-export-payload-tests COMMAND console-export-payload-tests)
+    set_tests_properties(console-export-payload-tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;MONSTER_OVERLAY_UI_TEST_LAYOUT=split"
+        TIMEOUT 90)
 
     # An unhandled flag used to fall through to the GUI and never exit;
     # --version/--help must return. TIMEOUT turns such a regression into a
@@ -2523,5 +2795,42 @@ add_test(NAME player-info-three-state-tests COMMAND player-info-three-state-test
 # from racing on it.
 set_tests_properties(player-info-three-state-tests PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    RESOURCE_LOCK "panels-ini")
+
+# ── v1.1.5: EVERY test runs against a scratch config directory ───────────
+#
+# The bug that motivated this: a full ctest run rewrote the user's real
+# ~/.config/monster-overlay/ — all three files in one write, at 23:42:31,
+# mid-suite. The values happened to be identical, so nothing was lost that
+# night, but a suite that can write the configuration it is exercising is a
+# suite that can one day lose it. 73 of the 109 test sources never redirect
+# XDG_CONFIG_HOME themselves.
+#
+# ENVIRONMENT_MODIFICATION, not ENVIRONMENT: the latter would replace the
+# per-test QT_QPA_PLATFORM=offscreen those tests already set. The tests that
+# DO call qputenv() at runtime still win over this, so the net is purely
+# additive.
+#
+# QT_QPA_PLATFORMTHEME=unset: the desktop exports a GTK platform theme
+# (gtk3), and the theme plugin initialises GTK even for the offscreen
+# platform — where there is no display to initialise against. One process
+# doing that alone only prints a warning; a `ctest -j4` batch of them does
+# it at once, and the ones that lose the race ABORT before their first
+# assertion (47 of 109 failed in 0.02 s each, all with "cannot open
+# display: :0"). The offscreen platform wants no platform theme at all, so
+# the suite takes it out of the equation instead of depending on whether
+# the machine running it happens to have a usable X display.
+get_property(_monster_all_tests DIRECTORY PROPERTY TESTS)
+set(_monster_test_xdg "${CMAKE_CURRENT_BINARY_DIR}/test-xdg")
+file(MAKE_DIRECTORY "${_monster_test_xdg}")
+set_tests_properties(${_monster_all_tests} PROPERTIES
+    ENVIRONMENT_MODIFICATION
+        "XDG_CONFIG_HOME=set:${_monster_test_xdg};QT_QPA_PLATFORMTHEME=unset:")
+
+# The pixel baselines read the same scratch panels.ini the Widget tests
+# write, so this suite has to take the same lock the others take — without
+# it the baseline images are rendered against a half-written config and the
+# comparison fails on a size that moves with the race.
+set_tests_properties(snapshot-regression-tests PROPERTIES
     RESOURCE_LOCK "panels-ini")
 
